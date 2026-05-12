@@ -155,6 +155,7 @@ describe("surface delivery projection", () => {
       outcomeDecision: admitted,
       expressionDecision: activeExpression,
       visibilityPolicy: policy,
+      companionActionProjection: companionProjection({ kind: "suggest", executesOperation: false }),
     });
 
     expect(gatewayDelivery).toMatchObject({
@@ -338,6 +339,29 @@ describe("surface delivery projection", () => {
         outcomeDecision: outcome(finalOutcome),
         companionActionProjection: companionProjection({ kind: "execute_now", executesOperation: true }),
       })).toThrow(/incompatible/);
+    }
+  });
+
+  it("fails closed when express or escalation delivery carries approval-style action semantics", () => {
+    for (const finalOutcome of ["express_to_user", "escalate"] as const) {
+      for (const projectionKind of ["ask_for_approval", "prepare_draft"] as const) {
+        expect(() => projectSurfaceDelivery({
+          renderId: `render:${finalOutcome}:${projectionKind}`,
+          renderedAt: NOW,
+          surfaceClass: "gateway",
+          outcomeDecision: outcome(finalOutcome),
+          expressionDecision: expression(finalOutcome, ["gateway"]),
+          visibilityPolicy: visibilityPolicy({
+            id: `visibility:${finalOutcome}`,
+            outcomeId: `outcome:${finalOutcome}`,
+            expressionId: `expression:${finalOutcome}`,
+          }),
+          companionActionProjection: companionProjection({
+            kind: projectionKind,
+            executesOperation: false,
+          }),
+        })).toThrow(/incompatible/);
+      }
     }
   });
 

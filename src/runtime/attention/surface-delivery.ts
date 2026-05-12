@@ -275,7 +275,7 @@ function assertCompanionProjectionCompatible(
         return kind === "stay_silent" || kind === "digest_later";
       case "express_to_user":
       case "escalate":
-        return kind !== "stay_silent" && kind !== "digest_later";
+        return kind === "suggest" || kind === "challenge" || kind === "refuse_with_alternative";
     }
   })();
   if (!compatible) {
