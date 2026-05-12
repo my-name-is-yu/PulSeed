@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import {
   RuntimeControlOperationSchema,
   isTerminalRuntimeControlState,
@@ -18,6 +18,8 @@ import {
 } from "./control-db/index.js";
 
 const RuntimeEventJournalSchema = RuntimeEventSchema as z.ZodType<RuntimeEvent>;
+const RuntimeEventRecentLimitSchema = z.number().int().positive().safe().max(500);
+const RuntimeOperationRecentLimitSchema = z.number().int().positive().safe().max(500);
 
 interface RuntimeOperationRow {
   operation_json: string;
@@ -96,6 +98,20 @@ export class RuntimeOperationStore {
     });
   }
 
+  async listRecentOperations(limit = 50): Promise<RuntimeControlOperation[]> {
+    const parsedLimit = RuntimeOperationRecentLimitSchema.parse(limit);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        ORDER BY updated_at DESC, operation_id DESC
+        LIMIT ?
+      `).all(parsedLimit) as RuntimeOperationRow[];
+      return rows.reverse().map((row) => parseRuntimeOperationJson(row.operation_json));
+    });
+  }
+
   async listRuntimeItems(): Promise<RuntimeItem[]> {
     return [...await this.listPending(), ...await this.listCompleted()]
       .map(runtimeItemFromOperation);
@@ -110,6 +126,20 @@ export class RuntimeOperationStore {
         ORDER BY occurred_at ASC, event_id ASC
       `).all() as RuntimeOperationEventRow[];
       return rows.map((row) => parseRuntimeEventJson(row.event_json));
+    });
+  }
+
+  async listRecentRuntimeEvents(limit = 50): Promise<RuntimeEvent[]> {
+    const parsedLimit = RuntimeEventRecentLimitSchema.parse(limit);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT event_json
+        FROM runtime_operation_events
+        ORDER BY occurred_at DESC, event_id DESC
+        LIMIT ?
+      `).all(parsedLimit) as RuntimeOperationEventRow[];
+      return rows.reverse().map((row) => parseRuntimeEventJson(row.event_json));
     });
   }
 

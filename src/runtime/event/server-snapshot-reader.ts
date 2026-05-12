@@ -1,12 +1,24 @@
 import * as path from "node:path";
 import { z } from "zod";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
-import { DaemonStateStore, GoalTaskStateStore, type OutboxStore, type RuntimeAutomationSnapshot } from "../store/index.js";
+import {
+  createRuntimeStorePaths,
+  DaemonStateStore,
+  GoalTaskStateStore,
+  RuntimeOperationStore,
+  resolveRuntimeControlDbBaseDir,
+  type OutboxStore,
+  type RuntimeAutomationSnapshot,
+} from "../store/index.js";
 import { BrowserSessionStore, RuntimeAuthHandoffStore } from "../interactive-automation/index.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { createRuntimeSessionRegistry } from "../session-registry/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
+import {
+  buildResidentRuntimeInterfaceSnapshot,
+  type ResidentRuntimeInterfaceSnapshot,
+} from "../resident-runtime-interface.js";
 import {
   RuntimeOperatorHandoffStore,
   type RuntimeOperatorHandoffRecord,
@@ -29,6 +41,7 @@ export interface EventServerSnapshotData {
   runtime_automation: RuntimeAutomationSnapshot;
   runtime_sessions: RuntimeSessionRegistrySnapshot | null;
   operator_handoffs: RuntimeOperatorHandoffRecord[];
+  resident_runtime_interface: ResidentRuntimeInterfaceSnapshot;
 }
 
 export class EventServerSnapshotReader {
@@ -56,6 +69,14 @@ export class EventServerSnapshotReader {
       this.readOpenOperatorHandoffs(),
     ]);
 
+    const residentRuntimeInterface = await this.readResidentRuntimeInterface({
+      runtimeSessions,
+      approvals: approvalEvents,
+      activeWorkers,
+      latestOutboxSeq: latestOutbox?.seq ?? 0,
+      operatorHandoffs,
+    });
+
     return {
       daemon,
       goals,
@@ -67,6 +88,7 @@ export class EventServerSnapshotReader {
       runtime_automation: runtimeAutomation,
       runtime_sessions: runtimeSessions,
       operator_handoffs: operatorHandoffs,
+      resident_runtime_interface: residentRuntimeInterface,
     };
   }
 
@@ -82,6 +104,12 @@ export class EventServerSnapshotReader {
 
   private controlBaseDir(): string {
     return this.configuredControlBaseDir ?? this.stateManager?.getBaseDir() ?? path.dirname(this.eventsDir);
+  }
+
+  private runtimeControlBaseDir(): string {
+    if (this.configuredControlBaseDir) return this.configuredControlBaseDir;
+    if (this.stateManager) return this.stateManager.getBaseDir();
+    return resolveRuntimeControlDbBaseDir(createRuntimeStorePaths(this.runtimeRoot()));
   }
 
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
@@ -200,6 +228,41 @@ export class EventServerSnapshotReader {
 
   private async readOpenOperatorHandoffs(): Promise<RuntimeOperatorHandoffRecord[]> {
     return new RuntimeOperatorHandoffStore(this.runtimeRoot(), this.controlDbOptions()).listOpen();
+  }
+
+  private async readResidentRuntimeInterface(input: {
+    runtimeSessions: RuntimeSessionRegistrySnapshot | null;
+    approvals: ApprovalRequiredEvent[];
+    activeWorkers: Array<Record<string, unknown>>;
+    latestOutboxSeq: number;
+    operatorHandoffs: RuntimeOperatorHandoffRecord[];
+  }): Promise<ResidentRuntimeInterfaceSnapshot> {
+    const operationStore = new RuntimeOperationStore(this.runtimeRoot(), this.controlDbOptions());
+    const [pendingOperations, recentOperations, runtimeEvents, daemonState] = await Promise.all([
+      operationStore.listPending(),
+      operationStore.listRecentOperations(50),
+      operationStore.listRecentRuntimeEvents(50),
+      this.readRuntimeControlDaemonState(),
+    ]);
+
+    return buildResidentRuntimeInterfaceSnapshot({
+      runtimeRoot: this.runtimeRoot(),
+      controlBaseDir: this.runtimeControlBaseDir(),
+      daemonState,
+      runtimeSessions: input.runtimeSessions,
+      runtimeEvents,
+      pendingOperations,
+      recentOperations,
+      pendingApprovals: input.approvals,
+      lastOutboxSeq: input.latestOutboxSeq,
+      activeWorkers: input.activeWorkers,
+      operatorHandoffRefs: input.operatorHandoffs.map((handoff) => handoff.handoff_id),
+    });
+  }
+
+  private async readRuntimeControlDaemonState(): Promise<Record<string, unknown> | null> {
+    const state = await new DaemonStateStore(this.runtimeControlBaseDir()).load();
+    return state ? parseJsonObject(JSON.stringify(state)) : null;
   }
 
   async readDaemonStateRaw(): Promise<string | null> {
