@@ -19,6 +19,7 @@ export const AttentionInputSourceKindSchema = z.enum([
   "resident_curiosity",
   "resident_proactive_maintenance",
   "runtime_event",
+  "observation_event",
   "gateway_user_activity",
   "surface_memory",
   "feedback",
@@ -124,6 +125,7 @@ type AttentionInputSignalSourceMap = {
   resident_curiosity: "curiosity";
   resident_proactive_maintenance: "resident";
   runtime_event: "runtime_event";
+  observation_event: "observation";
   gateway_user_activity: "user_activity";
   surface_memory: "surface" | "memory";
   feedback: "feedback";
@@ -157,6 +159,11 @@ export interface AttentionInputIntakePort {
 }
 
 export function createAttentionInput(input: AttentionInputFactoryInput): AttentionInput {
+  if (input.source_kind === "observation_event") {
+    throw new Error(
+      "observation_event attention inputs require ObservationSession and ObservationEvent validation"
+    );
+  }
   const source = buildAttentionInputSource(input);
   const signalSource = signalSourceForAttentionInputKind(input.source_kind, input.signal_source);
   const signalRef = sourceRefForAttentionInput(input, signalSource);
@@ -374,6 +381,8 @@ function defaultSignalRefForAttentionInput(input: AttentionInputFactoryInput): C
       return ref("runtime_event", `resident-proactive:${input.source_id}`);
     case "runtime_event":
       return ref("runtime_event", input.source_id);
+    case "observation_event":
+      return ref("observation_event", input.source_id);
     case "gateway_user_activity":
       return ref("user_activity", input.source_id);
     case "surface_memory":
@@ -403,6 +412,8 @@ function signalSourceForAttentionInputKind(
       return "resident";
     case "runtime_event":
       return "runtime_event";
+    case "observation_event":
+      return "observation";
     case "gateway_user_activity":
       return "user_activity";
     case "surface_memory":
@@ -424,6 +435,8 @@ function allowedSignalSourcesForAttentionInputKind(kind: AttentionInputSourceKin
       return ["resident"];
     case "runtime_event":
       return ["runtime_event"];
+    case "observation_event":
+      return ["observation"];
     case "gateway_user_activity":
       return ["user_activity"];
     case "surface_memory":
@@ -463,6 +476,8 @@ function allowedRefKindsForSignalSource(source: SignalSource): readonly Companio
     case "resident":
     case "runtime_event":
       return ["runtime_event"];
+    case "observation":
+      return ["observation_event"];
     case "curiosity":
       return ["curiosity"];
     case "user_activity":
@@ -505,6 +520,7 @@ function defaultSourceEpochForAttentionInput(input: AttentionInputFactoryInput):
     case "daemon_tick":
     case "resident_curiosity":
     case "runtime_event":
+    case "observation_event":
     case "surface_memory":
     case "feedback":
       return "default";
@@ -520,6 +536,7 @@ function defaultHighWatermarkForAttentionInput(input: AttentionInputFactoryInput
     case "daemon_tick":
     case "resident_curiosity":
     case "runtime_event":
+    case "observation_event":
     case "surface_memory":
     case "feedback":
       return input.emitted_at;

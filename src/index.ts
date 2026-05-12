@@ -138,6 +138,22 @@ export {
   createAttentionContinuityInspection,
   inspectAttentionContinuity,
 } from "./runtime/attention/attention-continuity.js";
+export {
+  createObservationEvent,
+  createObservationSession,
+  observationEventToAttentionInput,
+} from "./runtime/observation/index.js";
+export type {
+  ObservationAttentionSignalPolicy,
+  ObservationEvent,
+  ObservationEventAttentionInput,
+  ObservationMemoryPolicy,
+  ObservationMemoryPromotionPolicy,
+  ObservationModality,
+  ObservationPurpose,
+  ObservationSession,
+  ObservationSource,
+} from "./runtime/observation/index.js";
 export type {
   AttentionContinuityAgendaEntry,
   AttentionContinuityFeedbackEntry,
