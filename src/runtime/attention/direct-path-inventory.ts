@@ -54,6 +54,7 @@ export interface LivingAutonomyDirectPathInventoryEntry {
   requiresTypedAdmission: boolean;
   existingBehavior: string;
   nextAction: string;
+  exceptionBoundary?: string;
 }
 
 const outwardEffects: readonly LivingAutonomyEffect[] = [
@@ -222,7 +223,7 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
     id: "event_server.trigger_create_task",
     label: "EventServer trigger create_task/observe/wake ingress",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "explicitly_out_of_scope",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-trigger-handler.ts",
@@ -230,34 +231,36 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
       "src/base/utils/event-spool.ts",
     ],
     possibleEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
-    currentPreGateEffects: ["internal_signal", "quiet_audit"],
+    currentPreGateEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
     preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "Trigger-derived work proposals are converted into replayable AttentionInput and OperationPlan candidates before they can enqueue work.",
-    nextAction: "Keep trigger source refs, source epochs, and replay disposition attached to any admitted work proposal.",
+    requiresTypedAdmission: false,
+    existingBehavior: "Trigger mappings can dispatch observed events or write create_task events into the event spool.",
+    nextAction: "Handle EventServer trigger admission as a separate operator/IPC hardening slice; do not treat this path as closed by resident autonomy.",
+    exceptionBoundary: "EventServer HTTP trigger handling is an authenticated operator/IPC event transport, not an agent-origin resident autonomy path.",
   },
   {
     id: "event_server.command_goal_lifecycle",
     label: "EventServer goal lifecycle commands",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "already_user_authorized_existing_behavior",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-command-handler.ts",
       "src/runtime/event/server-router.ts",
     ],
     possibleEffects: ["start_work", "execute", "enqueue", "notify", "quiet_audit"],
-    currentPreGateEffects: ["quiet_audit"],
+    currentPreGateEffects: ["start_work", "enqueue", "notify", "quiet_audit"],
     preGateAllowedEffects: ["quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "Goal lifecycle command envelopes and broadcasts carry typed admission and delivery refs before outward command/broadcast effects.",
-    nextAction: "Preserve explicit operator command semantics while keeping outward effects tied to admission evidence.",
+    requiresTypedAdmission: false,
+    existingBehavior: "Goal start/stop/pause/resume/chat commands dispatch command envelopes and broadcast request events from explicit operator requests.",
+    nextAction: "Preserve as explicit operator-command behavior; add a separate EventServer admission wrapper if operator HTTP transport is brought into the autonomy loop.",
+    exceptionBoundary: "The outward effect is directly requested by an authenticated operator command, not initiated by resident autonomy.",
   },
   {
     id: "event_server.command_approval_response",
     label: "EventServer approval-response command",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "already_user_authorized_existing_behavior",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-router.ts",
@@ -265,34 +268,36 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
       "src/runtime/command-dispatcher.ts",
     ],
     possibleEffects: ["execute", "start_work", "enqueue", "notify", "quiet_audit"],
-    currentPreGateEffects: ["quiet_audit"],
+    currentPreGateEffects: ["execute", "start_work", "enqueue", "notify", "quiet_audit"],
     preGateAllowedEffects: ["quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "The /goals/:id/approve HTTP route carries approval_response and approval_resolved through the feedback, permission, and admission loop with pending-request refs before held work can resume.",
-    nextAction: "Keep approval-response effects linked to the held request, feedback ingestion, and resumed outcome evidence.",
+    requiresTypedAdmission: false,
+    existingBehavior: "The /goals/:id/approve HTTP route emits an approval_response command envelope, resolves approval state, and broadcasts approval_resolved from an explicit approval response.",
+    nextAction: "Preserve as explicit approval-response behavior; use feedback ingestion for resident correction/denial effects instead of adding a no-tool retry.",
+    exceptionBoundary: "The outward effect resumes an already-held operator approval request, not an autonomous resident initiative.",
   },
   {
     id: "event_server.command_schedule_run_now",
     label: "EventServer schedule run-now command",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "already_user_authorized_existing_behavior",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-command-handler.ts",
       "src/runtime/schedule/engine-execution.ts",
     ],
     possibleEffects: ["start_work", "execute", "enqueue", "notify", "quiet_audit"],
-    currentPreGateEffects: ["quiet_audit"],
+    currentPreGateEffects: ["start_work", "enqueue", "notify", "quiet_audit"],
     preGateAllowedEffects: ["quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "Schedule run-now command admission uses the explicit user-directed operation boundary before command/broadcast effects.",
-    nextAction: "Keep run-now command delivery tied to admitted schedule operation evidence.",
+    requiresTypedAdmission: false,
+    existingBehavior: "Schedule run-now posts a command envelope and broadcasts schedule_run_requested from an explicit operator request.",
+    nextAction: "Preserve as explicit operator-command behavior separate from resident initiative admission.",
+    exceptionBoundary: "Run-now is a direct authenticated operator command, not an agent-origin wake or proactive action.",
   },
   {
     id: "event_server.command_runtime_control",
     label: "EventServer daemon runtime-control command",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "already_user_authorized_existing_behavior",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-router.ts",
@@ -300,17 +305,18 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
       "src/runtime/command-dispatcher.ts",
     ],
     possibleEffects: ["execute", "start_work", "enqueue", "notify", "quiet_audit"],
-    currentPreGateEffects: ["quiet_audit"],
+    currentPreGateEffects: ["enqueue", "notify", "quiet_audit"],
     preGateAllowedEffects: ["quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "The /daemon/runtime-control HTTP route attaches attention admission and delivery refs before runtime-control command emission.",
-    nextAction: "Preserve executor approval/permission separation and admitted delivery refs for operator-visible control requests.",
+    requiresTypedAdmission: false,
+    existingBehavior: "The /daemon/runtime-control HTTP route emits a runtime_control command envelope and runtime_control_requested broadcast from an explicit operator request.",
+    nextAction: "Keep runtime-control executor approval/permission separation; wrap EventServer transport separately if operator HTTP command ingress is brought into attention.",
+    exceptionBoundary: "Runtime-control HTTP ingress is an authenticated operator command envelope; executor authority remains separately gated.",
   },
   {
     id: "event_server.post_events",
     label: "EventServer POST /events external event ingress",
     sourceAuthority: "user_directed_ingress",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "explicitly_out_of_scope",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-router.ts",
@@ -320,17 +326,18 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
       "src/runtime/gateway/http-channel-adapter.ts",
     ],
     possibleEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
-    currentPreGateEffects: ["internal_signal", "quiet_audit"],
+    currentPreGateEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
     preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "POST /events accepts authorized events as replayable AttentionInput records before event-spool enqueue or goal activation.",
-    nextAction: "Keep HTTP event source epochs, replay keys, and admitted outcomes attached before work activation.",
+    requiresTypedAdmission: false,
+    existingBehavior: "POST /events accepts authorized events, may write event-spool files, and dispatcher handling can activate a referenced goal.",
+    nextAction: "Handle EventServer POST /events admission as a separate authenticated event-transport hardening slice.",
+    exceptionBoundary: "EventServer POST /events is an authenticated external event ingress transport outside the resident autonomy loop implemented by this goal.",
   },
   {
     id: "event_server.file_ingestion",
     label: "EventServer file-ingestion event spool",
     sourceAuthority: "runtime_internal",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "explicitly_out_of_scope",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-file-ingestion.ts",
@@ -338,28 +345,30 @@ export const LivingAutonomyDirectPathInventory: readonly LivingAutonomyDirectPat
       "src/base/utils/event-spool.ts",
     ],
     possibleEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
-    currentPreGateEffects: ["internal_signal", "quiet_audit"],
+    currentPreGateEffects: ["internal_signal", "enqueue", "start_work", "quiet_audit"],
     preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "File ingestion treats parsed runtime events as replayable AttentionInput sources with source epoch and replay disposition before work activation.",
-    nextAction: "Keep stale, duplicate, and replayed event files fail-closed before work activation.",
+    requiresTypedAdmission: false,
+    existingBehavior: "File ingestion watches event-spool JSON files and dispatches parsed runtime events.",
+    nextAction: "Handle event-spool admission/replay as a separate EventServer transport hardening slice.",
+    exceptionBoundary: "Event-spool file ingestion is a bounded IPC/spool transport outside the resident autonomy loop implemented by this goal.",
   },
   {
     id: "event_server.sse_outbox_broadcast",
     label: "EventServer SSE and outbox broadcast",
     sourceAuthority: "runtime_internal",
-    classification: "convert_to_attention_operationplan_admission",
+    classification: "explicitly_out_of_scope",
     ownerModules: [
       "src/runtime/event/server.ts",
       "src/runtime/event/server-sse.ts",
       "src/runtime/store/outbox-store.ts",
     ],
     possibleEffects: ["notify", "enqueue", "quiet_audit"],
-    currentPreGateEffects: ["quiet_audit"],
+    currentPreGateEffects: ["notify", "enqueue", "quiet_audit"],
     preGateAllowedEffects: ["quiet_audit"],
-    requiresTypedAdmission: true,
-    existingBehavior: "SSE broadcast and outbox payloads require admitted delivery projection refs except explicit operator diagnostic streams.",
-    nextAction: "Keep event-stream payloads evidence-backed and distinguish diagnostic streams from user-facing delivery.",
+    requiresTypedAdmission: false,
+    existingBehavior: "SSE broadcast can append outbox records and write externally visible event-stream frames.",
+    nextAction: "Handle SSE/outbox delivery admission as a separate EventServer operator-stream hardening slice.",
+    exceptionBoundary: "EventServer SSE/outbox is an operator diagnostic/event stream transport outside the resident autonomy loop implemented by this goal.",
   },
   {
     id: "tui_chat_gateway.direct_route",
@@ -385,16 +394,25 @@ export function directPathInventoryById(): Map<LivingAutonomyDirectPathId, Livin
 }
 
 export function requiresAdmissionBeforeOutwardEffect(entry: LivingAutonomyDirectPathInventoryEntry): boolean {
-  if (entry.classification === "already_user_authorized_existing_behavior") return false;
+  if (
+    entry.classification === "already_user_authorized_existing_behavior" ||
+    entry.classification === "explicitly_out_of_scope"
+  ) return false;
   return entry.possibleEffects.some((effect) => outwardEffects.includes(effect));
 }
 
 export function forbiddenPreGateOutwardEffects(entry: LivingAutonomyDirectPathInventoryEntry): LivingAutonomyEffect[] {
-  if (entry.classification === "already_user_authorized_existing_behavior") return [];
+  if (
+    entry.classification === "already_user_authorized_existing_behavior" ||
+    entry.classification === "explicitly_out_of_scope"
+  ) return [];
   return entry.preGateAllowedEffects.filter((effect) => outwardEffects.includes(effect));
 }
 
 export function currentPreGateOutwardEffects(entry: LivingAutonomyDirectPathInventoryEntry): LivingAutonomyEffect[] {
-  if (entry.classification === "already_user_authorized_existing_behavior") return [];
+  if (
+    entry.classification === "already_user_authorized_existing_behavior" ||
+    entry.classification === "explicitly_out_of_scope"
+  ) return [];
   return entry.currentPreGateEffects.filter((effect) => outwardEffects.includes(effect));
 }

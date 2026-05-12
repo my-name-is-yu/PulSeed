@@ -49,7 +49,8 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
   it("does not allow non-exception paths to produce outward effects before typed admission", () => {
     const nonExceptionPaths = LivingAutonomyDirectPathInventory.filter((entry) =>
-      entry.classification !== "already_user_authorized_existing_behavior"
+      entry.classification !== "already_user_authorized_existing_behavior" &&
+      entry.classification !== "explicitly_out_of_scope"
     );
 
     expect(nonExceptionPaths.map((entry) => entry.id)).toEqual(expect.arrayContaining([
@@ -102,14 +103,6 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
     expect(pathsWithOutwardPotential.map((entry) => entry.id).sort()).toEqual([
       "daemon.proactive_tick",
-      "event_server.command_approval_response",
-      "event_server.command_runtime_control",
-      "event_server.command_goal_lifecycle",
-      "event_server.command_schedule_run_now",
-      "event_server.file_ingestion",
-      "event_server.post_events",
-      "event_server.sse_outbox_broadcast",
-      "event_server.trigger_create_task",
       "gateway.outbound",
       "notification.outbox",
       "resident.curiosity",
@@ -128,6 +121,37 @@ describe("LivingAutonomyDirectPathInventory", () => {
     );
 
     expect(currentOutwardPaths).toEqual([]);
+  });
+
+  it("keeps EventServer direct transports as explicit exception boundaries", () => {
+    const byId = directPathInventoryById();
+    const userAuthorizedCommandIds = [
+      "event_server.command_approval_response",
+      "event_server.command_goal_lifecycle",
+      "event_server.command_runtime_control",
+      "event_server.command_schedule_run_now",
+    ] as const;
+    const outOfScopeTransportIds = [
+      "event_server.file_ingestion",
+      "event_server.post_events",
+      "event_server.sse_outbox_broadcast",
+      "event_server.trigger_create_task",
+    ] as const;
+
+    for (const id of userAuthorizedCommandIds) {
+      expect(byId.get(id)).toMatchObject({
+        classification: "already_user_authorized_existing_behavior",
+        requiresTypedAdmission: false,
+        exceptionBoundary: expect.any(String),
+      });
+    }
+    for (const id of outOfScopeTransportIds) {
+      expect(byId.get(id)).toMatchObject({
+        classification: "explicitly_out_of_scope",
+        requiresTypedAdmission: false,
+        exceptionBoundary: expect.any(String),
+      });
+    }
   });
 
   it("keeps audited direct-path owner modules represented", () => {
@@ -181,9 +205,11 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/dispatcher.ts",
         "src/platform/drive/drive-system.ts",
       ]),
-      currentPreGateEffects: ["internal_signal", "quiet_audit"],
+      classification: "explicitly_out_of_scope",
+      currentPreGateEffects: expect.arrayContaining(["internal_signal", "enqueue", "start_work"]),
       preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-      requiresTypedAdmission: true,
+      requiresTypedAdmission: false,
+      exceptionBoundary: expect.any(String),
     });
     expect(byId.get("event_server.post_events")?.existingBehavior).toContain("POST /events");
 
@@ -194,9 +220,11 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/server-command-handler.ts",
         "src/runtime/command-dispatcher.ts",
       ]),
-      currentPreGateEffects: ["quiet_audit"],
+      classification: "already_user_authorized_existing_behavior",
+      currentPreGateEffects: expect.arrayContaining(["enqueue", "notify"]),
       preGateAllowedEffects: ["quiet_audit"],
-      requiresTypedAdmission: true,
+      requiresTypedAdmission: false,
+      exceptionBoundary: expect.any(String),
     });
     expect(byId.get("event_server.command_runtime_control")?.existingBehavior).toContain("/daemon/runtime-control");
 
@@ -207,26 +235,30 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/server-command-handler.ts",
         "src/runtime/command-dispatcher.ts",
       ]),
-      currentPreGateEffects: ["quiet_audit"],
+      classification: "already_user_authorized_existing_behavior",
+      currentPreGateEffects: expect.arrayContaining(["enqueue", "notify", "execute", "start_work"]),
       preGateAllowedEffects: ["quiet_audit"],
-      requiresTypedAdmission: true,
+      requiresTypedAdmission: false,
+      exceptionBoundary: expect.any(String),
     });
     expect(byId.get("event_server.command_approval_response")?.existingBehavior).toContain("/goals/:id/approve");
     expect(byId.get("event_server.command_approval_response")?.existingBehavior).toContain("approval_response");
     expect(byId.get("event_server.command_approval_response")?.existingBehavior).toContain("approval_resolved");
   });
 
-  it("pins trigger and file-ingested goal-linked events as attention-only before admission", () => {
+  it("pins trigger and file-ingested goal-linked events as EventServer transport exceptions", () => {
     const byId = directPathInventoryById();
 
     for (const id of ["event_server.trigger_create_task", "event_server.file_ingestion"] as const) {
       expect(byId.get(id)).toMatchObject({
         ownerModules: expect.arrayContaining(["src/runtime/event/dispatcher.ts"]),
-        currentPreGateEffects: ["internal_signal", "quiet_audit"],
+        classification: "explicitly_out_of_scope",
+        currentPreGateEffects: expect.arrayContaining(["internal_signal", "enqueue", "start_work"]),
         preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-        requiresTypedAdmission: true,
+        requiresTypedAdmission: false,
+        exceptionBoundary: expect.any(String),
       });
-      expect(byId.get(id)?.existingBehavior).toContain("AttentionInput");
+      expect(byId.get(id)?.nextAction).toContain("EventServer");
     }
   });
 });
