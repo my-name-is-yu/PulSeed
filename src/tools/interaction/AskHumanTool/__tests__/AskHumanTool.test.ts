@@ -79,6 +79,25 @@ describe("AskHumanTool", () => {
     );
   });
 
+  it("passes structured approval target to approvalFn and returns it", async () => {
+    const ctx = makeContext(true);
+    const approvalTarget = {
+      tool_name: "confirm_gateway_config_write",
+      arguments: { channel: "telegram" },
+    };
+    const result = await tool.call({
+      question: "Write config?",
+      approval_scope: "write",
+      approval_target: approvalTarget,
+    }, ctx);
+    expect(ctx.approvalFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ approval_target: approvalTarget }),
+      })
+    );
+    expect(result.data).toMatchObject({ approval_target: approvalTarget });
+  });
+
   it("returns failure when approvalFn throws", async () => {
     const ctx: ToolCallContext = {
       ...makeContext(true),
@@ -99,6 +118,10 @@ describe("AskHumanTool", () => {
       question: "ok?",
       options: ["yes", "no"],
       approval_scope: "execute",
+      approval_target: {
+        tool_name: "confirm_gateway_config_write",
+        arguments: { channel: "telegram" },
+      },
     });
     expect(parsed.success).toBe(true);
   });

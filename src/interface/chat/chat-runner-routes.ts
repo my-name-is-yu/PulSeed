@@ -74,10 +74,25 @@ export type GatewayToolScope =
   | "approved_durable_run"
   | "authorized_runtime_control";
 
+export interface ApprovedGatewayAction {
+  toolName: string;
+  normalizedToolName: string;
+  action?: string;
+  argsFingerprint?: string;
+}
+
+interface GatewayApprovalTarget {
+  tool_name: string;
+  action?: string;
+  arguments?: Record<string, unknown>;
+}
+
 export interface GatewayToolScopeContext {
   runtimeControlAllowed?: boolean;
   runtimeControlApprovalMode?: "interactive" | "preapproved" | "disallowed";
   approvalAvailable?: boolean;
+  approvedGatewayActions?: readonly ApprovedGatewayAction[];
+  /** @deprecated Tool-name approvals are not executable gateway permissions. */
   approvedToolNames?: ReadonlySet<string> | readonly string[];
   /** @deprecated use approvalAvailable; retained for older focused tests. */
   approvedWrite?: boolean;
@@ -525,7 +540,7 @@ function isGatewayToolInScope(
         && tool.metadata.permissionLevel === "read_only"
         && !tool.metadata.isDestructive;
     case "approval_required":
-      return isApprovedGatewayTool(tool.metadata.name, context) && !tool.metadata.isReadOnly;
+      return hasApprovedGatewayActionForTool(tool.metadata.name, context) && !tool.metadata.isReadOnly;
     case "runtime_control":
       return scopes.has("authorized_runtime_control");
     case "never":
@@ -552,12 +567,12 @@ function initialGatewayToolScopeContext(
   };
 }
 
-function isApprovedGatewayTool(toolName: string, context: GatewayToolScopeContext): boolean {
-  const approvedNames = context.approvedToolNames;
-  if (!approvedNames) return false;
+function hasApprovedGatewayActionForTool(toolName: string, context: GatewayToolScopeContext): boolean {
+  const approvedActions = context.approvedGatewayActions ?? [];
+  if (approvedActions.length === 0) return false;
   const normalizedToolName = normalizeGatewayToolName(toolName);
-  for (const name of approvedNames) {
-    if (name === toolName || normalizeGatewayToolName(name) === normalizedToolName) {
+  for (const action of approvedActions) {
+    if (action.normalizedToolName === normalizedToolName) {
       return true;
     }
   }
@@ -759,6 +774,27 @@ async function executeWithTools(
         continue;
       }
       throwIfAbortedOrTimedOut(options.abortSignal, deadlineAt, "tool_call");
+      const executableTool = findGatewayVisibleTool(resolvedTool.name, visibleToolsForCall);
+      if (!executableTool) {
+        throw new ToolLoopTerminalError("policy_blocked", `Tool ${tc.function.name} is blocked by host gateway policy.`);
+      }
+      const approvalBindingFailure = isGatewaySurface
+        ? gatewayApprovalBindingFailure(executableTool, args, gatewayScopeContext)
+        : null;
+      if (approvalBindingFailure) {
+        host.eventBridge.emitActivity("tool", formatToolActivity("Failed", executableTool.metadata.name, approvalBindingFailure), eventContext, tc.id);
+        host.eventBridge.emitEvent({
+          type: "tool_end",
+          toolCallId: tc.id,
+          toolName: executableTool.metadata.name,
+          success: false,
+          summary: approvalBindingFailure,
+          durationMs: 0,
+          ...(executableTool.metadata.activityCategory ? { activityCategory: executableTool.metadata.activityCategory } : {}),
+          ...host.eventBridge.eventBase(eventContext),
+        });
+        throw new ToolLoopTerminalError("policy_blocked", approvalBindingFailure);
+      }
       const toolResult = await withAbortAndTimeout(
         (execution) => dispatchToolCall(
           host,
@@ -850,14 +886,40 @@ function applyGatewayApprovalScopeFromToolResult(
   ) {
     return;
   }
-  const approvalTargetTool = typeof record["approval_target_tool"] === "string"
-    ? record["approval_target_tool"].trim()
-    : "";
-  if (!approvalTargetTool) return;
-  const approvedToolNames = new Set(scopeContext.approvedToolNames ?? []);
-  approvedToolNames.add(approvalTargetTool);
-  approvedToolNames.add(normalizeGatewayToolName(approvalTargetTool));
-  scopeContext.approvedToolNames = approvedToolNames;
+  const target = parseGatewayApprovalTarget(record["approval_target"]);
+  if (!target) return;
+  const approvedAction = approvedGatewayActionFromTarget(target);
+  if (!approvedAction) return;
+  scopeContext.approvedGatewayActions = [
+    ...(scopeContext.approvedGatewayActions ?? []),
+    approvedAction,
+  ];
+}
+
+function parseGatewayApprovalTarget(value: unknown): GatewayApprovalTarget | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const toolName = typeof record["tool_name"] === "string" ? record["tool_name"].trim() : "";
+  if (!toolName) return null;
+  const action = typeof record["action"] === "string" ? record["action"].trim() : "";
+  const args = isRecord(record["arguments"]) ? record["arguments"] : undefined;
+  return {
+    tool_name: toolName,
+    ...(action ? { action } : {}),
+    ...(args ? { arguments: args } : {}),
+  };
+}
+
+function approvedGatewayActionFromTarget(target: GatewayApprovalTarget): ApprovedGatewayAction | null {
+  if (!target.arguments) return null;
+  const toolName = target.tool_name.trim();
+  if (!toolName) return null;
+  return {
+    toolName,
+    normalizedToolName: normalizeGatewayToolName(toolName),
+    ...(target.action ? { action: target.action } : {}),
+    argsFingerprint: stableJsonFingerprint(target.arguments),
+  };
 }
 
 function terminalModelInterruptionFromError(err: unknown): ToolLoopTerminalError | null {
@@ -901,6 +963,35 @@ function resolveGatewayToolCallName(
     .map((tool) => tool.metadata.name)
     .filter((name) => normalizeGatewayToolName(name) === normalized);
   return matches.length === 1 ? { allowed: true, name: matches[0]! } : { allowed: false };
+}
+
+function findGatewayVisibleTool(requestedName: string, tools: ITool[]): ITool | null {
+  const trimmed = requestedName.trim();
+  if (!trimmed) return null;
+  const direct = tools.find((tool) => tool.metadata.name === trimmed);
+  if (direct) return direct;
+  const normalized = normalizeGatewayToolName(trimmed);
+  return tools.find((tool) => normalizeGatewayToolName(tool.metadata.name) === normalized) ?? null;
+}
+
+function gatewayApprovalBindingFailure(
+  tool: ITool,
+  args: Record<string, unknown>,
+  context: GatewayToolScopeContext,
+): string | null {
+  if (tool.metadata.gatewayExposure !== "approval_required") return null;
+  if (tool.metadata.isReadOnly) return null;
+  const normalizedToolName = normalizeGatewayToolName(tool.metadata.name);
+  const approvedActions = (context.approvedGatewayActions ?? [])
+    .filter((action) => action.normalizedToolName === normalizedToolName);
+  if (approvedActions.length === 0) {
+    return `Tool ${tool.metadata.name} requires explicit approval for this exact request before it can run on this gateway surface.`;
+  }
+  const argsFingerprint = stableJsonFingerprint(args);
+  if (approvedActions.some((action) => action.argsFingerprint === argsFingerprint)) {
+    return null;
+  }
+  return `Tool ${tool.metadata.name} was approved only for a different request. The current arguments do not match the approved approval_target.arguments.`;
 }
 
 function classifyUnavailableGatewayTool(
@@ -1126,6 +1217,10 @@ function stableToolCycleFingerprint(
   })));
 }
 
+function stableJsonFingerprint(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
 function stableJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableJsonValue);
   if (!value || typeof value !== "object") return value;
@@ -1134,6 +1229,10 @@ function stableJsonValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => [key, stableJsonValue(entry)]),
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toolLoopTerminalEvidence(error: ToolLoopTerminalError) {

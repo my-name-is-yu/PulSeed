@@ -768,7 +768,11 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(selectGatewayModelLoopTools(tools, { approvedExecute: true }).map((tool) => tool.metadata.name))
       .toEqual(["read", "grep", "ask-human"]);
     expect(selectGatewayModelLoopTools(tools, {
-      approvedToolNames: new Set(["prepare_gateway_config_write"]),
+      approvedGatewayActions: [{
+        toolName: "prepare_gateway_config_write",
+        normalizedToolName: "prepare_gateway_config_write",
+        argsFingerprint: "{}",
+      }],
     }).map((tool) => tool.metadata.name))
       .toEqual(["read", "grep", "ask-human", "prepare_gateway_config_write"]);
     expect(selectGatewayModelLoopTools(tools, {
@@ -1049,7 +1053,10 @@ describe("CrossPlatformChatSessionManager", () => {
               question: "Write Telegram gateway config from the redacted token?",
               options: ["Approve", "Deny"],
               approval_scope: "write",
-              approval_target_tool: "confirm_gateway_config_write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
             }),
           },
         }],
@@ -1109,7 +1116,10 @@ describe("CrossPlatformChatSessionManager", () => {
               question: "Write Telegram gateway config?",
               options: ["Approve", "Deny"],
               approval_scope: "write",
-              approval_target_tool: "confirm_gateway_config_write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
             }),
           },
         }],
@@ -1150,6 +1160,144 @@ describe("CrossPlatformChatSessionManager", () => {
     const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
       .map((tool: { function: { name: string } }) => tool.function.name);
     expect(firstToolNames).toEqual(["ask-human"]);
+    expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
+  });
+
+  it("blocks a gateway write when the model changes arguments after approval", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので別の設定を書き込みます。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-confirm-config",
+          type: "function",
+          function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "slack" }) },
+        }],
+      },
+      {
+        content: "This third model request must not run after argument mismatch.",
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-approval-args-mismatch-user",
+      platform: "telegram",
+      conversation_id: "gateway-approval-args-mismatch",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("approval_target.arguments");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
+  });
+
+  it("does not expose or execute a different approval-required tool after one request is approved", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const otherWriteTool = makeScopedTool("delete_gateway_config", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので削除します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-delete-config",
+          type: "function",
+          function: { name: "delete_gateway_config", arguments: JSON.stringify({ channel: "telegram" }) },
+        }],
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool, otherWriteTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-approval-other-tool-user",
+      platform: "telegram",
+      conversation_id: "gateway-approval-other-tool",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("delete_gateway_config requires explicit approval");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(otherWriteTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
     expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
   });
 
@@ -1207,6 +1355,68 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toContain("confirm_gateway_config_write requires explicit approval");
     expect(approvalFn).toHaveBeenCalledOnce();
     expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human"]);
+  });
+
+  it("does not treat legacy approval_target_tool as broad dangerous-tool permission", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target_tool: "confirm_gateway_config_write",
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので任意の設定を書き込みます。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-confirm-config",
+          type: "function",
+          function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "telegram" }) },
+        }],
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-legacy-tool-target-user",
+      platform: "telegram",
+      conversation_id: "gateway-legacy-tool-target",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("confirm_gateway_config_write requires explicit approval");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
     const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
       .map((tool: { function: { name: string } }) => tool.function.name);
     expect(secondToolNames).toEqual(["ask-human"]);
@@ -1235,7 +1445,10 @@ describe("CrossPlatformChatSessionManager", () => {
                 question: "Write Telegram gateway config?",
                 options: ["Approve", "Deny"],
                 approval_scope: "write",
-                approval_target_tool: "confirm_gateway_config_write",
+                approval_target: {
+                  tool_name: "confirm_gateway_config_write",
+                  arguments: { channel: "telegram" },
+                },
               }),
             },
           },

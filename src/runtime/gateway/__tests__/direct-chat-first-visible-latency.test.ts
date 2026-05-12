@@ -481,6 +481,10 @@ describe("gateway direct chat first visible projection", () => {
                   question: "I need explicit permission before writing Telegram gateway config.",
                   options: ["Approve", "Deny"],
                   approval_scope: "write",
+                  approval_target: {
+                    tool_name: "confirm_gateway_config_write",
+                    arguments: { channel: "telegram" },
+                  },
                 }),
               },
             }],
