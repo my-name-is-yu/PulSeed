@@ -147,6 +147,7 @@ export type AutonomyFeedbackSignal = z.infer<typeof AutonomyFeedbackSignalSchema
 export const AutonomyContextAuthorityEvidenceSchema = z.object({
   ref: z.string().min(1),
   kind: z.enum([
+    "dream_hint",
     "memory",
     "route_config",
     "past_execution",

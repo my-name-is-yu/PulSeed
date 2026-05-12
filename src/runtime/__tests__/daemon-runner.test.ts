@@ -33,6 +33,7 @@ import { upsertRelationshipProfileItem } from "../../platform/profile/relationsh
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
 import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
+import type { ResidentOperationBoundaryResult } from "../capability-operation-planner.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -307,6 +308,37 @@ function makeResidentGoal(id: string, status: Goal["status"] = "active"): Goal {
     node_type: "goal",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+  };
+}
+
+function deniedResidentOperationBoundary(reason = "test boundary denied preparation"): ResidentOperationBoundaryResult {
+  return {
+    assembly: {
+      schema_version: "capability-operation-plan-assembly/v1",
+      assembly_id: "operation-plan-assembly:resident:test-denied",
+      assembled_at: "2026-05-12T00:00:00.000Z",
+      source: {
+        kind: "attention_projection",
+        source_ref: "outcome:resident:test-denied",
+        emitted_at: "2026-05-12T00:00:00.000Z",
+        metadata: {},
+      },
+      status: "planned",
+      reason,
+      candidate_plans: [{
+        plan_id: "operation-plan:resident.test.denied",
+      } as never],
+    },
+    admission_evaluation: {
+      evaluation_id: "admission:resident.test.denied",
+    } as never,
+    autonomy_decision: {
+      decision_id: "autonomy:resident.test.denied",
+      level: "prohibited",
+      allowed_steps: [],
+    } as never,
+    preparation_allowed: false,
+    execution_allowed: false,
   };
 }
 
@@ -696,7 +728,16 @@ describe("DaemonRunner durable runtime", () => {
     const state = await pollForJsonMatch<{
       status: string;
       active_goals: string[];
-      resident_activity: { kind: string; goal_id?: string; summary: string } | null;
+      resident_activity: {
+        kind: string;
+        goal_id?: string;
+        summary: string;
+        operation_plan_status?: string;
+        operation_plan_id?: string;
+        operation_admission_evaluation_id?: string;
+        autonomy_decision_id?: string;
+        autonomy_decision_level?: string;
+      } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
       (value) => value.resident_activity?.kind === "suggestion"
@@ -706,6 +747,11 @@ describe("DaemonRunner durable runtime", () => {
     expect(state.active_goals).not.toContain("resident-goal");
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "suggestion",
+      operation_plan_status: "planned",
+      operation_plan_id: expect.stringContaining("operation-plan:resident.goal_suggestion.prepare."),
+      operation_admission_evaluation_id: expect.stringContaining("admission:resident.goal_suggestion.prepare."),
+      autonomy_decision_id: expect.stringContaining("autonomy:resident.goal_suggestion.prepare."),
+      autonomy_decision_level: "prepare_only",
     }));
     expect(state.resident_activity?.goal_id).toBeUndefined();
 
@@ -719,6 +765,175 @@ describe("DaemonRunner durable runtime", () => {
       expect.objectContaining({ suggestionSurface: "repository" })
     );
     expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("keeps duplicate resident goal suggestions from preparing again across daemon restart", async () => {
+    const goalNegotiator = {
+      suggestGoals: vi.fn().mockResolvedValue([
+        {
+          title: "Add resident daemon coverage",
+          description: "Add regression coverage for idle daemon resident discovery.",
+          rationale: "Resident mode should create work from idle.",
+          dimensions_hint: ["test_coverage"],
+        },
+      ]),
+      negotiate: vi.fn(),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "suggest_goal",
+          details: {
+            title: "Find one resident improvement",
+            description: "Look for a concrete always-on improvement in the current workspace.",
+          },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+    const sharedConfig = {
+      check_interval_ms: 50,
+      proactive_mode: true,
+      proactive_interval_ms: 0,
+    };
+
+    const firstDeps = makeDeps(tmpDir, {
+      config: sharedConfig,
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+    });
+    let daemon = new DaemonRunner(firstDeps);
+    currentDaemon = daemon;
+    let startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const firstState = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        attention_input_id?: string;
+        operation_plan_id?: string;
+        operation_admission_evaluation_id?: string;
+        autonomy_decision_id?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "suggestion",
+    );
+    daemon.stop();
+    await startPromise;
+
+    const secondDeps = makeDeps(tmpDir, {
+      config: sharedConfig,
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+    });
+    daemon = new DaemonRunner(secondDeps);
+    currentDaemon = daemon;
+    startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const secondState = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        summary: string;
+        attention_input_id?: string;
+        attention_replay_disposition?: string;
+        operation_plan_id?: string;
+        operation_admission_evaluation_id?: string;
+        autonomy_decision_id?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.attention_replay_disposition === "duplicate",
+    );
+
+    expect(secondState.resident_activity).toMatchObject({
+      kind: "skipped",
+      attention_input_id: firstState.resident_activity?.attention_input_id,
+      attention_replay_disposition: "duplicate",
+    });
+    expect(secondState.resident_activity?.summary).toContain("no duplicate branch preparation");
+    expect(secondState.resident_activity?.operation_plan_id).toBeUndefined();
+    expect(secondState.resident_activity?.operation_admission_evaluation_id).toBeUndefined();
+    expect(secondState.resident_activity?.autonomy_decision_id).toBeUndefined();
+    expect(goalNegotiator.suggestGoals).toHaveBeenCalledOnce();
+    expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
+    expect(firstState.resident_activity?.operation_plan_id).toContain("operation-plan:resident.goal_suggestion.prepare.");
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("does not prepare resident goal discovery when the operation boundary denies preparation", async () => {
+    const goalNegotiator = {
+      suggestGoals: vi.fn().mockResolvedValue([
+        {
+          title: "Should not be prepared",
+          description: "This suggestion must not be requested when the boundary denies preparation.",
+          rationale: "Boundary denial must be enforced before proposal preparation.",
+          dimensions_hint: ["resident_autonomy"],
+        },
+      ]),
+      negotiate: vi.fn(),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "suggest_goal",
+          details: { description: "prepare only if the boundary allows it" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+    const residentOperationBoundaryEvaluator = vi.fn(() =>
+      deniedResidentOperationBoundary("test policy prohibited resident proposal preparation")
+    );
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+      residentOperationBoundaryEvaluator,
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        summary: string;
+        operation_plan_status?: string;
+        operation_plan_id?: string;
+        operation_preparation_allowed?: boolean;
+        operation_execution_allowed?: boolean;
+        autonomy_decision_level?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.summary.includes("held by operation boundary") === true,
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "skipped",
+      operation_plan_status: "planned",
+      operation_plan_id: "operation-plan:resident.test.denied",
+      operation_preparation_allowed: false,
+      operation_execution_allowed: false,
+      autonomy_decision_level: "prohibited",
+    }));
+    expect(goalNegotiator.suggestGoals).not.toHaveBeenCalled();
+    expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
+    expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).not.toHaveBeenCalled();
 
     daemon.stop();
     await startPromise;
@@ -847,6 +1062,76 @@ describe("DaemonRunner durable runtime", () => {
     expect(relationshipProfileContext).not.toContain("status=active; version=1");
     expect(relationshipProfileContext).not.toContain("sensitive health context");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("does not generate resident curiosity proposals when the operation boundary denies preparation", async () => {
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn().mockResolvedValue([
+        {
+          type: "periodic_exploration",
+          detected_at: new Date().toISOString(),
+          source_goal_id: null,
+          details: "Resident curiosity found a possible follow-up.",
+          severity: 0.3,
+        },
+      ]),
+      generateProposals: vi.fn().mockResolvedValue([
+        {
+          id: "curiosity-denied",
+          proposed_goal: {
+            description: "Should not be generated.",
+          },
+        },
+      ]),
+    };
+    const residentOperationBoundaryEvaluator = vi.fn(() =>
+      deniedResidentOperationBoundary("test policy prohibited resident curiosity preparation")
+    );
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+      residentOperationBoundaryEvaluator,
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        summary: string;
+        operation_plan_status?: string;
+        operation_plan_id?: string;
+        operation_preparation_allowed?: boolean;
+        operation_execution_allowed?: boolean;
+        autonomy_decision_level?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.summary.includes("held by operation boundary") === true,
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "skipped",
+      operation_plan_status: "planned",
+      operation_plan_id: "operation-plan:resident.test.denied",
+      operation_preparation_allowed: false,
+      operation_execution_allowed: false,
+      autonomy_decision_level: "prohibited",
+    }));
+    expect(curiosityEngine.evaluateTriggers).toHaveBeenCalledOnce();
+    expect(curiosityEngine.generateProposals).not.toHaveBeenCalled();
+    expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).not.toHaveBeenCalled();
 
     daemon.stop();
     await startPromise;
@@ -1349,6 +1634,11 @@ describe("DaemonRunner durable runtime", () => {
         attention_input_id?: string;
         agenda_item_id?: string;
         outcome_decision_id?: string;
+        operation_plan_status?: string;
+        operation_plan_id?: string;
+        operation_admission_evaluation_id?: string;
+        autonomy_decision_id?: string;
+        autonomy_decision_level?: string;
         surface_id?: string;
         surface_included_count?: number;
         surface_excluded_count?: number;
@@ -1375,6 +1665,11 @@ describe("DaemonRunner durable runtime", () => {
       attention_input_id: expect.stringContaining("attention-input:resident_proactive_maintenance:"),
       agenda_item_id: expect.stringContaining("agenda:"),
       outcome_decision_id: expect.stringContaining("outcome:resident:"),
+      operation_plan_status: "planned",
+      operation_plan_id: expect.stringContaining("operation-plan:resident.preemptive_check.prepare."),
+      operation_admission_evaluation_id: expect.stringContaining("admission:resident.preemptive_check.prepare."),
+      autonomy_decision_id: expect.stringContaining("autonomy:resident.preemptive_check.prepare."),
+      autonomy_decision_level: "approval_required",
       surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
       surface_included_count: 1,
       surface_excluded_count: 1,

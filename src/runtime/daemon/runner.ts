@@ -65,6 +65,7 @@ import {
   saveDaemonStateFile,
 } from "./index.js";
 import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
+import type { ResidentOperationBoundaryEvaluator } from "./runner-resident-shared.js";
 import {
   acceptRuntimeEnvelope as acceptRuntimeEnvelopeFn,
   handleApprovalResponseCommand as handleApprovalResponseCommandFn,
@@ -181,6 +182,8 @@ export interface DaemonDeps {
   attentionStateStore?: AttentionStateStore;
   /** Optional runtime operation store for resident admission control tests. */
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  /** Optional operation boundary evaluator for resident operation-plan tests. */
+  residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;
 }
 
 export class DaemonRunner {
@@ -241,6 +244,7 @@ export class DaemonRunner {
   private eventDispatcher: EventDispatcher | null = null;
   private attentionStateStore: AttentionStateStore;
   private runtimeOperationStore: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  private readonly residentOperationBoundaryEvaluator: ResidentOperationBoundaryEvaluator | undefined;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
   private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
   private readonly refreshResidentDeps: DaemonDeps["refreshResidentDeps"];
@@ -284,6 +288,7 @@ export class DaemonRunner {
       this.runtimeRoot,
       { controlBaseDir: this.baseDir },
     );
+    this.residentOperationBoundaryEvaluator = deps.residentOperationBoundaryEvaluator;
     const runtimeWiring = createRuntimeWiring(
       this.baseDir,
       this.runtimeRoot,

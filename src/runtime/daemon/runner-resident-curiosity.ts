@@ -1,5 +1,9 @@
 import type { ResidentActivity } from "../../base/types/daemon.js";
 import {
+  evaluateResidentOperationBoundary,
+  residentOperationBoundaryActivityMetadata,
+} from "../capability-operation-planner.js";
+import {
   buildRelationshipProfileSurfaceProjection,
   formatRelationshipProfileSurfaceContext,
   loadRelationshipProfileSurfaceContext,
@@ -19,6 +23,7 @@ import {
   loadKnownGoals,
   mergeResidentSurfaceActivityMetadata,
   persistResidentActivity,
+  residentOperationBoundaryAllowsPreparation,
   type ResidentActivityMetadata,
   type ResidentSurfaceActivityMetadata,
   resolveResidentSuggestionSurface,
@@ -49,6 +54,15 @@ export async function triggerResidentGoalDiscovery(
       kind: "skipped",
       trigger: "proactive_tick",
       summary: "Resident discovery skipped because active goals are already running.",
+      ...activityMetadata,
+    });
+    return;
+  }
+  if (!residentOperationBoundaryAllowsPreparation(activityMetadata)) {
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: "Resident discovery skipped because operation boundary did not allow preparation.",
       ...activityMetadata,
     });
     return;
@@ -107,7 +121,7 @@ export async function triggerResidentGoalDiscovery(
 export async function runResidentCuriosityCycle(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
   >,
   options?: {
     activityTrigger?: ResidentActivity["trigger"];
@@ -180,6 +194,12 @@ export async function runResidentCuriosityCycle(
       surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
     });
     const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+    const operationBoundary = (context.residentOperationBoundaryEvaluator ?? evaluateResidentOperationBoundary)({
+      admission: attentionAdmission,
+      assembledAt: new Date().toISOString(),
+      surfaceRef: inheritedSurfaceActivityMetadata.surface_id,
+    });
+    const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
     if (!attentionAdmission.branch_admitted) {
       await persistResidentActivity(context, {
         kind: "skipped",
@@ -187,6 +207,18 @@ export async function runResidentCuriosityCycle(
         summary: attentionAdmission.summary,
         ...inheritedSurfaceActivityMetadata,
         ...attentionActivityMetadata,
+        ...operationActivityMetadata,
+      });
+      return true;
+    }
+    if (!residentOperationBoundaryAllowsPreparation(operationActivityMetadata)) {
+      await persistResidentActivity(context, {
+        kind: "skipped",
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        summary: `Resident curiosity held by operation boundary: ${operationActivityMetadata.operation_plan_reason}`,
+        ...inheritedSurfaceActivityMetadata,
+        ...attentionActivityMetadata,
+        ...operationActivityMetadata,
       });
       return true;
     }
@@ -215,6 +247,7 @@ export async function runResidentCuriosityCycle(
     const combinedActivityMetadata = {
       ...surfaceActivityMetadata,
       ...attentionActivityMetadata,
+      ...operationActivityMetadata,
     };
     const proposals = await context.curiosityEngine.generateProposals(triggers, goals, {
       relationshipProfileContext: relationshipProfileSurfaceContext,
@@ -272,7 +305,7 @@ function residentSurfaceActivityMetadata(
 export async function triggerResidentInvestigation(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
   >,
   details?: Record<string, unknown>,
   surfaceActivityMetadata: ResidentActivityMetadata = {},
@@ -289,7 +322,7 @@ export async function triggerResidentInvestigation(
 export async function runScheduledGoalReview(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config" | "baseDir" | "attentionStateStore"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config" | "baseDir" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
   >,
   lastGoalReviewAt: number,
   setLastGoalReviewAt: (value: number) => void,

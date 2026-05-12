@@ -71,6 +71,9 @@ describe("resident attention orchestrator", () => {
 
     expect(second.attention_input_id).toBe(first.attention_input_id);
     expect(second.outcome_decision_id).toBe(first.outcome_decision_id);
+    expect(first.replay_disposition).toBe("accepted");
+    expect(second.replay_disposition).toBe("duplicate");
+    expect(second.branch_admitted).toBe(false);
 
     const snapshot = await new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .loadDecisionChainSnapshot({ includeTerminal: true });

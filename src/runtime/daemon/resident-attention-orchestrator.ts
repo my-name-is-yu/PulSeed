@@ -48,6 +48,7 @@ export interface ResidentAttentionAdmission {
   inhibition_decision_id: string;
   initiative_gate_decision_id: string;
   outcome_decision_id?: string;
+  replay_disposition: "accepted" | "duplicate";
   requested_outcome: OutcomeClass;
   admission_status: OutcomeDecision["admission_status"] | "not_selected";
   final_outcome?: OutcomeClass;
@@ -188,7 +189,7 @@ export async function evaluateResidentAttentionAdmission(
     visibility_checks: [passedCheck("visibility", "resident outcome is hidden from normal surfaces until shared delivery admits it")],
   });
 
-  await residentAttentionStore(context).saveCycle({
+  const intake = await residentAttentionStore(context).saveCycle({
     attentionInputs: [attentionInput],
     signalContext,
     urgeCandidates: [urge],
@@ -198,6 +199,9 @@ export async function evaluateResidentAttentionAdmission(
     outcomeDecisions: outcome ? [outcome] : [],
     recordedAt: now,
   });
+  const replayDisposition = intake && intake.accepted.length === 0 && intake.duplicates.length > 0
+    ? "duplicate"
+    : "accepted";
 
   return {
     action: input.action,
@@ -209,11 +213,14 @@ export async function evaluateResidentAttentionAdmission(
     inhibition_decision_id: inhibition.decision_id,
     initiative_gate_decision_id: gate.decision_id,
     outcome_decision_id: outcome?.outcome_decision_id,
+    replay_disposition: replayDisposition,
     requested_outcome: requestedOutcome,
     admission_status: outcome?.admission_status ?? "not_selected",
     final_outcome: outcome?.final_outcome,
-    branch_admitted: residentBranchAdmitted(input.action, outcome),
-    summary: residentAttentionAdmissionSummary(input.action, outcome, gate.reason),
+    branch_admitted: replayDisposition === "accepted" && residentBranchAdmitted(input.action, outcome),
+    summary: replayDisposition === "duplicate"
+      ? `Resident ${input.action} reused an existing attention admission; no duplicate branch preparation was started.`
+      : residentAttentionAdmissionSummary(input.action, outcome, gate.reason),
   };
 }
 
@@ -222,6 +229,7 @@ export function residentAttentionActivityMetadata(
 ): ResidentAttentionActivityMetadata {
   return {
     attention_input_id: admission.attention_input_id,
+    attention_replay_disposition: admission.replay_disposition,
     agenda_item_id: admission.agenda_item_id,
     outcome_decision_id: admission.outcome_decision_id,
   };
