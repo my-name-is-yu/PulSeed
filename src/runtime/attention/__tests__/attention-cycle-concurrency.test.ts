@@ -228,6 +228,21 @@ describe("attention cycle persistence and concurrency", () => {
         state: "proposed",
         updatedAt: "2026-05-12T01:05:00.000Z",
       });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:proposal-terminal-reupsert",
+        idempotency_key: "cycle:proposal-terminal-reupsert",
+        trigger_kind: "maintenance",
+        scope: scope(),
+        expected_projection_revision: await store.projectionRevision(scope()),
+        source_high_watermarks: ["runtime_event:proposal:3"],
+        clusters: [],
+        agendaItems: [],
+        decompositions: [],
+        admissionProposals: [{ ...proposal!.proposal, proposalState: "proposed" }],
+        events: [],
+        result: { reprojected: true },
+        created_at: "2026-05-12T01:06:00.000Z",
+      });
 
       await expect(store.listAdmissionProposals({ states: ["terminal"] })).resolves.toEqual([
         expect.objectContaining({

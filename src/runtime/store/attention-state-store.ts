@@ -975,7 +975,11 @@ function upsertAdmissionProposal(
         ELSE NULL
       END,
       updated_at = excluded.updated_at,
-      proposal_json = excluded.proposal_json
+      proposal_json = CASE
+        WHEN attention_admission_proposals.state IN ('confirmed', 'terminal')
+          THEN attention_admission_proposals.proposal_json
+        ELSE excluded.proposal_json
+      END
   `).run(
     raw.candidateId,
     raw.child.id,
