@@ -54,7 +54,10 @@ describe("LivingAutonomyDirectPathInventory", () => {
     );
 
     expect(nonExceptionPaths.map((entry) => entry.id)).toEqual(expect.arrayContaining([
-      "notification.outbox",
+      "daemon.proactive_tick",
+      "resident.curiosity",
+      "resident.proactive_maintenance",
+      "runtime_control.executor",
     ]));
     for (const entry of nonExceptionPaths) {
       expect(entry.requiresTypedAdmission, entry.id).toBe(true);
@@ -101,7 +104,6 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
     expect(pathsWithOutwardPotential.map((entry) => entry.id).sort()).toEqual([
       "daemon.proactive_tick",
-      "notification.outbox",
       "resident.curiosity",
       "resident.proactive_maintenance",
       "runtime_control.executor",
@@ -134,6 +136,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
       "event_server.post_events",
       "event_server.sse_outbox_broadcast",
       "event_server.trigger_create_task",
+      "notification.outbox",
     ] as const;
 
     for (const id of userAuthorizedCommandIds) {
@@ -150,6 +153,26 @@ describe("LivingAutonomyDirectPathInventory", () => {
         exceptionBoundary: expect.any(String),
       });
     }
+  });
+
+  it("keeps notification/outbox/reporting delivery as an explicit transport exception", () => {
+    const outbox = directPathInventoryById().get("notification.outbox");
+
+    expect(outbox).toMatchObject({
+      classification: "explicitly_out_of_scope",
+      ownerModules: expect.arrayContaining([
+        "src/runtime/store/outbox-store.ts",
+        "src/runtime/notification-dispatcher.ts",
+        "src/runtime/control/runtime-control-result-routing.ts",
+        "src/reporting/reporting-engine.ts",
+        "src/interface/cli/commands/daemon.ts",
+      ]),
+      currentPreGateEffects: expect.arrayContaining(["notify", "enqueue"]),
+      requiresTypedAdmission: false,
+      exceptionBoundary: expect.any(String),
+    });
+    expect(outbox?.existingBehavior).toContain("notification dispatcher");
+    expect(outbox?.nextAction).toContain("notification transport hardening");
   });
 
   it("keeps audited direct-path owner modules represented", () => {
