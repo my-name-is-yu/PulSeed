@@ -151,68 +151,6 @@ export async function evaluateResidentAttentionAdmission(
   if (!agendaItem) {
     throw new Error("resident attention admission did not create an agenda item");
   }
-  const inhibition = decideInhibition({
-    decision_id: `inhibition:resident:${stableId(sourceId)}`,
-    decided_at: now,
-    candidate: agendaItem,
-    companion_state: companionState,
-    permission_checks: [
-      ...companionControls.includes("pause_proactivity")
-        ? [failedCheck("permission", "pause_proactivity is active for resident attention", companionEvidenceRefs)]
-        : [],
-      passedCheck("permission", "resident signal only creates an inspectable agenda candidate"),
-    ],
-    staleness_checks: [passedCheck("staleness", "resident signal uses the current source high-watermark")],
-    safety_checks: [
-      ...companionSnapshot.unavailableReason
-        ? [failedCheck("safety", companionSnapshot.unavailableReason, companionEvidenceRefs)]
-        : [],
-      ...companionControls.includes("suspend_companion")
-        ? [failedCheck("safety", "suspend_companion is active for resident attention", companionEvidenceRefs)]
-        : [],
-      passedCheck("safety", "resident signal cannot notify, speak, or act before outcome admission"),
-    ],
-    policy_refs: companionSnapshot.unavailableReason ? companionEvidenceRefs : [],
-  });
-  const requiredRuntimeControlRefs = requiredRuntimeControlsForResidentAction(input.action, goalId);
-  const companionControlChecks = residentCompanionControlChecks(companionSnapshot);
-  const gate = selectInitiativeGateDecision({
-    decision_id: `gate:resident:${stableId(sourceId)}`,
-    decided_at: now,
-    candidate: agendaItem,
-    inhibition_decision: inhibition,
-    companion_state: companionState,
-    requested_outcome: requestedOutcome,
-    permission_checks: [passedCheck("permission", "resident branch requires typed attention admission")],
-    staleness_checks: [passedCheck("staleness", "resident branch target was grounded in this source high-watermark")],
-    side_effect_checks: [passedCheck("authority", "runtime-control admission remains separate from capability availability")],
-    required_runtime_control_refs: requiredRuntimeControlRefs,
-  });
-  const outcome = admitInitiativeGateDecision({
-    outcome_decision_id: `outcome:resident:${stableId(sourceId)}`,
-    gate_decision: gate,
-    decided_at: now,
-    runtime_item_refs: [ref("runtime_item", agendaItem.agenda_item_id)],
-    authority_checks: [passedCheck("authority", "resident outcome has no execution authority without runtime-control admission")],
-    staleness_checks: [passedCheck("staleness", "resident outcome uses the current source high-watermark")],
-    companion_control_checks: companionControlChecks,
-    safety_checks: [passedCheck("safety", "resident outcome remains non-GUI and non-notifying")],
-    visibility_checks: [passedCheck("visibility", "resident outcome is hidden from normal surfaces until shared delivery admits it")],
-  });
-
-  const intake = await residentAttentionStore(context).saveCycle({
-    attentionInputs: [attentionInput],
-    signalContext,
-    urgeCandidates: [urge],
-    agendaItems: [agendaItem],
-    inhibitionDecisions: [inhibition],
-    initiativeGateDecisions: [gate],
-    outcomeDecisions: outcome ? [outcome] : [],
-    recordedAt: now,
-  });
-  const replayDisposition = intake && intake.accepted.length === 0 && intake.duplicates.length > 0
-    ? "duplicate"
-    : "accepted";
 
   const metabolismStore = residentAttentionMetabolismStore(context);
   let metabolismResult: AttentionCycleResult | null = null;
@@ -249,8 +187,73 @@ export async function evaluateResidentAttentionAdmission(
     ? metabolismResult.admissionCandidates.filter((candidate) =>
       candidate.agendaRef === currentMetabolismAgenda.agenda_item_id
     )
-    : metabolismResult?.admissionCandidates ?? [];
-  const returnedAgendaItemId = currentMetabolismAgenda?.agenda_item_id ?? agendaItem.agenda_item_id;
+    : [];
+  const decisionAgendaItem = currentMetabolismAgenda ?? agendaItem;
+
+  const inhibition = decideInhibition({
+    decision_id: `inhibition:resident:${stableId(sourceId)}`,
+    decided_at: now,
+    candidate: decisionAgendaItem,
+    companion_state: companionState,
+    permission_checks: [
+      ...companionControls.includes("pause_proactivity")
+        ? [failedCheck("permission", "pause_proactivity is active for resident attention", companionEvidenceRefs)]
+        : [],
+      passedCheck("permission", "resident signal only creates an inspectable agenda candidate"),
+    ],
+    staleness_checks: [passedCheck("staleness", "resident signal uses the current source high-watermark")],
+    safety_checks: [
+      ...companionSnapshot.unavailableReason
+        ? [failedCheck("safety", companionSnapshot.unavailableReason, companionEvidenceRefs)]
+        : [],
+      ...companionControls.includes("suspend_companion")
+        ? [failedCheck("safety", "suspend_companion is active for resident attention", companionEvidenceRefs)]
+        : [],
+      passedCheck("safety", "resident signal cannot notify, speak, or act before outcome admission"),
+    ],
+    policy_refs: companionSnapshot.unavailableReason ? companionEvidenceRefs : [],
+  });
+  const requiredRuntimeControlRefs = requiredRuntimeControlsForResidentAction(input.action, goalId);
+  const companionControlChecks = residentCompanionControlChecks(companionSnapshot);
+  const gate = selectInitiativeGateDecision({
+    decision_id: `gate:resident:${stableId(sourceId)}`,
+    decided_at: now,
+    candidate: decisionAgendaItem,
+    inhibition_decision: inhibition,
+    companion_state: companionState,
+    requested_outcome: requestedOutcome,
+    permission_checks: [passedCheck("permission", "resident branch requires typed attention admission")],
+    staleness_checks: [passedCheck("staleness", "resident branch target was grounded in this source high-watermark")],
+    side_effect_checks: [passedCheck("authority", "runtime-control admission remains separate from capability availability")],
+    required_runtime_control_refs: requiredRuntimeControlRefs,
+  });
+  const outcome = admitInitiativeGateDecision({
+    outcome_decision_id: `outcome:resident:${stableId(sourceId)}`,
+    gate_decision: gate,
+    decided_at: now,
+    runtime_item_refs: [ref("runtime_item", decisionAgendaItem.agenda_item_id)],
+    authority_checks: [passedCheck("authority", "resident outcome has no execution authority without runtime-control admission")],
+    staleness_checks: [passedCheck("staleness", "resident outcome uses the current source high-watermark")],
+    companion_control_checks: companionControlChecks,
+    safety_checks: [passedCheck("safety", "resident outcome remains non-GUI and non-notifying")],
+    visibility_checks: [passedCheck("visibility", "resident outcome is hidden from normal surfaces until shared delivery admits it")],
+  });
+
+  const intake = await residentAttentionStore(context).saveCycle({
+    attentionInputs: [attentionInput],
+    signalContext,
+    urgeCandidates: [urge],
+    agendaItems: [decisionAgendaItem],
+    inhibitionDecisions: [inhibition],
+    initiativeGateDecisions: [gate],
+    outcomeDecisions: outcome ? [outcome] : [],
+    recordedAt: now,
+  });
+  const replayDisposition = intake && intake.accepted.length === 0 && intake.duplicates.length > 0
+    ? "duplicate"
+    : "accepted";
+
+  const returnedAgendaItemId = decisionAgendaItem.agenda_item_id;
   const metabolismAdmitted = replayDisposition === "accepted"
     && residentBranchAdmitted(input.action, outcome)
     && residentMetabolismAdmitsAction(input.action, currentAdmissionCandidates, metabolismResult);
@@ -275,7 +278,9 @@ export async function evaluateResidentAttentionAdmission(
     branch_admitted: metabolismAdmitted,
     summary: replayDisposition === "duplicate"
       ? `Resident ${input.action} reused an existing attention admission; no duplicate branch preparation was started.`
-      : metabolismResult && metabolismResult.admissionCandidates.length === 0 && outcome?.admission_status === "admitted"
+      : !outcome && companionControls.length > 0
+        ? `Resident ${input.action} held by companion controls: ${companionControls.join(", ")}.`
+      : metabolismResult && currentAdmissionCandidates.length === 0 && outcome?.admission_status === "admitted"
         ? residentAttentionMetabolismHeldSummary(input.action, metabolismResult)
       : residentAttentionAdmissionSummary(input.action, outcome, gate.reason),
   };

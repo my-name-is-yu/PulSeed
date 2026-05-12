@@ -119,18 +119,19 @@ describe("resident attention orchestrator", () => {
     );
 
     expect(second.attention_input_id).not.toBe(first.attention_input_id);
-    expect(second.outcome_decision_id).not.toBe(first.outcome_decision_id);
+    expect(second.outcome_decision_id).toBeUndefined();
+    expect(second.admission_status).toBe("not_selected");
+    expect(second.branch_admitted).toBe(false);
 
     const snapshot = await new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .loadDecisionChainSnapshot({ includeTerminal: true });
     expect(snapshot.attention_inputs).toHaveLength(2);
-    expect(snapshot.outcome_decisions).toHaveLength(2);
-    expect(snapshot.outcome_decisions.at(-1)).toEqual(expect.objectContaining({
-      admission_status: "rejected",
-      downgrade_or_rejection_reason: expect.objectContaining({
-        code: "control_suppressed",
-      }),
-    }));
+    expect(snapshot.initiative_gate_decisions).toHaveLength(2);
+    expect(snapshot.initiative_gate_decisions.at(-1)?.input_refs).toContainEqual({
+      kind: "agent_agenda_item",
+      id: second.agenda_item_id,
+    });
+    expect(snapshot.outcome_decisions).toHaveLength(1);
   });
 
   it("returns the agenda item produced for the current resident urge when prior concerns exist", async () => {
@@ -160,10 +161,26 @@ describe("resident attention orchestrator", () => {
     const currentAgenda = concernState.agenda_items.find((item) =>
       item.source_urge_refs.some((urgeRef) => urgeRef.id === second.urge_id)
     );
+    const snapshot = await new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    const secondGate = snapshot.initiative_gate_decisions.find((decision) =>
+      decision.decision_id === second.initiative_gate_decision_id
+    );
+    const secondOutcome = snapshot.outcome_decisions.find((decision) =>
+      decision.outcome_decision_id === second.outcome_decision_id
+    );
 
     expect(second.replay_disposition).toBe("accepted");
     expect(second.agenda_item_id).not.toBe(first.agenda_item_id);
     expect(second.agenda_item_id).toBe(currentAgenda?.agenda_item_id);
+    expect(secondGate?.input_refs).toContainEqual({
+      kind: "agent_agenda_item",
+      id: second.agenda_item_id,
+    });
+    expect(secondOutcome?.runtime_item_refs).toEqual([{
+      kind: "runtime_item",
+      id: second.agenda_item_id,
+    }]);
   });
 
   it("fails closed without fabricating active suspend control when companion controls are unavailable", async () => {

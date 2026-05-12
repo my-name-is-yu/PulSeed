@@ -2215,12 +2215,10 @@ describe("DaemonRunner durable runtime", () => {
     }));
     const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
       .loadDecisionChainSnapshot({ includeTerminal: true });
-    expect(snapshot.outcome_decisions.at(-1)).toEqual(expect.objectContaining({
-      admission_status: "rejected",
-      downgrade_or_rejection_reason: expect.objectContaining({
-        code: "control_suppressed",
-      }),
+    expect(snapshot.initiative_gate_decisions.at(-1)).toEqual(expect.objectContaining({
+      status: "delayed",
     }));
+    expect(snapshot.outcome_decisions).toHaveLength(0);
 
     daemon.stop();
     await startPromise;
