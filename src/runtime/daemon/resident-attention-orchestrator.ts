@@ -11,6 +11,7 @@ import {
   selectInitiativeGateDecision,
   type AttentionCycleResult,
   type AttentionSafetyTrigger,
+  type AttentionAdmissionCandidate,
 } from "../attention/index.js";
 import { refKey, stableId } from "../attention/attention-refs.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
@@ -241,11 +242,19 @@ export async function evaluateResidentAttentionAdmission(
     });
   }
 
-  const returnedAgendaItemId = metabolismResult?.agendaUpdates[0]?.agenda_item_id ?? agendaItem.agenda_item_id;
+  const currentMetabolismAgenda = metabolismResult
+    ? selectMetabolismAgendaForUrge(metabolismResult, urge.urge_id)
+    : null;
+  const currentAdmissionCandidates = currentMetabolismAgenda && metabolismResult
+    ? metabolismResult.admissionCandidates.filter((candidate) =>
+      candidate.agendaRef === currentMetabolismAgenda.agenda_item_id
+    )
+    : metabolismResult?.admissionCandidates ?? [];
+  const returnedAgendaItemId = currentMetabolismAgenda?.agenda_item_id ?? agendaItem.agenda_item_id;
   const metabolismAdmitted = replayDisposition === "accepted"
     && residentBranchAdmitted(input.action, outcome)
-    && residentMetabolismAdmitsAction(input.action, metabolismResult);
-  const returnedAdmissionStatus = metabolismResult && metabolismResult.admissionCandidates.length === 0 && outcome?.admission_status === "admitted"
+    && residentMetabolismAdmitsAction(input.action, currentAdmissionCandidates, metabolismResult);
+  const returnedAdmissionStatus = metabolismResult && currentAdmissionCandidates.length === 0 && outcome?.admission_status === "admitted"
     ? "not_selected"
     : outcome?.admission_status ?? "not_selected";
 
@@ -270,6 +279,15 @@ export async function evaluateResidentAttentionAdmission(
         ? residentAttentionMetabolismHeldSummary(input.action, metabolismResult)
       : residentAttentionAdmissionSummary(input.action, outcome, gate.reason),
   };
+}
+
+function selectMetabolismAgendaForUrge(
+  result: AttentionCycleResult,
+  urgeId: string,
+): AttentionCycleResult["agendaUpdates"][number] | null {
+  return result.agendaUpdates.find((item) =>
+    item.source_urge_refs.some((urgeRef) => urgeRef.id === urgeId)
+  ) ?? null;
 }
 
 export function residentAttentionActivityMetadata(
@@ -509,10 +527,11 @@ function residentAttentionMetabolismHeldSummary(
 
 function residentMetabolismAdmitsAction(
   action: ResidentAttentionAction,
+  candidates: readonly AttentionAdmissionCandidate[],
   result: AttentionCycleResult | null,
 ): boolean {
   if (!result) return true;
-  const childTypes = new Set(result.admissionCandidates.map((candidate) => candidate.child.childType));
+  const childTypes = new Set(candidates.map((candidate) => candidate.child.childType));
   switch (action) {
     case "preemptive_check":
       return childTypes.has("action_candidate");

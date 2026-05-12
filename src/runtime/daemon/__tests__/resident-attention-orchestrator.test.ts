@@ -133,6 +133,39 @@ describe("resident attention orchestrator", () => {
     }));
   });
 
+  it("returns the agenda item produced for the current resident urge when prior concerns exist", async () => {
+    const baseDir = makeTempDir("resident-attention-current-agenda-");
+    const first = await evaluateResidentAttentionAdmission(
+      makeContext(baseDir, "2026-05-12T00:00:00.000Z", 1),
+      {
+        action: "suggest_goal",
+        trigger: "proactive_tick",
+        details: { topic: "alpha" },
+        summary: "Resident proactive maintenance selected the alpha concern.",
+        now: "2026-05-12T00:00:00.000Z",
+      },
+    );
+    const second = await evaluateResidentAttentionAdmission(
+      makeContext(baseDir, "2026-05-12T00:05:00.000Z", 2),
+      {
+        action: "suggest_goal",
+        trigger: "proactive_tick",
+        details: { topic: "beta" },
+        summary: "Resident proactive maintenance selected the beta concern.",
+        now: "2026-05-12T00:05:00.000Z",
+      },
+    );
+    const concernState = await new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .loadConcernState();
+    const currentAgenda = concernState.agenda_items.find((item) =>
+      item.source_urge_refs.some((urgeRef) => urgeRef.id === second.urge_id)
+    );
+
+    expect(second.replay_disposition).toBe("accepted");
+    expect(second.agenda_item_id).not.toBe(first.agenda_item_id);
+    expect(second.agenda_item_id).toBe(currentAgenda?.agenda_item_id);
+  });
+
   it("fails closed without fabricating active suspend control when companion controls are unavailable", async () => {
     const baseDir = makeTempDir("resident-attention-control-unavailable-");
     const savedCycles: unknown[] = [];

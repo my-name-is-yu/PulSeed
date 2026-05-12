@@ -38,14 +38,12 @@ export function decomposeAgendaItem(input: {
 }): AgendaDecomposition {
   const maxChildren = input.maxChildren ?? 3;
   const clusterRef = input.agendaItem.clusterRef ?? ref("attention_cluster", `legacy:${input.agendaItem.agenda_item_id}`);
-  const existingChildren = input.existing?.children.filter((child) =>
-    child.admissionState === "not_admitted" || child.admissionState === "needs_approval"
-  ) ?? [];
+  const existingChildren = input.existing?.children ?? [];
   const childSeed = childSeedForCarePosture(input.agendaItem);
   const children = [...existingChildren];
 
   for (const childType of childSeed) {
-    if (children.length >= maxChildren) break;
+    if (activeChildCount(children) >= maxChildren) break;
     const idempotencyKey = `${input.agendaItem.policyEpoch}:${input.agendaItem.agenda_item_id}:${childType}`;
     if (children.some((child) => child.idempotencyKey === idempotencyKey)) continue;
     children.push(createDecompositionChild({
@@ -75,6 +73,12 @@ export function decomposeAgendaItem(input: {
     createdAt: input.existing?.createdAt ?? input.now,
     updatedAt: input.now,
   });
+}
+
+function activeChildCount(children: readonly AgendaDecompositionChild[]): number {
+  return children.filter((child) =>
+    child.admissionState === "not_admitted" || child.admissionState === "needs_approval"
+  ).length;
 }
 
 function createDecompositionChild(input: {

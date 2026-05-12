@@ -207,6 +207,49 @@ describe("attention concern metabolism contracts", () => {
     ]);
   });
 
+  it("preserves admitted decomposition children instead of reopening them", () => {
+    const [cluster] = promoteAttentionClusters({
+      clusters: mergeUrgesIntoClusters({
+        urges: [urge({ id: "admitted-child" })],
+        now: NOW,
+      }).clusters,
+      now: NOW,
+    });
+    const [agendaItem] = projectClustersToAgenda({ clusters: cluster ? [cluster] : [], now: NOW });
+    const [initial] = decomposeAgenda({ agendaItems: agendaItem ? [agendaItem] : [], now: NOW });
+    const admittedChild = initial?.children[0];
+    expect(agendaItem).toBeDefined();
+    expect(initial).toBeDefined();
+    expect(admittedChild).toBeDefined();
+
+    const existing = {
+      ...initial!,
+      children: [
+        {
+          ...admittedChild!,
+          admissionState: "admitted" as const,
+          outcomeRef: "outcome:admitted",
+          updatedAt: "2026-05-12T00:01:00.000Z",
+        },
+        ...initial!.children.slice(1),
+      ],
+    };
+    const [redecomposed] = decomposeAgenda({
+      agendaItems: [agendaItem!],
+      existingDecompositions: [existing],
+      now: "2026-05-12T00:02:00.000Z",
+    });
+    const matchingChildren = redecomposed?.children.filter((child) =>
+      child.idempotencyKey === admittedChild!.idempotencyKey
+    );
+
+    expect(matchingChildren).toHaveLength(1);
+    expect(matchingChildren?.[0]).toMatchObject({
+      admissionState: "admitted",
+      outcomeRef: "outcome:admitted",
+    });
+  });
+
   it("includes full scope identity in scope keys and seeded cluster IDs", () => {
     const left = createAttentionClusterFromUrge(urge({
       id: "scope-left",
