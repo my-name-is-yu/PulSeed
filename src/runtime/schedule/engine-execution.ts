@@ -398,13 +398,17 @@ function getDueEntryDescriptors(entries: ScheduleEntry[]): DueEntryDescriptor[] 
     const retryState = entry.retry_state ?? null;
     if (retryState?.next_retry_at) {
       return new Date(retryState.next_retry_at).getTime() <= now
-        ? [{ entry, reason: "retry", scheduledFor: retryState.next_retry_at }]
+        ? [{ entry, reason: "retry", scheduledFor: getRetryScheduledFor(entry, retryState) }]
         : [];
     }
     return new Date(entry.next_fire_at).getTime() <= now
       ? [{ entry, reason: "cadence", scheduledFor: entry.next_fire_at }]
       : [];
   });
+}
+
+function getRetryScheduledFor(entry: ScheduleEntry, retryState: ScheduleRetryState): string | null {
+  return retryState.scheduled_for ?? entry.last_fired_at ?? entry.next_fire_at ?? retryState.next_retry_at;
 }
 
 function normalizeRetryPolicy(entry: ScheduleEntry): ScheduleRetryPolicy {
@@ -474,12 +478,14 @@ async function applyExecutionOutcome(
   ) {
     const attempts = (currentRetryState?.attempts ?? 0) + 1;
     const firstFailureAt = currentRetryState?.first_failure_at ?? safeResult.fired_at;
+    const retryScheduledFor = currentRetryState?.scheduled_for ?? scheduledFor ?? entry.last_fired_at ?? entry.next_fire_at;
     const windowElapsed = new Date(safeResult.fired_at).getTime() - new Date(firstFailureAt).getTime();
     if (attempts <= retryPolicy.max_attempts && windowElapsed <= retryPolicy.max_retry_window_ms) {
       retryAt = new Date(Date.now() + computeRetryDelay(retryPolicy, attempts)).toISOString();
       retryState = {
         attempts,
         next_retry_at: retryAt,
+        scheduled_for: retryScheduledFor,
         last_attempt_at: safeResult.fired_at,
         first_failure_at: firstFailureAt,
         last_failure_kind: failureKind,

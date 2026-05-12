@@ -2770,13 +2770,25 @@ describe("GoalTrigger execution (Phase 3)", () => {
     await eng.tick();
 
     const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
-    replayedEntry.next_fire_at = dueAt;
-    replayedEntry.retry_state = null;
+    replayedEntry.next_fire_at = "2026-05-12T01:00:00.000Z";
+    replayedEntry.retry_state = {
+      attempts: 1,
+      next_retry_at: secondRunAt,
+      scheduled_for: dueAt,
+      last_attempt_at: firstRunAt,
+      first_failure_at: firstRunAt,
+      last_failure_kind: "transient",
+      last_error_message: "retry wait-resume attention",
+    };
     await eng.saveEntries();
     await eng.loadEntries();
 
     vi.setSystemTime(new Date(secondRunAt));
     await eng.tick();
+
+    const history = await eng.getRecentHistory(10, entry.id);
+    expect(history.map((record) => record.reason)).toEqual(["cadence", "retry"]);
+    expect(history.map((record) => record.scheduled_for)).toEqual([dueAt, dueAt]);
 
     const store = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
     await expect(store.listCycleResults()).resolves.toEqual([
@@ -2827,8 +2839,16 @@ describe("GoalTrigger execution (Phase 3)", () => {
     };
 
     const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
-    replayedEntry.next_fire_at = dueAt;
-    replayedEntry.retry_state = null;
+    replayedEntry.next_fire_at = "2026-05-12T01:00:00.000Z";
+    replayedEntry.retry_state = {
+      attempts: 1,
+      next_retry_at: secondRunAt,
+      scheduled_for: dueAt,
+      last_attempt_at: firstRunAt,
+      first_failure_at: firstRunAt,
+      last_failure_kind: "transient",
+      last_error_message: "retry wait-resume attention",
+    };
     await eng.saveEntries();
     await eng.loadEntries();
 
