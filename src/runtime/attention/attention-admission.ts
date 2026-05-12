@@ -9,7 +9,7 @@ import {
 } from "../capability-operation-planner.js";
 import type { CapabilityOperationPlanAssembly } from "../types/capability-operation-plan.js";
 import { stableId } from "./attention-refs.js";
-import { permissionScopeAllowsAuthority } from "./attention-scope.js";
+import { attentionScopeKey, permissionScopeAllowsAuthority } from "./attention-scope.js";
 
 export type AttentionAdmissionProposalState =
   | "proposed"
@@ -90,16 +90,7 @@ export function assembleCapabilityPlansForAttentionAdmissions(input: {
 }
 
 export function scopeBlockKey(scope: AttentionScope): string {
-  return [
-    scope.userId ?? "user:null",
-    scope.identityId ?? "identity:null",
-    scope.workspaceId ?? "workspace:null",
-    scope.conversationId ?? "conversation:null",
-    scope.sessionId ?? "session:null",
-    scope.surfaceClass,
-    scope.surfaceRef ?? "surface:null",
-    scope.policyEpoch,
-  ].join("|");
+  return attentionScopeKey(scope);
 }
 
 function residentProjectionForAttentionCandidate(

@@ -22,6 +22,7 @@ import {
   buildAttentionAdmissionCandidates,
   type AttentionAdmissionCandidate,
 } from "./attention-admission.js";
+import { attentionScopeKey } from "./attention-scope.js";
 import { sourceRefKey, stableId } from "./attention-refs.js";
 
 export type AttentionCycleTrigger =
@@ -105,7 +106,7 @@ export async function runAttentionCycle(input: {
   >;
   cycle: AttentionCycleInput;
 }): Promise<AttentionCycleResult> {
-  const cycleId = `attention-cycle:${stableId(input.cycle.cycleIdempotencyKey)}`;
+  const cycleId = `attention-cycle:${stableId(`${attentionScopeKey(input.cycle.scope)}:${input.cycle.cycleIdempotencyKey}`)}`;
 
   if (isPrioritySafetyTrigger(input.cycle.trigger, input.cycle.safetyTrigger)) {
     await input.store.addPendingBlock({

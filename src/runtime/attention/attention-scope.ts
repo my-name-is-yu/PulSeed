@@ -160,6 +160,20 @@ export function deriveAttentionScopeFromSignalContext(input: {
   });
 }
 
+export function attentionScopeKey(scope: AttentionScope): string {
+  const parsed = AttentionScopeSchema.parse(scope);
+  return [
+    parsed.userId ?? "user:null",
+    parsed.identityId ?? "identity:null",
+    parsed.workspaceId ?? "workspace:null",
+    parsed.conversationId ?? "conversation:null",
+    parsed.sessionId ?? "session:null",
+    parsed.surfaceClass,
+    parsed.surfaceRef ?? "surface:null",
+    parsed.policyEpoch,
+  ].join("|");
+}
+
 export function permissionScopeAllowsAuthority(
   permissionScope: AttentionPermissionScope,
   authority: Authority,

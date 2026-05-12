@@ -11,6 +11,7 @@ import {
   runtimeItemsForAgenda,
 } from "../attention/attention-agenda.js";
 import type { AttentionAdmissionCandidate } from "../attention/attention-admission.js";
+import { attentionScopeKey } from "../attention/attention-scope.js";
 import {
   AgendaDecompositionSchema,
   AgentAgendaItemSchema,
@@ -534,11 +535,12 @@ export class AttentionStateStore {
     const db = await this.database();
     return db.transaction((sqlite) => {
       const key = scopeKey(input.scope);
+      const scopedIdempotencyKey = `${key}:${input.idempotency_key}`;
       const existingCycle = sqlite.prepare(`
         SELECT projection_revision, write_disposition
         FROM attention_cycle_results
         WHERE idempotency_key = ?
-      `).get(input.idempotency_key) as {
+      `).get(scopedIdempotencyKey) as {
         projection_revision: number;
         write_disposition: AttentionMetabolismWriteDisposition;
       } | undefined;
@@ -553,7 +555,7 @@ export class AttentionStateStore {
       if (currentRevision !== input.expected_projection_revision) {
         appendCycleResult(sqlite, {
           cycle_id: input.cycle_id,
-          idempotency_key: input.idempotency_key,
+          idempotency_key: scopedIdempotencyKey,
           trigger_kind: input.trigger_kind,
           scope_key: key,
           projection_revision: currentRevision,
@@ -594,7 +596,7 @@ export class AttentionStateStore {
       });
       appendCycleResult(sqlite, {
         cycle_id: input.cycle_id,
-        idempotency_key: input.idempotency_key,
+        idempotency_key: scopedIdempotencyKey,
         trigger_kind: input.trigger_kind,
         scope_key: key,
         projection_revision: nextRevision,
@@ -1755,14 +1757,5 @@ function agendaReferencesAny(item: AgentAgendaItem, refs: ReadonlySet<string>): 
 }
 
 function scopeKey(scope: AttentionScope): string {
-  return [
-    scope.userId ?? "user:null",
-    scope.identityId ?? "identity:null",
-    scope.workspaceId ?? "workspace:null",
-    scope.conversationId ?? "conversation:null",
-    scope.sessionId ?? "session:null",
-    scope.surfaceClass,
-    scope.surfaceRef ?? "surface:null",
-    scope.policyEpoch,
-  ].join("|");
+  return attentionScopeKey(scope);
 }

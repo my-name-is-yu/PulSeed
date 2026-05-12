@@ -3,6 +3,7 @@ import {
   assembleCapabilityPlansForAttentionAdmissions,
   assembleSignalContext,
   buildAttentionAdmissionCandidates,
+  createAttentionClusterFromUrge,
   createAttentionDiagnostics,
   createUrgeCandidate,
   decideAttentionSimilarity,
@@ -203,6 +204,19 @@ describe("attention concern metabolism contracts", () => {
       "prepare",
       "watch",
     ]);
+  });
+
+  it("includes full scope identity in seeded cluster IDs", () => {
+    const left = createAttentionClusterFromUrge(urge({
+      id: "scope-left",
+      scope: scope({ userId: "user-left", sessionId: "session-shared" }),
+    }), NOW);
+    const right = createAttentionClusterFromUrge(urge({
+      id: "scope-right",
+      scope: scope({ userId: "user-right", sessionId: "session-shared" }),
+    }), NOW);
+
+    expect(left.id).not.toBe(right.id);
   });
 
   it("admits only fresh authorized children through capability planning, never direct action", () => {

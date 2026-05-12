@@ -17,6 +17,7 @@ import {
   uniqueSourceRefs,
 } from "./attention-refs.js";
 import {
+  attentionScopeKey,
   decideScopeCompatibility,
   deriveClusterScope,
 } from "./attention-scope.js";
@@ -80,8 +81,7 @@ export function createAttentionClusterFromUrge(urge: UrgeCandidate, now: string)
   const id = `attention-cluster:${stableId([
     refKey(urge.target),
     urge.semanticFingerprint ?? urge.urge_id,
-    urge.scope.policyEpoch,
-    urge.scope.surfaceRef ?? "surface:none",
+    attentionScopeKey(urge.scope),
   ].join("|"))}`;
 
   return AttentionClusterSchema.parse({

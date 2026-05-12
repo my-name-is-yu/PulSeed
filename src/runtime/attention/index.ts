@@ -25,6 +25,7 @@ export type {
 } from "./attention-input.js";
 export {
   deriveAttentionScopeFromSignalContext,
+  attentionScopeKey,
   decideScopeCompatibility,
   deriveClusterScope,
   derivePermissionScope,
