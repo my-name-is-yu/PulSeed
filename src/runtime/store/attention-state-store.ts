@@ -132,7 +132,7 @@ export class AttentionStateStore {
       const intake = input.attentionInputs
         ? appendAttentionInputs(sqlite, input.attentionInputs, input.recordedAt)
         : null;
-      if (intake && intake.duplicates.length > 0) {
+      if (intake && intake.accepted.length === 0 && intake.duplicates.length > 0) {
         return intake;
       }
       if (input.signalContext) {

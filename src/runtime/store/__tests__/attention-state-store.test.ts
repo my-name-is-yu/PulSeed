@@ -435,6 +435,109 @@ describe("AttentionStateStore", () => {
     }
   });
 
+  it("continues cycle persistence for accepted inputs in a mixed duplicate replay batch", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-mixed-cycle-replay-");
+    try {
+      const original = durableAttentionCycle({
+        agendaIdSuffix: "mixed-original",
+        sourceKind: "schedule",
+      });
+      const firstDb = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const firstStore = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: firstDb });
+        const intake = await firstStore.saveCycle({
+          attentionInputs: [original.attentionInput],
+          signalContext: original.signalContext,
+          urgeCandidates: [original.urge],
+          agendaItems: [original.agendaItem],
+          inhibitionDecisions: [original.inhibition],
+          initiativeGateDecisions: [original.gate],
+          outcomeDecisions: [original.outcome],
+          expressionDecisions: [original.expression],
+          recordedAt: NOW,
+        });
+        expect(intake?.accepted).toHaveLength(1);
+      } finally {
+        firstDb.close();
+      }
+
+      const secondDb = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const accepted = durableAttentionCycle({
+          agendaIdSuffix: "mixed-accepted",
+          sourceKind: "gateway_user_activity",
+          targetRef: ref("goal", "goal:attention-store:mixed-accepted"),
+        });
+        const restartedStore = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: secondDb });
+        const intake = await restartedStore.saveCycle({
+          attentionInputs: [original.attentionInput, accepted.attentionInput],
+          signalContext: accepted.signalContext,
+          urgeCandidates: [accepted.urge],
+          agendaItems: [accepted.agendaItem],
+          inhibitionDecisions: [accepted.inhibition],
+          initiativeGateDecisions: [accepted.gate],
+          outcomeDecisions: [accepted.outcome],
+          expressionDecisions: [accepted.expression],
+          recordedAt: LATER,
+        });
+
+        expect(intake?.accepted.map((input) => input.attention_input_id)).toEqual([
+          accepted.attentionInput.attention_input_id,
+        ]);
+        expect(intake?.duplicates).toEqual([
+          expect.objectContaining({
+            duplicate_of: original.attentionInput.attention_input_id,
+          }),
+        ]);
+        const snapshot = await restartedStore.loadDecisionChainSnapshot({ includeTerminal: true });
+        expect(snapshot.agenda_items.map((item) => item.agenda_item_id)).toEqual(expect.arrayContaining([
+          original.agendaItem.agenda_item_id,
+          accepted.agendaItem.agenda_item_id,
+        ]));
+        expect(snapshot.outcome_decisions.map((decision) => decision.outcome_decision_id)).toEqual(
+          expect.arrayContaining([
+            original.outcome.outcome_decision_id,
+            accepted.outcome.outcome_decision_id,
+          ])
+        );
+        expect(snapshot.expression_decisions.map((decision) => decision.expression_decision_id)).toEqual(
+          expect.arrayContaining([
+            original.expression.expression_decision_id,
+            accepted.expression.expression_decision_id,
+          ])
+        );
+        expect(secondDb.read((sqlite) =>
+          sqlite.prepare(`
+            SELECT attention_input_id, disposition, duplicate_of
+            FROM attention_input_replay_records
+            WHERE replay_key IN (?, ?)
+            ORDER BY recorded_at ASC, disposition ASC, attention_input_id ASC
+          `).all(original.attentionInput.source.replay_key, accepted.attentionInput.source.replay_key)
+        )).toEqual([
+          {
+            attention_input_id: original.attentionInput.attention_input_id,
+            disposition: "accepted",
+            duplicate_of: null,
+          },
+          {
+            attention_input_id: accepted.attentionInput.attention_input_id,
+            disposition: "accepted",
+            duplicate_of: null,
+          },
+          {
+            attention_input_id: original.attentionInput.attention_input_id,
+            disposition: "duplicate_replay_key",
+            duplicate_of: original.attentionInput.attention_input_id,
+          },
+        ]);
+      } finally {
+        secondDb.close();
+      }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("fails closed for wrong-shaped agenda rows instead of flushing corrupt backlog", async () => {
     const tmpDir = makeTempDir("pulseed-attention-store-corrupt-");
     try {
