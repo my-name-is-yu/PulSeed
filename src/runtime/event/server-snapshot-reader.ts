@@ -109,6 +109,7 @@ export class EventServerSnapshotReader {
 
   private runtimeControlBaseDir(): string {
     if (this.configuredControlBaseDir) return this.configuredControlBaseDir;
+    if (this.stateManager) return this.stateManager.getBaseDir();
     return resolveRuntimeControlDbBaseDir(createRuntimeStorePaths(this.runtimeRoot()));
   }
 

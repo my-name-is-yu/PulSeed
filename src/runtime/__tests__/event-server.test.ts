@@ -1150,6 +1150,41 @@ describe("snapshot and outbox replay", () => {
     expect(snapshot.resident_runtime_interface?.connection.last_command_at).toBe(now);
   });
 
+  it("reports the state manager control base when runtime stores use it with a custom runtime root", async () => {
+    const runtimeRoot = path.join(tmpDir, "custom-runtime-with-state-manager");
+    const stateManager = new StateManager(tmpDir, undefined, { walEnabled: false });
+    await stateManager.init();
+    const now = new Date().toISOString();
+    await new RuntimeOperationStore(runtimeRoot, { controlBaseDir: stateManager.getBaseDir() }).save(
+      makeRuntimeControlOperation({
+        requested_at: now,
+        updated_at: now,
+        state: "verified",
+        completed_at: now,
+      })
+    );
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+      stateManager,
+    });
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      resident_runtime_interface?: {
+        identity: { control_base_dir: string };
+        connection: { last_command_at: string | null };
+      };
+    };
+    expect(snapshot.resident_runtime_interface?.identity.control_base_dir).toBe(stateManager.getBaseDir());
+    expect(snapshot.resident_runtime_interface?.connection.last_command_at).toBe(now);
+  });
+
   it("reads auth handoff sessions from an explicitly configured runtime root", async () => {
     const runtimeRoot = path.join(tmpDir, "custom-runtime");
     await new BrowserSessionStore(runtimeRoot).recordAuthRequired({
