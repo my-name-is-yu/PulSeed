@@ -37,6 +37,12 @@ const CompanionAutonomyRefKinds = [
   "signal_context",
   "urge_candidate",
   "agent_agenda_item",
+  "attention_cluster",
+  "agenda_decomposition",
+  "agenda_decomposition_child",
+  "attention_event",
+  "attention_cycle",
+  "attention_admission",
   "inhibition_decision",
   "initiative_gate_decision",
   "outcome_decision",
@@ -70,6 +76,8 @@ function refWithKind(...allowedKinds: CompanionAutonomyRefKind[]) {
 }
 
 const AuditTraceRefSchema = refWithKind("audit_trace");
+const AgentAgendaRefSchema = refWithKind("agent_agenda_item");
+const AttentionClusterRefSchema = refWithKind("attention_cluster");
 const InitiativeGateDecisionRefSchema = refWithKind("initiative_gate_decision");
 const OutcomeDecisionRefSchema = refWithKind("outcome_decision");
 const UrgeCandidateRefSchema = refWithKind("urge_candidate");
@@ -110,6 +118,172 @@ export const AttentionSensitivitySchema = z.enum([
   "restricted",
 ]);
 export type AttentionSensitivity = z.infer<typeof AttentionSensitivitySchema>;
+
+export const AttentionSurfaceClassSchema = z.enum([
+  "cli",
+  "tui",
+  "telegram",
+  "daemon",
+  "schedule",
+  "system",
+  "unknown",
+]);
+export type AttentionSurfaceClass = z.infer<typeof AttentionSurfaceClassSchema>;
+
+export const AttentionPermissionScopeSchema = z.enum([
+  "local_only",
+  "read_only",
+  "draft_allowed",
+  "notify_allowed",
+  "write_allowed",
+  "unknown",
+]);
+export type AttentionPermissionScope = z.infer<typeof AttentionPermissionScopeSchema>;
+
+export const AttentionScopeSensitivitySchema = z.enum([
+  "low",
+  "medium",
+  "high",
+  "unknown",
+]);
+export type AttentionScopeSensitivity = z.infer<typeof AttentionScopeSensitivitySchema>;
+
+export const DEFAULT_ATTENTION_SCOPE = {
+  userId: null,
+  identityId: null,
+  workspaceId: null,
+  conversationId: null,
+  sessionId: null,
+  surfaceClass: "unknown",
+  surfaceRef: null,
+  permissionScope: "unknown",
+  sensitivity: "unknown",
+  memoryOwner: null,
+  policyEpoch: "unknown",
+} as const;
+
+export const AttentionScopeSchema = z.object({
+  userId: z.string().min(1).nullable(),
+  identityId: z.string().min(1).nullable().optional(),
+  workspaceId: z.string().min(1).nullable().optional(),
+  conversationId: z.string().min(1).nullable().optional(),
+  sessionId: z.string().min(1).nullable().optional(),
+  surfaceClass: AttentionSurfaceClassSchema,
+  surfaceRef: z.string().min(1).nullable().optional(),
+  permissionScope: AttentionPermissionScopeSchema,
+  sensitivity: AttentionScopeSensitivitySchema,
+  memoryOwner: z.string().min(1).nullable().optional(),
+  policyEpoch: z.string().min(1),
+}).strict();
+export type AttentionScope = z.infer<typeof AttentionScopeSchema>;
+
+export const AttentionSignalRefSchema = CompanionAutonomySourceRefSchema;
+export type AttentionSignalRef = z.infer<typeof AttentionSignalRefSchema>;
+
+export const AttentionStructuredRefSchema = z.object({
+  ref: CompanionAutonomyRefSchema,
+  relation: z.enum([
+    "about",
+    "caused_by",
+    "blocks",
+    "depends_on",
+    "same_wait_condition",
+    "same_high_watermark",
+    "same_runtime_operation",
+    "same_policy",
+  ]).default("about"),
+  strength: z.number().min(0).max(1).default(1),
+}).strict();
+export type AttentionStructuredRef = z.infer<typeof AttentionStructuredRefSchema>;
+
+export const StalenessSnapshotSchema = z.object({
+  state: z.enum(["fresh", "aging", "stale", "needs_regrounding", "unknown"]),
+  observedAt: z.string().datetime(),
+  sourceHighWatermark: z.string().min(1).nullable().default(null),
+  reason: z.string().min(1),
+}).strict();
+export type StalenessSnapshot = z.infer<typeof StalenessSnapshotSchema>;
+
+export const SourceDiversitySummarySchema = z.object({
+  sourceKinds: z.array(z.string().min(1)).default([]),
+  independentSourceCount: z.number().int().nonnegative().default(0),
+  repeatedSourceCount: z.number().int().nonnegative().default(0),
+}).strict();
+export type SourceDiversitySummary = z.infer<typeof SourceDiversitySummarySchema>;
+
+export const AttentionEvidenceStrengthSchema = z.enum(["weak", "moderate", "strong", "unknown"]);
+export type AttentionEvidenceStrength = z.infer<typeof AttentionEvidenceStrengthSchema>;
+
+export const AttentionThemeSchema = z.object({
+  label: z.string().min(1),
+  structuredRefs: z.array(AttentionStructuredRefSchema).default([]),
+  semanticFingerprint: z.string().min(1).nullable().default(null),
+  semanticProviderId: z.string().min(1).nullable().default(null),
+  semanticProviderVersion: z.string().min(1).nullable().default(null),
+  themeHints: z.array(z.string().min(1)).default([]),
+}).strict();
+export type AttentionTheme = z.infer<typeof AttentionThemeSchema>;
+
+export const SimilarityBasisSchema = z.object({
+  outcome: z.enum(["semantic", "structured_ref", "semantic_and_structured_ref", "manual_seed", "unknown"]),
+  confidence: z.number().min(0).max(1),
+  reasons: z.array(z.string().min(1)).default([]),
+}).strict();
+export type SimilarityBasis = z.infer<typeof SimilarityBasisSchema>;
+
+export const AttentionConflictSchema = z.object({
+  conflict_id: z.string().min(1),
+  kind: z.enum([
+    "scope_conflict",
+    "permission_conflict",
+    "sensitivity_conflict",
+    "semantic_conflict",
+    "freshness_conflict",
+    "policy_epoch_mismatch",
+    "correction_conflict",
+  ]),
+  reason: z.string().min(1),
+  refs: z.array(CompanionAutonomyRefSchema).default([]),
+  createdAt: z.string().datetime(),
+}).strict();
+export type AttentionConflict = z.infer<typeof AttentionConflictSchema>;
+
+export const AttentionSplitCandidateSchema = z.object({
+  split_id: z.string().min(1),
+  reason: z.string().min(1),
+  memberUrgeRefs: z.array(UrgeCandidateRefSchema).default([]),
+  confidence: z.number().min(0).max(1),
+  createdAt: z.string().datetime(),
+}).strict();
+export type AttentionSplitCandidate = z.infer<typeof AttentionSplitCandidateSchema>;
+
+export const AttentionMergeEventSchema = z.object({
+  event_id: z.string().min(1),
+  mergedAt: z.string().datetime(),
+  urgeRef: UrgeCandidateRefSchema,
+  previousClusterRef: AttentionClusterRefSchema.nullable().default(null),
+  basis: SimilarityBasisSchema,
+  reasons: z.array(z.string().min(1)).default([]),
+}).strict();
+export type AttentionMergeEvent = z.infer<typeof AttentionMergeEventSchema>;
+
+export const AttentionSuppressionSchema = z.object({
+  reason: z.string().min(1),
+  suppressedAt: z.string().datetime(),
+  feedbackRef: CompanionAutonomyRefSchema.nullable().default(null),
+}).strict();
+export type AttentionSuppression = z.infer<typeof AttentionSuppressionSchema>;
+
+export const AttentionClusterLifecycleSchema = z.enum([
+  "forming",
+  "watching",
+  "mature",
+  "split_pending",
+  "suppressed",
+  "forgotten",
+  "needs_regrounding",
+]);
+export type AttentionClusterLifecycle = z.infer<typeof AttentionClusterLifecycleSchema>;
 
 export const SignalSourceSchema = z.enum([
   "runtime_event",
@@ -313,6 +487,29 @@ export const UrgeCandidateSchema = z.object({
   allowed_moves: z.array(AttentionMoveSchema).default([]),
   forbidden_moves: z.array(AttentionMoveSchema).default([]),
   maturation: AttentionMaturationSchema,
+  scope: AttentionScopeSchema.default(DEFAULT_ATTENTION_SCOPE),
+  signalRefs: z.array(AttentionSignalRefSchema).default([]),
+  structuredRefs: z.array(AttentionStructuredRefSchema).default([]),
+  semanticFingerprint: z.string().min(1).nullable().default(null),
+  semanticProviderId: z.string().min(1).nullable().default(null),
+  semanticProviderVersion: z.string().min(1).nullable().default(null),
+  sourceDiversity: SourceDiversitySummarySchema.default({
+    sourceKinds: [],
+    independentSourceCount: 0,
+    repeatedSourceCount: 0,
+  }),
+  stalenessSnapshot: StalenessSnapshotSchema.default({
+    state: "needs_regrounding",
+    observedAt: "1970-01-01T00:00:00.000Z",
+    sourceHighWatermark: null,
+    reason: "legacy urge candidate requires regrounding before outward admission",
+  }),
+  evidenceStrength: AttentionEvidenceStrengthSchema.default("unknown"),
+  uncertainty: z.number().min(0).max(1).default(1),
+  conflictMarkers: z.array(AttentionConflictSchema).default([]),
+  policyEpoch: z.string().min(1).default("unknown"),
+  modelOrClassifierVersion: z.string().min(1).nullable().default(null),
+  replayableInputRefs: z.array(CompanionAutonomyRefSchema).default([]),
   audit_refs: z.array(AuditTraceRefSchema).default([]),
 }).strict().superRefine((urge, ctx) => {
   const overlap = urge.allowed_moves.filter((move) => urge.forbidden_moves.includes(move));
@@ -325,6 +522,30 @@ export const UrgeCandidateSchema = z.object({
   }
 });
 export type UrgeCandidate = z.infer<typeof UrgeCandidateSchema>;
+
+export const AttentionClusterSchema = z.object({
+  id: z.string().min(1),
+  scope: AttentionScopeSchema,
+  theme: AttentionThemeSchema,
+  memberUrgeRefs: z.array(UrgeCandidateRefSchema).default([]),
+  signalRefs: z.array(AttentionSignalRefSchema).default([]),
+  similarityBasis: SimilarityBasisSchema,
+  aggregateStrength: z.number().min(0).max(1),
+  aggregateConfidence: z.number().min(0).max(1),
+  uncertainty: z.number().min(0).max(1),
+  sourceDiversity: SourceDiversitySummarySchema,
+  maturation: AttentionMaturationSchema,
+  lifecycle: AttentionClusterLifecycleSchema,
+  conflicts: z.array(AttentionConflictSchema).default([]),
+  splitCandidates: z.array(AttentionSplitCandidateSchema).default([]),
+  mergeHistory: z.array(AttentionMergeEventSchema).default([]),
+  suppression: AttentionSuppressionSchema.optional(),
+  forgetAfter: z.string().datetime().nullable().default(null),
+  lastRegroundedAt: z.string().datetime().nullable().default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict();
+export type AttentionCluster = z.infer<typeof AttentionClusterSchema>;
 
 export const AgentAgendaItemKindSchema = z.enum([
   "goal_stewardship",
@@ -355,6 +576,28 @@ export const AgendaPostureSchema = z.enum([
   "rejected_stale",
 ]);
 export type AgendaPosture = z.infer<typeof AgendaPostureSchema>;
+
+export const AgentCarePostureSchema = z.enum([
+  "notice",
+  "watch",
+  "hold",
+  "prepare",
+  "ask",
+  "offer",
+  "act_candidate",
+  "silence",
+]);
+export type AgentCarePosture = z.infer<typeof AgentCarePostureSchema>;
+
+export const AttentionCommitmentLifecycleSchema = z.enum([
+  "uncommitted",
+  "watching",
+  "held",
+  "proposed",
+  "admitted",
+  "terminal",
+]);
+export type AttentionCommitmentLifecycle = z.infer<typeof AttentionCommitmentLifecycleSchema>;
 
 export const AgendaControlStateSchema = z.enum([
   "active",
@@ -433,6 +676,15 @@ export const AgentAgendaItemSchema = z.object({
   revisit_condition: AttentionRevisitConditionSchema,
   control_state: AgendaControlStateSchema,
   merge_trace: AgendaMergeTraceSchema.optional(),
+  clusterRef: AttentionClusterRefSchema.nullable().default(null),
+  carePosture: AgentCarePostureSchema.default("watch"),
+  revisitCondition: AttentionRevisitConditionSchema.optional(),
+  abandonmentCondition: AttentionRevisitConditionSchema.optional(),
+  suppressionReason: z.string().min(1).nullable().default(null),
+  commitmentLifecycle: AttentionCommitmentLifecycleSchema.default("held"),
+  needsRegrounding: z.boolean().default(true),
+  scope: AttentionScopeSchema.default(DEFAULT_ATTENTION_SCOPE),
+  policyEpoch: z.string().min(1).default("unknown"),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   audit_refs: z.array(AuditTraceRefSchema).default([]),
@@ -447,6 +699,35 @@ export const AgentAgendaItemSchema = z.object({
   }
 });
 export type AgentAgendaItem = z.infer<typeof AgentAgendaItemSchema>;
+
+export const AgendaDecompositionChildSchema = z.object({
+  id: z.string().min(1),
+  parentAgendaRef: AgentAgendaRefSchema,
+  clusterRef: AttentionClusterRefSchema,
+  childType: z.enum(["watch", "prepare", "ask", "digest", "action_candidate", "silence"]),
+  idempotencyKey: z.string().min(1),
+  requiredAuthority: z.enum(["none", "read", "draft", "notify", "write"]),
+  permissionScope: AttentionPermissionScopeSchema,
+  stalenessSnapshot: StalenessSnapshotSchema,
+  candidatePayloadRef: z.string().min(1).nullable().default(null),
+  admissionState: z.enum(["not_admitted", "admitted", "rejected", "expired", "needs_approval"]),
+  outcomeRef: z.string().min(1).nullable().default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict();
+export type AgendaDecompositionChild = z.infer<typeof AgendaDecompositionChildSchema>;
+
+export const AgendaDecompositionSchema = z.object({
+  id: z.string().min(1),
+  agendaRef: AgentAgendaRefSchema,
+  clusterRef: AttentionClusterRefSchema,
+  scope: AttentionScopeSchema,
+  children: z.array(AgendaDecompositionChildSchema).default([]),
+  status: z.enum(["open", "partially_admitted", "closed", "suppressed", "needs_regrounding"]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict();
+export type AgendaDecomposition = z.infer<typeof AgendaDecompositionSchema>;
 
 export const InhibitionDecisionKindSchema = z.enum([
   "suppress",

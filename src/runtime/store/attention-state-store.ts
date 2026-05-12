@@ -10,15 +10,22 @@ import {
 import {
   runtimeItemsForAgenda,
 } from "../attention/attention-agenda.js";
+import type { AttentionAdmissionCandidate } from "../attention/attention-admission.js";
+import { attentionScopeKey } from "../attention/attention-scope.js";
 import {
+  AgendaDecompositionSchema,
   AgentAgendaItemSchema,
+  AttentionClusterSchema,
   ExpressionDecisionSchema,
   InhibitionDecisionSchema,
   InitiativeGateDecisionSchema,
   OutcomeDecisionSchema,
   SignalContextSchema,
   UrgeCandidateSchema,
+  type AgendaDecomposition,
   type AgentAgendaItem,
+  type AttentionCluster,
+  type AttentionScope,
   type CompanionAutonomyRef,
   type ExpressionDecision,
   type InhibitionDecision,
@@ -28,7 +35,7 @@ import {
   type UrgeCandidate,
 } from "../types/companion-autonomy.js";
 import type { RuntimeItem } from "../types/companion-state.js";
-import { ref, refKey, uniqueRefs } from "../attention/attention-refs.js";
+import { ref, refKey, stableId, uniqueRefs } from "../attention/attention-refs.js";
 import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
@@ -69,6 +76,8 @@ export interface AttentionStateCycleInput {
 export interface AttentionAgendaListOptions {
   includeSuppressed?: boolean;
   includeTerminal?: boolean;
+  scopeKey?: string | null;
+  forceLegacy?: boolean;
 }
 
 export interface AttentionAgendaSuppressionInput {
@@ -104,6 +113,111 @@ export interface AttentionDecisionChainSnapshot {
   initiative_gate_decisions: InitiativeGateDecision[];
   outcome_decisions: OutcomeDecision[];
   expression_decisions: ExpressionDecision[];
+}
+
+export interface AttentionConcernStateSnapshot {
+  clusters: AttentionCluster[];
+  agenda_items: AgentAgendaItem[];
+  decompositions: AgendaDecomposition[];
+}
+
+export interface AttentionConcernStateLoadOptions {
+  scope?: AttentionScope;
+}
+
+export interface AttentionEventLedgerRecord {
+  event_id: string;
+  event_type:
+    | "signal_observed"
+    | "urge_created"
+    | "cluster_merged"
+    | "cluster_split"
+    | "matured"
+    | "suppressed"
+    | "forgotten"
+    | "agenda_projected"
+    | "decomposed"
+    | "admitted"
+    | "rejected"
+    | "outcome_recorded"
+    | "correction_received"
+    | "invalidated";
+  scope: AttentionScope;
+  policy_epoch: string;
+  occurred_at: string;
+  mode: "shadow" | "live";
+  compactable?: boolean;
+  critical?: boolean;
+  model_or_classifier_version?: string | null;
+  experiment_id?: string | null;
+  event: Record<string, unknown>;
+}
+
+export interface AttentionMetabolismCycleWriteInput {
+  cycle_id: string;
+  idempotency_key: string;
+  trigger_kind: string;
+  scope: AttentionScope;
+  expected_projection_revision: number;
+  source_high_watermarks: readonly string[];
+  clusters: readonly AttentionCluster[];
+  agendaItems: readonly AgentAgendaItem[];
+  decompositions: readonly AgendaDecomposition[];
+  admissionProposals?: readonly AttentionAdmissionCandidate[];
+  events?: readonly AttentionEventLedgerRecord[];
+  pendingBlocks?: readonly AttentionPendingBlockWriteInput[];
+  result: Record<string, unknown>;
+  created_at: string;
+  no_op_hash?: string | null;
+}
+
+export type AttentionMetabolismWriteDisposition =
+  | "written"
+  | "no_op_elided"
+  | "stale_rejected"
+  | "budget_dropped";
+
+export interface AttentionMetabolismCycleWriteResult {
+  writeDisposition: AttentionMetabolismWriteDisposition;
+  projectionRevision: number;
+  replayedTriggerKind?: string;
+}
+
+export interface AttentionPendingBlockRecord {
+  block_id: string;
+  scope_key: string;
+  trigger_kind: string;
+  reason: string;
+  created_at: string;
+  cleared_at: string | null;
+}
+
+export interface AttentionPendingBlockWriteInput {
+  blockId?: string;
+  scope: AttentionScope;
+  triggerKind: string;
+  reason: string;
+  createdAt: string;
+}
+
+export interface AttentionPendingBlockClearResult {
+  cleared_count: number;
+  block_ids: string[];
+}
+
+export interface AttentionAdmissionProposalRecord {
+  proposal_id: string;
+  child_id: string;
+  idempotency_key: string;
+  state: AttentionAdmissionCandidate["proposalState"];
+  runtime_operation_id: string | null;
+  created_at: string;
+  updated_at: string;
+  proposal: AttentionAdmissionCandidate;
+}
+
+export interface AttentionAdmissionProposalListOptions {
+  states?: readonly AttentionAdmissionCandidate["proposalState"][];
 }
 
 export class AttentionStateStore {
@@ -269,6 +383,279 @@ export class AttentionStateStore {
     }));
   }
 
+  async loadConcernState(
+    options: AttentionConcernStateLoadOptions = {}
+  ): Promise<AttentionConcernStateSnapshot> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const key = options.scope ? scopeKey(options.scope) : null;
+      return {
+        clusters: listConcernClusters(sqlite, key),
+        agenda_items: listAgendaItems(sqlite, {
+          includeSuppressed: true,
+          includeTerminal: false,
+          scopeKey: key,
+        }),
+        decompositions: listConcernDecompositions(sqlite, key),
+      };
+    });
+  }
+
+  async loadConcernStateForScope(scope: AttentionScope): Promise<AttentionConcernStateSnapshot> {
+    return this.loadConcernState({ scope });
+  }
+
+  async listCurrentAgendaItems(options: AttentionAgendaListOptions = {}): Promise<AgentAgendaItem[]> {
+    const db = await this.database();
+    return db.read((sqlite) => listAgendaItems(sqlite, options));
+  }
+
+  async listAdmissionProposals(
+    options: AttentionAdmissionProposalListOptions = {}
+  ): Promise<AttentionAdmissionProposalRecord[]> {
+    const db = await this.database();
+    return db.read((sqlite) => listAdmissionProposals(sqlite, options));
+  }
+
+  async listCycleResults(): Promise<Array<{
+    cycle_id: string;
+    scope_key: string;
+    projection_revision: number;
+    write_disposition: AttentionMetabolismWriteDisposition;
+    result: Record<string, unknown>;
+  }>> {
+    const db = await this.database();
+    return db.read((sqlite) =>
+      (sqlite.prepare(`
+        SELECT cycle_id, scope_key, projection_revision, write_disposition, result_json
+        FROM attention_cycle_results
+        ORDER BY created_at ASC, cycle_id ASC
+      `).all() as Array<{
+        cycle_id: string;
+        scope_key: string;
+        projection_revision: number;
+        write_disposition: AttentionMetabolismWriteDisposition;
+        result_json: string;
+      }>).map((row) => ({
+        cycle_id: row.cycle_id,
+        scope_key: row.scope_key,
+        projection_revision: row.projection_revision,
+        write_disposition: row.write_disposition,
+        result: JSON.parse(row.result_json) as Record<string, unknown>,
+      }))
+    );
+  }
+
+  async markAdmissionProposalState(input: {
+    proposalId: string;
+    state: AttentionAdmissionCandidate["proposalState"];
+    updatedAt: string;
+    runtimeOperationId?: string | null;
+  }): Promise<void> {
+    const db = await this.database();
+    db.transaction((sqlite) => {
+      sqlite.prepare(`
+        UPDATE attention_admission_proposals
+        SET state = ?,
+          runtime_operation_id = COALESCE(?, runtime_operation_id),
+          updated_at = ?,
+          proposal_json = json_set(proposal_json, '$.proposalState', ?)
+        WHERE proposal_id = ?
+          AND (
+            state NOT IN ('confirmed', 'terminal')
+            OR (state = 'confirmed' AND ? = 'terminal')
+          )
+      `).run(
+        input.state,
+        input.runtimeOperationId ?? null,
+        input.updatedAt,
+        input.state,
+        input.proposalId,
+        input.state,
+      );
+    });
+  }
+
+  async reconcileAdmissionProposals(input: {
+    orphanBefore: string;
+    updatedAt: string;
+  }): Promise<{ orphaned_count: number; proposal_ids: string[] }> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT proposal_id
+        FROM attention_admission_proposals
+        WHERE state IN ('pending_handoff', 'handed_off')
+          AND updated_at < ?
+        ORDER BY updated_at ASC, proposal_id ASC
+      `).all(input.orphanBefore) as Array<{ proposal_id: string }>;
+      for (const row of rows) {
+        sqlite.prepare(`
+          UPDATE attention_admission_proposals
+          SET state = 'orphaned_needs_reconcile',
+            updated_at = ?,
+            proposal_json = json_set(proposal_json, '$.proposalState', 'orphaned_needs_reconcile')
+          WHERE proposal_id = ?
+        `).run(input.updatedAt, row.proposal_id);
+      }
+      return {
+        orphaned_count: rows.length,
+        proposal_ids: rows.map((row) => row.proposal_id),
+      };
+    });
+  }
+
+  async listPendingBlocks(scope?: AttentionScope): Promise<AttentionPendingBlockRecord[]> {
+    const db = await this.database();
+    return db.read((sqlite) => listPendingBlocks(sqlite, scope ? scopeKey(scope) : null));
+  }
+
+  async clearPendingBlocks(input: {
+    scope: AttentionScope;
+    clearedAt: string;
+    reason: string;
+    triggerKinds?: readonly string[];
+  }): Promise<AttentionPendingBlockClearResult> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const key = scopeKey(input.scope);
+      const rows = listPendingBlocks(sqlite, key)
+        .filter((block) => input.triggerKinds ? input.triggerKinds.includes(block.trigger_kind) : true);
+      for (const row of rows) {
+        sqlite.prepare(`
+          UPDATE attention_pending_blocks
+          SET cleared_at = ?,
+            reason = ?
+          WHERE block_id = ?
+        `).run(input.clearedAt, input.reason, row.block_id);
+      }
+      return {
+        cleared_count: rows.length,
+        block_ids: rows.map((row) => row.block_id),
+      };
+    });
+  }
+
+  async projectionRevision(scope: AttentionScope): Promise<number> {
+    const db = await this.database();
+    return db.read((sqlite) => readProjectionRevision(sqlite, scopeKey(scope)));
+  }
+
+  async saveMetabolismCycle(
+    input: AttentionMetabolismCycleWriteInput
+  ): Promise<AttentionMetabolismCycleWriteResult> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const key = scopeKey(input.scope);
+      const scopedIdempotencyKey = `${key}:${input.idempotency_key}`;
+      const existingCycle = sqlite.prepare(`
+        SELECT projection_revision, write_disposition, trigger_kind
+        FROM attention_cycle_results
+        WHERE idempotency_key = ?
+      `).get(scopedIdempotencyKey) as {
+        projection_revision: number;
+        write_disposition: AttentionMetabolismWriteDisposition;
+        trigger_kind: string;
+      } | undefined;
+      const currentRevision = readProjectionRevision(sqlite, key);
+      if (existingCycle && existingCycle.write_disposition !== "stale_rejected") {
+        return {
+          writeDisposition: "no_op_elided",
+          projectionRevision: existingCycle.projection_revision,
+          replayedTriggerKind: existingCycle.trigger_kind,
+        };
+      }
+      if (currentRevision !== input.expected_projection_revision) {
+        if (!existingCycle) {
+          appendCycleResult(sqlite, {
+            cycle_id: input.cycle_id,
+            idempotency_key: scopedIdempotencyKey,
+            trigger_kind: input.trigger_kind,
+            scope_key: key,
+            projection_revision: currentRevision,
+            write_disposition: "stale_rejected",
+            created_at: input.created_at,
+            result: {
+              ...input.result,
+              stale_rejected: true,
+              expected_projection_revision: input.expected_projection_revision,
+              current_projection_revision: currentRevision,
+            },
+          });
+        }
+        return {
+          writeDisposition: "stale_rejected",
+          projectionRevision: currentRevision,
+        };
+      }
+      if (existingCycle?.write_disposition === "stale_rejected") {
+        deleteCycleResultByIdempotencyKey(sqlite, scopedIdempotencyKey);
+      }
+
+      const nextRevision = currentRevision + 1;
+      const clusters = input.clusters.filter((cluster) => scopeKey(cluster.scope) === key);
+      const agendaItems = input.agendaItems.filter((item) => scopeKey(item.scope) === key);
+      const decompositions = input.decompositions.filter((decomposition) => scopeKey(decomposition.scope) === key);
+      const admissionProposals = (input.admissionProposals ?? [])
+        .filter((proposal) => scopeKey(proposal.scope) === key);
+      for (const event of input.events ?? []) appendAttentionEvent(sqlite, event);
+      for (const cluster of clusters) upsertAttentionCluster(sqlite, cluster, nextRevision);
+      for (const item of agendaItems) {
+        upsertCurrentAgenda(sqlite, item, nextRevision);
+      }
+      for (const decomposition of decompositions) upsertDecomposition(sqlite, decomposition, nextRevision);
+      for (const proposal of admissionProposals) upsertAdmissionProposal(sqlite, proposal, input.created_at);
+      upsertWatermark(sqlite, {
+        scope_key: key,
+        projection_revision: nextRevision,
+        high_watermarks: input.source_high_watermarks,
+        last_noop_hash: input.no_op_hash ?? null,
+        updated_at: input.created_at,
+      });
+      appendCycleResult(sqlite, {
+        cycle_id: input.cycle_id,
+        idempotency_key: scopedIdempotencyKey,
+        trigger_kind: input.trigger_kind,
+        scope_key: key,
+        projection_revision: nextRevision,
+        write_disposition: "written",
+        created_at: input.created_at,
+        result: input.result,
+      });
+      for (const block of input.pendingBlocks ?? []) {
+        if (scopeKey(block.scope) === key) upsertPendingBlock(sqlite, block);
+      }
+
+      return {
+        writeDisposition: "written",
+        projectionRevision: nextRevision,
+      };
+    });
+  }
+
+  async addPendingBlock(input: {
+    blockId?: string;
+    scope: AttentionScope;
+    triggerKind: string;
+    reason: string;
+    createdAt: string;
+  }): Promise<void> {
+    const db = await this.database();
+    db.transaction((sqlite) => upsertPendingBlock(sqlite, input));
+  }
+
+  async listPendingBlockScopeKeys(): Promise<string[]> {
+    const db = await this.database();
+    return db.read((sqlite) =>
+      (sqlite.prepare(`
+        SELECT DISTINCT scope_key
+        FROM attention_pending_blocks
+        WHERE cleared_at IS NULL
+        ORDER BY scope_key ASC
+      `).all() as Array<{ scope_key: string }>).map((row) => row.scope_key)
+    );
+  }
+
   async listAgendaItems(options: AttentionAgendaListOptions = {}): Promise<AgentAgendaItem[]> {
     const db = await this.database();
     return db.read((sqlite) => listAgendaItems(sqlite, options));
@@ -301,10 +688,13 @@ export class AttentionStateStore {
         reason: input.reason,
         auditRef: input.auditRef,
       }));
-      for (const item of suppressed) upsertAgendaItem(sqlite, item, {
-        suppressedAt: now,
-        suppressionReason: input.reason,
-      });
+      for (const item of suppressed) {
+        upsertAgendaItem(sqlite, item, {
+          suppressedAt: now,
+          suppressionReason: input.reason,
+        });
+        updateCurrentAgendaItemIfPresent(sqlite, item);
+      }
       return {
         suppressed_count: suppressed.length,
         agenda_item_ids: suppressed.map((item) => item.agenda_item_id),
@@ -324,7 +714,10 @@ export class AttentionStateStore {
         reason: input.reason,
         auditRef: input.auditRef,
       }));
-      for (const item of invalidated) upsertAgendaItem(sqlite, item);
+      for (const item of invalidated) {
+        upsertAgendaItem(sqlite, item);
+        updateCurrentAgendaItemIfPresent(sqlite, item);
+      }
       return {
         invalidated_count: invalidated.length,
         agenda_item_ids: invalidated.map((item) => item.agenda_item_id),
@@ -361,6 +754,387 @@ function listAttentionInputsStrict(sqlite: SqliteDatabase): AttentionInput[] {
     "emitted_at ASC, attention_input_id ASC",
     AttentionInputSchema,
   );
+}
+
+function readProjectionRevision(sqlite: SqliteDatabase, key: string): number {
+  const row = sqlite.prepare(`
+    SELECT projection_revision
+    FROM attention_cycle_watermarks
+    WHERE scope_key = ?
+  `).get(key) as { projection_revision: number } | undefined;
+  return row?.projection_revision ?? 0;
+}
+
+function appendAttentionEvent(sqlite: SqliteDatabase, event: AttentionEventLedgerRecord): void {
+  sqlite.prepare(`
+    INSERT INTO attention_event_ledger (
+      event_id,
+      event_type,
+      scope_key,
+      policy_epoch,
+      model_or_classifier_version,
+      experiment_id,
+      mode,
+      occurred_at,
+      compactable,
+      critical,
+      event_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(event_id) DO NOTHING
+  `).run(
+    event.event_id,
+    event.event_type,
+    scopeKey(event.scope),
+    event.policy_epoch,
+    event.model_or_classifier_version ?? null,
+    event.experiment_id ?? null,
+    event.mode,
+    event.occurred_at,
+    event.compactable ?? false ? 1 : 0,
+    event.critical ?? false ? 1 : 0,
+    JSON.stringify(event.event)
+  );
+}
+
+function upsertAttentionCluster(
+  sqlite: SqliteDatabase,
+  raw: AttentionCluster,
+  projectionRevision: number
+): void {
+  const cluster = AttentionClusterSchema.parse(raw);
+  sqlite.prepare(`
+    INSERT INTO attention_current_clusters (
+      cluster_id,
+      lifecycle,
+      scope_key,
+      policy_epoch,
+      projection_revision,
+      updated_at,
+      cluster_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(cluster_id) DO UPDATE SET
+      lifecycle = excluded.lifecycle,
+      scope_key = excluded.scope_key,
+      policy_epoch = excluded.policy_epoch,
+      projection_revision = excluded.projection_revision,
+      updated_at = excluded.updated_at,
+      cluster_json = excluded.cluster_json
+  `).run(
+    cluster.id,
+    cluster.lifecycle,
+    scopeKey(cluster.scope),
+    cluster.scope.policyEpoch,
+    projectionRevision,
+    cluster.updatedAt,
+    JSON.stringify(cluster)
+  );
+}
+
+function upsertCurrentAgenda(
+  sqlite: SqliteDatabase,
+  raw: AgentAgendaItem,
+  projectionRevision: number
+): void {
+  const item = AgentAgendaItemSchema.parse(raw);
+  sqlite.prepare(`
+    INSERT INTO attention_current_agenda (
+      agenda_item_id,
+      cluster_id,
+      status,
+      scope_key,
+      policy_epoch,
+      projection_revision,
+      updated_at,
+      agenda_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(agenda_item_id) DO UPDATE SET
+      cluster_id = excluded.cluster_id,
+      status = excluded.status,
+      scope_key = excluded.scope_key,
+      policy_epoch = excluded.policy_epoch,
+      projection_revision = excluded.projection_revision,
+      updated_at = excluded.updated_at,
+      agenda_json = excluded.agenda_json
+  `).run(
+    item.agenda_item_id,
+    item.clusterRef?.id ?? null,
+    item.current_posture,
+    scopeKey(item.scope),
+    item.policyEpoch,
+    projectionRevision,
+    item.updated_at,
+    JSON.stringify(item)
+  );
+}
+
+function updateCurrentAgendaItemIfPresent(
+  sqlite: SqliteDatabase,
+  raw: AgentAgendaItem,
+): void {
+  const item = AgentAgendaItemSchema.parse(raw);
+  sqlite.prepare(`
+    UPDATE attention_current_agenda
+    SET cluster_id = ?,
+      status = ?,
+      scope_key = ?,
+      policy_epoch = ?,
+      updated_at = ?,
+      agenda_json = json(?)
+    WHERE agenda_item_id = ?
+  `).run(
+    item.clusterRef?.id ?? null,
+    item.current_posture,
+    scopeKey(item.scope),
+    item.policyEpoch,
+    item.updated_at,
+    JSON.stringify(item),
+    item.agenda_item_id
+  );
+}
+
+function upsertDecomposition(
+  sqlite: SqliteDatabase,
+  raw: AgendaDecomposition,
+  projectionRevision: number
+): void {
+  const decomposition = AgendaDecompositionSchema.parse(raw);
+  sqlite.prepare(`
+    INSERT INTO attention_decompositions (
+      decomposition_id,
+      agenda_item_id,
+      cluster_id,
+      status,
+      scope_key,
+      policy_epoch,
+      projection_revision,
+      updated_at,
+      decomposition_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(decomposition_id) DO UPDATE SET
+      agenda_item_id = excluded.agenda_item_id,
+      cluster_id = excluded.cluster_id,
+      status = excluded.status,
+      scope_key = excluded.scope_key,
+      policy_epoch = excluded.policy_epoch,
+      projection_revision = excluded.projection_revision,
+      updated_at = excluded.updated_at,
+      decomposition_json = excluded.decomposition_json
+  `).run(
+    decomposition.id,
+    decomposition.agendaRef.id,
+    decomposition.clusterRef.id,
+    decomposition.status,
+    scopeKey(decomposition.scope),
+    decomposition.scope.policyEpoch,
+    projectionRevision,
+    decomposition.updatedAt,
+    JSON.stringify(decomposition)
+  );
+}
+
+function upsertAdmissionProposal(
+  sqlite: SqliteDatabase,
+  raw: AttentionAdmissionCandidate,
+  updatedAt: string
+): void {
+  sqlite.prepare(`
+    INSERT INTO attention_admission_proposals (
+      proposal_id,
+      child_id,
+      idempotency_key,
+      state,
+      runtime_operation_id,
+      created_at,
+      updated_at,
+      proposal_json
+    )
+    VALUES (?, ?, ?, ?, NULL, ?, ?, json(?))
+    ON CONFLICT(proposal_id) DO UPDATE SET
+      state = CASE
+        WHEN attention_admission_proposals.state IN ('confirmed', 'terminal')
+          THEN attention_admission_proposals.state
+        ELSE excluded.state
+      END,
+      child_id = excluded.child_id,
+      idempotency_key = excluded.idempotency_key,
+      runtime_operation_id = CASE
+        WHEN attention_admission_proposals.state IN ('confirmed', 'terminal')
+          THEN attention_admission_proposals.runtime_operation_id
+        ELSE NULL
+      END,
+      updated_at = excluded.updated_at,
+      proposal_json = CASE
+        WHEN attention_admission_proposals.state IN ('confirmed', 'terminal')
+          THEN attention_admission_proposals.proposal_json
+        ELSE excluded.proposal_json
+      END
+  `).run(
+    raw.candidateId,
+    raw.child.id,
+    raw.idempotencyKey,
+    raw.proposalState,
+    raw.createdAt,
+    updatedAt,
+    JSON.stringify(raw),
+  );
+}
+
+function listAdmissionProposals(
+  sqlite: SqliteDatabase,
+  options: AttentionAdmissionProposalListOptions,
+): AttentionAdmissionProposalRecord[] {
+  const states = options.states ?? [];
+  const where = states.length > 0
+    ? `WHERE state IN (${states.map(() => "?").join(", ")})`
+    : "";
+  const rows = sqlite.prepare(`
+    SELECT proposal_id, child_id, idempotency_key, state, runtime_operation_id, created_at, updated_at, proposal_json
+    FROM attention_admission_proposals
+    ${where}
+    ORDER BY updated_at ASC, proposal_id ASC
+  `).all(...states) as Array<{
+    proposal_id: string;
+    child_id: string;
+    idempotency_key: string;
+    state: AttentionAdmissionCandidate["proposalState"];
+    runtime_operation_id: string | null;
+    created_at: string;
+    updated_at: string;
+    proposal_json: string;
+  }>;
+  return rows.flatMap((row) => {
+    try {
+      return [{
+        proposal_id: row.proposal_id,
+        child_id: row.child_id,
+        idempotency_key: row.idempotency_key,
+        state: row.state,
+        runtime_operation_id: row.runtime_operation_id,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        proposal: JSON.parse(row.proposal_json) as AttentionAdmissionCandidate,
+      }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function listPendingBlocks(sqlite: SqliteDatabase, key: string | null): AttentionPendingBlockRecord[] {
+  const rows = sqlite.prepare(`
+    SELECT block_id, scope_key, trigger_kind, reason, created_at, cleared_at
+    FROM attention_pending_blocks
+    WHERE cleared_at IS NULL
+      ${key ? "AND scope_key = ?" : ""}
+    ORDER BY created_at ASC, block_id ASC
+  `).all(...(key ? [key] : [])) as AttentionPendingBlockRecord[];
+  return rows;
+}
+
+function upsertPendingBlock(sqlite: SqliteDatabase, input: AttentionPendingBlockWriteInput): void {
+  sqlite.prepare(`
+    INSERT INTO attention_pending_blocks (
+      block_id,
+      scope_key,
+      trigger_kind,
+      reason,
+      created_at,
+      cleared_at
+    )
+    VALUES (?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(block_id) DO UPDATE SET
+      reason = excluded.reason,
+      cleared_at = NULL
+  `).run(
+    input.blockId ?? `attention-block:${stableId(`${scopeKey(input.scope)}:${input.triggerKind}`)}`,
+    scopeKey(input.scope),
+    input.triggerKind,
+    input.reason,
+    input.createdAt,
+  );
+}
+
+function upsertWatermark(
+  sqlite: SqliteDatabase,
+  input: {
+    scope_key: string;
+    projection_revision: number;
+    high_watermarks: readonly string[];
+    last_noop_hash: string | null;
+    updated_at: string;
+  }
+): void {
+  sqlite.prepare(`
+    INSERT INTO attention_cycle_watermarks (
+      scope_key,
+      projection_revision,
+      last_high_watermarks_json,
+      last_noop_hash,
+      updated_at
+    )
+    VALUES (?, ?, json(?), ?, ?)
+    ON CONFLICT(scope_key) DO UPDATE SET
+      projection_revision = excluded.projection_revision,
+      last_high_watermarks_json = excluded.last_high_watermarks_json,
+      last_noop_hash = excluded.last_noop_hash,
+      updated_at = excluded.updated_at
+  `).run(
+    input.scope_key,
+    input.projection_revision,
+    JSON.stringify(input.high_watermarks),
+    input.last_noop_hash,
+    input.updated_at
+  );
+}
+
+function appendCycleResult(
+  sqlite: SqliteDatabase,
+  input: {
+    cycle_id: string;
+    idempotency_key: string;
+    trigger_kind: string;
+    scope_key: string;
+    projection_revision: number;
+    write_disposition: AttentionMetabolismWriteDisposition;
+    created_at: string;
+    result: Record<string, unknown>;
+  }
+): void {
+  sqlite.prepare(`
+    INSERT INTO attention_cycle_results (
+      cycle_id,
+      idempotency_key,
+      trigger_kind,
+      scope_key,
+      projection_revision,
+      write_disposition,
+      created_at,
+      result_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(idempotency_key) DO NOTHING
+  `).run(
+    input.cycle_id,
+    input.idempotency_key,
+    input.trigger_kind,
+    input.scope_key,
+    input.projection_revision,
+    input.write_disposition,
+    input.created_at,
+    JSON.stringify(input.result)
+  );
+}
+
+function deleteCycleResultByIdempotencyKey(sqlite: SqliteDatabase, idempotencyKey: string): void {
+  sqlite.prepare(`
+    DELETE FROM attention_cycle_results
+    WHERE idempotency_key = ?
+      AND write_disposition = 'stale_rejected'
+  `).run(idempotencyKey);
 }
 
 function appendAttentionInputs(
@@ -767,6 +1541,22 @@ function upsertExpressionDecision(sqlite: SqliteDatabase, raw: ExpressionDecisio
 }
 
 function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
+  if (options.forceLegacy) return listLegacyAgendaItems(sqlite, options);
+
+  const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
+  const legacyAgenda = listLegacyAgendaItems(sqlite, options);
+  return mergeCurrentAndLegacyAgendaItems(currentAgenda, legacyAgenda, options);
+}
+
+function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
+  if (options.forceLegacy) return listLegacyAgendaItemsStrict(sqlite, options);
+
+  const currentAgenda = listCurrentAgendaItemsStrict(sqlite, { scopeKey: options.scopeKey ?? null });
+  const legacyAgenda = listLegacyAgendaItemsStrict(sqlite, options);
+  return mergeCurrentAndLegacyAgendaItems(currentAgenda, legacyAgenda, options);
+}
+
+function listLegacyAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
   const rows = sqlite.prepare(`
     SELECT lifecycle, agenda_json
     FROM attention_agenda_items
@@ -775,11 +1565,12 @@ function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOpt
   return rows.flatMap((row) => {
     if (!options.includeSuppressed && row.lifecycle === "suppressed") return [];
     if (!options.includeTerminal && (row.lifecycle === "terminal" || row.lifecycle === "stale")) return [];
-    return parseStored<AgentAgendaItem>(row.agenda_json, AgentAgendaItemSchema);
+    return parseStored<AgentAgendaItem>(row.agenda_json, AgentAgendaItemSchema)
+      .filter((item) => !options.scopeKey || scopeKey(item.scope) === options.scopeKey);
   });
 }
 
-function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
+function listLegacyAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
   const rows = sqlite.prepare(`
     SELECT lifecycle, agenda_json
     FROM attention_agenda_items
@@ -788,12 +1579,111 @@ function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaL
   return rows.flatMap((row, index) => {
     if (!options.includeSuppressed && row.lifecycle === "suppressed") return [];
     if (!options.includeTerminal && (row.lifecycle === "terminal" || row.lifecycle === "stale")) return [];
-    return [parseStoredStrict<AgentAgendaItem>(
+    const item = parseStoredStrict<AgentAgendaItem>(
       row.agenda_json,
       AgentAgendaItemSchema,
       `attention_agenda_items.agenda_json[${index}]`
-    )];
+    );
+    return !options.scopeKey || scopeKey(item.scope) === options.scopeKey ? [item] : [];
   });
+}
+
+function mergeCurrentAndLegacyAgendaItems(
+  currentAgenda: readonly AgentAgendaItem[],
+  legacyAgenda: readonly AgentAgendaItem[],
+  options: AttentionAgendaListOptions,
+): AgentAgendaItem[] {
+  if (currentAgenda.length === 0) return [...legacyAgenda];
+
+  const legacyById = new Map(legacyAgenda.map((item) => [item.agenda_item_id, item]));
+  const current = currentAgenda
+    .map((item) => {
+      const legacyMutation = legacyById.get(item.agenda_item_id);
+      return shouldPreferLegacyAgendaMutation(item, legacyMutation) ? legacyMutation! : item;
+    })
+    .filter((item) => includeAgendaItem(item, options));
+  if (options.scopeKey) return current;
+
+  const currentScopeKeys = new Set(currentAgenda.map((item) => scopeKey(item.scope)));
+  const currentItemIds = new Set(currentAgenda.map((item) => item.agenda_item_id));
+  return [
+    ...current,
+    ...legacyAgenda.filter((item) =>
+      !currentItemIds.has(item.agenda_item_id) && !currentScopeKeys.has(scopeKey(item.scope))
+    ),
+  ].sort(compareAgendaItems);
+}
+
+function shouldPreferLegacyAgendaMutation(
+  current: AgentAgendaItem,
+  legacy: AgentAgendaItem | undefined,
+): boolean {
+  if (!legacy) return false;
+  if (legacy.updated_at.localeCompare(current.updated_at) <= 0) return false;
+  const legacyLifecycle = lifecycleForAgenda(legacy);
+  return legacyLifecycle === "suppressed" || legacyLifecycle === "stale" || legacyLifecycle === "terminal";
+}
+
+function compareAgendaItems(left: AgentAgendaItem, right: AgentAgendaItem): number {
+  return left.updated_at.localeCompare(right.updated_at)
+    || left.agenda_item_id.localeCompare(right.agenda_item_id);
+}
+
+function listCurrentAgendaItems(
+  sqlite: SqliteDatabase,
+  options: { scopeKey?: string | null } = {},
+): AgentAgendaItem[] {
+  const rows = sqlite.prepare(`
+    SELECT agenda_json
+    FROM attention_current_agenda
+    ${options.scopeKey ? "WHERE scope_key = ?" : ""}
+    ORDER BY updated_at ASC, agenda_item_id ASC
+  `).all(...(options.scopeKey ? [options.scopeKey] : [])) as Array<{ agenda_json: string }>;
+  return rows.flatMap((row) => parseStored<AgentAgendaItem>(row.agenda_json, AgentAgendaItemSchema));
+}
+
+function listCurrentAgendaItemsStrict(
+  sqlite: SqliteDatabase,
+  options: { scopeKey?: string | null } = {},
+): AgentAgendaItem[] {
+  const rows = sqlite.prepare(`
+    SELECT agenda_json
+    FROM attention_current_agenda
+    ${options.scopeKey ? "WHERE scope_key = ?" : ""}
+    ORDER BY updated_at ASC, agenda_item_id ASC
+  `).all(...(options.scopeKey ? [options.scopeKey] : [])) as Array<{ agenda_json: string }>;
+  return rows.map((row, index) => parseStoredStrict<AgentAgendaItem>(
+    row.agenda_json,
+    AgentAgendaItemSchema,
+    `attention_current_agenda.agenda_json[${index}]`
+  ));
+}
+
+function listConcernClusters(sqlite: SqliteDatabase, key: string | null): AttentionCluster[] {
+  const rows = sqlite.prepare(`
+    SELECT cluster_json
+    FROM attention_current_clusters
+    ${key ? "WHERE scope_key = ?" : ""}
+    ORDER BY updated_at ASC, cluster_id ASC
+  `).all(...(key ? [key] : [])) as Array<{ cluster_json: string }>;
+  return rows.flatMap((row) => parseStored<AttentionCluster>(row.cluster_json, AttentionClusterSchema));
+}
+
+function listConcernDecompositions(sqlite: SqliteDatabase, key: string | null): AgendaDecomposition[] {
+  const rows = sqlite.prepare(`
+    SELECT decomposition_json
+    FROM attention_decompositions
+    ${key ? "WHERE scope_key = ?" : ""}
+    ORDER BY updated_at ASC, decomposition_id ASC
+  `).all(...(key ? [key] : [])) as Array<{ decomposition_json: string }>;
+  return rows.flatMap((row) => parseStored<AgendaDecomposition>(row.decomposition_json, AgendaDecompositionSchema));
+}
+
+function includeAgendaItem(item: AgentAgendaItem, options: AttentionAgendaListOptions): boolean {
+  const lifecycle = lifecycleForAgenda(item);
+  if (!options.includeSuppressed && lifecycle === "suppressed") return false;
+  if (!options.includeTerminal && (lifecycle === "terminal" || lifecycle === "stale")) return false;
+  return true;
 }
 
 function listJsonColumn<T>(
@@ -995,4 +1885,8 @@ function agendaReferencesAny(item: AgentAgendaItem, refs: ReadonlySet<string>): 
     ...item.source_urge_refs,
   ];
   return candidates.some((candidate) => refs.has(refKey(candidate)));
+}
+
+function scopeKey(scope: AttentionScope): string {
+  return attentionScopeKey(scope);
 }

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 29;
+export const CONTROL_DB_SCHEMA_VERSION = 30;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -441,6 +441,143 @@ CREATE INDEX IF NOT EXISTS feedback_ingestion_effects_feedback_idx
 
 CREATE INDEX IF NOT EXISTS feedback_ingestion_effects_target_idx
   ON feedback_ingestion_effects(target_ref, effect_kind, created_at);
+`.trim();
+
+export const CONTROL_DB_ATTENTION_METABOLISM_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS attention_event_ledger (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'signal_observed',
+    'urge_created',
+    'cluster_merged',
+    'cluster_split',
+    'matured',
+    'suppressed',
+    'forgotten',
+    'agenda_projected',
+    'decomposed',
+    'admitted',
+    'rejected',
+    'outcome_recorded',
+    'correction_received',
+    'invalidated'
+  )),
+  scope_key TEXT NOT NULL,
+  policy_epoch TEXT NOT NULL,
+  model_or_classifier_version TEXT,
+  experiment_id TEXT,
+  mode TEXT NOT NULL CHECK (mode IN ('shadow', 'live')),
+  occurred_at TEXT NOT NULL,
+  compactable INTEGER NOT NULL CHECK (compactable IN (0, 1)),
+  critical INTEGER NOT NULL CHECK (critical IN (0, 1)),
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_event_ledger_scope_idx
+  ON attention_event_ledger(scope_key, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS attention_event_ledger_type_idx
+  ON attention_event_ledger(event_type, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS attention_current_clusters (
+  cluster_id TEXT PRIMARY KEY,
+  lifecycle TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  policy_epoch TEXT NOT NULL,
+  projection_revision INTEGER NOT NULL CHECK (projection_revision >= 0),
+  updated_at TEXT NOT NULL,
+  cluster_json TEXT NOT NULL CHECK (json_valid(cluster_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_current_clusters_scope_idx
+  ON attention_current_clusters(scope_key, lifecycle, updated_at, cluster_id);
+
+CREATE TABLE IF NOT EXISTS attention_current_agenda (
+  agenda_item_id TEXT PRIMARY KEY,
+  cluster_id TEXT,
+  status TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  policy_epoch TEXT NOT NULL,
+  projection_revision INTEGER NOT NULL CHECK (projection_revision >= 0),
+  updated_at TEXT NOT NULL,
+  agenda_json TEXT NOT NULL CHECK (json_valid(agenda_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_current_agenda_scope_idx
+  ON attention_current_agenda(scope_key, status, updated_at, agenda_item_id);
+
+CREATE TABLE IF NOT EXISTS attention_decompositions (
+  decomposition_id TEXT PRIMARY KEY,
+  agenda_item_id TEXT NOT NULL,
+  cluster_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  policy_epoch TEXT NOT NULL,
+  projection_revision INTEGER NOT NULL CHECK (projection_revision >= 0),
+  updated_at TEXT NOT NULL,
+  decomposition_json TEXT NOT NULL CHECK (json_valid(decomposition_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_decompositions_scope_idx
+  ON attention_decompositions(scope_key, status, updated_at, decomposition_id);
+
+CREATE INDEX IF NOT EXISTS attention_decompositions_agenda_idx
+  ON attention_decompositions(agenda_item_id, updated_at, decomposition_id);
+
+CREATE TABLE IF NOT EXISTS attention_cycle_results (
+  cycle_id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  trigger_kind TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  projection_revision INTEGER NOT NULL CHECK (projection_revision >= 0),
+  write_disposition TEXT NOT NULL CHECK (write_disposition IN ('written', 'no_op_elided', 'stale_rejected', 'budget_dropped')),
+  created_at TEXT NOT NULL,
+  result_json TEXT NOT NULL CHECK (json_valid(result_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_cycle_results_scope_idx
+  ON attention_cycle_results(scope_key, created_at, cycle_id);
+
+CREATE TABLE IF NOT EXISTS attention_cycle_watermarks (
+  scope_key TEXT PRIMARY KEY,
+  projection_revision INTEGER NOT NULL CHECK (projection_revision >= 0),
+  last_high_watermarks_json TEXT NOT NULL CHECK (json_valid(last_high_watermarks_json)),
+  last_noop_hash TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attention_pending_blocks (
+  block_id TEXT PRIMARY KEY,
+  scope_key TEXT NOT NULL,
+  trigger_kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  cleared_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS attention_pending_blocks_scope_idx
+  ON attention_pending_blocks(scope_key, cleared_at, created_at, block_id);
+
+CREATE TABLE IF NOT EXISTS attention_admission_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  child_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL CHECK (state IN (
+    'proposed',
+    'pending_handoff',
+    'handed_off',
+    'confirmed',
+    'terminal',
+    'orphaned_needs_reconcile'
+  )),
+  runtime_operation_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_admission_proposals_state_idx
+  ON attention_admission_proposals(state, updated_at, proposal_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -2050,5 +2187,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     29,
     "feedback-ingestion-runtime-state",
     CONTROL_DB_FEEDBACK_INGESTION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    30,
+    "attention-concern-metabolism-runtime-state",
+    CONTROL_DB_ATTENTION_METABOLISM_SCHEMA_SQL
   ),
 ];

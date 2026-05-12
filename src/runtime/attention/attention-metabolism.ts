@@ -49,6 +49,7 @@ import type {
 } from "./attention-metabolism-types.js";
 export {
   mergeUrgesIntoAgenda,
+  projectClustersToAgenda,
   runtimeItemsForAgenda,
 } from "./attention-agenda.js";
 export type {
@@ -64,6 +65,7 @@ import {
   uniqueRefs,
   uniqueSourceRefs,
 } from "./attention-refs.js";
+import { deriveAttentionScopeFromSignalContext } from "./attention-scope.js";
 import {
   AgentAgendaItemSchema,
   AutonomyCheckSchema,
@@ -275,6 +277,17 @@ export function createUrgeCandidate(input: UrgeCandidateAssemblyInput): UrgeCand
   const maturationState = input.maturation_state ?? (
     input.confidence >= 0.65 && input.strength >= 0.5 ? "warming" : "new"
   );
+  const scope = input.scope ?? deriveAttentionScopeFromSignalContext({
+    signalContext: input.signal_context,
+    policyEpoch: input.policyEpoch,
+    sensitivity: input.sensitivity,
+  });
+  const signalRefs = uniqueSourceRefs(input.signalRefs ?? evidenceRefs);
+  const structuredRefs = input.structuredRefs ?? [
+    { ref: input.target, relation: "about", strength: 1 },
+    ...input.signal_context.current_goal_refs.map((goalRef) => ({ ref: goalRef, relation: "about" as const, strength: 0.8 })),
+    ...input.signal_context.runtime_state_refs.map((runtimeRef) => ({ ref: runtimeRef, relation: "caused_by" as const, strength: 0.7 })),
+  ];
 
   return UrgeCandidateSchema.parse({
     urge_id: input.urge_id,
@@ -303,6 +316,39 @@ export function createUrgeCandidate(input: UrgeCandidateAssemblyInput): UrgeCand
       reinforcement_refs: evidenceRefs,
       blocker_refs: [],
     },
+    scope,
+    signalRefs,
+    structuredRefs,
+    semanticFingerprint: input.semanticFingerprint ?? null,
+    semanticProviderId: input.semanticProviderId ?? null,
+    semanticProviderVersion: input.semanticProviderVersion ?? null,
+    sourceDiversity: {
+      sourceKinds: unique(input.signal_context.signal_sources),
+      independentSourceCount: signalRefs.length,
+      repeatedSourceCount: Math.max(0, evidenceRefs.length - signalRefs.length),
+    },
+    stalenessSnapshot: {
+      state: input.signal_context.stale_target_context.needs_regrounding_refs.length > 0
+        ? "needs_regrounding"
+        : input.signal_context.stale_target_context.stale_refs.length > 0
+          ? "stale"
+          : "fresh",
+      observedAt: input.signal_context.assembled_at,
+      sourceHighWatermark: input.signal_context.signal_context_id,
+      reason: input.signal_context.stale_target_context.needs_regrounding_refs.length > 0
+        ? "signal context requested regrounding"
+        : input.signal_context.stale_target_context.stale_refs.length > 0
+          ? "signal context carries stale refs"
+          : "signal context is current for this attention cycle",
+    },
+    evidenceStrength: input.evidenceStrength ?? (
+      input.strength >= 0.75 && signalRefs.length > 1 ? "strong" : input.strength >= 0.45 ? "moderate" : "weak"
+    ),
+    uncertainty: input.uncertainty ?? Number((1 - input.confidence).toFixed(4)),
+    conflictMarkers: [],
+    policyEpoch: scope.policyEpoch,
+    modelOrClassifierVersion: input.modelOrClassifierVersion ?? null,
+    replayableInputRefs: input.replayableInputRefs ?? [ref("signal_context", input.signal_context.signal_context_id)],
     audit_refs: input.audit_refs ?? [],
   });
 }

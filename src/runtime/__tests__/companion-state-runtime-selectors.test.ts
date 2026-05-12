@@ -228,6 +228,42 @@ describe("companion state runtime selectors", () => {
     expect(selectNonSuspendedMode(makeReducerInput({ runtime_items: [] }), [], emptyRuntimeSignals())).toBe("resting");
   });
 
+  it("uses only fresh agent agenda items for attention-derived watching mode", () => {
+    const freshAgenda = makeRuntimeItem({
+      item_id: "agenda:fresh",
+      type: "agent_agenda_item",
+      status: "mature",
+      posture: "proposed",
+      authority: {
+        ...operationalAuthority,
+        resumable: false,
+        actionable: false,
+        speakable: false,
+        requires_confirmation: true,
+        approval_scope: "inspect_only",
+      },
+    });
+    const staleAgenda = makeRuntimeItem({
+      ...freshAgenda,
+      item_id: "agenda:stale",
+      staleness: {
+        ...currentStaleness,
+        temporal: { outcome: "needs_regrounding", reason: "previous turn agenda is stale" },
+      },
+    });
+
+    expect(selectNonSuspendedMode(
+      makeReducerInput({ runtime_items: [freshAgenda] }),
+      [],
+      emptyRuntimeSignals(),
+    )).toBe("watching");
+    expect(selectNonSuspendedMode(
+      makeReducerInput({ runtime_items: [staleAgenda] }),
+      [],
+      emptyRuntimeSignals(),
+    )).toBe("resting");
+  });
+
   it("collects deterministic input refs from reducer inputs and structured runtime events", () => {
     const refs = inputRefs(makeReducerInput({
       runtime_items: [makeRuntimeItem({ item_id: "run:1" })],

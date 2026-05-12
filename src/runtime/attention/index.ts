@@ -24,6 +24,81 @@ export type {
   SchedulerWakeAttentionInputsInput,
 } from "./attention-input.js";
 export {
+  deriveAttentionScopeFromSignalContext,
+  attentionScopeKey,
+  decideScopeCompatibility,
+  deriveClusterScope,
+  derivePermissionScope,
+  permissionScopeAllowsAuthority,
+} from "./attention-scope.js";
+export type {
+  ScopeCompatibilityDecision,
+} from "./attention-scope.js";
+export {
+  DeterministicSemanticFingerprintProvider,
+  decideAttentionSimilarity,
+} from "./attention-semantic.js";
+export type {
+  AttentionSimilarityDecision,
+  AttentionSimilarityInput,
+  SemanticFingerprintInput,
+  SemanticFingerprintProvider,
+  SemanticFingerprintResult,
+} from "./attention-semantic.js";
+export {
+  createAttentionClusterFromUrge,
+  mergeUrgesIntoClusters,
+} from "./attention-clustering.js";
+export type {
+  MergeUrgesIntoClustersInput,
+  MergeUrgesIntoClustersResult,
+} from "./attention-clustering.js";
+export {
+  promoteAttentionCluster,
+  promoteAttentionClusters,
+} from "./attention-promotion.js";
+export type {
+  PromoteAttentionClustersInput,
+} from "./attention-promotion.js";
+export {
+  decomposeAgenda,
+  decomposeAgendaItem,
+} from "./attention-decomposition.js";
+export type {
+  DecomposeAgendaInput,
+} from "./attention-decomposition.js";
+export {
+  assembleCapabilityPlansForAttentionAdmissions,
+  buildAttentionAdmissionCandidates,
+  scopeBlockKey,
+} from "./attention-admission.js";
+export type {
+  AttentionAdmissionCandidate,
+  AttentionAdmissionProposalState,
+} from "./attention-admission.js";
+export {
+  runAttentionCycle,
+} from "./attention-cycle.js";
+export type {
+  AttentionAuditRef,
+  AttentionClusterUpdate,
+  AttentionCycleInput,
+  AttentionCycleResult,
+  AttentionCycleTrigger,
+  AttentionSafetyTrigger,
+  AttentionSilenceReason,
+  AttentionSourceHighWatermark,
+} from "./attention-cycle.js";
+export {
+  AttentionDiagnosticViewSchema,
+  createAttentionDiagnostics,
+} from "./attention-diagnostics.js";
+export type {
+  AttentionConcernDiagnostic,
+  AttentionDiagnosticView,
+  AttentionDiagnostics,
+} from "./attention-diagnostics.js";
+export {
   AttentionFeedbackKindValues,
   admitInitiativeGateDecision,
   advanceAttentionMaturation,
@@ -36,6 +111,7 @@ export {
   createUrgeCandidate,
   decideInhibition,
   mergeUrgesIntoAgenda,
+  projectClustersToAgenda,
   ref,
   renderExpressionDecisionForSurface,
   reevaluateSchedulerWakeThroughAttention,

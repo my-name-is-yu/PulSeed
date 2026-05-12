@@ -21,8 +21,8 @@ describe("FeedbackIngestionStore", () => {
     try {
       const db = await openControlDatabase({ baseDir: tmpDir });
       try {
-        expect(CONTROL_DB_SCHEMA_VERSION).toBe(29);
-        expect(db.schemaVersion()).toBe(29);
+        expect(CONTROL_DB_SCHEMA_VERSION).toBe(30);
+        expect(db.schemaVersion()).toBe(30);
         const tables = db.read((sqlite) =>
           sqlite.prepare(`
             SELECT name

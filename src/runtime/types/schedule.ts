@@ -212,6 +212,7 @@ export type ScheduleRetryPolicy = z.infer<typeof ScheduleRetryPolicySchema>;
 export const ScheduleRetryStateSchema = z.object({
   attempts: z.number().finite().int().nonnegative().max(MAX_SCHEDULE_RETRY_ATTEMPTS).default(0),
   next_retry_at: z.string().datetime().nullable().default(null),
+  scheduled_for: z.string().datetime().nullable().default(null),
   last_attempt_at: z.string().datetime().nullable().default(null),
   first_failure_at: z.string().datetime().nullable().default(null),
   last_failure_kind: ScheduleFailureKindSchema.nullable().default(null),

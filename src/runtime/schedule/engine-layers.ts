@@ -394,6 +394,7 @@ export async function executeGoalTrigger(
         entry_name: entry.name,
         activation_kind: "wait_resume",
         fired_at: firedAt,
+        scheduled_for: scheduledFor,
       });
       const projection = buildWaitResumeAttentionProjection(reevaluation, firedAt);
       const capabilityOperationPlanAssembly = assembleScheduleOperationPlans({

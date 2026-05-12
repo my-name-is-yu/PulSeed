@@ -9,13 +9,16 @@ import {
   createAttentionInput,
   createExpressionDecisionForOutcome,
   createUrgeCandidate,
+  decomposeAgenda,
   decideInhibition,
+  buildAttentionAdmissionCandidates,
   mergeUrgesIntoAgenda,
   ref,
   selectInitiativeGateDecision,
 } from "../../attention/index.js";
 import type {
   AgentAgendaItem,
+  AttentionScope,
   AutonomyCheck,
   CompanionAutonomyRef,
 } from "../../types/companion-autonomy.js";
@@ -28,6 +31,22 @@ import {
 
 const NOW = "2026-05-12T00:00:00.000Z";
 const LATER = "2026-05-12T00:05:00.000Z";
+
+function scope(id: string): AttentionScope {
+  return {
+    userId: `user:${id}`,
+    identityId: `identity:${id}`,
+    workspaceId: `workspace:${id}`,
+    conversationId: `conversation:${id}`,
+    sessionId: `session:${id}`,
+    surfaceClass: "daemon",
+    surfaceRef: `surface:${id}`,
+    permissionScope: "local_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: `policy:${id}`,
+  };
+}
 
 function check(kind: AutonomyCheck["kind"], status: AutonomyCheck["status"] = "passed"): AutonomyCheck {
   return {
@@ -176,8 +195,8 @@ describe("AttentionStateStore", () => {
 
       const upgraded = await openControlDatabase({ baseDir: tmpDir });
       try {
-        expect(CONTROL_DB_SCHEMA_VERSION).toBe(29);
-        expect(upgraded.schemaVersion()).toBe(29);
+        expect(CONTROL_DB_SCHEMA_VERSION).toBe(30);
+        expect(upgraded.schemaVersion()).toBe(30);
         const tables = upgraded.read((sqlite) =>
           sqlite.prepare(`
             SELECT name
@@ -187,13 +206,21 @@ describe("AttentionStateStore", () => {
           `).all() as Array<{ name: string }>
         ).map((row) => row.name);
         expect(tables).toEqual([
+          "attention_admission_proposals",
           "attention_agenda_items",
+          "attention_current_agenda",
+          "attention_current_clusters",
+          "attention_cycle_results",
+          "attention_cycle_watermarks",
+          "attention_decompositions",
+          "attention_event_ledger",
           "attention_expression_decisions",
           "attention_inhibition_decisions",
           "attention_initiative_gate_decisions",
           "attention_input_replay_records",
           "attention_inputs",
           "attention_outcome_decisions",
+          "attention_pending_blocks",
           "attention_signal_contexts",
           "attention_urge_candidates",
         ]);
@@ -293,6 +320,90 @@ describe("AttentionStateStore", () => {
       } finally {
         secondDb.close();
       }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("merges legacy agenda rows for scopes that do not have current projections", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-partial-rollout-");
+    try {
+      const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const legacyScope = scope("legacy");
+      const currentScope = scope("current");
+      const legacyCycle = durableAttentionCycle({
+        agendaIdSuffix: "legacy",
+        targetRef: ref("goal", "goal:attention-store:legacy"),
+      });
+      const currentCycle = durableAttentionCycle({
+        agendaIdSuffix: "current",
+        targetRef: ref("goal", "goal:attention-store:current"),
+      });
+      const currentScopeLegacyCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-legacy",
+        targetRef: ref("goal", "goal:attention-store:current-legacy"),
+      });
+      const legacyAgenda = {
+        ...legacyCycle.agendaItem,
+        scope: legacyScope,
+        policyEpoch: legacyScope.policyEpoch,
+      };
+      const currentAgenda = {
+        ...currentCycle.agendaItem,
+        scope: currentScope,
+        policyEpoch: currentScope.policyEpoch,
+      };
+      const currentScopeLegacyAgenda = {
+        ...currentScopeLegacyCycle.agendaItem,
+        scope: currentScope,
+        policyEpoch: currentScope.policyEpoch,
+      };
+
+      await saveCycle(store, {
+        ...legacyCycle,
+        agendaItem: legacyAgenda,
+      });
+      await saveCycle(store, {
+        ...currentScopeLegacyCycle,
+        agendaItem: currentScopeLegacyAgenda,
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-projection",
+        idempotency_key: "cycle:current-projection",
+        trigger_kind: "maintenance",
+        scope: currentScope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current:1"],
+        clusters: [],
+        agendaItems: [currentAgenda],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+
+      const agenda = await store.listAgendaItems();
+      expect(agenda).toEqual(expect.arrayContaining([
+        expect.objectContaining({ agenda_item_id: legacyAgenda.agenda_item_id }),
+        expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+      ]));
+      expect(agenda.map((item) => item.agenda_item_id)).not.toContain(currentScopeLegacyAgenda.agenda_item_id);
+      await expect(store.listRuntimeItems(LATER)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ item_id: legacyAgenda.agenda_item_id }),
+        expect.objectContaining({ item_id: currentAgenda.agenda_item_id }),
+      ]));
+      await expect(store.loadConcernState()).resolves.toMatchObject({
+        agenda_items: expect.arrayContaining([
+          expect.objectContaining({ agenda_item_id: legacyAgenda.agenda_item_id }),
+          expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+        ]),
+      });
+      await expect(store.loadConcernState({ scope: currentScope })).resolves.toMatchObject({
+        agenda_items: [
+          expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+        ],
+      });
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -563,6 +674,56 @@ describe("AttentionStateStore", () => {
     }
   });
 
+  it("fails strict decision snapshots on malformed current agenda rows", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-current-strict-");
+    try {
+      const db = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: db });
+        const currentScope = scope("current-strict");
+        const cycle = durableAttentionCycle({
+          agendaIdSuffix: "current-strict",
+          targetRef: ref("goal", "goal:attention-store:current-strict"),
+        });
+        const agendaItem = {
+          ...cycle.agendaItem,
+          scope: currentScope,
+          policyEpoch: currentScope.policyEpoch,
+        };
+        await store.saveMetabolismCycle({
+          cycle_id: "attention-cycle:current-strict",
+          idempotency_key: "cycle:current-strict",
+          trigger_kind: "maintenance",
+          scope: currentScope,
+          expected_projection_revision: 0,
+          source_high_watermarks: ["runtime_event:current-strict:1"],
+          clusters: [],
+          agendaItems: [agendaItem],
+          decompositions: [],
+          admissionProposals: [],
+          events: [],
+          result: { projected: true },
+          created_at: NOW,
+        });
+        db.transaction((sqlite) => {
+          sqlite.prepare(`
+            UPDATE attention_current_agenda
+            SET agenda_json = json(?)
+            WHERE agenda_item_id = ?
+          `).run(JSON.stringify({ wrong_shape: true }), agendaItem.agenda_item_id);
+        });
+
+        await expect(store.loadDecisionChainSnapshotStrict()).rejects.toThrow(
+          "attention_current_agenda.agenda_json[0]"
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("invalidates stale refs and excludes them from default agenda rehydrate", async () => {
     const tmpDir = makeTempDir("pulseed-attention-store-stale-");
     try {
@@ -644,6 +805,91 @@ describe("AttentionStateStore", () => {
     }
   });
 
+  it("applies control and invalidation mutations to current agenda projections", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-current-mutations-");
+    try {
+      const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const suppressedCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-suppress",
+        origin: "curiosity",
+        sourceKind: "resident_curiosity",
+        targetRef: ref("goal", "goal:attention-store:current-suppress"),
+      });
+      const invalidatedCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-invalidate",
+        targetRef: ref("goal", "goal:attention-store:current-invalidate"),
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-mutations",
+        idempotency_key: "cycle:current-mutations",
+        trigger_kind: "maintenance",
+        scope: suppressedCycle.agendaItem.scope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current-mutations:1"],
+        clusters: [],
+        agendaItems: [suppressedCycle.agendaItem],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+
+      await expect(store.suppressAgendaForControl({
+        control: "suppress_nonessential_agenda",
+        reason: "operator asked for quiet current attention",
+        now: LATER,
+      })).resolves.toMatchObject({
+        suppressed_count: 1,
+      });
+      await expect(store.listAgendaItems()).resolves.toEqual([]);
+      await expect(store.listAgendaItems({ includeSuppressed: true })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          agenda_item_id: suppressedCycle.agendaItem.agenda_item_id,
+          current_posture: "suppressed",
+          control_state: "suppressed",
+        }),
+      ]));
+
+      const invalidationStore = new AttentionStateStore(path.join(tmpDir, "runtime-invalidation"), { controlBaseDir: `${tmpDir}-invalidation` });
+      await invalidationStore.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-invalidation",
+        idempotency_key: "cycle:current-invalidation",
+        trigger_kind: "maintenance",
+        scope: invalidatedCycle.agendaItem.scope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current-invalidation:1"],
+        clusters: [],
+        agendaItems: [invalidatedCycle.agendaItem],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+      await expect(invalidationStore.invalidateRefs({
+        refs: [ref("goal", "goal:attention-store:current-invalidate")],
+        reason: "current projection target became stale",
+        now: LATER,
+      })).resolves.toEqual({
+        invalidated_count: 1,
+        agenda_item_ids: [invalidatedCycle.agendaItem.agenda_item_id],
+      });
+      await expect(invalidationStore.listAgendaItems()).resolves.toEqual([]);
+      await expect(invalidationStore.listAgendaItems({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          agenda_item_id: invalidatedCycle.agendaItem.agenda_item_id,
+          current_posture: "rejected_stale",
+          control_state: "expired",
+          staleness_state: "rejected",
+        }),
+      ]);
+    } finally {
+      cleanupTempDir(tmpDir);
+      cleanupTempDir(`${tmpDir}-invalidation`);
+    }
+  });
+
   it("does not retroactively suppress admitted agenda history", async () => {
     const tmpDir = makeTempDir("pulseed-attention-store-admitted-suppress-");
     try {
@@ -685,6 +931,82 @@ describe("AttentionStateStore", () => {
           current_posture: "admitted",
           maturation: expect.objectContaining({ state: "expressed" }),
         });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("loads representative old agenda rows as regrounding-only state before admission", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-old-agenda-");
+    try {
+      const db = await openControlDatabase({ baseDir: tmpDir });
+      try {
+        const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlDb: db });
+        const cycle = durableAttentionCycle({ agendaIdSuffix: "legacy-row" });
+        const legacyAgendaJson = { ...cycle.agendaItem } as Record<string, unknown>;
+        delete legacyAgendaJson.clusterRef;
+        delete legacyAgendaJson.carePosture;
+        delete legacyAgendaJson.revisitCondition;
+        delete legacyAgendaJson.abandonmentCondition;
+        delete legacyAgendaJson.suppressionReason;
+        delete legacyAgendaJson.commitmentLifecycle;
+        delete legacyAgendaJson.needsRegrounding;
+        delete legacyAgendaJson.scope;
+        delete legacyAgendaJson.policyEpoch;
+
+        db.transaction((sqlite) => {
+          sqlite.prepare(`
+            INSERT INTO attention_agenda_items (
+              agenda_item_id,
+              kind,
+              origin,
+              current_posture,
+              control_state,
+              lifecycle,
+              staleness_state,
+              revisit_kind,
+              revisit_due_at,
+              suppressed_at,
+              suppression_reason,
+              cooldown_until,
+              created_at,
+              updated_at,
+              stale_ref_count,
+              invalidation_ref_count,
+              audit_ref_count,
+              agenda_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, 0, 0, 0, json(?))
+          `).run(
+            cycle.agendaItem.agenda_item_id,
+            cycle.agendaItem.kind,
+            cycle.agendaItem.origin,
+            cycle.agendaItem.current_posture,
+            cycle.agendaItem.control_state,
+            "held",
+            cycle.agendaItem.staleness_state,
+            cycle.agendaItem.revisit_condition.kind,
+            cycle.agendaItem.created_at,
+            cycle.agendaItem.updated_at,
+            JSON.stringify(legacyAgendaJson),
+          );
+        });
+
+        const [agenda] = await store.listAgendaItems();
+        expect(agenda).toMatchObject({
+          agenda_item_id: cycle.agendaItem.agenda_item_id,
+          needsRegrounding: true,
+          scope: expect.objectContaining({
+            permissionScope: "unknown",
+            policyEpoch: "unknown",
+          }),
+        });
+
+        const decompositions = decomposeAgenda({ agendaItems: [agenda!], now: LATER });
+        expect(buildAttentionAdmissionCandidates({ decompositions, now: LATER })).toEqual([]);
       } finally {
         db.close();
       }
