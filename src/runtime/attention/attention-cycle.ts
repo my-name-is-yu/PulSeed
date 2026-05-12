@@ -107,6 +107,7 @@ export async function runAttentionCycle(input: {
   cycle: AttentionCycleInput;
 }): Promise<AttentionCycleResult> {
   const cycleId = `attention-cycle:${stableId(`${attentionScopeKey(input.cycle.scope)}:${input.cycle.cycleIdempotencyKey}`)}`;
+  const shouldClearPendingBlocks = input.cycle.trigger === "runtime_outcome";
 
   if (isPrioritySafetyTrigger(input.cycle.trigger, input.cycle.safetyTrigger)) {
     await input.store.addPendingBlock({
@@ -114,12 +115,6 @@ export async function runAttentionCycle(input: {
       triggerKind: input.cycle.safetyTrigger ?? input.cycle.trigger,
       reason: "priority safety trigger blocks stale admission cycles until committed",
       createdAt: input.cycle.now,
-    });
-  } else if (input.cycle.trigger === "runtime_outcome") {
-    await input.store.clearPendingBlocks({
-      scope: input.cycle.scope,
-      clearedAt: input.cycle.now,
-      reason: "runtime outcome committed; pending attention admission block reconciled",
     });
   }
 
@@ -241,6 +236,14 @@ export async function runAttentionCycle(input: {
       agendaUpdates: agenda,
       decompositions,
       silenceReasons,
+    });
+  }
+
+  if (shouldClearPendingBlocks) {
+    await input.store.clearPendingBlocks({
+      scope: input.cycle.scope,
+      clearedAt: input.cycle.now,
+      reason: "runtime outcome committed; pending attention admission block reconciled",
     });
   }
 

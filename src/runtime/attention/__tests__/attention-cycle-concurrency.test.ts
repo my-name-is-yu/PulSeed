@@ -282,6 +282,24 @@ describe("attention cycle persistence and concurrency", () => {
         }),
       ]);
 
+      const staleOutcome = await runAttentionCycle({
+        store,
+        cycle: {
+          now: "2026-05-12T01:04:00.000Z",
+          trigger: "runtime_outcome",
+          scope: scope(),
+          signalRefs: [sourceRef("runtime_event", "runtime:outcome:stale")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "stale" }],
+          expectedProjectionRevision: 0,
+          cycleIdempotencyKey: "cycle:runtime-outcome:stale",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+
+      expect(staleOutcome.writeDisposition).toBe("stale_rejected");
+      await expect(store.listPendingBlocks(scope())).resolves.toHaveLength(1);
+
       const reconciled = await runAttentionCycle({
         store,
         cycle: {
