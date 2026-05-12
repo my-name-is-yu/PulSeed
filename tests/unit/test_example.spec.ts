@@ -9,7 +9,7 @@ import { formatOperationError } from "../../src/interface/cli/utils.js";
 import {
   buildThreshold,
   deduplicateDimensionKeys,
-  findBestDimensionMatch,
+  validateDataSourceDimensionMappings,
 } from "../../src/orchestrator/goal/goal-validation.js";
 
 describe("test_example", () => {
@@ -65,21 +65,35 @@ describe("test_example", () => {
     });
   });
 
-  describe("findBestDimensionMatch", () => {
-    it("returns the best candidate when token overlap is strong enough", () => {
-      expect(
-        findBestDimensionMatch("test_coverage_percent", [
-          "deployment_frequency",
-          "test_coverage",
-          "bug_count",
-        ])
-      ).toBe("test_coverage");
+  describe("validateDataSourceDimensionMappings", () => {
+    it("preserves exact typed data-source dimension mappings", () => {
+      const [dimension] = validateDataSourceDimensionMappings([
+        {
+          name: "test_coverage_percent",
+          label: "Test coverage percent",
+          threshold_type: "min",
+          threshold_value: 80,
+          observation_method_hint: "ci",
+          dimension_mapping: { data_source: "ci", dimension: "test_coverage" },
+        },
+      ], [{ name: "ci", dimensions: ["test_coverage"] }]);
+
+      expect(dimension?.dimension_mapping).toEqual({ data_source: "ci", dimension: "test_coverage" });
     });
 
-    it("returns null when overlap does not meet the threshold", () => {
-      expect(
-        findBestDimensionMatch("revenue_growth", ["growth_rate", "burn_down", "qa_status"])
-      ).toBeNull();
+    it("drops stale or fuzzy mapping candidates instead of guessing by token overlap", () => {
+      const [dimension] = validateDataSourceDimensionMappings([
+        {
+          name: "revenue_growth",
+          label: "Revenue growth",
+          threshold_type: "min",
+          threshold_value: 10,
+          observation_method_hint: "finance",
+          dimension_mapping: { data_source: "finance", dimension: "growth_rate" },
+        },
+      ], [{ name: "finance", dimensions: ["burn_down", "qa_status"] }]);
+
+      expect(dimension?.dimension_mapping).toBeNull();
     });
   });
 
@@ -114,8 +128,8 @@ describe("test_example", () => {
   });
 
   describe("applyConfidenceWeight", () => {
-    it("inflates normalized gaps based on low confidence", () => {
-      expect(applyConfidenceWeight(0.5, 0.25, 2, false)).toBe(1.25);
+    it("inflates normalized gaps based on low confidence and caps them at one", () => {
+      expect(applyConfidenceWeight(0.5, 0.25, 2, false)).toBe(1);
     });
 
     it("skips weighting for null-backed values", () => {

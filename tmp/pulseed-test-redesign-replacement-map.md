@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-12T15:20:39.305Z
+Generated: 2026-05-12T15:57:57.021Z
 
 Deletion gate: old tests may only be deleted after the mapped replacement trace has landed and the old test plus new trace passed in the same checkout.
 
@@ -21,7 +21,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - gateway_runtime_status_uses_tool_evidence_not_guidance
   - gateway_final_visible_suppresses_late_progress_and_typing
   - tool_unavailable_returned_to_model_before_final
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 185 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/interface/chat/__tests__/chat-runner-tools.test.ts
@@ -30,7 +30,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
 - State artifact: tool request/result envelope, chat event stream
 - Replacement traces:
   - gateway_read_workspace_under_protected_paths_no_approval
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/interface/chat/__tests__/setup-secret-intake.test.ts
@@ -39,7 +39,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
 - State artifact: secret setup state, redacted transcript/event artifact
 - Replacement traces:
   - gateway_secret_setup_redacts_token_and_confirms_write
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/interface/chat/__tests__/cross-platform-session.test.ts
@@ -52,7 +52,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - gateway_runspec_epoch_changed_rejects_start
   - approval_origin_bound_stale_reply_rejected
   - approval_delivery_unavailable_denies_not_executes
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/control/__tests__/runtime-control-service.test.ts
@@ -66,7 +66,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - runtime_control_resume_after_companion_revival_requires_readmission
   - runtime_control_cancel_after_revival_blocks_stale_run
   - runtime_control_finalize_records_proposal_without_external_action
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/__tests__/schedule-engine.test.ts
@@ -78,7 +78,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - schedule_wait_resume_due_creates_held_attention_artifact
   - schedule_wait_resume_retry_same_due_idempotent
   - schedule_side_effect_crash_replay_no_duplicate_execution
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/__tests__/approval-broker.test.ts
@@ -91,7 +91,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - gateway_approval_other_tool_after_approval_blocked
   - gateway_multi_approval_reentrant_same_turn
   - approval_pending_restored_after_daemon_restart
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/queue/__tests__/journal-backed-queue.test.ts
@@ -103,7 +103,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - eventserver_approval_unknown_request_rejected_before_accept
   - queue_expired_claim_rejects_late_ack_and_reclaims
   - queue_dedupe_inflight_rejects_replacement
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/store/__tests__/attention-state-store.test.ts
@@ -114,7 +114,7 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - state_attention_schema_ahead_fail_closed
   - attention_observation_requires_visible_indicator_before_event
   - attention_observation_after_expiry_terminal_allowed_only
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
 ### src/runtime/__tests__/daemon-runner.test.ts
@@ -125,34 +125,34 @@ Deletion gate: old tests may only be deleted after the mapped replacement trace 
   - state_runtime_root_custom_shared_control_db
   - session_registry_dead_process_not_running
   - daemon_progress_final_order_once
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
-### src/runtime/session-registry/__tests__/registry.test.ts
+### src/runtime/session-registry/__tests__/runtime-session-registry.test.ts
 
 - Production boundary: resident runtime discovery -> session registry snapshot
 - State artifact: session registry snapshot, capability snapshot
 - Replacement traces:
   - session_registry_dead_process_not_running
   - resident_runtime_snapshot_capability_discovery_grants_no_authority
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 1 file / 21 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
-### src/tools/fs/ReadTool/__tests__/read-tool.test.ts
+### src/tools/fs/ReadTool/__tests__/ReadTool.test.ts
 
 - Production boundary: tool catalog -> readonly filesystem tool execution
 - State artifact: tool result envelope
 - Replacement traces:
   - tool_readonly_fs_no_write_approval_under_workspace
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 
-### src/tools/fs/FileWriteTool/__tests__/file-write-tool.test.ts
+### src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts
 
 - Production boundary: tool approval gate -> local write mutation
 - State artifact: approval artifact, mutation artifact
 - Replacement traces:
   - tool_write_local_records_approval_artifact_before_mutation
-- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.
+- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.
 - Delete condition: keep until all mapped traces and the old file pass together in this checkout.
 

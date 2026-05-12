@@ -3,8 +3,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { globSync } from "glob";
 import {
+  contractInclude,
   fullInclude,
+  goldenTraceInclude,
   integrationInclude,
+  replayInclude,
+  slowInclude,
   smokeInclude,
 } from "../vitest.patterns.js";
 
@@ -133,7 +137,7 @@ const p0TraceMappings = [
     stateArtifact: "daemon snapshot, session registry snapshot, progress/final events",
   },
   {
-    oldPath: "src/runtime/session-registry/__tests__/registry.test.ts",
+    oldPath: "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
     traces: [
       "session_registry_dead_process_not_running",
       "resident_runtime_snapshot_capability_discovery_grants_no_authority",
@@ -142,7 +146,7 @@ const p0TraceMappings = [
     stateArtifact: "session registry snapshot, capability snapshot",
   },
   {
-    oldPath: "src/tools/fs/ReadTool/__tests__/read-tool.test.ts",
+    oldPath: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
     traces: [
       "tool_readonly_fs_no_write_approval_under_workspace",
     ],
@@ -150,7 +154,7 @@ const p0TraceMappings = [
     stateArtifact: "tool result envelope",
   },
   {
-    oldPath: "src/tools/fs/FileWriteTool/__tests__/file-write-tool.test.ts",
+    oldPath: "src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts",
     traces: [
       "tool_write_local_records_approval_artifact_before_mutation",
     ],
@@ -202,6 +206,61 @@ const allP0Traces = [
   "daemon_progress_final_order_once",
 ];
 
+const sameCheckoutEvidenceByOldPath = new Map([
+  [
+    "src/interface/chat/__tests__/chat-runner.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 185 tests.",
+  ],
+  [
+    "src/interface/chat/__tests__/chat-runner-tools.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+  ],
+  [
+    "src/interface/chat/__tests__/setup-secret-intake.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+  ],
+  [
+    "src/interface/chat/__tests__/cross-platform-session.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
+  ],
+  [
+    "src/runtime/control/__tests__/runtime-control-service.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/__tests__/schedule-engine.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/__tests__/approval-broker.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/queue/__tests__/journal-backed-queue.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/store/__tests__/attention-state-store.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/__tests__/daemon-runner.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+  ],
+  [
+    "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 1 file / 21 tests.",
+  ],
+  [
+    "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+  ],
+  [
+    "src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts",
+    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+  ],
+]);
+
 function expand(patterns) {
   return new Set(
     patterns
@@ -223,10 +282,14 @@ function countMatches(content, pattern) {
   return (content.match(pattern) ?? []).length;
 }
 
-function currentLanes(filePath, fullSet, integrationSet, smokeSet, runtimeLongRunSet) {
+function currentLanes(filePath, fullSet, integrationSet, smokeSet, runtimeLongRunSet, contractSet, goldenTraceSet, replaySet, slowSet) {
   const lanes = [];
   if (fullSet.has(filePath) && integrationSet.has(filePath)) lanes.push("integration");
   if (fullSet.has(filePath) && !integrationSet.has(filePath)) lanes.push("unit");
+  if (contractSet.has(filePath)) lanes.push("contracts");
+  if (goldenTraceSet.has(filePath)) lanes.push("golden-traces");
+  if (replaySet.has(filePath)) lanes.push("replay");
+  if (slowSet.has(filePath) && !runtimeLongRunSet.has(filePath)) lanes.push("slow");
   if (smokeSet.has(filePath)) lanes.push("smoke");
   if (runtimeLongRunSet.has(filePath)) lanes.push("runtime-long-run");
   return lanes;
@@ -296,7 +359,11 @@ function notesFor(filePath, current, target, mapping) {
 }
 
 const fullSet = expand(fullInclude);
+const contractSet = expand(contractInclude);
+const goldenTraceSet = expand(goldenTraceInclude);
 const integrationSet = expand(integrationInclude);
+const replaySet = expand(replayInclude);
+const slowSet = expand(slowInclude);
 const smokeSet = expand(smokeInclude);
 const runtimeLongRunSet = expand(["tests/slow/**/*.test.ts"]);
 const allTestLike = unique(
@@ -312,7 +379,17 @@ const mappingByPath = new Map(p0TraceMappings.map((mapping) => [mapping.oldPath,
 const records = allTestLike.map((filePath) => {
   const content = readFileSync(path.join(root, filePath), "utf8");
   const mapping = mappingByPath.get(filePath);
-  const current = currentLanes(filePath, fullSet, integrationSet, smokeSet, runtimeLongRunSet);
+  const current = currentLanes(
+    filePath,
+    fullSet,
+    integrationSet,
+    smokeSet,
+    runtimeLongRunSet,
+    contractSet,
+    goldenTraceSet,
+    replaySet,
+    slowSet,
+  );
   const target = targetFor(filePath, mapping);
   const replacementTrace = mapping?.traces ?? [];
   return {
@@ -346,7 +423,15 @@ const classificationCounts = records.reduce((acc, record) => {
   acc[record.classification] = (acc[record.classification] ?? 0) + 1;
   return acc;
 }, {});
-const includedCurrent = new Set([...fullSet, ...smokeSet, ...runtimeLongRunSet]);
+const includedCurrent = new Set([
+  ...fullSet,
+  ...contractSet,
+  ...goldenTraceSet,
+  ...replaySet,
+  ...slowSet,
+  ...smokeSet,
+  ...runtimeLongRunSet,
+]);
 const currentCoverageGaps = records
   .filter((record) => !includedCurrent.has(record.current_path))
   .map((record) => record.current_path);
@@ -407,7 +492,7 @@ function renderReplacementMap(summary) {
     for (const trace of mapping.traces) {
       lines.push(`  - ${trace}`);
     }
-    lines.push("- Simultaneous pass evidence: pending until Phase 2/3 trace suites land.");
+    lines.push(`- Simultaneous pass evidence: ${sameCheckoutEvidenceByOldPath.get(mapping.oldPath) ?? "pending until Phase 2/3 trace suites land."}`);
     lines.push("- Delete condition: keep until all mapped traces and the old file pass together in this checkout.");
     lines.push("");
   }

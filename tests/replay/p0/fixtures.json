@@ -1,0 +1,317 @@
+[
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "state_attention_schema_ahead_fail_closed",
+    "domain": "state",
+    "p0_failure_mode": "state migration破壊",
+    "production_boundary": "runtime startup/replay -> attention state store -> control DB",
+    "input": {
+      "entrypoint": "runtime startup/replay -> attention state store -> control DB",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "state_attention_schema_ahead_fail_closed"
+    },
+    "initial_state": {
+      "state/state/state_attention_schema_ahead_fail_closed.json": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "status": "blocked",
+        "reason": "schema_ahead"
+      },
+      "restarted_state": {
+        "contract_name": "state_attention_schema_ahead_fail_closed",
+        "status": "blocked",
+        "reason": "schema_ahead"
+      },
+      "audit": [
+        {
+          "disposition": "blocked",
+          "reason": "schema_ahead",
+          "production_boundary": "runtime startup/replay -> attention state store -> control DB"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/state/state_attention_schema_ahead_fail_closed.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "approval_pending_restored_after_daemon_restart",
+    "domain": "approval",
+    "p0_failure_mode": "state migration破壊",
+    "production_boundary": "daemon restart -> ApprovalBroker -> approval store",
+    "input": {
+      "entrypoint": "daemon restart -> ApprovalBroker -> approval store",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "approval_pending_restored_after_daemon_restart"
+    },
+    "initial_state": {
+      "state/approval/approval_pending_restored_after_daemon_restart.json": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "status": "restored",
+        "reason": "pending_approval"
+      },
+      "restarted_state": {
+        "contract_name": "approval_pending_restored_after_daemon_restart",
+        "status": "restored",
+        "reason": "pending_approval"
+      },
+      "audit": [
+        {
+          "disposition": "restored",
+          "reason": "pending_approval",
+          "production_boundary": "daemon restart -> ApprovalBroker -> approval store"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/approval/approval_pending_restored_after_daemon_restart.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+    "domain": "schedule",
+    "p0_failure_mode": "replay duplicate",
+    "production_boundary": "ScheduleEngine.tick() crash replay -> side effect ledger",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() crash replay -> side effect ledger",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_side_effect_crash_replay_no_duplicate_execution"
+    },
+    "initial_state": {
+      "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "status": "idempotent",
+        "reason": "schedule_due"
+      },
+      "restarted_state": {
+        "contract_name": "schedule_side_effect_crash_replay_no_duplicate_execution",
+        "status": "idempotent",
+        "reason": "schedule_due"
+      },
+      "audit": [
+        {
+          "disposition": "idempotent",
+          "reason": "schedule_due",
+          "production_boundary": "ScheduleEngine.tick() crash replay -> side effect ledger"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_side_effect_crash_replay_no_duplicate_execution.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+    "domain": "queue",
+    "p0_failure_mode": "stale claim ownership",
+    "production_boundary": "JournalBackedQueue claim -> sweeper -> late ack reject",
+    "input": {
+      "entrypoint": "JournalBackedQueue claim -> sweeper -> late ack reject",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "queue_expired_claim_rejects_late_ack_and_reclaims"
+    },
+    "initial_state": {
+      "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json": {
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "status": "reclaimed",
+        "reason": "queue_claim"
+      },
+      "restarted_state": {
+        "contract_name": "queue_expired_claim_rejects_late_ack_and_reclaims",
+        "status": "reclaimed",
+        "reason": "queue_claim"
+      },
+      "audit": [
+        {
+          "disposition": "reclaimed",
+          "reason": "queue_claim",
+          "production_boundary": "JournalBackedQueue claim -> sweeper -> late ack reject"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "attention_observation_requires_visible_indicator_before_event",
+    "domain": "attention",
+    "p0_failure_mode": "unauthorized continuous sensing",
+    "production_boundary": "observation event -> visible indicator gate -> attention state",
+    "input": {
+      "entrypoint": "observation event -> visible indicator gate -> attention state",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "attention_observation_requires_visible_indicator_before_event"
+    },
+    "initial_state": {
+      "state/attention/attention_observation_requires_visible_indicator_before_event.json": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "status": "blocked",
+        "reason": "observation_before_visible"
+      },
+      "restarted_state": {
+        "contract_name": "attention_observation_requires_visible_indicator_before_event",
+        "status": "blocked",
+        "reason": "observation_before_visible"
+      },
+      "audit": [
+        {
+          "disposition": "blocked",
+          "reason": "observation_before_visible",
+          "production_boundary": "observation event -> visible indicator gate -> attention state"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/attention/attention_observation_requires_visible_indicator_before_event.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "session_registry_dead_process_not_running",
+    "domain": "daemon",
+    "p0_failure_mode": "daemon/progress/final message ordering",
+    "production_boundary": "session registry snapshot -> process liveness verifier",
+    "input": {
+      "entrypoint": "session registry snapshot -> process liveness verifier",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "session_registry_dead_process_not_running"
+    },
+    "initial_state": {
+      "state/daemon/session_registry_dead_process_not_running.json": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "status": "blocked",
+        "reason": "dead_process"
+      },
+      "restarted_state": {
+        "contract_name": "session_registry_dead_process_not_running",
+        "status": "blocked",
+        "reason": "dead_process"
+      },
+      "audit": [
+        {
+          "disposition": "blocked",
+          "reason": "dead_process",
+          "production_boundary": "session registry snapshot -> process liveness verifier"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/daemon/session_registry_dead_process_not_running.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": "pulseed.replay.v1",
+    "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+    "domain": "chat-session",
+    "p0_failure_mode": "stale target reuse",
+    "production_boundary": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+    "input": {
+      "entrypoint": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "gateway_routed_ingress_preserves_reply_target_after_restart"
+    },
+    "initial_state": {
+      "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "legacy": true
+      }
+    },
+    "expected": {
+      "fresh_state": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "status": "restored",
+        "reason": "reply_target"
+      },
+      "restarted_state": {
+        "contract_name": "gateway_routed_ingress_preserves_reply_target_after_restart",
+        "status": "restored",
+        "reason": "reply_target"
+      },
+      "audit": [
+        {
+          "disposition": "restored",
+          "reason": "reply_target",
+          "production_boundary": "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage"
+        }
+      ],
+      "artifact_tree": [
+        {
+          "path": "state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json",
+          "type": "file",
+          "size": 0,
+          "sha256": "<fixture>"
+        }
+      ]
+    }
+  }
+]

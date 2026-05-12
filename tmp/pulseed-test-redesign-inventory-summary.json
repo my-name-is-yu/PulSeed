@@ -1,30 +1,35 @@
 {
-  "generated_at": "2026-05-12T15:20:39.305Z",
-  "test_like_files": 781,
+  "generated_at": "2026-05-12T15:57:57.021Z",
+  "test_like_files": 784,
   "current_lane_counts": {
-    "unit": 525,
-    "integration": 244,
-    "integration+smoke": 8,
+    "unit": 681,
+    "integration": 90,
+    "integration+smoke": 3,
+    "unit+smoke": 1,
+    "contracts": 1,
+    "golden-traces": 1,
+    "replay": 1,
     "runtime-long-run": 3,
-    "not_in_current_lane": 1
+    "unit+slow": 3
   },
   "target_lane_counts": {
-    "unit": 689,
+    "unit": 686,
     "integration": 75,
-    "golden-traces+replay": 10,
-    "slow": 7
+    "golden-traces+replay": 13,
+    "contracts": 1,
+    "slow": 7,
+    "golden-traces": 1,
+    "replay": 1
   },
   "classification_counts": {
     "keep": 712,
     "move_to_unit": 33,
-    "replace": 10,
+    "replace": 13,
     "move_to_integration": 19,
     "move_to_slow": 7
   },
-  "current_coverage_gap_count": 1,
-  "current_coverage_gaps": [
-    "tests/unit/test_example.spec.ts"
-  ],
+  "current_coverage_gap_count": 0,
+  "current_coverage_gaps": [],
   "p0_trace_count": 40,
   "p0_mapped_trace_count": 40,
   "p0_unmapped_traces": [],
