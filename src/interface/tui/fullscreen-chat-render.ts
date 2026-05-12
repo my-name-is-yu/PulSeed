@@ -8,7 +8,10 @@ import {
 } from "./fullscreen-chat-render-utils.js";
 import type { buildChatViewport } from "./chat/viewport.js";
 import type { ChatMessage, ChatDisplayRow } from "./chat/types.js";
-import { renderExpressionDecisionForSurface } from "../../runtime/attention/index.js";
+import {
+  projectSurfaceDelivery,
+  renderSurfaceDeliveryProjection,
+} from "../../runtime/attention/index.js";
 import type {
   ExpressionDecision,
   ExpressionSurfaceClass,
@@ -61,21 +64,22 @@ export type TuiExpressionDecisionRenderInput = {
 };
 
 export function renderTuiExpressionDecision(input: TuiExpressionDecisionRenderInput): RenderLine | null {
-  const rendered = renderExpressionDecisionForSurface({
-    render_id: input.renderId,
-    rendered_at: input.renderedAt,
-    surface_class: input.surfaceClass ?? "tui",
-    outcome_decision: input.outcomeDecision,
-    expression_decision: input.expressionDecision,
-    visibility_policy: input.visibilityPolicy,
+  const delivery = projectSurfaceDelivery({
+    renderId: input.renderId,
+    renderedAt: input.renderedAt,
+    surfaceClass: input.surfaceClass ?? "tui",
+    outcomeDecision: input.outcomeDecision,
+    expressionDecision: input.expressionDecision,
+    visibilityPolicy: input.visibilityPolicy,
   });
-  if (!rendered) return null;
+  const renderedText = renderSurfaceDeliveryProjection(delivery);
+  if (!delivery || !renderedText) return null;
 
   return {
-    key: rendered.render_id,
-    text: rendered.user_facing_rationale,
-    dim: rendered.expression_mode === "digest_item",
-    bold: rendered.expression_mode === "approval_request" || rendered.expression_mode === "urgent_alert",
+    key: delivery.delivery_id,
+    text: renderedText,
+    dim: delivery.delivery_mode === "digest_item",
+    bold: delivery.delivery_mode === "approval_request" || delivery.delivery_mode === "urgent_alert",
     protected: true,
   };
 }

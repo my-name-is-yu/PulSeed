@@ -1,6 +1,11 @@
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import {
+  SurfaceDeliveryProjectionSchema,
+  renderSurfaceDeliveryProjection,
+} from "../attention/index.js";
+import {
   formatGatewayLifecycleFailureMessage,
+  redactSetupSecrets,
   renderGatewayActivityEvent,
   renderGatewayAgentTimelineItem,
   renderGatewayOperationProgress,
@@ -129,6 +134,15 @@ export class NonTuiDisplayProjector {
       case "assistant_final":
         this.sawFinalSignal = true;
         await this.updateFinal(event.text, true);
+        return;
+      case "surface_delivery":
+        {
+          this.sawFinalSignal = true;
+          const projection = SurfaceDeliveryProjectionSchema.parse(event.projection);
+          const text = renderSurfaceDeliveryProjection(projection);
+          if (!text) return;
+          await this.updateFinal(redactSetupSecrets(text), true);
+        }
         return;
       case "lifecycle_error":
         await this.updateFinal(formatGatewayLifecycleFailureMessage(event.error, event.partialText, event.recovery), true);

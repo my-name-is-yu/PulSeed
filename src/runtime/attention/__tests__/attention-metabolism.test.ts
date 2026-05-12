@@ -654,7 +654,7 @@ describe("attention metabolism pipeline", () => {
     });
     expect(gatewayRender).toBe("Ask the user before continuing the blocked action.");
     expect(tuiRender).toMatchObject({
-      key: "render:tui:approval",
+      key: "surface-delivery:render:tui:approval",
       text: "Ask the user before continuing the blocked action.",
       bold: true,
       protected: true,

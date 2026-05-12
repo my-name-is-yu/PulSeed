@@ -830,7 +830,10 @@ function redactChatEvent(event: ChatEvent): ChatEvent {
 }
 
 function isTerminalEvent(event: ChatEvent): boolean {
-  return event.type === "assistant_final" || event.type === "lifecycle_end" || event.type === "lifecycle_error";
+  return event.type === "assistant_final" ||
+    event.type === "surface_delivery" ||
+    event.type === "lifecycle_end" ||
+    event.type === "lifecycle_error";
 }
 
 function runtimeEvidenceRefForEvent(event: ChatEvent): string | null {
@@ -890,6 +893,7 @@ function lastActivityLabelForEvent(event: ChatEvent): string | null {
     case "lifecycle_start":
     case "turn_steer":
     case "assistant_final":
+    case "surface_delivery":
     case "presence_update":
     case "lifecycle_end":
     case "lifecycle_error":
@@ -958,6 +962,7 @@ function resumedPresenceForEvent(
     case "lifecycle_start":
     case "turn_steer":
     case "assistant_final":
+    case "surface_delivery":
     case "presence_update":
     case "lifecycle_end":
     case "lifecycle_error":

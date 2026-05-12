@@ -1,6 +1,7 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { ToolActivityCategory } from "../../tools/types.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import type { SurfaceDeliveryProjection } from "../../runtime/attention/index.js";
 import type { ChatEventContext } from "./turn-state.js";
 import type { GatewayPublicProgress } from "./gateway-progress.js";
 import type { OperationProgressItem } from "./operation-progress.js";
@@ -105,6 +106,11 @@ export interface PresenceUpdateEvent extends ChatEventBase {
   presence: SeedyTurnPresence;
 }
 
+export interface SurfaceDeliveryEvent extends ChatEventBase {
+  type: "surface_delivery";
+  projection: SurfaceDeliveryProjection;
+}
+
 export interface LifecycleEndEvent extends ChatEventBase {
   type: "lifecycle_end";
   status: "completed" | "error";
@@ -129,6 +135,7 @@ export type ChatEvent =
   | AgentTimelineEvent
   | OperationProgressEvent
   | PresenceUpdateEvent
+  | SurfaceDeliveryEvent
   | ToolStartEvent
   | ToolUpdateEvent
   | ToolEndEvent
