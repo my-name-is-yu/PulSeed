@@ -167,6 +167,7 @@ Important subdirectories:
 - `daemon/`
 - `queue/`
 - `gateway/`
+- `observation/`
 - `schedule/`
 - `store/`
 
