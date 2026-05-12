@@ -1034,7 +1034,12 @@ describe("snapshot and outbox replay", () => {
     });
     const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: tmpDir });
     await operationStore.save(
-      makeRuntimeControlOperation({ requested_at: now, updated_at: now })
+      makeRuntimeControlOperation({
+        requested_at: now,
+        updated_at: now,
+        state: "verified",
+        completed_at: now,
+      })
     );
     const eventBaseMs = Date.parse(now) + 1_000;
     for (let index = 0; index < 55; index += 1) {
@@ -1057,7 +1062,8 @@ describe("snapshot and outbox replay", () => {
     const snapshot = JSON.parse(result.body) as {
       resident_runtime_interface?: {
         schema_version: string;
-        connection: { status: string; reason: string };
+        identity: { control_base_dir: string };
+        connection: { status: string; reason: string; last_command_at: string | null };
         command_channel: {
           requires_admission: boolean;
           capability_discovery_grants_authority: boolean;
@@ -1079,14 +1085,16 @@ describe("snapshot and outbox replay", () => {
       };
     };
     expect(snapshot.resident_runtime_interface?.schema_version).toBe("resident-runtime-interface-v1");
+    expect(snapshot.resident_runtime_interface?.identity.control_base_dir).toBe(tmpDir);
     expect(snapshot.resident_runtime_interface?.connection).toMatchObject({
       status: "online",
       reason: "daemon_evidence_fresh",
+      last_command_at: now,
     });
     expect(snapshot.resident_runtime_interface?.command_channel).toMatchObject({
       requires_admission: true,
       capability_discovery_grants_authority: false,
-      pending_operation_refs: ["runtime-interface-op-1"],
+      pending_operation_refs: [],
     });
     expect(snapshot.resident_runtime_interface?.event_stream.event_refs).toHaveLength(50);
     expect(snapshot.resident_runtime_interface?.event_stream.event_refs[0]).toMatchObject({
@@ -1108,6 +1116,38 @@ describe("snapshot and outbox replay", () => {
       gui_surface_included: false,
       capability_authority_granted: false,
     });
+  });
+
+  it("reports the runtime store control base for custom runtime roots", async () => {
+    const runtimeRoot = path.join(tmpDir, "custom-runtime-root");
+    const now = new Date().toISOString();
+    await new RuntimeOperationStore(runtimeRoot).save(
+      makeRuntimeControlOperation({
+        requested_at: now,
+        updated_at: now,
+        state: "verified",
+        completed_at: now,
+      })
+    );
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+    });
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      resident_runtime_interface?: {
+        identity: { control_base_dir: string };
+        connection: { last_command_at: string | null };
+      };
+    };
+    expect(snapshot.resident_runtime_interface?.identity.control_base_dir).toBe(path.resolve(runtimeRoot));
+    expect(snapshot.resident_runtime_interface?.connection.last_command_at).toBe(now);
   });
 
   it("reads auth handoff sessions from an explicitly configured runtime root", async () => {

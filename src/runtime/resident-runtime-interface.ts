@@ -205,6 +205,7 @@ export interface DeriveRuntimeConnectionStatusInput {
   daemonState?: Record<string, unknown> | null;
   runtimeEvents?: RuntimeEvent[];
   pendingOperations?: RuntimeControlOperation[];
+  recentOperations?: RuntimeControlOperation[];
   staleAfterMs?: number;
   offlineAfterMs?: number;
 }
@@ -224,6 +225,7 @@ export interface BuildResidentRuntimeInterfaceSnapshotInput extends BuildResiden
   runtimeSessions?: RuntimeSessionRegistrySnapshot | null;
   runtimeEvents?: RuntimeEvent[];
   pendingOperations?: RuntimeControlOperation[];
+  recentOperations?: RuntimeControlOperation[];
   pendingApprovals?: ApprovalRequiredEvent[];
   lastOutboxSeq?: number;
   activeWorkers?: Array<Record<string, unknown>>;
@@ -260,7 +262,10 @@ export function deriveRuntimeConnectionStatus(input: DeriveRuntimeConnectionStat
     stringField(input.daemonState, "started_at"),
   ]);
   const lastEventAt = latestTimestamp((input.runtimeEvents ?? []).map((event) => event.occurred_at));
-  const lastCommandAt = latestTimestamp((input.pendingOperations ?? []).map((operation) => operation.updated_at));
+  const lastCommandAt = latestTimestamp([
+    ...(input.pendingOperations ?? []).map((operation) => operation.updated_at),
+    ...(input.recentOperations ?? []).map((operation) => operation.updated_at),
+  ]);
   const evidenceRefs = [
     ...(input.daemonState ? ["daemon-state:current"] : []),
     ...(lastEventAt ? [`runtime-event:${lastEventAt}`] : []),
@@ -295,6 +300,7 @@ export function buildResidentRuntimeInterfaceSnapshot(
   const generatedAt = input.generatedAt ?? new Date().toISOString();
   const identity = buildResidentRuntimeIdentity({ ...input, generatedAt });
   const pendingOperations = input.pendingOperations ?? [];
+  const recentOperations = input.recentOperations ?? [];
   const runtimeEvents = input.runtimeEvents ?? [];
   const pendingApprovals = input.pendingApprovals ?? [];
   const connection = deriveRuntimeConnectionStatus({
@@ -302,6 +308,7 @@ export function buildResidentRuntimeInterfaceSnapshot(
     daemonState: input.daemonState,
     runtimeEvents,
     pendingOperations,
+    recentOperations,
     staleAfterMs: input.staleAfterMs,
     offlineAfterMs: input.offlineAfterMs,
   });
@@ -330,6 +337,7 @@ export function buildResidentRuntimeInterfaceSnapshot(
     ...connection.evidence_refs,
     ...eventStream.event_refs.map((event) => `runtime-event:${event.event_id}`),
     ...pendingOperations.map((operation) => `runtime-operation:${operation.operation_id}`),
+    ...recentOperations.map((operation) => `runtime-operation:${operation.operation_id}`),
     ...pendingApprovals.map((approval) => `approval:${approval.requestId}`),
     ...(input.runtimeSessions ? ["runtime-session-registry:snapshot"] : []),
     ...(input.lastOutboxSeq && input.lastOutboxSeq > 0 ? [`outbox:seq:${input.lastOutboxSeq}`] : []),

@@ -19,6 +19,7 @@ import {
 
 const RuntimeEventJournalSchema = RuntimeEventSchema as z.ZodType<RuntimeEvent>;
 const RuntimeEventRecentLimitSchema = z.number().int().positive().safe().max(500);
+const RuntimeOperationRecentLimitSchema = z.number().int().positive().safe().max(500);
 
 interface RuntimeOperationRow {
   operation_json: string;
@@ -94,6 +95,20 @@ export class RuntimeOperationStore {
         ORDER BY updated_at ASC, operation_id ASC
       `).all() as RuntimeOperationRow[];
       return rows.map((row) => parseRuntimeOperationJson(row.operation_json));
+    });
+  }
+
+  async listRecentOperations(limit = 50): Promise<RuntimeControlOperation[]> {
+    const parsedLimit = RuntimeOperationRecentLimitSchema.parse(limit);
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT operation_json
+        FROM runtime_operations
+        ORDER BY updated_at DESC, operation_id DESC
+        LIMIT ?
+      `).all(parsedLimit) as RuntimeOperationRow[];
+      return rows.reverse().map((row) => parseRuntimeOperationJson(row.operation_json));
     });
   }
 

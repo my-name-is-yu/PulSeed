@@ -129,4 +129,31 @@ describe("resident runtime interface contract", () => {
       ])
     );
   });
+
+  it("keeps last command evidence when the runtime command is already terminal", () => {
+    const terminalCommandAt = "2026-05-12T00:03:00.000Z";
+    const snapshot = buildResidentRuntimeInterfaceSnapshot({
+      runtimeRoot: "/tmp/pulseed/runtime",
+      controlBaseDir: "/tmp/pulseed",
+      generatedAt: "2026-05-12T00:05:00.000Z",
+      daemonState: {
+        status: "running",
+        started_at: "2026-05-12T00:00:00.000Z",
+        last_loop_at: "2026-05-12T00:04:00.000Z",
+      },
+      pendingOperations: [],
+      recentOperations: [
+        makeOperation({
+          operation_id: "runtime-op-terminal",
+          state: "verified",
+          updated_at: terminalCommandAt,
+          completed_at: terminalCommandAt,
+        }),
+      ],
+    });
+
+    expect(snapshot.connection.last_command_at).toBe(terminalCommandAt);
+    expect(snapshot.command_channel.pending_operation_refs).toEqual([]);
+    expect(snapshot.evidence_refs).toContain("runtime-operation:runtime-op-terminal");
+  });
 });

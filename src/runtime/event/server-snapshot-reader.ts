@@ -2,9 +2,11 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { ApprovalRequiredEvent } from "../approval-broker.js";
 import {
+  createRuntimeStorePaths,
   DaemonStateStore,
   GoalTaskStateStore,
   RuntimeOperationStore,
+  resolveRuntimeControlDbBaseDir,
   type OutboxStore,
   type RuntimeAutomationSnapshot,
 } from "../store/index.js";
@@ -103,6 +105,11 @@ export class EventServerSnapshotReader {
 
   private controlBaseDir(): string {
     return this.configuredControlBaseDir ?? this.stateManager?.getBaseDir() ?? path.dirname(this.eventsDir);
+  }
+
+  private runtimeControlBaseDir(): string {
+    if (this.configuredControlBaseDir) return this.configuredControlBaseDir;
+    return resolveRuntimeControlDbBaseDir(createRuntimeStorePaths(this.runtimeRoot()));
   }
 
   private async readPendingAuthSessions(): Promise<Array<Record<string, unknown>>> {
@@ -232,18 +239,20 @@ export class EventServerSnapshotReader {
     operatorHandoffs: RuntimeOperatorHandoffRecord[];
   }): Promise<ResidentRuntimeInterfaceSnapshot> {
     const operationStore = new RuntimeOperationStore(this.runtimeRoot(), this.controlDbOptions());
-    const [pendingOperations, runtimeEvents] = await Promise.all([
+    const [pendingOperations, recentOperations, runtimeEvents] = await Promise.all([
       operationStore.listPending(),
+      operationStore.listRecentOperations(50),
       operationStore.listRecentRuntimeEvents(50),
     ]);
 
     return buildResidentRuntimeInterfaceSnapshot({
       runtimeRoot: this.runtimeRoot(),
-      controlBaseDir: this.controlBaseDir(),
+      controlBaseDir: this.runtimeControlBaseDir(),
       daemonState: input.daemon,
       runtimeSessions: input.runtimeSessions,
       runtimeEvents,
       pendingOperations,
+      recentOperations,
       pendingApprovals: input.approvals,
       lastOutboxSeq: input.latestOutboxSeq,
       activeWorkers: input.activeWorkers,
