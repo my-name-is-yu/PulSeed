@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assembleCapabilityPlansForAttentionAdmissions,
   assembleSignalContext,
+  attentionScopeKey,
   buildAttentionAdmissionCandidates,
   createAttentionClusterFromUrge,
   createAttentionDiagnostics,
@@ -206,7 +207,7 @@ describe("attention concern metabolism contracts", () => {
     ]);
   });
 
-  it("includes full scope identity in seeded cluster IDs", () => {
+  it("includes full scope identity in scope keys and seeded cluster IDs", () => {
     const left = createAttentionClusterFromUrge(urge({
       id: "scope-left",
       scope: scope({ userId: "user-left", sessionId: "session-shared" }),
@@ -217,6 +218,25 @@ describe("attention concern metabolism contracts", () => {
     }), NOW);
 
     expect(left.id).not.toBe(right.id);
+
+    const readOnlyKey = attentionScopeKey(scope({
+      permissionScope: "read_only",
+      sensitivity: "medium",
+      memoryOwner: "memory:shared",
+    }));
+    const writeHighKey = attentionScopeKey(scope({
+      permissionScope: "write_allowed",
+      sensitivity: "high",
+      memoryOwner: "memory:shared",
+    }));
+    const otherOwnerKey = attentionScopeKey(scope({
+      permissionScope: "read_only",
+      sensitivity: "medium",
+      memoryOwner: "memory:other",
+    }));
+
+    expect(readOnlyKey).not.toBe(writeHighKey);
+    expect(readOnlyKey).not.toBe(otherOwnerKey);
   });
 
   it("admits only fresh authorized children through capability planning, never direct action", () => {

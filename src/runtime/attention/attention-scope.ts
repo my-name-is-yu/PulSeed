@@ -170,6 +170,9 @@ export function attentionScopeKey(scope: AttentionScope): string {
     parsed.sessionId ?? "session:null",
     parsed.surfaceClass,
     parsed.surfaceRef ?? "surface:null",
+    parsed.permissionScope,
+    parsed.sensitivity,
+    parsed.memoryOwner ?? "memory-owner:null",
     parsed.policyEpoch,
   ].join("|");
 }

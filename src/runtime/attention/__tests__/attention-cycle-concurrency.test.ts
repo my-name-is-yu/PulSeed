@@ -155,6 +155,98 @@ describe("attention cycle persistence and concurrency", () => {
     }
   });
 
+  it("partitions cycle idempotency by authority, sensitivity, and memory owner", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-cycle-scope-key-");
+    try {
+      const store = new AttentionStateStore(`${tmpDir}/runtime`, { controlBaseDir: tmpDir });
+      const readOnlyScope = scope({
+        permissionScope: "read_only",
+        sensitivity: "medium",
+        memoryOwner: "memory:shared",
+      });
+      const writeSensitiveScope = scope({
+        permissionScope: "write_allowed",
+        sensitivity: "high",
+        memoryOwner: "memory:shared",
+      });
+      const otherOwnerScope = scope({
+        permissionScope: "read_only",
+        sensitivity: "medium",
+        memoryOwner: "memory:other",
+      });
+
+      const readOnly = await runAttentionCycle({
+        store,
+        cycle: {
+          now: NOW,
+          trigger: "maintenance",
+          scope: readOnlyScope,
+          signalRefs: [sourceRef("runtime_event", "runtime:read")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "read:1" }],
+          expectedProjectionRevision: 0,
+          cycleIdempotencyKey: "cycle:shared-scope-fields",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+      const writeSensitive = await runAttentionCycle({
+        store,
+        cycle: {
+          now: NOW,
+          trigger: "maintenance",
+          scope: writeSensitiveScope,
+          signalRefs: [sourceRef("runtime_event", "runtime:write")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "write:1" }],
+          expectedProjectionRevision: 0,
+          cycleIdempotencyKey: "cycle:shared-scope-fields",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+      const otherOwner = await runAttentionCycle({
+        store,
+        cycle: {
+          now: NOW,
+          trigger: "maintenance",
+          scope: otherOwnerScope,
+          signalRefs: [sourceRef("runtime_event", "runtime:owner")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "owner:1" }],
+          expectedProjectionRevision: 0,
+          cycleIdempotencyKey: "cycle:shared-scope-fields",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+
+      expect(readOnly.writeDisposition).toBe("written");
+      expect(writeSensitive.writeDisposition).toBe("written");
+      expect(otherOwner.writeDisposition).toBe("written");
+      await expect(store.loadConcernState({ scope: readOnlyScope })).resolves.toMatchObject({
+        clusters: [
+          expect.objectContaining({
+            scope: expect.objectContaining({ permissionScope: "read_only", memoryOwner: "memory:shared" }),
+          }),
+        ],
+      });
+      await expect(store.loadConcernState({ scope: writeSensitiveScope })).resolves.toMatchObject({
+        clusters: [
+          expect.objectContaining({
+            scope: expect.objectContaining({ permissionScope: "write_allowed", sensitivity: "high" }),
+          }),
+        ],
+      });
+      await expect(store.loadConcernState({ scope: otherOwnerScope })).resolves.toMatchObject({
+        clusters: [
+          expect.objectContaining({
+            scope: expect.objectContaining({ memoryOwner: "memory:other" }),
+          }),
+        ],
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("priority safety triggers persist a pending block before ordinary admission can continue", async () => {
     const tmpDir = makeTempDir("pulseed-attention-cycle-block-");
     try {
