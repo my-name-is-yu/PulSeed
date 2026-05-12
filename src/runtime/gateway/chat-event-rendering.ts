@@ -1,4 +1,7 @@
-import { renderExpressionDecisionForSurface } from "../attention/index.js";
+import {
+  projectSurfaceDelivery,
+  renderSurfaceDeliveryProjection,
+} from "../attention/index.js";
 import type { ActivityEvent } from "../../interface/chat/chat-events.js";
 import type { OperationProgressItem } from "../../interface/chat/operation-progress.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
@@ -66,15 +69,16 @@ export function renderGatewayExpressionDecision(input: {
   expressionDecision?: ExpressionDecision | null;
   visibilityPolicy: VisibilityPolicy;
 }): string | null {
-  const rendered = renderExpressionDecisionForSurface({
-    render_id: input.renderId,
-    rendered_at: input.renderedAt,
-    surface_class: input.surfaceClass ?? "gateway",
-    outcome_decision: input.outcomeDecision,
-    expression_decision: input.expressionDecision,
-    visibility_policy: input.visibilityPolicy,
+  const delivery = projectSurfaceDelivery({
+    renderId: input.renderId,
+    renderedAt: input.renderedAt,
+    surfaceClass: input.surfaceClass ?? "gateway",
+    outcomeDecision: input.outcomeDecision,
+    expressionDecision: input.expressionDecision,
+    visibilityPolicy: input.visibilityPolicy,
   });
-  return rendered ? redactSetupSecrets(rendered.user_facing_rationale) : null;
+  const rendered = renderSurfaceDeliveryProjection(delivery);
+  return rendered ? redactSetupSecrets(rendered) : null;
 }
 
 export function renderGatewayAgentTimelineItem(item: AgentTimelineItem): string | null {

@@ -44,6 +44,13 @@ export {
   sourceRef,
 } from "./attention-metabolism.js";
 export {
+  projectSurfaceDelivery,
+  renderSurfaceDeliveryProjection,
+  SurfaceDeliveryKindSchema,
+  SurfaceDeliveryModeSchema,
+  SurfaceDeliveryProjectionSchema,
+} from "./surface-delivery.js";
+export {
   LivingAutonomyDirectPathIds,
   LivingAutonomyDirectPathInventory,
   currentPreGateOutwardEffects,
@@ -80,6 +87,12 @@ export type {
   SignalContextAssemblyInput,
   UrgeCandidateAssemblyInput,
 } from "./attention-metabolism.js";
+export type {
+  SurfaceDeliveryKind,
+  SurfaceDeliveryMode,
+  SurfaceDeliveryProjection,
+  SurfaceDeliveryProjectionInput,
+} from "./surface-delivery.js";
 export type {
   LivingAutonomyDirectPathId,
   LivingAutonomyDirectPathInventoryEntry,
