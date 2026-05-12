@@ -2742,6 +2742,51 @@ describe("GoalTrigger execution (Phase 3)", () => {
     });
   });
 
+  it("default wait-resume attention cycle is idempotent for the same scheduled due instance", async () => {
+    vi.useFakeTimers();
+    const dueAt = "2026-05-12T00:00:00.000Z";
+    const firstRunAt = "2026-05-12T00:00:05.000Z";
+    const secondRunAt = "2026-05-12T00:00:15.000Z";
+    vi.setSystemTime(new Date(firstRunAt));
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait-replay-default",
+        wait_strategy_id: "strategy:wait-replay-default",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = dueAt;
+    await eng.saveEntries();
+    await eng.loadEntries();
+    await eng.tick();
+
+    const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
+    replayedEntry.next_fire_at = dueAt;
+    replayedEntry.retry_state = null;
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    vi.setSystemTime(new Date(secondRunAt));
+    await eng.tick();
+
+    const store = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
+    await expect(store.listCycleResults()).resolves.toEqual([
+      expect.objectContaining({
+        write_disposition: "written",
+        result: expect.objectContaining({ trigger: "wait_resume" }),
+      }),
+    ]);
+  });
+
   it("keeps wait-resume replay identity stable for the same scheduled due instance", async () => {
     vi.useFakeTimers();
     const dueAt = "2026-05-12T00:00:00.000Z";

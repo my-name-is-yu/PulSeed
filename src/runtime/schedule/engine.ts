@@ -138,7 +138,7 @@ export class ScheduleEngine {
                 highWatermark: `${source.ref.id}:${source.lifecycle}`,
               })),
               expectedProjectionRevision: revision,
-              cycleIdempotencyKey: `wait_resume:${context.entry_id}:${context.fired_at}`,
+              cycleIdempotencyKey: `wait_resume:${context.entry_id}:${context.scheduled_for ?? context.fired_at}`,
               policyEpoch: scope.policyEpoch,
               mode: "live",
               urges: reevaluation.urge_candidates,

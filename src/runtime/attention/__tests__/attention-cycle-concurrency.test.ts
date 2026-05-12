@@ -79,7 +79,12 @@ describe("attention cycle persistence and concurrency", () => {
         orphaned_count: 1,
         proposal_ids: [proposals[0]!.proposal_id],
       });
-      await expect(store.listAdmissionProposals({ states: ["orphaned_needs_reconcile"] })).resolves.toHaveLength(1);
+      await expect(store.listAdmissionProposals({ states: ["orphaned_needs_reconcile"] })).resolves.toEqual([
+        expect.objectContaining({
+          proposal_id: proposals[0]!.proposal_id,
+          proposal: expect.objectContaining({ proposalState: "orphaned_needs_reconcile" }),
+        }),
+      ]);
     } finally {
       cleanupTempDir(tmpDir);
     }

@@ -484,7 +484,8 @@ export class AttentionStateStore {
         sqlite.prepare(`
           UPDATE attention_admission_proposals
           SET state = 'orphaned_needs_reconcile',
-            updated_at = ?
+            updated_at = ?,
+            proposal_json = json_set(proposal_json, '$.proposalState', 'orphaned_needs_reconcile')
           WHERE proposal_id = ?
         `).run(input.updatedAt, row.proposal_id);
       }

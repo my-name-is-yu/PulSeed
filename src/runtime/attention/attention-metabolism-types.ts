@@ -89,6 +89,7 @@ export type AttentionReevaluationContext = {
   entry_name: string;
   activation_kind?: "wait_resume";
   fired_at: string;
+  scheduled_for?: string | null;
 };
 
 export type AttentionReevaluationPort = {
