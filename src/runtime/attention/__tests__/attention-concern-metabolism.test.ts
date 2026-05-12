@@ -316,6 +316,94 @@ describe("attention concern metabolism contracts", () => {
     });
   });
 
+  it("restricts correction suppression to targeted decompositions and children", () => {
+    const clusters = promoteAttentionClusters({
+      clusters: [
+        createAttentionClusterFromUrge(urge({ id: "target-correction", concern: "targeted correction" }), NOW),
+        createAttentionClusterFromUrge(urge({ id: "unrelated-correction", concern: "unrelated correction" }), NOW),
+      ],
+      now: NOW,
+    });
+    const agenda = projectClustersToAgenda({ clusters, now: NOW });
+    const decompositions = decomposeAgenda({ agendaItems: agenda, now: NOW });
+    const target = decompositions.find((decomposition) => decomposition.clusterRef.id === clusters[0]!.id)!;
+    const unrelated = decompositions.find((decomposition) => decomposition.clusterRef.id === clusters[1]!.id)!;
+
+    const clusterCorrection = applyCorrectionFeedbackToAttention({
+      clusters,
+      decompositions,
+      correction: {
+        correctionRef: ref("correction", "correction:target-cluster"),
+        scope: scope(),
+        targetClusterRefs: [ref("attention_cluster", clusters[0]!.id)],
+        suppressionReason: "user corrected only one concern",
+        recordedAt: NOW,
+      },
+    });
+    expect(clusterCorrection.decompositions.find((item) => item.id === target.id)).toMatchObject({
+      status: "suppressed",
+    });
+    expect(clusterCorrection.decompositions.find((item) => item.id === unrelated.id)).toMatchObject({
+      status: unrelated.status,
+      children: unrelated.children,
+    });
+
+    const childOnlyCorrection = applyCorrectionFeedbackToAttention({
+      clusters,
+      decompositions,
+      correction: {
+        correctionRef: ref("correction", "correction:target-child"),
+        scope: scope(),
+        targetChildIds: [target.children[0]!.id],
+        suppressionReason: "user corrected only one child action",
+        recordedAt: NOW,
+      },
+    });
+    const childOnlyTarget = childOnlyCorrection.decompositions.find((item) => item.id === target.id)!;
+    expect(childOnlyTarget.status).toBe(target.status);
+    expect(childOnlyTarget.children[0]).toMatchObject({
+      admissionState: "rejected",
+      outcomeRef: "correction:target-child",
+    });
+    expect(childOnlyTarget.children.slice(1)).toEqual(target.children.slice(1));
+    expect(childOnlyCorrection.clusters).toEqual(clusters);
+    expect(childOnlyCorrection.decompositions.find((item) => item.id === unrelated.id)).toEqual(unrelated);
+  });
+
+  it("matches full attention scope before exposing diagnostics", () => {
+    const viewerScope = scope();
+    const otherConversationScope = scope({
+      conversationId: "conversation-2",
+      sessionId: "session-2",
+    });
+    const clusters = promoteAttentionClusters({
+      clusters: [
+        createAttentionClusterFromUrge(urge({ id: "diagnostic-visible", scope: viewerScope }), NOW),
+        createAttentionClusterFromUrge(urge({
+          id: "diagnostic-hidden",
+          scope: otherConversationScope,
+          policyEpoch: otherConversationScope.policyEpoch,
+        }), NOW),
+      ],
+      now: NOW,
+    });
+    const decompositions = decomposeAgenda({
+      agendaItems: projectClustersToAgenda({ clusters, now: NOW }),
+      now: NOW,
+    });
+
+    const diagnostics = createAttentionDiagnostics({
+      clusters,
+      decompositions,
+      viewerScope,
+      view: "same_user_detail",
+      generatedAt: NOW,
+    });
+
+    expect(diagnostics.concern_count).toBe(1);
+    expect(diagnostics.concerns.map((concern) => concern.cluster_id)).toEqual([clusters[0]!.id]);
+  });
+
   it("feeds failure and correction back into existing clusters and diagnostics without leaking high sensitivity refs", () => {
     const highScope = scope({ sensitivity: "high" });
     const clusters = promoteAttentionClusters({

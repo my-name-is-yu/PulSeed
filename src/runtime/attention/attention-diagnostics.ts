@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { attentionScopeKey } from "./attention-scope.js";
 import type {
   AgendaDecomposition,
   AttentionCluster,
@@ -110,7 +111,5 @@ function whySilent(cluster: AttentionCluster, decompositions: readonly AgendaDec
 }
 
 function sameDiagnosticScope(left: AttentionScope, right: AttentionScope): boolean {
-  return left.userId === right.userId
-    && (left.workspaceId ?? null) === (right.workspaceId ?? null)
-    && left.surfaceClass === right.surfaceClass;
+  return attentionScopeKey(left) === attentionScopeKey(right);
 }

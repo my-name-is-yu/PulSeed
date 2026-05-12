@@ -1,4 +1,5 @@
 import { uniqueRefs } from "./attention-refs.js";
+import { attentionScopeKey } from "./attention-scope.js";
 import type {
   AgentAgendaItemKind,
   AgendaDecomposition,
@@ -197,8 +198,11 @@ export function applyCorrectionFeedbackToAttention(input: {
 }): { clusters: AttentionCluster[]; decompositions: AgendaDecomposition[] } {
   const targetClusterIds = new Set((input.correction.targetClusterRefs ?? []).map((ref) => ref.id));
   const targetChildIds = new Set(input.correction.targetChildIds ?? []);
+  const hasClusterTargets = targetClusterIds.size > 0;
+  const hasChildTargets = targetChildIds.size > 0;
   const clusters = input.clusters.map((cluster) => {
-    if (targetClusterIds.size > 0 && !targetClusterIds.has(cluster.id)) return cluster;
+    if (hasChildTargets && !hasClusterTargets) return cluster;
+    if (hasClusterTargets && !targetClusterIds.has(cluster.id)) return cluster;
     if (!scopeMatchesCorrection(cluster.scope, input.correction.scope)) return cluster;
     return AttentionClusterSchema.parse({
       ...cluster,
@@ -217,19 +221,28 @@ export function applyCorrectionFeedbackToAttention(input: {
   });
   const decompositions = input.decompositions.map((decomposition) => {
     if (!scopeMatchesCorrection(decomposition.scope, input.correction.scope)) return decomposition;
+    const clusterTargeted = targetClusterIds.has(decomposition.clusterRef.id);
+    const childTargeted = decomposition.children.some((child) => targetChildIds.has(child.id));
+    if ((hasClusterTargets || hasChildTargets) && !clusterTargeted && !childTargeted) return decomposition;
+
+    const targetWholeDecomposition = !hasChildTargets;
+    const children = decomposition.children.map((child) => {
+      const shouldReject = targetWholeDecomposition || targetChildIds.has(child.id);
+      return shouldReject
+        ? {
+            ...child,
+            admissionState: child.admissionState === "admitted" ? "admitted" : "rejected",
+            outcomeRef: input.correction.correctionRef.id,
+            updatedAt: input.correction.recordedAt,
+          }
+        : child;
+    });
+    const suppressWholeDecomposition = targetWholeDecomposition
+      || children.every((child) => child.admissionState === "admitted" || child.admissionState === "rejected");
     return AgendaDecompositionSchema.parse({
       ...decomposition,
-      status: "suppressed",
-      children: decomposition.children.map((child) =>
-        targetChildIds.size === 0 || targetChildIds.has(child.id)
-          ? {
-              ...child,
-              admissionState: child.admissionState === "admitted" ? "admitted" : "rejected",
-              outcomeRef: input.correction.correctionRef.id,
-              updatedAt: input.correction.recordedAt,
-            }
-          : child
-      ),
+      status: suppressWholeDecomposition ? "suppressed" : decomposition.status,
+      children,
       updatedAt: input.correction.recordedAt,
     });
   });
@@ -268,8 +281,5 @@ function failureSuppression(failureClass: AttentionOutcomeFailureClass | undefin
 }
 
 function scopeMatchesCorrection(left: AttentionScope, right: AttentionScope): boolean {
-  return left.userId === right.userId
-    && (right.workspaceId === null || right.workspaceId === undefined || left.workspaceId === right.workspaceId)
-    && (right.conversationId === null || right.conversationId === undefined || left.conversationId === right.conversationId)
-    && left.policyEpoch === right.policyEpoch;
+  return attentionScopeKey(left) === attentionScopeKey(right);
 }
