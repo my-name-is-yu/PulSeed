@@ -251,6 +251,30 @@ describe("surface delivery projection", () => {
     });
   });
 
+  it("allows request approval delivery while the approval artifact is still a prepared draft", () => {
+    const delivery = projectSurfaceDelivery({
+      renderId: "render:approval-draft",
+      renderedAt: NOW,
+      surfaceClass: "gateway",
+      outcomeDecision: outcome("request_approval"),
+      expressionDecision: expression("request_approval", ["gateway"]),
+      visibilityPolicy: visibilityPolicy({
+        id: "visibility:request_approval",
+        outcomeId: "outcome:request_approval",
+        expressionId: "expression:request_approval",
+      }),
+      companionActionProjection: companionProjection({ kind: "prepare_draft", executesOperation: false }),
+    });
+
+    expect(delivery).toMatchObject({
+      delivery_kind: "request_approval",
+      delivery_mode: "approval_request",
+      companion_action_projection_id: "companion-action:prepare_draft",
+      should_render: true,
+      user_facing_text: "rendered request_approval",
+    });
+  });
+
   it("rejects stale ExpressionDecision records that are not selected by the OutcomeDecision", () => {
     const selectedOutcome = outcomeWithExpressionRef("express_to_user", "expression:new");
     const staleExpression = expression("express_to_user", ["gateway"], {

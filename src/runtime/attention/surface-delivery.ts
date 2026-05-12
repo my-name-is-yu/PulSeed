@@ -265,7 +265,7 @@ function assertCompanionProjectionCompatible(
   const compatible = (() => {
     switch (deliveryKind) {
       case "request_approval":
-        return kind === "ask_for_approval";
+        return kind === "ask_for_approval" || kind === "prepare_draft";
       case "add_to_digest":
         return kind === "digest_later";
       case "prepare_silently":
