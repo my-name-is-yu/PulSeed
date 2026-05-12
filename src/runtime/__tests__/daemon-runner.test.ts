@@ -31,6 +31,7 @@ import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
+import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
 import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
 import type { ResidentOperationBoundaryResult } from "../capability-operation-planner.js";
@@ -392,6 +393,25 @@ describe("DaemonRunner durable runtime", () => {
       },
     });
     expect(() => new DaemonRunner(deps)).not.toThrow();
+  });
+
+  it("keeps one resident feedback ingestion store on the daemon context", () => {
+    const defaultDaemon = new DaemonRunner(makeDeps(tmpDir));
+    const defaultContext = defaultDaemon as unknown as {
+      feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
+    };
+    expect(defaultContext.feedbackIngestionStore).toBeInstanceOf(FeedbackIngestionStore);
+
+    const injectedStore: Pick<FeedbackIngestionStore, "listEffects"> = {
+      listEffects: vi.fn().mockResolvedValue([]),
+    };
+    const injectedDaemon = new DaemonRunner(makeDeps(tmpDir, {
+      feedbackIngestionStore: injectedStore,
+    }));
+    const injectedContext = injectedDaemon as unknown as {
+      feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
+    };
+    expect(injectedContext.feedbackIngestionStore).toBe(injectedStore);
   });
 
   it("saves daemon-state.json with running status and active goals on start", async () => {
@@ -934,6 +954,89 @@ describe("DaemonRunner durable runtime", () => {
     expect(goalNegotiator.suggestGoals).not.toHaveBeenCalled();
     expect(goalNegotiator.negotiate).not.toHaveBeenCalled();
     expect((deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("passes stored feedback effects into resident operation boundary decisions", async () => {
+    await new FeedbackIngestionStore(path.join(tmpDir, "runtime")).ingest({
+      source: "gateway",
+      feedback_kind: "surface_correction",
+      outcome: "corrected",
+      target: {
+        kind: "surface",
+        id: "telegram-thread",
+      },
+      recorded_at: "2026-05-12T08:30:00.000Z",
+      reason: "Correct the previous proactive suggestion before preparing another.",
+      route: "express_to_user",
+    });
+    const goalNegotiator = {
+      suggestGoals: vi.fn().mockResolvedValue([
+        {
+          title: "Feedback-aware suggestion",
+          description: "Prepare only if feedback context allows it.",
+          rationale: "Stored feedback must narrow resident autonomy.",
+          dimensions_hint: ["resident_autonomy"],
+        },
+      ]),
+      negotiate: vi.fn(),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "suggest_goal",
+          details: { description: "prepare only after feedback context is applied" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+    const residentOperationBoundaryEvaluator = vi.fn(() =>
+      deniedResidentOperationBoundary("test policy prohibited resident proposal preparation")
+    );
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+      residentOperationBoundaryEvaluator,
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    await pollForJsonMatch<{
+      resident_activity: {
+        summary: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.summary.includes("held by operation boundary") === true,
+    );
+
+    expect(residentOperationBoundaryEvaluator).toHaveBeenCalled();
+    const boundaryInput = (residentOperationBoundaryEvaluator as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(boundaryInput).toEqual(expect.objectContaining({
+      recentFeedback: expect.arrayContaining([
+        expect.objectContaining({
+          outcome: "corrected",
+          policy_adjustment: "require_confirmation",
+        }),
+      ]),
+      invalidationEvidence: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "correction",
+          ref: "surface:telegram-thread:",
+        }),
+      ]),
+    }));
 
     daemon.stop();
     await startPromise;

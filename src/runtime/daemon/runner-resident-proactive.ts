@@ -14,6 +14,7 @@ import type {
   ResidentSurfaceActivityMetadata,
 } from "./runner-resident-shared.js";
 import {
+  loadResidentFeedbackDecisionContext,
   persistResidentActivity,
   residentOperationBoundaryAllowsPreparation,
 } from "./runner-resident-shared.js";
@@ -115,6 +116,7 @@ export async function proactiveTick(
   context: Pick<
     DaemonRunnerResidentContext,
     "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
+    | "feedbackIngestionStore"
   >,
   lastProactiveTickAt: number,
   setLastProactiveTickAt: (value: number) => void,
@@ -175,6 +177,7 @@ export async function proactiveTick(
     surfaceActivityMetadata,
   });
   const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+  const feedbackDecisionContext = await loadResidentFeedbackDecisionContext(context);
   const operationBoundary = (context.residentOperationBoundaryEvaluator ?? evaluateResidentOperationBoundary)({
     admission: attentionAdmission,
     assembledAt: new Date().toISOString(),
@@ -183,6 +186,8 @@ export async function proactiveTick(
       ? result.decision.details["goal_id"].trim()
       : undefined,
     surfaceRef: surfaceActivityMetadata.surface_id,
+    recentFeedback: feedbackDecisionContext.recentFeedback,
+    invalidationEvidence: feedbackDecisionContext.invalidationEvidence,
   });
   const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
 

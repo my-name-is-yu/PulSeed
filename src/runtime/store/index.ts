@@ -20,6 +20,7 @@ export {
   CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
   CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL,
+  CONTROL_DB_FEEDBACK_INGESTION_SCHEMA_SQL,
   CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL,
   CONTROL_DB_GOAL_TASK_DURABLE_LOOP_SCHEMA_SQL,
   CONTROL_DB_INITIAL_SCHEMA_SQL,
@@ -88,6 +89,13 @@ export type {
   AttentionStateStoreOptions,
   AttentionStoreLifecycle,
 } from "./attention-state-store.js";
+
+export {
+  FeedbackIngestionStore,
+} from "./feedback-ingestion-store.js";
+export type {
+  FeedbackIngestionStoreOptions,
+} from "./feedback-ingestion-store.js";
 
 export {
   GoalOrchestrationStateStore,

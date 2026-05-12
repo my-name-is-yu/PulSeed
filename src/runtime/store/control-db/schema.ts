@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 28;
+export const CONTROL_DB_SCHEMA_VERSION = 29;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -407,6 +407,40 @@ CREATE TABLE IF NOT EXISTS attention_expression_decisions (
 
 CREATE INDEX IF NOT EXISTS attention_expression_decisions_status_idx
   ON attention_expression_decisions(decision_status, created_at, expression_decision_id);
+`.trim();
+
+export const CONTROL_DB_FEEDBACK_INGESTION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS feedback_ingestion_records (
+  feedback_id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  feedback_json TEXT NOT NULL CHECK (json_valid(feedback_json))
+);
+
+CREATE INDEX IF NOT EXISTS feedback_ingestion_records_target_idx
+  ON feedback_ingestion_records(target_kind, target_id, recorded_at);
+
+CREATE INDEX IF NOT EXISTS feedback_ingestion_records_recorded_idx
+  ON feedback_ingestion_records(recorded_at, feedback_id);
+
+CREATE TABLE IF NOT EXISTS feedback_ingestion_effects (
+  effect_id TEXT PRIMARY KEY,
+  feedback_id TEXT NOT NULL,
+  effect_kind TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  effect_json TEXT NOT NULL CHECK (json_valid(effect_json)),
+  FOREIGN KEY (feedback_id) REFERENCES feedback_ingestion_records(feedback_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS feedback_ingestion_effects_feedback_idx
+  ON feedback_ingestion_effects(feedback_id, created_at);
+
+CREATE INDEX IF NOT EXISTS feedback_ingestion_effects_target_idx
+  ON feedback_ingestion_effects(target_ref, effect_kind, created_at);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -2011,5 +2045,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     28,
     "attention-agenda-decision-runtime-state",
     CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    29,
+    "feedback-ingestion-runtime-state",
+    CONTROL_DB_FEEDBACK_INGESTION_SCHEMA_SQL
   ),
 ];

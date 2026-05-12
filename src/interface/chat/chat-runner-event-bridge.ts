@@ -894,6 +894,7 @@ function lastActivityLabelForEvent(event: ChatEvent): string | null {
     case "turn_steer":
     case "assistant_final":
     case "surface_delivery":
+    case "user_feedback":
     case "presence_update":
     case "lifecycle_end":
     case "lifecycle_error":
@@ -963,6 +964,7 @@ function resumedPresenceForEvent(
     case "turn_steer":
     case "assistant_final":
     case "surface_delivery":
+    case "user_feedback":
     case "presence_update":
     case "lifecycle_end":
     case "lifecycle_error":

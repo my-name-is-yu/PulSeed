@@ -176,8 +176,8 @@ describe("AttentionStateStore", () => {
 
       const upgraded = await openControlDatabase({ baseDir: tmpDir });
       try {
-        expect(CONTROL_DB_SCHEMA_VERSION).toBe(28);
-        expect(upgraded.schemaVersion()).toBe(28);
+        expect(CONTROL_DB_SCHEMA_VERSION).toBe(29);
+        expect(upgraded.schemaVersion()).toBe(29);
         const tables = upgraded.read((sqlite) =>
           sqlite.prepare(`
             SELECT name

@@ -19,6 +19,7 @@ import {
 } from "./resident-attention-orchestrator.js";
 import {
   gatherResidentWorkspaceContext,
+  loadResidentFeedbackDecisionContext,
   loadExistingGoalTitles,
   loadKnownGoals,
   mergeResidentSurfaceActivityMetadata,
@@ -121,7 +122,7 @@ export async function triggerResidentGoalDiscovery(
 export async function runResidentCuriosityCycle(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator" | "feedbackIngestionStore"
   >,
   options?: {
     activityTrigger?: ResidentActivity["trigger"];
@@ -194,10 +195,13 @@ export async function runResidentCuriosityCycle(
       surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
     });
     const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+    const feedbackDecisionContext = await loadResidentFeedbackDecisionContext(context);
     const operationBoundary = (context.residentOperationBoundaryEvaluator ?? evaluateResidentOperationBoundary)({
       admission: attentionAdmission,
       assembledAt: new Date().toISOString(),
       surfaceRef: inheritedSurfaceActivityMetadata.surface_id,
+      recentFeedback: feedbackDecisionContext.recentFeedback,
+      invalidationEvidence: feedbackDecisionContext.invalidationEvidence,
     });
     const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
     if (!attentionAdmission.branch_admitted) {
@@ -305,7 +309,7 @@ function residentSurfaceActivityMetadata(
 export async function triggerResidentInvestigation(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator" | "feedbackIngestionStore"
   >,
   details?: Record<string, unknown>,
   surfaceActivityMetadata: ResidentActivityMetadata = {},
@@ -322,7 +326,7 @@ export async function triggerResidentInvestigation(
 export async function runScheduledGoalReview(
   context: Pick<
     DaemonRunnerResidentContext,
-    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config" | "baseDir" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
+    "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "config" | "baseDir" | "attentionStateStore" | "residentOperationBoundaryEvaluator" | "feedbackIngestionStore"
   >,
   lastGoalReviewAt: number,
   setLastGoalReviewAt: (value: number) => void,

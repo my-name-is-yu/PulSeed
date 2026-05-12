@@ -25,6 +25,7 @@ import {
   ProactiveOverreachIndicatorSchema,
   type ProactiveInterventionSummary,
 } from "../../../runtime/store/proactive-intervention-store.js";
+import { FeedbackIngestionStore } from "../../../runtime/store/feedback-ingestion-store.js";
 import { createRelationshipProfileProposalsFromProactiveFeedback } from "../../../platform/profile/proactive-feedback-proposals.js";
 import {
   createRuntimeDreamSidecarReview,
@@ -661,9 +662,25 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       channel: "cli",
     });
     const proposalResult = await createRelationshipProfileProposalsFromProactiveFeedback(stateManager.getBaseDir(), event);
+    const feedbackStore = new FeedbackIngestionStore(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
+    const feedbackIngestion = await feedbackStore.ingest({
+      source: "cli",
+      feedback_kind: "proactive_feedback",
+      outcome: event.outcome,
+      target: {
+        kind: "intervention",
+        id: event.intervention_id,
+      },
+      recorded_at: event.recorded_at,
+      reason: event.reason,
+      overreach_indicators: event.overreach_indicators,
+      follow_through_success: event.follow_through_success,
+      proactive_event_ref: event.event_id,
+      profile_proposal_refs: proposalResult.proposals.map((proposal) => proposal.id),
+    });
     const summary = await store.summarize();
     if (values.json) {
-      printJson({ event, proposals: proposalResult.proposals, summary });
+      printJson({ event, feedback_ingestion: feedbackIngestion, proposals: proposalResult.proposals, summary });
     } else {
       console.log(`Recorded proactive feedback: ${event.outcome} for ${event.intervention_id}`);
       if (proposalResult.proposals.length > 0) {

@@ -639,6 +639,7 @@ function isNonTerminalProgressEvent(event: ChatEvent): boolean {
     case "lifecycle_start":
     case "presence_update":
     case "turn_steer":
+    case "user_feedback":
       return false;
   }
 }
