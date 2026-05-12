@@ -47,6 +47,7 @@ export class GlobTool implements ITool<GlobInput, string[]> {
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     activityCategory: "search",
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = GlobInputSchema;
 

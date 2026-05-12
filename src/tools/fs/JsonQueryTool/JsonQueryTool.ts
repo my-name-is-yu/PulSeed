@@ -43,6 +43,7 @@ export class JsonQueryTool implements ITool<JsonQueryInput, unknown> {
     shouldDefer: true, alwaysLoad: false, maxConcurrency: 0,
     maxOutputChars: MAX_OUTPUT_CHARS, tags: [...TAGS],
     activityCategory: "read",
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = JsonQueryInputSchema;
 

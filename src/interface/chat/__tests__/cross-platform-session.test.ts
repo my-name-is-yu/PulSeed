@@ -14,6 +14,7 @@ import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adap
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StateManager as RealStateManager } from "../../../base/state/state-manager.js";
+import type { LLMMessage } from "../../../base/llm/llm-client.js";
 import { createSetupRuntimeControlTools } from "../../../tools/runtime/SetupRuntimeControlTools.js";
 import type { ApprovalRequest, ITool, ToolCallContext, ToolResult } from "../../../tools/types.js";
 import { ToolRegistry } from "../../../tools/registry.js";
@@ -78,6 +79,7 @@ function makeGatewayReadTool(): ITool {
       maxOutputChars: 8000,
       tags: ["read"],
       activityCategory: "read",
+      gatewayExposure: "default_safe",
     },
     inputSchema: z.object({}),
     description: () => "Check whether the current repository has a README.",
@@ -106,6 +108,7 @@ function makeGatewayRuntimeStatusTool(): ITool {
       maxOutputChars: 8000,
       tags: ["runtime", "status"],
       activityCategory: "read",
+      gatewayExposure: "runtime_control",
     },
     inputSchema: z.object({}),
     description: () => "Read PulSeed runtime status.",
@@ -123,6 +126,10 @@ function makeGatewayRuntimeStatusTool(): ITool {
 function makeScopedTool(name: string, overrides: Partial<ITool["metadata"]> = {}): ITool {
   const permissionLevel = overrides.permissionLevel ?? "read_only";
   const isReadOnly = overrides.isReadOnly ?? permissionLevel === "read_only";
+  const gatewayExposure = overrides.gatewayExposure
+    ?? (isReadOnly && permissionLevel === "read_only" && !overrides.isDestructive
+      ? "default_safe"
+      : "never");
   return {
     metadata: {
       name,
@@ -135,6 +142,7 @@ function makeScopedTool(name: string, overrides: Partial<ITool["metadata"]> = {}
       maxConcurrency: overrides.maxConcurrency ?? 0,
       maxOutputChars: overrides.maxOutputChars ?? 8000,
       tags: overrides.tags ?? [],
+      gatewayExposure,
       ...(overrides.activityCategory ? { activityCategory: overrides.activityCategory } : {}),
     },
     inputSchema: z.object({}).passthrough(),
@@ -330,6 +338,37 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(result.output).toContain("no language model client is configured");
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before gateway tool catalog use when the provider cannot preserve native tool transcripts", async () => {
+    const readTool = makeGatewayReadTool();
+    const llmClient = {
+      sendMessageStream: vi.fn().mockResolvedValue({
+        content: "This provider should not receive the gateway tool catalog.",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+        tool_calls: [],
+      }),
+      supportsToolCalling: vi.fn(() => false),
+      parseJSON: vi.fn(),
+    };
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([readTool]),
+    }));
+
+    const result = await manager.execute("README を確認して", {
+      identity_key: "gateway-no-native-tools-user",
+      platform: "telegram",
+      conversation_id: "gateway-no-native-tools",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("native tool-calling support");
+    expect(llmClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(readTool.call).not.toHaveBeenCalled();
   });
 
   it("reuses the same ChatRunner session for the same identity_key across platforms", async () => {
@@ -697,31 +736,45 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
   });
 
-  it("keeps the default gateway catalog scoped to read, search, status, and approval-request tools", () => {
+  it("keeps the default gateway catalog scoped to read, search, and approval-request tools", () => {
     const tools = [
       makeScopedTool("read"),
       makeScopedTool("grep"),
-      makeScopedTool("get_runtime_status"),
+      makeScopedTool("get_runtime_status", { gatewayExposure: "runtime_control" }),
       makeScopedTool("ask-human"),
-      makeScopedTool("prepare_gateway_config_write", { permissionLevel: "write_local", isReadOnly: false }),
-      makeScopedTool("create_schedule", { permissionLevel: "write_local", isReadOnly: false }),
+      makeScopedTool("prepare_gateway_config_write", {
+        permissionLevel: "write_local",
+        isReadOnly: false,
+        gatewayExposure: "approval_required",
+      }),
       makeScopedTool("start_durable_run", { permissionLevel: "write_local", isReadOnly: false }),
-      makeScopedTool("request_runtime_control", { permissionLevel: "write_local", isReadOnly: false }),
+      makeScopedTool("request_runtime_control", {
+        permissionLevel: "write_local",
+        isReadOnly: false,
+        gatewayExposure: "runtime_control",
+      }),
       makeScopedTool("shell", { permissionLevel: "execute", isReadOnly: false }),
     ];
 
     expect(selectGatewayModelLoopTools(tools).map((tool) => tool.metadata.name)).toEqual([
       "read",
       "grep",
-      "get_runtime_status",
       "ask-human",
     ]);
     expect(selectGatewayModelLoopTools(tools, { approvedWrite: true }).map((tool) => tool.metadata.name))
-      .toEqual(["read", "grep", "get_runtime_status", "ask-human", "prepare_gateway_config_write", "create_schedule"]);
+      .toEqual(["read", "grep", "ask-human"]);
     expect(selectGatewayModelLoopTools(tools, { approvedDurableRun: true }).map((tool) => tool.metadata.name))
-      .toEqual(["read", "grep", "get_runtime_status", "ask-human", "start_durable_run"]);
+      .toEqual(["read", "grep", "ask-human"]);
     expect(selectGatewayModelLoopTools(tools, { approvedExecute: true }).map((tool) => tool.metadata.name))
-      .toEqual(["read", "grep", "get_runtime_status", "ask-human", "shell"]);
+      .toEqual(["read", "grep", "ask-human"]);
+    expect(selectGatewayModelLoopTools(tools, {
+      approvedGatewayActions: [{
+        toolName: "prepare_gateway_config_write",
+        normalizedToolName: "prepare_gateway_config_write",
+        argsFingerprint: "{}",
+      }],
+    }).map((tool) => tool.metadata.name))
+      .toEqual(["read", "grep", "ask-human", "prepare_gateway_config_write"]);
     expect(selectGatewayModelLoopTools(tools, {
       runtimeControlAllowed: true,
       runtimeControlApprovalMode: "interactive",
@@ -766,7 +819,11 @@ describe("CrossPlatformChatSessionManager", () => {
       llmClient: llmClient as never,
       registry: makeRegistryWithTools([
         makeScopedTool("read"),
-        makeScopedTool("request_runtime_control", { permissionLevel: "write_local", isReadOnly: false }),
+        makeScopedTool("request_runtime_control", {
+          permissionLevel: "write_local",
+          isReadOnly: false,
+          gatewayExposure: "runtime_control",
+        }),
         makeScopedTool("start_durable_run", { permissionLevel: "write_local", isReadOnly: false }),
         makeScopedTool("shell", { permissionLevel: "execute", isReadOnly: false }),
       ]),
@@ -842,6 +899,15 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(tool.call).toHaveBeenCalledOnce();
     expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondMessages = llmClient.sendMessageStream.mock.calls[1]?.[0] as LLMMessage[];
+    expect(secondMessages).toEqual(expect.arrayContaining([expect.objectContaining({
+      role: "tool",
+      tool_call_id: "call-readme",
+      name: "read",
+    })]));
+    expect(secondMessages.some((message) =>
+      message.role === "user" && message.content.includes("Tool result for read")
+    )).toBe(false);
     const firstOptions = llmClient.sendMessageStream.mock.calls[0]?.[1];
     expect((firstOptions?.tools ?? []).map((item: { function: { name: string } }) => item.function.name))
       .toContain("read");
@@ -911,7 +977,7 @@ describe("CrossPlatformChatSessionManager", () => {
     }
   });
 
-  it("keeps runtime status checks in the same default gateway tool-choice loop", async () => {
+  it("keeps authorized runtime status checks in the same gateway tool-choice loop", async () => {
     const events: ChatEvent[] = [];
     const tool = makeGatewayRuntimeStatusTool();
     const llmClient = makeStreamingLLMClient([
@@ -941,6 +1007,10 @@ describe("CrossPlatformChatSessionManager", () => {
       conversation_id: "telegram-runtime-status",
       user_id: "user-1",
       cwd: "/repo",
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+      },
       onEvent: (event) => { events.push(event); },
     });
 
@@ -968,6 +1038,7 @@ describe("CrossPlatformChatSessionManager", () => {
       isReadOnly: false,
       isDestructive: true,
       tags: ["automation"],
+      gatewayExposure: "approval_required",
     });
     const llmClient = makeStreamingLLMClient([
       {
@@ -982,6 +1053,10 @@ describe("CrossPlatformChatSessionManager", () => {
               question: "Write Telegram gateway config from the redacted token?",
               options: ["Approve", "Deny"],
               approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
             }),
           },
         }],
@@ -1026,6 +1101,7 @@ describe("CrossPlatformChatSessionManager", () => {
       permissionLevel: "write_local",
       isReadOnly: false,
       isDestructive: true,
+      gatewayExposure: "approval_required",
     });
     const llmClient = makeStreamingLLMClient([
       {
@@ -1040,6 +1116,10 @@ describe("CrossPlatformChatSessionManager", () => {
               question: "Write Telegram gateway config?",
               options: ["Approve", "Deny"],
               approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
             }),
           },
         }],
@@ -1083,6 +1163,265 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
   });
 
+  it("blocks a gateway write when the model changes arguments after approval", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので別の設定を書き込みます。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-confirm-config",
+          type: "function",
+          function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "slack" }) },
+        }],
+      },
+      {
+        content: "This third model request must not run after argument mismatch.",
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-approval-args-mismatch-user",
+      platform: "telegram",
+      conversation_id: "gateway-approval-args-mismatch",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("approval_target.arguments");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
+  });
+
+  it("does not expose or execute a different approval-required tool after one request is approved", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const otherWriteTool = makeScopedTool("delete_gateway_config", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target: {
+                tool_name: "confirm_gateway_config_write",
+                arguments: { channel: "telegram" },
+              },
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので削除します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-delete-config",
+          type: "function",
+          function: { name: "delete_gateway_config", arguments: JSON.stringify({ channel: "telegram" }) },
+        }],
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool, otherWriteTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-approval-other-tool-user",
+      platform: "telegram",
+      conversation_id: "gateway-approval-other-tool",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("delete_gateway_config requires explicit approval");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(otherWriteTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human", "confirm_gateway_config_write"]);
+  });
+
+  it("does not expand gateway write tools when approval omits the exact target tool", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので設定を書き込みます。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-confirm-config",
+          type: "function",
+          function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "telegram" }) },
+        }],
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-approval-missing-target-user",
+      platform: "telegram",
+      conversation_id: "gateway-approval-missing-target",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("confirm_gateway_config_write requires explicit approval");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human"]);
+  });
+
+  it("does not treat legacy approval_target_tool as broad dangerous-tool permission", async () => {
+    const approvalFn = vi.fn(async () => true);
+    const askHuman = new AskHumanTool();
+    const writeTool = makeScopedTool("confirm_gateway_config_write", {
+      permissionLevel: "write_local",
+      isReadOnly: false,
+      isDestructive: true,
+      gatewayExposure: "approval_required",
+    });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "設定を書き込む前に許可を確認します。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-ask-write-approval",
+          type: "function",
+          function: {
+            name: "ask-human",
+            arguments: JSON.stringify({
+              question: "Write Telegram gateway config?",
+              options: ["Approve", "Deny"],
+              approval_scope: "write",
+              approval_target_tool: "confirm_gateway_config_write",
+            }),
+          },
+        }],
+      },
+      {
+        content: "承認されたので任意の設定を書き込みます。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-confirm-config",
+          type: "function",
+          function: { name: "confirm_gateway_config_write", arguments: JSON.stringify({ channel: "telegram" }) },
+        }],
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([askHuman, writeTool]),
+      approvalFn,
+    }));
+
+    const result = await manager.execute("その Telegram 設定を書き込んで", {
+      identity_key: "gateway-legacy-tool-target-user",
+      platform: "telegram",
+      conversation_id: "gateway-legacy-tool-target",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("confirm_gateway_config_write requires explicit approval");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(writeTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondToolNames = (llmClient.sendMessageStream.mock.calls[1]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(secondToolNames).toEqual(["ask-human"]);
+  });
+
   it("applies scoped gateway approval before checking the next tool call in the same response", async () => {
     const approvalFn = vi.fn(async () => true);
     const askHuman = new AskHumanTool();
@@ -1090,6 +1429,7 @@ describe("CrossPlatformChatSessionManager", () => {
       permissionLevel: "write_local",
       isReadOnly: false,
       isDestructive: true,
+      gatewayExposure: "approval_required",
     });
     const llmClient = makeStreamingLLMClient([
       {
@@ -1105,6 +1445,10 @@ describe("CrossPlatformChatSessionManager", () => {
                 question: "Write Telegram gateway config?",
                 options: ["Approve", "Deny"],
                 approval_scope: "write",
+                approval_target: {
+                  tool_name: "confirm_gateway_config_write",
+                  arguments: { channel: "telegram" },
+                },
               }),
             },
           },
@@ -1150,11 +1494,13 @@ describe("CrossPlatformChatSessionManager", () => {
       permissionLevel: "write_local",
       isReadOnly: false,
       isDestructive: true,
+      gatewayExposure: "runtime_control",
     });
     const shell = makeScopedTool("shell", {
       permissionLevel: "execute",
       isReadOnly: false,
       isDestructive: true,
+      gatewayExposure: "never",
     });
     const llmClient = makeStreamingLLMClient([
       {
@@ -1184,7 +1530,7 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("request_runtime_control is not available in this gateway scope");
+    expect(result.output).toContain("request_runtime_control requires runtime-control authorization");
     expect(result.output).toContain("Type: Permission failure");
     expect(requestRuntimeControl.call).not.toHaveBeenCalled();
     expect(shell.call).not.toHaveBeenCalled();
@@ -1194,7 +1540,7 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(toolNames).not.toContain("shell");
   });
 
-  it("returns a terminal failure when the gateway model repeats the same tool cycle", async () => {
+  it("does not fail on one harmless repeated tool cycle when the model then answers", async () => {
     const events: ChatEvent[] = [];
     const readTool = makeScopedTool("read", { activityCategory: "read" });
     const llmClient = makeStreamingLLMClient([
@@ -1217,7 +1563,7 @@ describe("CrossPlatformChatSessionManager", () => {
         }],
       },
       {
-        content: "This final answer must not be treated as success.",
+        content: "README.md exists.",
       },
     ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
@@ -1234,11 +1580,94 @@ describe("CrossPlatformChatSessionManager", () => {
       onEvent: (event) => { events.push(event); },
     });
 
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("README.md exists.");
+    expect(readTool.call).toHaveBeenCalledTimes(2);
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(3);
+    expect(events.some((event) => event.type === "assistant_final")).toBe(true);
+  });
+
+  it("returns unavailable tool errors to the gateway model before answering", async () => {
+    const readTool = makeScopedTool("read", { activityCategory: "read" });
+    const llmClient = makeStreamingLLMClient([
+      {
+        content: "README を読もうとします。",
+        stop_reason: "tool_calls",
+        tool_calls: [{
+          id: "call-read-file",
+          type: "function",
+          function: { name: "read_file", arguments: JSON.stringify({ file_path: "README.md" }) },
+        }],
+      },
+      {
+        content: "この gateway では read_file は使えないため、確認できません。",
+      },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([readTool]),
+    }));
+
+    const result = await manager.execute("README を読んで答えて", {
+      identity_key: "gateway-unavailable-tool-user",
+      platform: "telegram",
+      conversation_id: "gateway-unavailable-tool",
+      user_id: "user-1",
+      cwd: "/repo",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("read_file");
+    expect(readTool.call).not.toHaveBeenCalled();
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    const secondMessages = llmClient.sendMessageStream.mock.calls[1]?.[0] as LLMMessage[];
+    const toolResult = secondMessages.find((message) => message.role === "tool");
+    expect(toolResult).toMatchObject({
+      role: "tool",
+      tool_call_id: "call-read-file",
+      name: "read_file",
+    });
+    expect(toolResult?.content).toContain("\"denial_class\":\"unknown_tool\"");
+  });
+
+  it("eventually fails repeated no-progress gateway tool cycles with loop-safety evidence", async () => {
+    const events: ChatEvent[] = [];
+    const readTool = makeScopedTool("read", { activityCategory: "read" });
+    const repeatedReadCall = (id: string) => ({
+      content: "同じファイルを確認します。",
+      stop_reason: "tool_calls" as const,
+      tool_calls: [{
+        id,
+        type: "function" as const,
+        function: { name: "read", arguments: JSON.stringify({ file_path: "README.md" }) },
+      }],
+    });
+    const llmClient = makeStreamingLLMClient([
+      repeatedReadCall("call-read-1"),
+      repeatedReadCall("call-read-2"),
+      repeatedReadCall("call-read-3"),
+      repeatedReadCall("call-read-4"),
+      { content: "This final answer must not run." },
+    ]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([readTool]),
+    }));
+
+    const result = await manager.execute("README を読んで答えて", {
+      identity_key: "gateway-repeated-loop-user",
+      platform: "telegram",
+      conversation_id: "gateway-repeated-loop",
+      user_id: "user-1",
+      cwd: "/repo",
+      onEvent: (event) => { events.push(event); },
+    });
+
     expect(result.success).toBe(false);
     expect(result.output).toContain("repeated the same tool call");
     expect(result.output).toContain("Recovery");
-    expect(readTool.call).toHaveBeenCalledTimes(2);
-    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(readTool.call).toHaveBeenCalledTimes(4);
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(4);
     expect(events.some((event) => event.type === "assistant_final")).toBe(false);
   });
 
@@ -1423,7 +1852,7 @@ describe("CrossPlatformChatSessionManager", () => {
     )).toBe(false);
   });
 
-  it("does not run post-final evidence repair on ordinary gateway replies", async () => {
+  it("repairs unsupported workspace claims before gateway final projection", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -1458,11 +1887,11 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("やあ。PulSeed dogfood 用の作業ディレクトリにいます。何を進めますか？");
-    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(result.output).toBe("やあ。何を進めますか？");
+    expect(llmClient.sendMessage).toHaveBeenCalledOnce();
   });
 
-  it("does not run post-final evidence fail-closed classification on ordinary gateway replies", async () => {
+  it("fails closed before final projection when a runtime claim has no evidence and the gate is unavailable", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockRejectedValue(new Error("classifier unavailable")),
       sendMessageStream: vi.fn().mockResolvedValue({
@@ -1488,11 +1917,12 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.output).toBe("PulSeed の daemon は正常に動いています。");
-    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(result.output).toContain("I can't verify the current local state");
+    expect(result.output).not.toContain("daemon は正常");
+    expect(llmClient.sendMessage).toHaveBeenCalledOnce();
   });
 
-  it("streams ordinary gateway model deltas directly without buffered evidence repair", async () => {
+  it("holds streamed evidence-sensitive gateway deltas until the safety gate decides", async () => {
     const events: ChatEvent[] = [];
     const llmClient = {
       sendMessage: vi.fn().mockImplementation(async (messages: Array<{ content: string }>) => {
@@ -1532,7 +1962,7 @@ describe("CrossPlatformChatSessionManager", () => {
       registry: makeRegistryWithTools([]),
     }));
 
-    await manager.execute("やあ！", {
+    const result = await manager.execute("やあ！", {
       identity_key: "gateway-safe-stream-user",
       platform: "telegram",
       conversation_id: "telegram-safe-stream",
@@ -1545,8 +1975,9 @@ describe("CrossPlatformChatSessionManager", () => {
       event.type === "assistant_delta"
     );
     expect(deltas.map((event) => event.delta)).toContain("やあ。");
-    expect(deltas.map((event) => event.delta).join("")).toContain("作業ディレクトリ");
-    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    expect(deltas.map((event) => event.delta).join("")).not.toContain("作業ディレクトリ");
+    expect(result.output).toContain("current workspace or repository state");
+    expect(llmClient.sendMessage).toHaveBeenCalledOnce();
   });
 
   it("streams native agent-loop final text directly without a runtime evidence gate", async () => {
@@ -2545,7 +2976,7 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("request_runtime_control is not available in this gateway scope");
+    expect(result.output).toContain("request_runtime_control requires runtime-control authorization");
     expect(result.output).toContain("Type: Permission failure");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
     expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
@@ -2750,23 +3181,22 @@ describe("CrossPlatformChatSessionManager", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("request_runtime_control is not available in this gateway scope");
+    expect(result.output).toContain("request_runtime_control requires runtime-control authorization");
     expect(result.output).toContain("Type: Permission failure");
-    expect(result.output).not.toContain("runtime-control");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
     expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(events.some((event) =>
       event.type === "tool_end"
       && event.toolName === "request_runtime_control"
       && event.success === false
-      && event.summary.includes("not available in this gateway scope")
+      && event.summary.includes("requires runtime-control authorization")
     )).toBe(true);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it("allows default gateway runtime status inspection without runtime-control mutation authority", async () => {
+  it("does not expose runtime status inspection on a runtime-control denied gateway turn", async () => {
     const events: ChatEvent[] = [];
     const stateManager = makeMockStateManager();
     const adapter = makeMockAdapter();
@@ -2800,7 +3230,7 @@ describe("CrossPlatformChatSessionManager", () => {
         }],
       },
       {
-        content: "This chat is not authorized to inspect or control PulSeed's running state. Nothing was executed, and I will not use shell commands as a workaround.",
+        content: "This second model request must not run after runtime status denial.",
       },
     ]);
     const manager = new CrossPlatformChatSessionManager(makeDeps({
@@ -2825,17 +3255,24 @@ describe("CrossPlatformChatSessionManager", () => {
       onEvent: (event) => { events.push(event); },
     });
 
-    expect(result.success).toBe(true);
-    expect(result.output).toContain("not authorized to inspect or control PulSeed's running state");
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("get_runtime_status requires runtime-control authorization");
+    expect(result.output).toContain("Type: Permission failure");
     expect(result.output).not.toContain("inspect_companion_state");
-    expect(result.output).not.toContain("Runtime control");
-    expect(result.output).not.toContain("runtime-control");
-    expect(result.output).not.toContain("lifecycle actions");
     expect(llmClient.sendMessage).not.toHaveBeenCalled();
-    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    const firstToolNames = (llmClient.sendMessageStream.mock.calls[0]?.[1]?.tools ?? [])
+      .map((tool: { function: { name: string } }) => tool.function.name);
+    expect(firstToolNames).not.toContain("get_runtime_status");
+    expect(events.some((event) =>
+      event.type === "tool_start"
+      && event.toolName === "get_runtime_status"
+    )).toBe(false);
     expect(events.some((event) =>
       event.type === "tool_end"
       && event.toolName === "get_runtime_status"
+      && event.success === false
+      && event.summary.includes("requires runtime-control authorization")
     )).toBe(true);
     expect(runtimeControlService.request).not.toHaveBeenCalled();
     expect(chatAgentLoopRunner.execute).not.toHaveBeenCalled();
@@ -2904,10 +3341,9 @@ describe("CrossPlatformChatSessionManager", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.output).toContain("request_runtime_control is not available in this gateway scope");
+      expect(result.output).toContain("request_runtime_control requires runtime-control authorization");
       expect(result.output).toContain("Type: Permission failure");
       expect(result.output).not.toContain(operation);
-      expect(result.output).not.toContain("runtime-control");
       expect(llmClient.sendMessage).not.toHaveBeenCalled();
       expect(llmClient.sendMessageStream).toHaveBeenCalledTimes(1);
       expect(runtimeControlService.request).not.toHaveBeenCalled();

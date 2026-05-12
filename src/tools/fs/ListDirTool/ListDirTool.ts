@@ -37,6 +37,7 @@ export class ListDirTool implements ITool<ListDirInput, DirEntry[]> {
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     activityCategory: "read",
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = ListDirInputSchema;
 

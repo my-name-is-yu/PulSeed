@@ -55,7 +55,7 @@ export {
   ArtifactMetricDataSourceAdapter,
   createWorkspaceArtifactMetricDataSource,
 } from "./adapters/datasources/artifact-metric-datasource.js";
-export { buildLLMClient, buildAdapterRegistry } from "./base/llm/provider-factory.js";
+export { buildLLMClient, buildGatewayLLMClient, buildAdapterRegistry } from "./base/llm/provider-factory.js";
 export { CodexLLMClient } from "./base/llm/codex-llm-client.js";
 export type { CodexLLMClientConfig } from "./base/llm/codex-llm-client.js";
 export { loadProviderConfig, saveProviderConfig, DEFAULT_PROVIDER_CONFIG, migrateProviderConfig, validateProviderConfig, MODEL_REGISTRY } from "./base/llm/provider-config.js";

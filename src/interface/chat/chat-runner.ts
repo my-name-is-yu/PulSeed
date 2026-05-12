@@ -961,7 +961,11 @@ export class ChatRunner {
   }
 
   async getSessionExecutionPolicy(): Promise<ExecutionPolicy> {
-    const policy = await resolveSessionExecutionPolicy(this.sessionExecutionPolicy, this.sessionCwd);
+    const policy = await resolveSessionExecutionPolicy(
+      this.sessionExecutionPolicy,
+      this.sessionCwd,
+      this.deps.defaultExecutionSecurity,
+    );
     this.sessionExecutionPolicy = policy;
     return policy;
   }
@@ -1040,7 +1044,7 @@ export class ChatRunner {
 
   private async reloadProviderRuntime(): Promise<void> {
     const [
-      { buildAdapterRegistry, buildLLMClient },
+      { buildAdapterRegistry, buildGatewayLLMClient },
       { loadProviderConfig },
       {
         createNativeChatAgentLoopRunner,
@@ -1056,10 +1060,11 @@ export class ChatRunner {
       baseDir: this.providerConfigBaseDir(),
       saveMigration: false,
     });
-    const llmClient = await buildLLMClient(providerConfig);
+    const llmClient = await buildGatewayLLMClient(providerConfig);
     const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
     this.deps.llmClient = llmClient;
     this.deps.adapter = adapterRegistry.getAdapter(providerConfig.adapter);
+    this.deps.defaultExecutionSecurity = providerConfig.agent_loop?.security;
     this.deps.chatAgentLoopRunner = this.deps.registry && this.deps.toolExecutor && shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
       ? createNativeChatAgentLoopRunner({
           llmClient,

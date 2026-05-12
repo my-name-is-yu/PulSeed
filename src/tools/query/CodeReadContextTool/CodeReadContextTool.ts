@@ -104,6 +104,7 @@ export class CodeReadContextTool implements ITool<CodeReadContextInput, unknown>
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     activityCategory: "read",
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = CodeReadContextInputSchema;
 

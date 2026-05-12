@@ -62,7 +62,11 @@ function buildPrompt(messages: LLMMessage[], system?: string): string {
   }
 
   for (const msg of messages) {
-    parts.push(`${msg.role}: ${msg.content}`);
+    if (msg.role === "tool") {
+      parts.push(`tool result${msg.name ? ` for ${msg.name}` : ""}: ${msg.content}`);
+    } else {
+      parts.push(`${msg.role}: ${msg.content}`);
+    }
   }
 
   return parts.join("\n");
@@ -565,6 +569,36 @@ function codexResponsesInput(messages: LLMMessage[]): Record<string, unknown>[] 
     const text = message.content || " ";
     if (message.role === "user") {
       return [{ role: "user", content: [{ type: "input_text", text }] }];
+    }
+    if (message.role === "tool") {
+      return [{
+        type: "function_call_output",
+        call_id: message.tool_call_id,
+        output: text,
+      }];
+    }
+    if (message.tool_calls?.length) {
+      const items: Record<string, unknown>[] = [];
+      if (message.content.trim()) {
+        items.push({
+          type: "message",
+          id: `msg_${index}`,
+          role: "assistant",
+          content: [{ type: "output_text", text, annotations: [] }],
+          status: "completed",
+        });
+      }
+      for (const call of message.tool_calls) {
+        items.push({
+          type: "function_call",
+          id: call.id,
+          call_id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+          status: "completed",
+        });
+      }
+      return items;
     }
     return [{
       type: "message",

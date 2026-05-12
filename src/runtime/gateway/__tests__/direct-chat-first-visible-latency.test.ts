@@ -448,6 +448,7 @@ describe("gateway direct chat first visible projection", () => {
         maxConcurrency: 0,
         maxOutputChars: 1000,
         tags: ["automation"],
+        gatewayExposure: "approval_required",
       },
       inputSchema: z.object({ channel: z.literal("telegram").default("telegram") }).strict(),
       description: () => "Write Telegram gateway config after explicit permission.",
@@ -480,6 +481,10 @@ describe("gateway direct chat first visible projection", () => {
                   question: "I need explicit permission before writing Telegram gateway config.",
                   options: ["Approve", "Deny"],
                   approval_scope: "write",
+                  approval_target: {
+                    tool_name: "confirm_gateway_config_write",
+                    arguments: { channel: "telegram" },
+                  },
                 }),
               },
             }],

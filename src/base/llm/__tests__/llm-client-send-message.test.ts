@@ -117,6 +117,62 @@ describe("LLMClient.sendMessage", () => {
     });
   });
 
+  it("maps assistant tool calls and tool results as Anthropic structured blocks", async () => {
+    const { LLMClient } = await import("../llm-client.js");
+    createMock.mockResolvedValueOnce({
+      content: [{ type: "text", text: "done" }],
+      usage: { input_tokens: 14, output_tokens: 4 },
+      stop_reason: "end_turn",
+    });
+
+    const client = new LLMClient("sk-ant-test");
+    await client.sendMessage([
+      { role: "user", content: "Inspect README." },
+      {
+        role: "assistant",
+        content: "I will read it.",
+        tool_calls: [{
+          id: "call-read",
+          type: "function",
+          function: {
+            name: "read",
+            arguments: "{\"file_path\":\"README.md\"}",
+          },
+        }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-read",
+        name: "read",
+        content: "{\"exists\":true}",
+      },
+    ]);
+
+    const request = createMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }>;
+    };
+    expect(request.messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "I will read it." },
+        {
+          type: "tool_use",
+          id: "call-read",
+          name: "read",
+          input: { file_path: "README.md" },
+        },
+      ],
+    });
+    expect(request.messages[2]).toEqual({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "call-read",
+        content: "{\"exists\":true}",
+      }],
+    });
+  });
+
   it("retries transient failures with exponential backoff and then succeeds", async () => {
     const { LLMClient } = await import("../llm-client.js");
     createMock

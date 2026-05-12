@@ -79,6 +79,7 @@ export class ReadTool implements ITool<ReadInput, string> {
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     activityCategory: "read",
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = ReadInputSchema;
 

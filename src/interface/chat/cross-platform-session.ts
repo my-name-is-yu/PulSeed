@@ -16,7 +16,7 @@ import {
 } from "./ingress-router.js";
 import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { StateManager } from "../../base/state/state-manager.js";
-import { buildAdapterRegistry, buildLLMClient } from "../../base/llm/provider-factory.js";
+import { buildAdapterRegistry, buildGatewayLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { TrustManager } from "../../platform/traits/trust-manager.js";
 import { ObservationEngine } from "../../platform/observation/observation-engine.js";
@@ -1407,7 +1407,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const stateManager = new StateManager();
   await stateManager.init();
 
-  const llmClient = await buildLLMClient();
+  const llmClient = await buildGatewayLLMClient(providerConfig);
   const adapterRegistry = await buildAdapterRegistry(llmClient, providerConfig);
   const adapter = adapterRegistry.getAdapter(providerConfig.adapter);
   const toolRegistry = new ToolRegistry();
@@ -1510,6 +1510,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     stateManager,
     adapter,
     llmClient,
+    defaultExecutionSecurity: providerConfig.agent_loop?.security,
     registry: toolRegistry,
     toolExecutor,
     chatAgentLoopRunner,

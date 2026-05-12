@@ -30,6 +30,7 @@ export class ToolSearchTool implements ITool<ToolSearchInput, ToolSearchResult[]
     maxOutputChars: MAX_OUTPUT_CHARS,
     tags: [...TAGS],
     activityCategory: "search",
+    gatewayExposure: "default_safe",
   };
 
   readonly inputSchema = ToolSearchInputSchema;

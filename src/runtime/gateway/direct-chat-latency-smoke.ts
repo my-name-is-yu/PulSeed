@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ZodSchema } from "zod";
 import { StateManager } from "../../base/state/state-manager.js";
-import { buildLLMClient } from "../../base/llm/provider-factory.js";
+import { buildGatewayLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import type {
   ILLMClient,
@@ -236,11 +236,12 @@ async function main(): Promise<number> {
   process.env["PULSEED_HOME"] = home;
   const stateManager = new StateManager(home, undefined, { walEnabled: false });
   await stateManager.init();
-  const llmClient = new TimingLLMClient(await buildLLMClient(providerConfig));
+  const llmClient = new TimingLLMClient(await buildGatewayLLMClient(providerConfig));
   const manager = new CrossPlatformChatSessionManager({
     stateManager,
     adapter: new NullAdapter(),
     llmClient,
+    defaultExecutionSecurity: providerConfig.agent_loop?.security,
     registry: new ToolRegistry(),
   });
   registerGatewayChatSessionPort(async () => manager);

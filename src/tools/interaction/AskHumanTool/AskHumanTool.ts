@@ -3,10 +3,19 @@ import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMet
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
+export const AskHumanApprovalTargetSchema = z.object({
+  tool_name: z.string().min(1),
+  action: z.string().min(1).optional(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
 export const AskHumanInputSchema = z.object({
   question: z.string().min(1, "question is required"),
   options: z.array(z.string()).optional(),
   approval_scope: z.enum(["write", "execute", "durable_run"]).optional(),
+  approval_target: AskHumanApprovalTargetSchema.optional(),
+  /** @deprecated Use approval_target with concrete arguments so approval binds to one request. */
+  approval_target_tool: z.string().min(1).optional(),
 }).strict();
 export type AskHumanInput = z.infer<typeof AskHumanInputSchema>;
 
@@ -22,6 +31,7 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
     maxConcurrency: 1,
     maxOutputChars: 4000,
     tags: [...TAGS],
+    gatewayExposure: "default_safe",
   };
   readonly inputSchema = AskHumanInputSchema;
 
@@ -33,9 +43,16 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
     const startTime = Date.now();
     try {
       const permissionLevel = permissionLevelForApprovalScope(input.approval_scope);
+      const approvalInput = {
+        question: input.question,
+        options: input.options,
+        approval_scope: input.approval_scope,
+        approval_target: input.approval_target,
+        approval_target_tool: input.approval_target_tool,
+      };
       const approved = await context.approvalFn({
         toolName: "ask-human",
-        input: { question: input.question, options: input.options, approval_scope: input.approval_scope },
+        input: approvalInput,
         reason: input.question,
         permissionLevel,
         isDestructive: input.approval_scope !== undefined,
@@ -45,7 +62,10 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
       if (!approved && input.approval_scope) {
         return {
           success: false,
-          data: { answer, question: input.question, approval_scope: input.approval_scope },
+          data: {
+            answer,
+            ...approvalInput,
+          },
           summary: `Human denied ${input.approval_scope} permission: ${input.question}`,
           error: `Human denied ${input.approval_scope} permission`,
           execution: {
@@ -58,7 +78,10 @@ export class AskHumanTool implements ITool<AskHumanInput, unknown> {
       }
       return {
         success: true,
-        data: { answer, question: input.question, approval_scope: input.approval_scope },
+        data: {
+          answer,
+          ...approvalInput,
+        },
         summary: `Human answered: ${answer}`,
         durationMs: Date.now() - startTime,
       };

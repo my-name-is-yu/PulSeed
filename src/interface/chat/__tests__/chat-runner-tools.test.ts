@@ -54,6 +54,7 @@ function makeMockTool(
       maxConcurrency: 0,
       maxOutputChars: 4000,
       tags: [],
+      gatewayExposure: "default_safe",
       ...(activityCategory ? { activityCategory } : {}),
     },
     inputSchema: z.object({}),
@@ -547,6 +548,7 @@ describe("ChatRunner — Codex-like model request builder path", () => {
         maxConcurrency: 0,
         maxOutputChars: 4000,
         tags: [],
+        gatewayExposure: "default_safe",
       },
       inputSchema: z.object({
         pattern: z.string(),
