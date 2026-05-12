@@ -17,6 +17,7 @@ export {
 
 export {
   CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL,
+  CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
   CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_GOAL_ORCHESTRATION_SCHEMA_SQL,
@@ -71,6 +72,22 @@ export {
 export type {
   DriveGoalScheduleLegacyImportReport,
 } from "../../platform/drive/drive-schedule-state-migration.js";
+
+export {
+  AttentionStateStore,
+  AttentionStoreLifecycleSchema,
+} from "./attention-state-store.js";
+export type {
+  AttentionAgendaListOptions,
+  AttentionDecisionChainSnapshot,
+  AttentionAgendaSuppressionInput,
+  AttentionAgendaSuppressionResult,
+  AttentionInvalidationInput,
+  AttentionInvalidationResult,
+  AttentionStateCycleInput,
+  AttentionStateStoreOptions,
+  AttentionStoreLifecycle,
+} from "./attention-state-store.js";
 
 export {
   GoalOrchestrationStateStore,

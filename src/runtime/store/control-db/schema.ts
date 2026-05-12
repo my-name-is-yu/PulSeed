@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 27;
+export const CONTROL_DB_SCHEMA_VERSION = 28;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -245,6 +245,168 @@ CREATE INDEX IF NOT EXISTS reflection_reports_type_period_idx
 
 CREATE INDEX IF NOT EXISTS reflection_reports_created_idx
   ON reflection_reports(created_at, report_id);
+`.trim();
+
+export const CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS attention_inputs (
+  attention_input_id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_epoch TEXT NOT NULL,
+  high_watermark TEXT NOT NULL,
+  replay_key TEXT NOT NULL UNIQUE,
+  emitted_at TEXT NOT NULL,
+  replay_disposition TEXT NOT NULL CHECK (replay_disposition IN ('accepted', 'duplicate_replay_key')),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'suppressed', 'stale', 'terminal')),
+  suppressed_at TEXT,
+  cooldown_until TEXT,
+  revisit_due_at TEXT,
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  invalidation_ref_count INTEGER NOT NULL CHECK (invalidation_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  input_json TEXT NOT NULL CHECK (json_valid(input_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_inputs_source_idx
+  ON attention_inputs(source_kind, source_id, source_epoch, high_watermark);
+
+CREATE INDEX IF NOT EXISTS attention_inputs_lifecycle_idx
+  ON attention_inputs(lifecycle, emitted_at, attention_input_id);
+
+CREATE TABLE IF NOT EXISTS attention_input_replay_records (
+  replay_record_id TEXT PRIMARY KEY,
+  attention_input_id TEXT NOT NULL,
+  replay_key TEXT NOT NULL,
+  disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'duplicate_replay_key')),
+  duplicate_of TEXT,
+  emitted_at TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  input_json TEXT NOT NULL CHECK (json_valid(input_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_input_replay_records_key_idx
+  ON attention_input_replay_records(replay_key, recorded_at, replay_record_id);
+
+CREATE TABLE IF NOT EXISTS attention_signal_contexts (
+  signal_context_id TEXT PRIMARY KEY,
+  assembled_at TEXT NOT NULL,
+  source_replay_keys_json TEXT NOT NULL CHECK (json_valid(source_replay_keys_json)),
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  invalidation_ref_count INTEGER NOT NULL CHECK (invalidation_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  context_json TEXT NOT NULL CHECK (json_valid(context_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_signal_contexts_assembled_idx
+  ON attention_signal_contexts(assembled_at, signal_context_id);
+
+CREATE TABLE IF NOT EXISTS attention_urge_candidates (
+  urge_id TEXT PRIMARY KEY,
+  origin TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  maturation_state TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  urge_json TEXT NOT NULL CHECK (json_valid(urge_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_urge_candidates_lifecycle_idx
+  ON attention_urge_candidates(lifecycle, updated_at, urge_id);
+
+CREATE INDEX IF NOT EXISTS attention_urge_candidates_target_idx
+  ON attention_urge_candidates(target_kind, target_id, updated_at, urge_id);
+
+CREATE TABLE IF NOT EXISTS attention_agenda_items (
+  agenda_item_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  current_posture TEXT NOT NULL,
+  control_state TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  staleness_state TEXT NOT NULL,
+  revisit_kind TEXT NOT NULL,
+  revisit_due_at TEXT,
+  suppressed_at TEXT,
+  suppression_reason TEXT,
+  cooldown_until TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  invalidation_ref_count INTEGER NOT NULL CHECK (invalidation_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  agenda_json TEXT NOT NULL CHECK (json_valid(agenda_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_agenda_items_lifecycle_idx
+  ON attention_agenda_items(lifecycle, updated_at, agenda_item_id);
+
+CREATE INDEX IF NOT EXISTS attention_agenda_items_control_idx
+  ON attention_agenda_items(control_state, current_posture, updated_at, agenda_item_id);
+
+CREATE INDEX IF NOT EXISTS attention_agenda_items_revisit_idx
+  ON attention_agenda_items(revisit_kind, revisit_due_at, agenda_item_id);
+
+CREATE TABLE IF NOT EXISTS attention_inhibition_decisions (
+  decision_id TEXT PRIMARY KEY,
+  target_ref TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  decided_at TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_inhibition_decisions_target_idx
+  ON attention_inhibition_decisions(target_ref, decided_at, decision_id);
+
+CREATE TABLE IF NOT EXISTS attention_initiative_gate_decisions (
+  decision_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  decided_at TEXT NOT NULL,
+  selected_outcome TEXT,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_initiative_gate_decisions_status_idx
+  ON attention_initiative_gate_decisions(status, decided_at, decision_id);
+
+CREATE TABLE IF NOT EXISTS attention_outcome_decisions (
+  outcome_decision_id TEXT PRIMARY KEY,
+  initiative_decision_ref TEXT NOT NULL,
+  admission_status TEXT NOT NULL,
+  requested_outcome TEXT NOT NULL,
+  final_outcome TEXT,
+  decided_at TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  stale_ref_count INTEGER NOT NULL CHECK (stale_ref_count >= 0),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_outcome_decisions_status_idx
+  ON attention_outcome_decisions(admission_status, decided_at, outcome_decision_id);
+
+CREATE TABLE IF NOT EXISTS attention_expression_decisions (
+  expression_decision_id TEXT PRIMARY KEY,
+  outcome_decision_ref TEXT NOT NULL,
+  outcome_class TEXT NOT NULL,
+  decision_status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'pending', 'held', 'suppressed', 'admitted', 'stale', 'terminal')),
+  audit_ref_count INTEGER NOT NULL CHECK (audit_ref_count >= 0),
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_expression_decisions_status_idx
+  ON attention_expression_decisions(decision_status, created_at, expression_decision_id);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -1844,5 +2006,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     27,
     "reflection-report-runtime-state",
     CONTROL_DB_REFLECTION_REPORT_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    28,
+    "attention-agenda-decision-runtime-state",
+    CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL
   ),
 ];

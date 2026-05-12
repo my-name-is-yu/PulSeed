@@ -123,7 +123,7 @@ export function runtimeItemsForAgenda(items: AgentAgendaItem[], now: string): Ru
     schema_version: "runtime-item-v1",
     item_id: item.agenda_item_id,
     type: "agent_agenda_item",
-    status: item.current_posture === "ready_for_gate" ? "mature" : "active",
+    status: runtimeStatusForAgendaPosture(item.current_posture),
     posture: agendaPostureToRuntimePosture(item.current_posture),
     source: "attention-metabolism",
     created_at: item.created_at,
@@ -178,11 +178,30 @@ export function runtimeItemsForAgenda(items: AgentAgendaItem[], now: string): Ru
         "require_confirmation",
       ],
       required_confirmation: ["require_confirmation"],
-      repair_options: ["reground_item", "require_confirmation"],
+      repair_options: [],
       reason: "agenda runtime mirror is inspection-only before admission",
     },
     audit_trace_refs: item.audit_refs.map((candidate) => candidate.id),
   }));
+}
+
+function runtimeStatusForAgendaPosture(posture: AgendaPosture): RuntimeItem["status"] {
+  switch (posture) {
+    case "ready_for_gate":
+      return "mature";
+    case "suppressed":
+      return "blocked";
+    case "expired":
+    case "rejected_stale":
+      return "expired";
+    case "admitted":
+      return "completed";
+    case "new":
+    case "warming":
+    case "held":
+    case "prepared":
+      return "active";
+  }
 }
 
 export function intersectMoves(moves: readonly AttentionMove[], allowed: readonly AttentionMove[]): AttentionMove[] {
