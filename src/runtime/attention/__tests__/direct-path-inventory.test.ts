@@ -54,9 +54,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
     );
 
     expect(nonExceptionPaths.map((entry) => entry.id)).toEqual(expect.arrayContaining([
-      "gateway.outbound",
       "notification.outbox",
-      "tui_chat_gateway.direct_route",
     ]));
     for (const entry of nonExceptionPaths) {
       expect(entry.requiresTypedAdmission, entry.id).toBe(true);
@@ -103,12 +101,10 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
     expect(pathsWithOutwardPotential.map((entry) => entry.id).sort()).toEqual([
       "daemon.proactive_tick",
-      "gateway.outbound",
       "notification.outbox",
       "resident.curiosity",
       "resident.proactive_maintenance",
       "runtime_control.executor",
-      "tui_chat_gateway.direct_route",
     ].sort());
     for (const entry of pathsWithOutwardPotential) {
       expect(entry.requiresTypedAdmission, entry.id).toBe(true);
@@ -123,13 +119,15 @@ describe("LivingAutonomyDirectPathInventory", () => {
     expect(currentOutwardPaths).toEqual([]);
   });
 
-  it("keeps EventServer direct transports as explicit exception boundaries", () => {
+  it("keeps direct user-command and EventServer transports as explicit exception boundaries", () => {
     const byId = directPathInventoryById();
     const userAuthorizedCommandIds = [
       "event_server.command_approval_response",
       "event_server.command_goal_lifecycle",
       "event_server.command_runtime_control",
       "event_server.command_schedule_run_now",
+      "gateway.outbound",
+      "tui_chat_gateway.direct_route",
     ] as const;
     const outOfScopeTransportIds = [
       "event_server.file_ingestion",
