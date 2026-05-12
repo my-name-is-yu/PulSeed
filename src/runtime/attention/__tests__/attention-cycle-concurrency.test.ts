@@ -428,6 +428,53 @@ describe("attention cycle persistence and concurrency", () => {
     }
   });
 
+  it("does not reopen pending blocks when a committed safety cycle is replayed", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-cycle-safety-replay-");
+    try {
+      const store = new AttentionStateStore(`${tmpDir}/runtime`, { controlBaseDir: tmpDir });
+      const cycleScope = scope();
+      const safetyCycle = {
+        now: NOW,
+        trigger: "correction" as const,
+        safetyTrigger: "correction" as const,
+        scope: cycleScope,
+        signalRefs: [sourceRef("correction", "correction:replay")],
+        sourceHighWatermarks: [{ source: "correction", highWatermark: "1" }],
+        expectedProjectionRevision: 0,
+        cycleIdempotencyKey: "cycle:correction:replay",
+        policyEpoch: "policy:cycle",
+        mode: "live" as const,
+      };
+
+      const blocked = await runAttentionCycle({ store, cycle: safetyCycle });
+      expect(blocked.writeDisposition).toBe("written");
+      await expect(store.listPendingBlocks(cycleScope)).resolves.toHaveLength(1);
+
+      const reconciled = await runAttentionCycle({
+        store,
+        cycle: {
+          now: "2026-05-12T01:05:00.000Z",
+          trigger: "runtime_outcome",
+          scope: cycleScope,
+          signalRefs: [sourceRef("runtime_event", "runtime:outcome:safety-replay")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "2" }],
+          expectedProjectionRevision: blocked.projectionRevision,
+          cycleIdempotencyKey: "cycle:runtime-outcome:safety-replay",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+      expect(reconciled.writeDisposition).toBe("written");
+      await expect(store.listPendingBlocks(cycleScope)).resolves.toHaveLength(0);
+
+      const duplicateSafety = await runAttentionCycle({ store, cycle: safetyCycle });
+      expect(duplicateSafety.writeDisposition).toBe("no_op_elided");
+      await expect(store.listPendingBlocks(cycleScope)).resolves.toHaveLength(0);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("reconciles pending blocks when a committed runtime outcome cycle is replayed", async () => {
     const tmpDir = makeTempDir("pulseed-attention-cycle-replay-pending-");
     try {

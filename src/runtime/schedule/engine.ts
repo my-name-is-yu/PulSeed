@@ -114,7 +114,10 @@ export class ScheduleEngine {
     this.hookManager = deps.hookManager;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
-    const defaultAttentionStore = new AttentionStateStore(resolveConfiguredDaemonRuntimeRoot(this.baseDir));
+    const defaultAttentionStore = new AttentionStateStore(
+      resolveConfiguredDaemonRuntimeRoot(this.baseDir),
+      { controlBaseDir: this.baseDir },
+    );
     this.attentionReevaluation = deps.attentionReevaluation ?? {
       reevaluate: async (signalContext, context) => {
         const reevaluation = reevaluateSchedulerWakeThroughAttention(signalContext, context);

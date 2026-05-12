@@ -165,6 +165,7 @@ export interface AttentionMetabolismCycleWriteInput {
   decompositions: readonly AgendaDecomposition[];
   admissionProposals?: readonly AttentionAdmissionCandidate[];
   events?: readonly AttentionEventLedgerRecord[];
+  pendingBlocks?: readonly AttentionPendingBlockWriteInput[];
   result: Record<string, unknown>;
   created_at: string;
   no_op_hash?: string | null;
@@ -189,6 +190,14 @@ export interface AttentionPendingBlockRecord {
   reason: string;
   created_at: string;
   cleared_at: string | null;
+}
+
+export interface AttentionPendingBlockWriteInput {
+  blockId?: string;
+  scope: AttentionScope;
+  triggerKind: string;
+  reason: string;
+  createdAt: string;
 }
 
 export interface AttentionPendingBlockClearResult {
@@ -613,6 +622,9 @@ export class AttentionStateStore {
         created_at: input.created_at,
         result: input.result,
       });
+      for (const block of input.pendingBlocks ?? []) {
+        if (scopeKey(block.scope) === key) upsertPendingBlock(sqlite, block);
+      }
 
       return {
         writeDisposition: "written",
@@ -629,28 +641,7 @@ export class AttentionStateStore {
     createdAt: string;
   }): Promise<void> {
     const db = await this.database();
-    db.transaction((sqlite) => {
-      sqlite.prepare(`
-        INSERT INTO attention_pending_blocks (
-          block_id,
-          scope_key,
-          trigger_kind,
-          reason,
-          created_at,
-          cleared_at
-        )
-        VALUES (?, ?, ?, ?, ?, NULL)
-        ON CONFLICT(block_id) DO UPDATE SET
-          reason = excluded.reason,
-          cleared_at = NULL
-      `).run(
-        input.blockId ?? `attention-block:${stableId(`${scopeKey(input.scope)}:${input.triggerKind}`)}`,
-        scopeKey(input.scope),
-        input.triggerKind,
-        input.reason,
-        input.createdAt,
-      );
-    });
+    db.transaction((sqlite) => upsertPendingBlock(sqlite, input));
   }
 
   async listPendingBlockScopeKeys(): Promise<string[]> {
@@ -1042,6 +1033,29 @@ function listPendingBlocks(sqlite: SqliteDatabase, key: string | null): Attentio
     ORDER BY created_at ASC, block_id ASC
   `).all(...(key ? [key] : [])) as AttentionPendingBlockRecord[];
   return rows;
+}
+
+function upsertPendingBlock(sqlite: SqliteDatabase, input: AttentionPendingBlockWriteInput): void {
+  sqlite.prepare(`
+    INSERT INTO attention_pending_blocks (
+      block_id,
+      scope_key,
+      trigger_kind,
+      reason,
+      created_at,
+      cleared_at
+    )
+    VALUES (?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(block_id) DO UPDATE SET
+      reason = excluded.reason,
+      cleared_at = NULL
+  `).run(
+    input.blockId ?? `attention-block:${stableId(`${scopeKey(input.scope)}:${input.triggerKind}`)}`,
+    scopeKey(input.scope),
+    input.triggerKind,
+    input.reason,
+    input.createdAt,
+  );
 }
 
 function upsertWatermark(

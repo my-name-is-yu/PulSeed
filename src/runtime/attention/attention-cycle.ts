@@ -1,5 +1,6 @@
 import type {
   AttentionPendingBlockRecord,
+  AttentionPendingBlockWriteInput,
   AttentionStateStore,
 } from "../store/attention-state-store.js";
 import type {
@@ -100,7 +101,6 @@ export async function runAttentionCycle(input: {
     | "loadConcernState"
     | "saveMetabolismCycle"
     | "projectionRevision"
-    | "addPendingBlock"
     | "listPendingBlocks"
     | "clearPendingBlocks"
   >;
@@ -108,15 +108,7 @@ export async function runAttentionCycle(input: {
 }): Promise<AttentionCycleResult> {
   const cycleId = `attention-cycle:${stableId(`${attentionScopeKey(input.cycle.scope)}:${input.cycle.cycleIdempotencyKey}`)}`;
   const shouldClearPendingBlocks = input.cycle.trigger === "runtime_outcome";
-
-  if (isPrioritySafetyTrigger(input.cycle.trigger, input.cycle.safetyTrigger)) {
-    await input.store.addPendingBlock({
-      scope: input.cycle.scope,
-      triggerKind: input.cycle.safetyTrigger ?? input.cycle.trigger,
-      reason: "priority safety trigger blocks stale admission cycles until committed",
-      createdAt: input.cycle.now,
-    });
-  }
+  const pendingBlockToWrite = createPendingBlockForCycle(input.cycle);
 
   if (input.cycle.maxWrites === 0 && !isPrioritySafetyTrigger(input.cycle.trigger, input.cycle.safetyTrigger)) {
     return emptyCycleResult({
@@ -150,7 +142,10 @@ export async function runAttentionCycle(input: {
     existingDecompositions: state.decompositions,
     now: input.cycle.now,
   });
-  const pendingBlocks = await input.store.listPendingBlocks(input.cycle.scope);
+  const pendingBlocks = includePendingBlockForCycle(
+    await input.store.listPendingBlocks(input.cycle.scope),
+    pendingBlockToWrite,
+  );
   const pendingBlockedScopes = pendingBlocks.map((block) => block.scope_key);
   const admissionCandidates = buildAttentionAdmissionCandidates({
     decompositions,
@@ -186,6 +181,7 @@ export async function runAttentionCycle(input: {
     agendaItems: agenda,
     decompositions,
     admissionProposals: admissionCandidates,
+    pendingBlocks: pendingBlockToWrite ? [pendingBlockToWrite] : [],
     events: [
       ...createdUrges.map((urge) => ({
         event_id: `attention-event:${stableId(`${cycleId}:urge:${urge.urge_id}`)}`,
@@ -298,6 +294,40 @@ function createUrgesForCycle(cycle: AttentionCycleInput): UrgeCandidate[] {
     policyEpoch: cycle.policyEpoch,
     maturation_state: "warming",
   })];
+}
+
+function createPendingBlockForCycle(cycle: AttentionCycleInput): AttentionPendingBlockWriteInput | null {
+  if (!isPrioritySafetyTrigger(cycle.trigger, cycle.safetyTrigger)) return null;
+  const triggerKind = cycle.safetyTrigger ?? cycle.trigger;
+  const scopeKey = attentionScopeKey(cycle.scope);
+  return {
+    blockId: `attention-block:${stableId(`${scopeKey}:${triggerKind}`)}`,
+    scope: cycle.scope,
+    triggerKind,
+    reason: "priority safety trigger blocks stale admission cycles until committed",
+    createdAt: cycle.now,
+  };
+}
+
+function includePendingBlockForCycle(
+  pendingBlocks: AttentionPendingBlockRecord[],
+  pendingBlock: AttentionPendingBlockWriteInput | null,
+): AttentionPendingBlockRecord[] {
+  if (!pendingBlock) return pendingBlocks;
+  const record = pendingBlockRecord(pendingBlock);
+  const next = pendingBlocks.filter((block) => block.block_id !== record.block_id);
+  return [...next, record];
+}
+
+function pendingBlockRecord(block: AttentionPendingBlockWriteInput): AttentionPendingBlockRecord {
+  return {
+    block_id: block.blockId ?? `attention-block:${stableId(`${attentionScopeKey(block.scope)}:${block.triggerKind}`)}`,
+    scope_key: attentionScopeKey(block.scope),
+    trigger_kind: block.triggerKind,
+    reason: block.reason,
+    created_at: block.createdAt,
+    cleared_at: null,
+  };
 }
 
 function isPrioritySafetyTrigger(trigger: AttentionCycleTrigger, safetyTrigger?: AttentionSafetyTrigger | null): boolean {

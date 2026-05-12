@@ -2699,7 +2699,7 @@ describe("GoalTrigger execution (Phase 3)", () => {
     expect(concernState.decompositions[0]?.status).not.toBe("closed");
   });
 
-  it("default wait-resume path writes attention state through configured runtime root", async () => {
+  it("default wait-resume path writes attention state through configured runtime root and shared control DB", async () => {
     const configuredRuntimeRoot = path.join(tempDir, "configured-runtime-root");
     fs.writeFileSync(path.join(tempDir, "daemon.json"), JSON.stringify({
       runtime_root: configuredRuntimeRoot,
@@ -2726,8 +2726,9 @@ describe("GoalTrigger execution (Phase 3)", () => {
 
     const results = await eng.tick();
     const result = results.find((candidate) => candidate.entry_id === entry.id)!;
-    const configuredStore = new AttentionStateStore(configuredRuntimeRoot);
-    const defaultStore = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
+    const configuredStore = new AttentionStateStore(configuredRuntimeRoot, { controlBaseDir: tempDir });
+    const splitControlStore = new AttentionStateStore(configuredRuntimeRoot);
+    const sharedControlStore = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
 
     expect(result.status).toBe("ok");
     await expect(configuredStore.loadConcernState()).resolves.toMatchObject({
@@ -2735,10 +2736,15 @@ describe("GoalTrigger execution (Phase 3)", () => {
       agenda_items: [expect.any(Object)],
       decompositions: [expect.any(Object)],
     });
-    await expect(defaultStore.loadConcernState()).resolves.toMatchObject({
+    await expect(splitControlStore.loadConcernState()).resolves.toMatchObject({
       clusters: [],
       agenda_items: [],
       decompositions: [],
+    });
+    await expect(sharedControlStore.loadConcernState()).resolves.toMatchObject({
+      clusters: [expect.any(Object)],
+      agenda_items: [expect.any(Object)],
+      decompositions: [expect.any(Object)],
     });
   });
 

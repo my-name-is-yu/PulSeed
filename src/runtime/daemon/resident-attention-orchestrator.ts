@@ -318,7 +318,6 @@ function residentAttentionMetabolismStore(context: ResidentAttentionContext): Pi
   | "loadConcernState"
   | "saveMetabolismCycle"
   | "projectionRevision"
-  | "addPendingBlock"
   | "listPendingBlocks"
   | "clearPendingBlocks"
 > | null {
@@ -327,7 +326,6 @@ function residentAttentionMetabolismStore(context: ResidentAttentionContext): Pi
     && "loadConcernState" in context.attentionStateStore
     && "saveMetabolismCycle" in context.attentionStateStore
     && "projectionRevision" in context.attentionStateStore
-    && "addPendingBlock" in context.attentionStateStore
     && "listPendingBlocks" in context.attentionStateStore
     && "clearPendingBlocks" in context.attentionStateStore
   ) {
@@ -336,7 +334,6 @@ function residentAttentionMetabolismStore(context: ResidentAttentionContext): Pi
       | "loadConcernState"
       | "saveMetabolismCycle"
       | "projectionRevision"
-      | "addPendingBlock"
       | "listPendingBlocks"
       | "clearPendingBlocks"
     >;
