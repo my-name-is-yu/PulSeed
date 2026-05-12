@@ -237,6 +237,12 @@ describe("attention continuity inspection", () => {
         controlBaseDir: tmpDir,
         now: LATER,
       });
+      const redactedFeedback = await inspectAttentionContinuity({
+        runtimeRoot,
+        controlBaseDir: tmpDir,
+        now: LATER,
+        feedbackEffectLimit: 0,
+      });
 
       expect(first.status).toBe("needs_operator_review");
       expect(first.summary.pending_agenda_count).toBeGreaterThanOrEqual(4);
@@ -248,6 +254,8 @@ describe("attention continuity inspection", () => {
       expect(first.summary.pending_runtime_operation_count).toBe(1);
       expect(first.summary.runtime_event_count).toBe(1);
       expect(first.summary.feedback_effect_count).toBeGreaterThan(0);
+      expect(redactedFeedback.summary.feedback_effect_count).toBe(first.summary.feedback_effect_count);
+      expect(redactedFeedback.recent_feedback_effects).toEqual([]);
       expect(first.presence_status.hidden_inspectable_refs).toEqual(expect.arrayContaining([
         pending.agendaItem.agenda_item_id,
       ]));

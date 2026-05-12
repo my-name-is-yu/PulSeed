@@ -217,6 +217,7 @@ export function createAttentionContinuityInspection(input: {
   const staleRuntimeItemRefs = input.runtimeItems
     .filter((item) => Object.values(item.staleness).some((value) => value.outcome !== "current"))
     .map((item) => item.item_id);
+  const recentFeedbackEffects = limitedFeedbackEffects(input.feedbackEffects, input.feedbackEffectLimit);
   const warnings = continuityWarnings({
     generatedAt: input.generatedAt,
     agendaItems: input.agendaItems,
@@ -264,9 +265,7 @@ export function createAttentionContinuityInspection(input: {
     quiet_outcomes: quietOutcomes.map(outcomeEntry),
     suppressed_outcomes: suppressedOutcomes.map(outcomeEntry),
     quiet_preparations: quietPreparations.map(outcomeEntry),
-    recent_feedback_effects: input.feedbackEffects
-      .slice(-Math.max(0, input.feedbackEffectLimit ?? 20))
-      .map(feedbackEntry),
+    recent_feedback_effects: recentFeedbackEffects.map(feedbackEntry),
     pending_runtime_operations: input.pendingRuntimeOperations.map((operation) => ({
       operation_id: operation.operation_id,
       kind: operation.kind,
@@ -453,6 +452,15 @@ function uniqueRuntimeItems(items: readonly RuntimeItem[]): RuntimeItem[] {
   const byId = new Map<string, RuntimeItem>();
   for (const item of items) byId.set(item.item_id, item);
   return [...byId.values()];
+}
+
+function limitedFeedbackEffects(
+  effects: readonly FeedbackIngestionEffect[],
+  limit: number | undefined
+): readonly FeedbackIngestionEffect[] {
+  if (limit === undefined) return effects.slice(-20);
+  if (limit <= 0) return [];
+  return effects.slice(-limit);
 }
 
 function agendaStaleRefKeys(item: AgentAgendaItem): string[] {
