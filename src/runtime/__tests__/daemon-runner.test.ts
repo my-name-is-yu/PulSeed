@@ -1175,6 +1175,49 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
+  it("reuses the runner runtime operation store for resident admission controls", async () => {
+    const runtimeOperationStore = {
+      listCompleted: vi.fn().mockResolvedValue([]),
+      listPending: vi.fn().mockResolvedValue([]),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "sleep",
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      runtimeOperationStore,
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    await pollForJsonMatch<{
+      resident_activity: { kind: string; summary: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "sleep",
+    );
+
+    expect(runtimeOperationStore.listCompleted).toHaveBeenCalled();
+    expect(runtimeOperationStore.listPending).toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
   it("caps idle daemon re-checks at 5 seconds", async () => {
     const deps = makeDeps(tmpDir, {
       config: {

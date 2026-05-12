@@ -25,6 +25,7 @@ import type { Envelope } from "../types/envelope.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import { type ApprovalStore, type OutboxStore, type RuntimeHealthStore } from "../store/index.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
+import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import type { RuntimeControlOperationKind } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import type { GoalLeaseManager } from "../goal-lease-manager.js";
@@ -178,6 +179,8 @@ export interface DaemonDeps {
   shutdownSignalTarget?: ProcessSignalTarget;
   /** Optional durable attention store for resident autonomy tests. */
   attentionStateStore?: AttentionStateStore;
+  /** Optional runtime operation store for resident admission control tests. */
+  runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
 }
 
 export class DaemonRunner {
@@ -237,6 +240,7 @@ export class DaemonRunner {
   private commandDispatcher: CommandDispatcher | null = null;
   private eventDispatcher: EventDispatcher | null = null;
   private attentionStateStore: AttentionStateStore;
+  private runtimeOperationStore: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
   private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
   private readonly refreshResidentDeps: DaemonDeps["refreshResidentDeps"];
@@ -273,6 +277,10 @@ export class DaemonRunner {
 
     this.runtimeRoot = this.resolveRuntimeRoot();
     this.attentionStateStore = deps.attentionStateStore ?? new AttentionStateStore(
+      this.runtimeRoot,
+      { controlBaseDir: this.baseDir },
+    );
+    this.runtimeOperationStore = deps.runtimeOperationStore ?? new RuntimeOperationStore(
       this.runtimeRoot,
       { controlBaseDir: this.baseDir },
     );
