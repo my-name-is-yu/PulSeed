@@ -131,6 +131,7 @@ export class SeedyPresenceProjector {
         return;
       case "lifecycle_start":
       case "turn_steer":
+      case "user_feedback":
         return;
     }
   }
@@ -422,6 +423,7 @@ export class SeedyPresenceProjector {
         return false;
       case "lifecycle_start":
       case "turn_steer":
+      case "user_feedback":
       case "lifecycle_end":
         return false;
     }

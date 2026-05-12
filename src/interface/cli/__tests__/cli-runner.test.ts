@@ -178,6 +178,7 @@ import { dispatchCommand } from "../cli-command-registry.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import { DaemonClient } from "../../../runtime/daemon/client.js";
 import { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import { FeedbackIngestionStore } from "../../../runtime/store/feedback-ingestion-store.js";
 import { ProactiveInterventionStore } from "../../../runtime/store/proactive-intervention-store.js";
 import {
   createRelationshipProfileChangeProposal,
@@ -2324,6 +2325,26 @@ describe("runtime proactive feedback commands", () => {
         kind: "intervention_policy",
       },
     });
+    const feedbackStore = new FeedbackIngestionStore(path.join(tmpDir, "runtime"));
+    const records = await feedbackStore.listRecords();
+    expect(records).toEqual([
+      expect.objectContaining({
+        source: "cli",
+        feedback_kind: "proactive_feedback",
+        outcome: "overreach",
+        target: {
+          kind: "intervention",
+          id: "intervention-cli-feedback",
+        },
+        profile_proposal_refs: [proposalStore.proposals[0]!.id],
+      }),
+    ]);
+    await expect(feedbackStore.listEffects(records[0]!.feedback_id)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ effect_kind: "autonomy_feedback_signal" }),
+      expect.objectContaining({ effect_kind: "attention_cooldown" }),
+      expect.objectContaining({ effect_kind: "profile_proposal_recommendation" }),
+      expect.objectContaining({ effect_kind: "proactive_intervention_feedback" }),
+    ]));
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const qualityCode = await runCLI("runtime", "proactive-quality");

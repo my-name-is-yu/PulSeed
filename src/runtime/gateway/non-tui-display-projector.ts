@@ -154,6 +154,7 @@ export class NonTuiDisplayProjector {
         return;
       case "lifecycle_start":
       case "turn_steer":
+      case "user_feedback":
         return;
     }
   }

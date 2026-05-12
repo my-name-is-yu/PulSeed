@@ -16,6 +16,7 @@ import type { ApprovalRequest, CapabilityExecutionResolver } from "../../tools/t
 import type { PermissionGrantStore } from "../../runtime/store/permission-grant-store.js";
 import type { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-plan-store.js";
 import type { CapabilityVerificationStore } from "../../runtime/store/capability-verification-store.js";
+import type { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
 import type {
   RuntimeControlActor,
   RuntimeControlReplyTarget,
@@ -87,6 +88,7 @@ export interface ChatRunnerDeps {
     "requestConversationalApproval" | "resolveConversationalApproval" | "findPendingConversationalApproval" | "loadPendingApproval"
   >;
   permissionGrantStore?: Pick<PermissionGrantStore, "createActive" | "list" | "recordUse">;
+  feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
   permissionWaitPlanStore?: Pick<
     PermissionWaitPlanStore,
     "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"

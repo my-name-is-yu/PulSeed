@@ -16,11 +16,21 @@ import type {
   ResidentOperationBoundaryInput,
   ResidentOperationBoundaryResult,
 } from "../capability-operation-planner.js";
+import type {
+  AutonomyCacheInvalidationEvidence,
+  AutonomyFeedbackSignal,
+} from "../control/autonomy-governor.js";
+import {
+  feedbackEffectsToAutonomyFeedbackSignals,
+  feedbackEffectsToCompanionStateFeedbackRefs,
+  feedbackEffectsToInvalidationEvidence,
+} from "../attention/index.js";
 import type { Logger } from "../logger.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { AttentionStateStore } from "../store/attention-state-store.js";
 import type { RuntimeOperationStore } from "../store/runtime-operation-store.js";
+import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
 import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 import {
@@ -126,6 +136,7 @@ export interface DaemonRunnerResidentContext {
   supervisor?: LoopSupervisor;
   attentionStateStore?: Pick<AttentionStateStore, "saveCycle">;
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
   residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;
   saveDaemonState(): Promise<void>;
   refreshOperationalState(): void;
@@ -176,6 +187,26 @@ export function residentOperationBoundaryAllowsPreparation(
     && Boolean(metadata.autonomy_decision_id)
     && metadata.operation_preparation_allowed === true
     && metadata.operation_execution_allowed === false;
+}
+
+export interface ResidentFeedbackDecisionContext {
+  recentFeedback: AutonomyFeedbackSignal[];
+  invalidationEvidence: AutonomyCacheInvalidationEvidence[];
+  feedbackRefs: string[];
+}
+
+export async function loadResidentFeedbackDecisionContext(
+  context: Pick<DaemonRunnerResidentContext, "baseDir"> &
+    Partial<Pick<DaemonRunnerResidentContext, "feedbackIngestionStore">>
+): Promise<ResidentFeedbackDecisionContext> {
+  const store = context.feedbackIngestionStore
+    ?? new FeedbackIngestionStore(resolveDaemonRuntimeRoot(context.baseDir), { controlBaseDir: context.baseDir });
+  const effects = await store.listEffects();
+  return {
+    recentFeedback: feedbackEffectsToAutonomyFeedbackSignals(effects),
+    invalidationEvidence: feedbackEffectsToInvalidationEvidence(effects),
+    feedbackRefs: feedbackEffectsToCompanionStateFeedbackRefs(effects),
+  };
 }
 
 export function mergeResidentSurfaceActivityMetadata(

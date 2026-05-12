@@ -100,6 +100,14 @@ import {
   formatSetupConfirmationCancelled,
   formatTelegramSetupRefreshResult,
 } from "./chat-runner-setup-format.js";
+import {
+  feedbackIngestionSourceForReplyTarget,
+  feedbackSurfaceRefForReplyTarget,
+  ingestFeedbackFromChatEvent,
+} from "./feedback-ingestion.js";
+import { createFeedbackIngestion } from "../../runtime/attention/index.js";
+import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime-root.js";
+import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
 
 export type {
   ChatRunResult,
@@ -164,8 +172,10 @@ export class ChatRunner {
   private pendingResumeChoices: RecoveryResumeCandidate[] | null = null;
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
+  private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
 
   constructor(private readonly deps: ChatRunnerDeps) {
+    this.feedbackIngestionStore = deps.feedbackIngestionStore ?? createDefaultChatFeedbackIngestionStore(deps.stateManager);
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -639,7 +649,16 @@ export class ChatRunner {
     this.eventJournalHistory = history;
     this.eventBridge.setEventRecorder((event) => {
       this.eventJournalDirty = true;
-      return history.recordChatEvent(event, { persist: false });
+      const feedbackReplyTarget = runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null;
+      const feedbackSource = feedbackIngestionSourceForReplyTarget(feedbackReplyTarget);
+      return Promise.all([
+        history.recordChatEvent(event, { persist: false }),
+        ingestFeedbackFromChatEvent(event, {
+          store: this.feedbackIngestionStore,
+          source: feedbackSource,
+          surfaceRef: feedbackSurfaceRefForReplyTarget(feedbackSource, feedbackReplyTarget),
+        }),
+      ]).then(() => undefined);
     });
     const pinnedReplyTarget = normalizePinnedReplyTarget(
       runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
@@ -1318,3 +1337,21 @@ export class ChatRunner {
 
 void COMMAND_HELP;
 void formatRoute;
+
+function createDefaultChatFeedbackIngestionStore(
+  stateManager: StateManager
+): Pick<FeedbackIngestionStore, "ingest"> {
+  const getBaseDir = (stateManager as Partial<Pick<StateManager, "getBaseDir">>).getBaseDir;
+  if (typeof getBaseDir === "function") {
+    const baseDir = getBaseDir.call(stateManager);
+    return new FeedbackIngestionStore(
+      resolveConfiguredDaemonRuntimeRoot(baseDir),
+      { controlBaseDir: baseDir },
+    );
+  }
+  return {
+    async ingest(input) {
+      return createFeedbackIngestion(input);
+    },
+  };
+}

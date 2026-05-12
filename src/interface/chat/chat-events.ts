@@ -1,7 +1,7 @@
 import type { FailureRecoveryGuidance } from "./failure-recovery.js";
 import type { ToolActivityCategory } from "../../tools/types.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
-import type { SurfaceDeliveryProjection } from "../../runtime/attention/index.js";
+import type { FeedbackIngestionInput, SurfaceDeliveryProjection } from "../../runtime/attention/index.js";
 import type { ChatEventContext } from "./turn-state.js";
 import type { GatewayPublicProgress } from "./gateway-progress.js";
 import type { OperationProgressItem } from "./operation-progress.js";
@@ -111,6 +111,11 @@ export interface SurfaceDeliveryEvent extends ChatEventBase {
   projection: SurfaceDeliveryProjection;
 }
 
+export interface UserFeedbackEvent extends ChatEventBase {
+  type: "user_feedback";
+  feedback: FeedbackIngestionInput;
+}
+
 export interface LifecycleEndEvent extends ChatEventBase {
   type: "lifecycle_end";
   status: "completed" | "error";
@@ -136,6 +141,7 @@ export type ChatEvent =
   | OperationProgressEvent
   | PresenceUpdateEvent
   | SurfaceDeliveryEvent
+  | UserFeedbackEvent
   | ToolStartEvent
   | ToolUpdateEvent
   | ToolEndEvent

@@ -44,6 +44,23 @@ export {
   sourceRef,
 } from "./attention-metabolism.js";
 export {
+  createFeedbackIngestion,
+  feedbackEffectsToAttentionFeedbackEvents,
+  feedbackEffectsToAutonomyFeedbackSignals,
+  feedbackEffectsToCompanionStateFeedbackRefs,
+  feedbackEffectsToInvalidationEvidence,
+  feedbackIngestionToAttentionInput,
+  FeedbackIngestionEffectSchema,
+  FeedbackIngestionInputSchema,
+  FeedbackIngestionKindSchema,
+  FeedbackIngestionOutcomeSchema,
+  FeedbackIngestionRecordSchema,
+  FeedbackIngestionResultSchema,
+  FeedbackIngestionSourceSchema,
+  FeedbackTargetKindSchema,
+  FeedbackTargetSchema,
+} from "./feedback-ingestion.js";
+export {
   projectSurfaceDelivery,
   renderSurfaceDeliveryProjection,
   SurfaceDeliveryKindSchema,
@@ -87,6 +104,17 @@ export type {
   SignalContextAssemblyInput,
   UrgeCandidateAssemblyInput,
 } from "./attention-metabolism.js";
+export type {
+  FeedbackIngestionEffect,
+  FeedbackIngestionInput,
+  FeedbackIngestionKind,
+  FeedbackIngestionOutcome,
+  FeedbackIngestionRecord,
+  FeedbackIngestionResult,
+  FeedbackIngestionSource,
+  FeedbackTarget,
+  FeedbackTargetKind,
+} from "./feedback-ingestion.js";
 export type {
   SurfaceDeliveryKind,
   SurfaceDeliveryMode,
