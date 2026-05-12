@@ -256,7 +256,15 @@ export const ObservationEventSchema = z.object({
   raw_media: z.never().optional(),
   raw_media_ref: z.never().optional(),
   audit_refs: z.array(refWithKind("audit_trace")).default([]),
-}).strict();
+}).strict().superRefine((event, ctx) => {
+  if (event.observation_ref && event.observation_ref.id !== event.event_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["observation_ref", "id"],
+      message: "observation_ref id must match event_id",
+    });
+  }
+});
 export type ObservationEvent = z.infer<typeof ObservationEventSchema>;
 
 export interface CreateObservationSessionInput extends z.input<typeof ObservationSessionSchema> {}
@@ -311,7 +319,7 @@ export function observationEventToAttentionInput(input: ObservationEventAttentio
     },
     signal_source: "observation",
     signal_ref: {
-      ref: event.observation_ref ?? ref("observation_event", event.event_id),
+      ref: ref("observation_event", event.event_id),
       lifecycle: "active",
     },
     effect_policy: effectPolicy,

@@ -344,6 +344,20 @@ describe("Observation sensory contracts", () => {
     ).toThrow();
   });
 
+  it("rejects forged observation refs that do not match the event id", () => {
+    const forgedEvent = {
+      ...sampleEvent(),
+      observation_ref: ref("observation_event", "observation-event-other"),
+    };
+
+    expect(() =>
+      observationEventToAttentionInput({
+        session: activeSession(),
+        event: forgedEvent as never,
+      })
+    ).toThrow("observation_ref id must match event_id");
+  });
+
   it("rejects events that are not linked to the declared observation session or modality", () => {
     const session = activeSession();
     expect(() =>
