@@ -450,12 +450,16 @@ export class AttentionStateStore {
           runtime_operation_id = COALESCE(?, runtime_operation_id),
           updated_at = ?
         WHERE proposal_id = ?
-          AND state NOT IN ('confirmed', 'terminal')
+          AND (
+            state NOT IN ('confirmed', 'terminal')
+            OR (state = 'confirmed' AND ? = 'terminal')
+          )
       `).run(
         input.state,
         input.runtimeOperationId ?? null,
         input.updatedAt,
         input.proposalId,
+        input.state,
       );
     });
   }
@@ -929,6 +933,11 @@ function upsertAdmissionProposal(
       END,
       child_id = excluded.child_id,
       idempotency_key = excluded.idempotency_key,
+      runtime_operation_id = CASE
+        WHEN attention_admission_proposals.state IN ('confirmed', 'terminal')
+          THEN attention_admission_proposals.runtime_operation_id
+        ELSE NULL
+      END,
       updated_at = excluded.updated_at,
       proposal_json = excluded.proposal_json
   `).run(

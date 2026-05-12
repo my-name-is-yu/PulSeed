@@ -155,6 +155,84 @@ describe("attention cycle persistence and concurrency", () => {
     }
   });
 
+  it("closes confirmed proposals and clears stale runtime operations on re-upsert", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-proposal-lifecycle-");
+    try {
+      const store = new AttentionStateStore(`${tmpDir}/runtime`, { controlBaseDir: tmpDir });
+      const first = await runAttentionCycle({
+        store,
+        cycle: {
+          now: NOW,
+          trigger: "maintenance",
+          scope: scope(),
+          signalRefs: [sourceRef("runtime_event", "runtime:proposal")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "proposal:1" }],
+          expectedProjectionRevision: 0,
+          cycleIdempotencyKey: "cycle:proposal:1",
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+      const [proposal] = await store.listAdmissionProposals({ states: ["proposed"] });
+      expect(proposal).toBeDefined();
+
+      await store.markAdmissionProposalState({
+        proposalId: proposal!.proposal_id,
+        state: "pending_handoff",
+        runtimeOperationId: "runtime-operation:stale",
+        updatedAt: "2026-05-12T01:01:00.000Z",
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:proposal-reupsert",
+        idempotency_key: "cycle:proposal-reupsert",
+        trigger_kind: "maintenance",
+        scope: scope(),
+        expected_projection_revision: first.projectionRevision,
+        source_high_watermarks: ["runtime_event:proposal:2"],
+        clusters: [],
+        agendaItems: [],
+        decompositions: [],
+        admissionProposals: [{ ...proposal!.proposal, proposalState: "proposed" }],
+        events: [],
+        result: { reprojected: true },
+        created_at: "2026-05-12T01:02:00.000Z",
+      });
+
+      await expect(store.listAdmissionProposals({ states: ["proposed"] })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          proposal_id: proposal!.proposal_id,
+          runtime_operation_id: null,
+        }),
+      ]));
+
+      await store.markAdmissionProposalState({
+        proposalId: proposal!.proposal_id,
+        state: "confirmed",
+        runtimeOperationId: "runtime-operation:confirmed",
+        updatedAt: "2026-05-12T01:03:00.000Z",
+      });
+      await store.markAdmissionProposalState({
+        proposalId: proposal!.proposal_id,
+        state: "terminal",
+        updatedAt: "2026-05-12T01:04:00.000Z",
+      });
+      await store.markAdmissionProposalState({
+        proposalId: proposal!.proposal_id,
+        state: "proposed",
+        updatedAt: "2026-05-12T01:05:00.000Z",
+      });
+
+      await expect(store.listAdmissionProposals({ states: ["terminal"] })).resolves.toEqual([
+        expect.objectContaining({
+          proposal_id: proposal!.proposal_id,
+          runtime_operation_id: "runtime-operation:confirmed",
+        }),
+      ]);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("partitions cycle idempotency by authority, sensitivity, and memory owner", async () => {
     const tmpDir = makeTempDir("pulseed-attention-cycle-scope-key-");
     try {
