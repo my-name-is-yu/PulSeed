@@ -72,6 +72,7 @@ describe("resident attention orchestrator", () => {
     expect(second.attention_input_id).toBe(first.attention_input_id);
     expect(second.outcome_decision_id).toBe(first.outcome_decision_id);
     expect(first.replay_disposition).toBe("accepted");
+    expect(first.branch_admitted).toBe(true);
     expect(second.replay_disposition).toBe("duplicate");
     expect(second.branch_admitted).toBe(false);
 
@@ -84,6 +85,14 @@ describe("resident attention orchestrator", () => {
       source_kind: "resident_proactive_maintenance",
       source_epoch: "resident:resident_proactive_maintenance:proactive_tick:suggest_goal:controls:none",
     }));
+    const concernState = await new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .loadConcernState();
+    expect(concernState.clusters).toHaveLength(1);
+    expect(concernState.agenda_items[0]).toMatchObject({
+      clusterRef: expect.objectContaining({ kind: "attention_cluster" }),
+      needsRegrounding: false,
+    });
+    expect(concernState.decompositions[0]?.children.length).toBeGreaterThan(0);
   });
 
   it("records a new current resident decision when companion controls change after replay", async () => {

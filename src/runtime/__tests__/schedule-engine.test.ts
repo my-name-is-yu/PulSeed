@@ -13,7 +13,7 @@ import type { ScheduleEntry, ScheduleEntryInput } from "../types/schedule.js";
 import type { IDataSourceAdapter } from "../../platform/observation/data-source-adapter.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
-import { openControlDatabase } from "../store/index.js";
+import { AttentionStateStore, openControlDatabase } from "../store/index.js";
 import { loadReflectionReport } from "../../reflection/reflection-utils.js";
 
 let tempDir: string;
@@ -2663,6 +2663,40 @@ describe("GoalTrigger execution (Phase 3)", () => {
       activation_kind: "wait_resume",
     });
     expect(notificationDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("default wait-resume path persists store-backed attention cycle state", async () => {
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait",
+        wait_strategy_id: "strategy:wait",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+    const store = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
+    const concernState = await store.loadConcernState();
+
+    expect(result.status).toBe("ok");
+    expect(result.internal_attention_projection).toBeDefined();
+    expect(concernState.clusters).toHaveLength(1);
+    expect(concernState.agenda_items).toHaveLength(1);
+    expect(concernState.decompositions).toHaveLength(1);
+    expect(concernState.decompositions[0]?.status).not.toBe("closed");
   });
 
   it("keeps wait-resume replay identity stable for the same scheduled due instance", async () => {

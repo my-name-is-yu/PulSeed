@@ -6,6 +6,10 @@ import type {
 } from "../../grounding/surface-contracts.js";
 import type {
   AgentAgendaItem,
+  AttentionScope,
+  AttentionSignalRef,
+  AttentionStructuredRef,
+  AttentionEvidenceStrength,
   AttentionMaturation,
   AttentionMaturationState,
   AttentionMaturationTransition,
@@ -123,6 +127,17 @@ export type UrgeCandidateAssemblyInput = {
   expires_at?: string;
   decay_rule?: AttentionMaturation["decay_rule"];
   audit_refs?: CompanionAutonomyRef[];
+  scope?: AttentionScope;
+  signalRefs?: AttentionSignalRef[];
+  structuredRefs?: AttentionStructuredRef[];
+  semanticFingerprint?: string | null;
+  semanticProviderId?: string | null;
+  semanticProviderVersion?: string | null;
+  evidenceStrength?: AttentionEvidenceStrength;
+  uncertainty?: number;
+  policyEpoch?: string;
+  modelOrClassifierVersion?: string | null;
+  replayableInputRefs?: CompanionAutonomyRef[];
 };
 
 export type AdvanceMaturationInput = {

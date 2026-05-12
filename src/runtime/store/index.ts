@@ -17,6 +17,7 @@ export {
 
 export {
   CONTROL_DB_CAPABILITY_REGISTRY_SCHEMA_SQL,
+  CONTROL_DB_ATTENTION_METABOLISM_SCHEMA_SQL,
   CONTROL_DB_ATTENTION_STATE_SCHEMA_SQL,
   CONTROL_DB_CHAT_AGENTLOOP_SESSION_SCHEMA_SQL,
   CONTROL_DB_DRIVE_SCHEDULE_SCHEMA_SQL,
@@ -83,8 +84,13 @@ export type {
   AttentionDecisionChainSnapshot,
   AttentionAgendaSuppressionInput,
   AttentionAgendaSuppressionResult,
+  AttentionConcernStateSnapshot,
+  AttentionEventLedgerRecord,
   AttentionInvalidationInput,
   AttentionInvalidationResult,
+  AttentionMetabolismCycleWriteInput,
+  AttentionMetabolismCycleWriteResult,
+  AttentionMetabolismWriteDisposition,
   AttentionStateCycleInput,
   AttentionStateStoreOptions,
   AttentionStoreLifecycle,

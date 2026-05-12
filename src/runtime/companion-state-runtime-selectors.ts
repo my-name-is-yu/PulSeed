@@ -140,6 +140,11 @@ export function selectNonSuspendedMode(
   if (input.runtime_items.some((item) => item.posture === "working")) return "working";
   if (input.runtime_items.some((item) => item.posture === "watching")) return "watching";
   if (input.runtime_items.some((item) => item.posture === "waiting")) return "waiting";
+  if (input.runtime_items.some((item) =>
+    item.type === "agent_agenda_item"
+    && item.status === "mature"
+    && !hasBlockingStaleness(item.staleness)
+  )) return "watching";
   if (input.runtime_items.some((item) => item.type === "urge_candidate" && item.status === "mature")) return "curious";
   return "resting";
 }

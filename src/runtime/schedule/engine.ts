@@ -9,9 +9,12 @@ import {
 import { executeCron, executeGoalTrigger, executeProbe } from "./engine-layers.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import {
+  deriveAttentionScopeFromSignalContext,
   reevaluateSchedulerWakeThroughAttention,
+  runAttentionCycle,
   type AttentionReevaluationPort,
 } from "../attention/index.js";
+import { AttentionStateStore } from "../store/attention-state-store.js";
 import {
   ScheduleHistoryStore,
   type ScheduleRunHistoryRecord,
@@ -110,9 +113,45 @@ export class ScheduleEngine {
     this.hookManager = deps.hookManager;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
+    const defaultAttentionStore = new AttentionStateStore(path.join(this.baseDir, "runtime"), {
+      controlBaseDir: this.baseDir,
+    });
     this.attentionReevaluation = deps.attentionReevaluation ?? {
-      reevaluate: (signalContext, context) =>
-        Promise.resolve(reevaluateSchedulerWakeThroughAttention(signalContext, context)),
+      reevaluate: async (signalContext, context) => {
+        const reevaluation = reevaluateSchedulerWakeThroughAttention(signalContext, context);
+        const scope = deriveAttentionScopeFromSignalContext({
+          signalContext,
+          policyEpoch: "policy:default",
+          permissionScope: "local_only",
+          sensitivity: "medium",
+        });
+        try {
+          const revision = await defaultAttentionStore.projectionRevision(scope);
+          await runAttentionCycle({
+            store: defaultAttentionStore,
+            cycle: {
+              now: context.fired_at,
+              trigger: "wait_resume",
+              scope,
+              signalRefs: signalContext.signal_refs,
+              sourceHighWatermarks: signalContext.signal_refs.map((source) => ({
+                source: source.ref.kind,
+                highWatermark: `${source.ref.id}:${source.lifecycle}`,
+              })),
+              expectedProjectionRevision: revision,
+              cycleIdempotencyKey: `wait_resume:${context.entry_id}:${context.fired_at}`,
+              policyEpoch: scope.policyEpoch,
+              mode: "live",
+              urges: reevaluation.urge_candidates,
+            },
+          });
+        } catch (error) {
+          this.logger.warn("wait_resume attention cycle persistence failed closed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return reevaluation;
+      },
     };
     this.historyStore = new ScheduleHistoryStore(this.baseDir);
     this.entryStore = new ScheduleEntryStore(this.baseDir, this.logger, async (entries) => {

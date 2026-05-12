@@ -7,15 +7,19 @@ import {
   decideInhibition,
   mergeUrgesIntoAgenda,
   ref,
+  runAttentionCycle,
   selectInitiativeGateDecision,
+  type AttentionCycleResult,
+  type AttentionSafetyTrigger,
 } from "../attention/index.js";
-import { stableId } from "../attention/attention-refs.js";
+import { refKey, stableId } from "../attention/attention-refs.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import type { RuntimeControlOperation } from "../store/runtime-operation-schemas.js";
 import type {
   AutonomyCheck,
   CompanionAutonomyRef,
+  AttentionScope,
   OutcomeClass,
   OutcomeDecision,
 } from "../types/companion-autonomy.js";
@@ -95,6 +99,11 @@ export async function evaluateResidentAttentionAdmission(
     ? ref("surface", input.surfaceActivityMetadata.surface_id)
     : undefined;
   const targetRef = targetRefForResidentAttention(input.action, sourceId, goalId);
+  const attentionScope = residentAttentionScope({
+    action: input.action,
+    companionSnapshot,
+    surfaceRef,
+  });
   const attentionInput = createAttentionInput({
     source_kind: sourceKind,
     source_id: sourceId,
@@ -132,6 +141,7 @@ export async function evaluateResidentAttentionAdmission(
     expected_user_benefit: expectedBenefitForResidentAction(input.action),
     maturation_state: "mature",
     surface_ref: surfaceRef,
+    scope: attentionScope,
   });
   const [agendaItem] = mergeUrgesIntoAgenda({
     urges: [urge],
@@ -203,23 +213,61 @@ export async function evaluateResidentAttentionAdmission(
     ? "duplicate"
     : "accepted";
 
+  const metabolismStore = residentAttentionMetabolismStore(context);
+  let metabolismResult: AttentionCycleResult | null = null;
+  if (metabolismStore) {
+    const revision = await metabolismStore.projectionRevision(urge.scope);
+    const safetyTrigger = residentMetabolismSafetyTrigger(companionSnapshot);
+    metabolismResult = await runAttentionCycle({
+      store: metabolismStore,
+      cycle: {
+        now,
+        trigger: safetyTrigger ? "suspend" : "conversation",
+        safetyTrigger,
+        scope: urge.scope,
+        signalRefs: urge.signalRefs,
+        sourceHighWatermarks: [
+          {
+            source: attentionInput.source.source_kind,
+            highWatermark: attentionInput.source.high_watermark,
+          },
+        ],
+        expectedProjectionRevision: revision,
+        cycleIdempotencyKey: `resident:${sourceId}`,
+        policyEpoch: urge.policyEpoch,
+        mode: "live",
+        urges: [urge],
+      },
+    });
+  }
+
+  const returnedAgendaItemId = metabolismResult?.agendaUpdates[0]?.agenda_item_id ?? agendaItem.agenda_item_id;
+  const metabolismAdmitted = replayDisposition === "accepted"
+    && residentBranchAdmitted(input.action, outcome)
+    && residentMetabolismAdmitsAction(input.action, metabolismResult);
+  const returnedAdmissionStatus = metabolismResult && metabolismResult.admissionCandidates.length === 0 && outcome?.admission_status === "admitted"
+    ? "not_selected"
+    : outcome?.admission_status ?? "not_selected";
+
   return {
     action: input.action,
     source_kind: sourceKind,
     attention_input_id: attentionInput.attention_input_id,
     signal_context_id: signalContext.signal_context_id,
     urge_id: urge.urge_id,
-    agenda_item_id: agendaItem.agenda_item_id,
+    agenda_item_id: returnedAgendaItemId,
     inhibition_decision_id: inhibition.decision_id,
     initiative_gate_decision_id: gate.decision_id,
     outcome_decision_id: outcome?.outcome_decision_id,
     replay_disposition: replayDisposition,
     requested_outcome: requestedOutcome,
-    admission_status: outcome?.admission_status ?? "not_selected",
+    admission_status: returnedAdmissionStatus,
     final_outcome: outcome?.final_outcome,
-    branch_admitted: replayDisposition === "accepted" && residentBranchAdmitted(input.action, outcome),
+    branch_admitted: metabolismAdmitted,
     summary: replayDisposition === "duplicate"
       ? `Resident ${input.action} reused an existing attention admission; no duplicate branch preparation was started.`
+      : metabolismResult && metabolismResult.admissionCandidates.length === 0 && outcome?.admission_status === "admitted"
+        ? residentAttentionMetabolismHeldSummary(input.action, metabolismResult)
       : residentAttentionAdmissionSummary(input.action, outcome, gate.reason),
   };
 }
@@ -237,6 +285,41 @@ export function residentAttentionActivityMetadata(
 
 function residentAttentionStore(context: ResidentAttentionContext): Pick<AttentionStateStore, "saveCycle"> {
   return context.attentionStateStore ?? new AttentionStateStore(
+    resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
+    { controlBaseDir: context.baseDir },
+  );
+}
+
+function residentAttentionMetabolismStore(context: ResidentAttentionContext): Pick<
+  AttentionStateStore,
+  | "loadConcernState"
+  | "saveMetabolismCycle"
+  | "projectionRevision"
+  | "addPendingBlock"
+  | "listPendingBlocks"
+  | "clearPendingBlocks"
+> | null {
+  if (
+    context.attentionStateStore
+    && "loadConcernState" in context.attentionStateStore
+    && "saveMetabolismCycle" in context.attentionStateStore
+    && "projectionRevision" in context.attentionStateStore
+    && "addPendingBlock" in context.attentionStateStore
+    && "listPendingBlocks" in context.attentionStateStore
+    && "clearPendingBlocks" in context.attentionStateStore
+  ) {
+    return context.attentionStateStore as Pick<
+      AttentionStateStore,
+      | "loadConcernState"
+      | "saveMetabolismCycle"
+      | "projectionRevision"
+      | "addPendingBlock"
+      | "listPendingBlocks"
+      | "clearPendingBlocks"
+    >;
+  }
+  if (context.attentionStateStore) return null;
+  return new AttentionStateStore(
     resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
     { controlBaseDir: context.baseDir },
   );
@@ -381,6 +464,68 @@ function residentCompanionControlChecks(
   ];
 }
 
+function residentAttentionScope(input: {
+  action: ResidentAttentionAction;
+  companionSnapshot: ResidentCompanionControlSnapshot;
+  surfaceRef?: CompanionAutonomyRef;
+}): AttentionScope {
+  return {
+    userId: null,
+    identityId: null,
+    workspaceId: null,
+    conversationId: null,
+    sessionId: null,
+    surfaceClass: "daemon",
+    surfaceRef: input.surfaceRef ? refKey(input.surfaceRef) : null,
+    permissionScope: input.action === "preemptive_check" ? "write_allowed" : "read_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: `resident:${input.companionSnapshot.epoch}`,
+  };
+}
+
+function residentMetabolismSafetyTrigger(
+  snapshot: ResidentCompanionControlSnapshot,
+): AttentionSafetyTrigger | null {
+  if (snapshot.unavailableReason) return "suspend";
+  return snapshot.controls.some((control) =>
+    control === "suspend_companion"
+      || control === "pause_proactivity"
+      || control === "enter_quiet_mode"
+      || control === "stop_all_quiet_work"
+      || control === "stop_all_watches"
+      || control === "suppress_nonessential_agenda"
+      || control === "require_confirmation_for_proactivity"
+  ) ? "suspend" : null;
+}
+
+function residentAttentionMetabolismHeldSummary(
+  action: ResidentAttentionAction,
+  result: AttentionCycleResult,
+): string {
+  const reason = result.silenceReasons[0]?.reason ?? "concern metabolism did not admit a child";
+  return `Resident ${action} held by concern metabolism: ${reason}`;
+}
+
+function residentMetabolismAdmitsAction(
+  action: ResidentAttentionAction,
+  result: AttentionCycleResult | null,
+): boolean {
+  if (!result) return true;
+  const childTypes = new Set(result.admissionCandidates.map((candidate) => candidate.child.childType));
+  switch (action) {
+    case "preemptive_check":
+      return childTypes.has("action_candidate");
+    case "sleep":
+    case "suggest_goal":
+    case "investigate":
+    case "curiosity":
+      return childTypes.has("prepare") || childTypes.has("digest");
+    case "curiosity_noop":
+      return childTypes.has("watch") || childTypes.has("silence");
+  }
+}
+
 function residentAttentionSourceId(
   input: ResidentAttentionEvaluationInput,
   goalId: string,
@@ -465,7 +610,7 @@ function feelingForResidentAction(action: ResidentAttentionAction) {
 }
 
 function strengthForResidentAction(action: ResidentAttentionAction): number {
-  return action === "preemptive_check" ? 0.78 : action === "curiosity_noop" ? 0.42 : 0.66;
+  return action === "curiosity_noop" ? 0.42 : action === "preemptive_check" ? 0.78 : 0.76;
 }
 
 function confidenceForResidentAction(action: ResidentAttentionAction): number {
