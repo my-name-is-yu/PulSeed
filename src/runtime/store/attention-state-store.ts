@@ -379,18 +379,13 @@ export class AttentionStateStore {
     const db = await this.database();
     return db.read((sqlite) => {
       const key = options.scope ? scopeKey(options.scope) : null;
-      const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: key });
-      const legacyAgenda = currentAgenda.length > 0
-        ? []
-        : listAgendaItems(sqlite, {
+      return {
+        clusters: listConcernClusters(sqlite, key),
+        agenda_items: listAgendaItems(sqlite, {
           includeSuppressed: true,
           includeTerminal: false,
           scopeKey: key,
-          forceLegacy: true,
-        });
-      return {
-        clusters: listConcernClusters(sqlite, key),
-        agenda_items: currentAgenda.length > 0 ? currentAgenda : legacyAgenda,
+        }),
         decompositions: listConcernDecompositions(sqlite, key),
       };
     });
@@ -544,34 +539,38 @@ export class AttentionStateStore {
         projection_revision: number;
         write_disposition: AttentionMetabolismWriteDisposition;
       } | undefined;
-      if (existingCycle) {
+      const currentRevision = readProjectionRevision(sqlite, key);
+      if (existingCycle && existingCycle.write_disposition !== "stale_rejected") {
         return {
           writeDisposition: "no_op_elided",
           projectionRevision: existingCycle.projection_revision,
         };
       }
-
-      const currentRevision = readProjectionRevision(sqlite, key);
       if (currentRevision !== input.expected_projection_revision) {
-        appendCycleResult(sqlite, {
-          cycle_id: input.cycle_id,
-          idempotency_key: scopedIdempotencyKey,
-          trigger_kind: input.trigger_kind,
-          scope_key: key,
-          projection_revision: currentRevision,
-          write_disposition: "stale_rejected",
-          created_at: input.created_at,
-          result: {
-            ...input.result,
-            stale_rejected: true,
-            expected_projection_revision: input.expected_projection_revision,
-            current_projection_revision: currentRevision,
-          },
-        });
+        if (!existingCycle) {
+          appendCycleResult(sqlite, {
+            cycle_id: input.cycle_id,
+            idempotency_key: scopedIdempotencyKey,
+            trigger_kind: input.trigger_kind,
+            scope_key: key,
+            projection_revision: currentRevision,
+            write_disposition: "stale_rejected",
+            created_at: input.created_at,
+            result: {
+              ...input.result,
+              stale_rejected: true,
+              expected_projection_revision: input.expected_projection_revision,
+              current_projection_revision: currentRevision,
+            },
+          });
+        }
         return {
           writeDisposition: "stale_rejected",
           projectionRevision: currentRevision,
         };
+      }
+      if (existingCycle?.write_disposition === "stale_rejected") {
+        deleteCycleResultByIdempotencyKey(sqlite, scopedIdempotencyKey);
       }
 
       const nextRevision = currentRevision + 1;
@@ -1066,6 +1065,14 @@ function appendCycleResult(
   );
 }
 
+function deleteCycleResultByIdempotencyKey(sqlite: SqliteDatabase, idempotencyKey: string): void {
+  sqlite.prepare(`
+    DELETE FROM attention_cycle_results
+    WHERE idempotency_key = ?
+      AND write_disposition = 'stale_rejected'
+  `).run(idempotencyKey);
+}
+
 function appendAttentionInputs(
   sqlite: SqliteDatabase,
   inputs: readonly AttentionInput[],
@@ -1470,13 +1477,22 @@ function upsertExpressionDecision(sqlite: SqliteDatabase, raw: ExpressionDecisio
 }
 
 function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
-  if (!options.forceLegacy) {
-    const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
-    if (currentAgenda.length > 0) {
-      return currentAgenda.filter((item) => includeAgendaItem(item, options));
-    }
-  }
+  if (options.forceLegacy) return listLegacyAgendaItems(sqlite, options);
 
+  const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
+  const legacyAgenda = listLegacyAgendaItems(sqlite, options);
+  return mergeCurrentAndLegacyAgendaItems(currentAgenda, legacyAgenda, options);
+}
+
+function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
+  if (options.forceLegacy) return listLegacyAgendaItemsStrict(sqlite, options);
+
+  const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
+  const legacyAgenda = listLegacyAgendaItemsStrict(sqlite, options);
+  return mergeCurrentAndLegacyAgendaItems(currentAgenda, legacyAgenda, options);
+}
+
+function listLegacyAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
   const rows = sqlite.prepare(`
     SELECT lifecycle, agenda_json
     FROM attention_agenda_items
@@ -1490,14 +1506,7 @@ function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOpt
   });
 }
 
-function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
-  if (!options.forceLegacy) {
-    const currentAgenda = listCurrentAgendaItems(sqlite, { scopeKey: options.scopeKey ?? null });
-    if (currentAgenda.length > 0) {
-      return currentAgenda.filter((item) => includeAgendaItem(item, options));
-    }
-  }
-
+function listLegacyAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
   const rows = sqlite.prepare(`
     SELECT lifecycle, agenda_json
     FROM attention_agenda_items
@@ -1513,6 +1522,28 @@ function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaL
     );
     return !options.scopeKey || scopeKey(item.scope) === options.scopeKey ? [item] : [];
   });
+}
+
+function mergeCurrentAndLegacyAgendaItems(
+  currentAgenda: readonly AgentAgendaItem[],
+  legacyAgenda: readonly AgentAgendaItem[],
+  options: AttentionAgendaListOptions,
+): AgentAgendaItem[] {
+  if (currentAgenda.length === 0) return [...legacyAgenda];
+
+  const current = currentAgenda.filter((item) => includeAgendaItem(item, options));
+  if (options.scopeKey) return current;
+
+  const currentScopeKeys = new Set(currentAgenda.map((item) => scopeKey(item.scope)));
+  return [
+    ...current,
+    ...legacyAgenda.filter((item) => !currentScopeKeys.has(scopeKey(item.scope))),
+  ].sort(compareAgendaItems);
+}
+
+function compareAgendaItems(left: AgentAgendaItem, right: AgentAgendaItem): number {
+  return left.updated_at.localeCompare(right.updated_at)
+    || left.agenda_item_id.localeCompare(right.agenda_item_id);
 }
 
 function listCurrentAgendaItems(

@@ -18,6 +18,7 @@ import {
 } from "../../attention/index.js";
 import type {
   AgentAgendaItem,
+  AttentionScope,
   AutonomyCheck,
   CompanionAutonomyRef,
 } from "../../types/companion-autonomy.js";
@@ -30,6 +31,22 @@ import {
 
 const NOW = "2026-05-12T00:00:00.000Z";
 const LATER = "2026-05-12T00:05:00.000Z";
+
+function scope(id: string): AttentionScope {
+  return {
+    userId: `user:${id}`,
+    identityId: `identity:${id}`,
+    workspaceId: `workspace:${id}`,
+    conversationId: `conversation:${id}`,
+    sessionId: `session:${id}`,
+    surfaceClass: "daemon",
+    surfaceRef: `surface:${id}`,
+    permissionScope: "local_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: `policy:${id}`,
+  };
+}
 
 function check(kind: AutonomyCheck["kind"], status: AutonomyCheck["status"] = "passed"): AutonomyCheck {
   return {
@@ -303,6 +320,90 @@ describe("AttentionStateStore", () => {
       } finally {
         secondDb.close();
       }
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("merges legacy agenda rows for scopes that do not have current projections", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-store-partial-rollout-");
+    try {
+      const store = new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const legacyScope = scope("legacy");
+      const currentScope = scope("current");
+      const legacyCycle = durableAttentionCycle({
+        agendaIdSuffix: "legacy",
+        targetRef: ref("goal", "goal:attention-store:legacy"),
+      });
+      const currentCycle = durableAttentionCycle({
+        agendaIdSuffix: "current",
+        targetRef: ref("goal", "goal:attention-store:current"),
+      });
+      const currentScopeLegacyCycle = durableAttentionCycle({
+        agendaIdSuffix: "current-legacy",
+        targetRef: ref("goal", "goal:attention-store:current-legacy"),
+      });
+      const legacyAgenda = {
+        ...legacyCycle.agendaItem,
+        scope: legacyScope,
+        policyEpoch: legacyScope.policyEpoch,
+      };
+      const currentAgenda = {
+        ...currentCycle.agendaItem,
+        scope: currentScope,
+        policyEpoch: currentScope.policyEpoch,
+      };
+      const currentScopeLegacyAgenda = {
+        ...currentScopeLegacyCycle.agendaItem,
+        scope: currentScope,
+        policyEpoch: currentScope.policyEpoch,
+      };
+
+      await saveCycle(store, {
+        ...legacyCycle,
+        agendaItem: legacyAgenda,
+      });
+      await saveCycle(store, {
+        ...currentScopeLegacyCycle,
+        agendaItem: currentScopeLegacyAgenda,
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:current-projection",
+        idempotency_key: "cycle:current-projection",
+        trigger_kind: "maintenance",
+        scope: currentScope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:current:1"],
+        clusters: [],
+        agendaItems: [currentAgenda],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { projected: true },
+        created_at: NOW,
+      });
+
+      const agenda = await store.listAgendaItems();
+      expect(agenda).toEqual(expect.arrayContaining([
+        expect.objectContaining({ agenda_item_id: legacyAgenda.agenda_item_id }),
+        expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+      ]));
+      expect(agenda.map((item) => item.agenda_item_id)).not.toContain(currentScopeLegacyAgenda.agenda_item_id);
+      await expect(store.listRuntimeItems(LATER)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ item_id: legacyAgenda.agenda_item_id }),
+        expect.objectContaining({ item_id: currentAgenda.agenda_item_id }),
+      ]));
+      await expect(store.loadConcernState()).resolves.toMatchObject({
+        agenda_items: expect.arrayContaining([
+          expect.objectContaining({ agenda_item_id: legacyAgenda.agenda_item_id }),
+          expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+        ]),
+      });
+      await expect(store.loadConcernState({ scope: currentScope })).resolves.toMatchObject({
+        agenda_items: [
+          expect.objectContaining({ agenda_item_id: currentAgenda.agenda_item_id }),
+        ],
+      });
     } finally {
       cleanupTempDir(tmpDir);
     }
