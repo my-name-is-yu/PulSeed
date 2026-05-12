@@ -84,7 +84,7 @@ function appendFeedbackIngestion(
   result: FeedbackIngestionResult
 ): void {
   const record = FeedbackIngestionRecordSchema.parse(result.record);
-  assertFeedbackIngestionAppendIsImmutable(sqlite, record, result.effects);
+  const effects = result.effects.map((effect) => FeedbackIngestionEffectSchema.parse(effect));
   sqlite.prepare(`
     INSERT INTO feedback_ingestion_records (
       feedback_id,
@@ -96,13 +96,7 @@ function appendFeedbackIngestion(
       feedback_json
     )
     VALUES (?, ?, ?, ?, ?, ?, json(?))
-    ON CONFLICT(feedback_id) DO UPDATE SET
-      source = excluded.source,
-      outcome = excluded.outcome,
-      recorded_at = excluded.recorded_at,
-      target_kind = excluded.target_kind,
-      target_id = excluded.target_id,
-      feedback_json = excluded.feedback_json
+    ON CONFLICT(feedback_id) DO NOTHING
   `).run(
     record.feedback_id,
     record.source,
@@ -112,9 +106,9 @@ function appendFeedbackIngestion(
     record.target.id,
     JSON.stringify(record)
   );
+  assertStoredFeedbackIngestionRecordMatches(sqlite, record);
 
-  for (const raw of result.effects) {
-    const effect = FeedbackIngestionEffectSchema.parse(raw);
+  for (const effect of effects) {
     sqlite.prepare(`
       INSERT INTO feedback_ingestion_effects (
         effect_id,
@@ -125,12 +119,7 @@ function appendFeedbackIngestion(
         effect_json
       )
       VALUES (?, ?, ?, ?, ?, json(?))
-      ON CONFLICT(effect_id) DO UPDATE SET
-        feedback_id = excluded.feedback_id,
-        effect_kind = excluded.effect_kind,
-        target_ref = excluded.target_ref,
-        created_at = excluded.created_at,
-        effect_json = excluded.effect_json
+      ON CONFLICT(effect_id) DO NOTHING
     `).run(
       effect.effect_id,
       effect.feedback_id,
@@ -140,6 +129,7 @@ function appendFeedbackIngestion(
       JSON.stringify(effect)
     );
   }
+  assertStoredFeedbackIngestionEffectsMatch(sqlite, record, effects);
 }
 
 function listFeedbackIngestionRecords(
@@ -168,23 +158,30 @@ function listFeedbackIngestionEffects(
   return rows.map((row) => parseFeedbackEffect(row.effect_json));
 }
 
-function assertFeedbackIngestionAppendIsImmutable(
+function assertStoredFeedbackIngestionRecordMatches(
   sqlite: SqliteDatabase,
-  record: FeedbackIngestionRecord,
-  effects: readonly FeedbackIngestionEffect[]
+  record: FeedbackIngestionRecord
 ): void {
   const existingRecordRow = sqlite.prepare(`
     SELECT feedback_json
     FROM feedback_ingestion_records
     WHERE feedback_id = ?
   `).get(record.feedback_id) as FeedbackRecordRow | undefined;
-  if (!existingRecordRow) return;
+  if (!existingRecordRow) {
+    throw new Error(`feedback ingestion ${record.feedback_id} was not persisted`);
+  }
 
   const existingRecord = parseFeedbackRecord(existingRecordRow.feedback_json);
   if (canonicalJson(existingRecord) !== canonicalJson(record)) {
     throw new Error(`feedback ingestion ${record.feedback_id} already exists with different durable content`);
   }
+}
 
+function assertStoredFeedbackIngestionEffectsMatch(
+  sqlite: SqliteDatabase,
+  record: FeedbackIngestionRecord,
+  effects: readonly FeedbackIngestionEffect[]
+): void {
   const existingEffects = listFeedbackIngestionEffects(sqlite, record.feedback_id);
   const existingById = new Map(existingEffects.map((item) => [item.effect_id, canonicalJson(item)]));
   const nextById = new Map(effects.map((item) => [item.effect_id, canonicalJson(FeedbackIngestionEffectSchema.parse(item))]));

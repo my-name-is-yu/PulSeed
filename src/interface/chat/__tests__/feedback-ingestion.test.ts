@@ -146,4 +146,18 @@ describe("chat feedback ingestion", () => {
       id: "telegram:12345",
     });
   });
+
+  it("derives CLI source and surface refs from CLI reply targets", () => {
+    const replyTarget = {
+      surface: "cli" as const,
+      channel: "cli" as const,
+      conversation_id: "local-terminal",
+    };
+    const source = feedbackIngestionSourceForReplyTarget(replyTarget);
+    expect(source).toBe("cli");
+    expect(feedbackSurfaceRefForReplyTarget(source, replyTarget)).toEqual({
+      kind: "surface",
+      id: "cli:local-terminal",
+    });
+  });
 });

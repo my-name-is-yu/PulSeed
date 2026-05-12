@@ -28,6 +28,7 @@ export function feedbackIngestionSourceForReplyTarget(
     ?? (typeof replyTarget?.metadata?.["platform"] === "string" ? replyTarget.metadata["platform"] : "")
   ).toLowerCase();
   if (channel === "telegram" || platform === "telegram") return "telegram";
+  if (channel === "cli") return "cli";
   if (channel === "tui" || channel === "terminal") return "tui";
   if (channel === "chat" || channel === "") return "chat";
   return "gateway";
