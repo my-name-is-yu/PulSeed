@@ -6,7 +6,7 @@ import {
   type AttentionInput,
   type AttentionInputIntakeRecord,
   type AttentionInputIntakeResult,
-} from "../attention/index.js";
+} from "../attention/attention-input.js";
 import {
   runtimeItemsForAgenda,
 } from "../attention/attention-agenda.js";
@@ -217,6 +217,58 @@ export class AttentionStateStore {
     }));
   }
 
+  async loadDecisionChainSnapshotStrict(
+    options: AttentionAgendaListOptions = {}
+  ): Promise<AttentionDecisionChainSnapshot> {
+    const db = await this.database();
+    return db.read((sqlite) => ({
+      attention_inputs: listAttentionInputsStrict(sqlite),
+      signal_contexts: listJsonColumnStrict<SignalContext>(
+        sqlite,
+        "attention_signal_contexts",
+        "context_json",
+        "assembled_at ASC, signal_context_id ASC",
+        SignalContextSchema,
+      ),
+      urge_candidates: listJsonColumnStrict<UrgeCandidate>(
+        sqlite,
+        "attention_urge_candidates",
+        "urge_json",
+        "updated_at ASC, urge_id ASC",
+        UrgeCandidateSchema,
+      ),
+      agenda_items: listAgendaItemsStrict(sqlite, options),
+      inhibition_decisions: listJsonColumnStrict<InhibitionDecision>(
+        sqlite,
+        "attention_inhibition_decisions",
+        "decision_json",
+        "decided_at ASC, decision_id ASC",
+        InhibitionDecisionSchema,
+      ),
+      initiative_gate_decisions: listJsonColumnStrict<InitiativeGateDecision>(
+        sqlite,
+        "attention_initiative_gate_decisions",
+        "decision_json",
+        "decided_at ASC, decision_id ASC",
+        InitiativeGateDecisionSchema,
+      ),
+      outcome_decisions: listJsonColumnStrict<OutcomeDecision>(
+        sqlite,
+        "attention_outcome_decisions",
+        "decision_json",
+        "decided_at ASC, outcome_decision_id ASC",
+        OutcomeDecisionSchema,
+      ),
+      expression_decisions: listJsonColumnStrict<ExpressionDecision>(
+        sqlite,
+        "attention_expression_decisions",
+        "decision_json",
+        "created_at ASC, expression_decision_id ASC",
+        ExpressionDecisionSchema,
+      ),
+    }));
+  }
+
   async listAgendaItems(options: AttentionAgendaListOptions = {}): Promise<AgentAgendaItem[]> {
     const db = await this.database();
     return db.read((sqlite) => listAgendaItems(sqlite, options));
@@ -224,6 +276,13 @@ export class AttentionStateStore {
 
   async listRuntimeItems(now: string): Promise<RuntimeItem[]> {
     return runtimeItemsForAgenda(await this.listAgendaItems({
+      includeSuppressed: true,
+      includeTerminal: false,
+    }), now);
+  }
+
+  async listRuntimeItemsStrict(now: string): Promise<RuntimeItem[]> {
+    return runtimeItemsForAgenda(await this.listAgendaItemsStrict({
       includeSuppressed: true,
       includeTerminal: false,
     }), now);
@@ -277,10 +336,25 @@ export class AttentionStateStore {
     this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
     return this.dbPromise;
   }
+
+  private async listAgendaItemsStrict(options: AttentionAgendaListOptions = {}): Promise<AgentAgendaItem[]> {
+    const db = await this.database();
+    return db.read((sqlite) => listAgendaItemsStrict(sqlite, options));
+  }
 }
 
 function listAttentionInputs(sqlite: SqliteDatabase): AttentionInput[] {
   return listJsonColumn<AttentionInput>(
+    sqlite,
+    "attention_inputs",
+    "input_json",
+    "emitted_at ASC, attention_input_id ASC",
+    AttentionInputSchema,
+  );
+}
+
+function listAttentionInputsStrict(sqlite: SqliteDatabase): AttentionInput[] {
+  return listJsonColumnStrict<AttentionInput>(
     sqlite,
     "attention_inputs",
     "input_json",
@@ -705,6 +779,23 @@ function listAgendaItems(sqlite: SqliteDatabase, options: AttentionAgendaListOpt
   });
 }
 
+function listAgendaItemsStrict(sqlite: SqliteDatabase, options: AttentionAgendaListOptions): AgentAgendaItem[] {
+  const rows = sqlite.prepare(`
+    SELECT lifecycle, agenda_json
+    FROM attention_agenda_items
+    ORDER BY updated_at ASC, agenda_item_id ASC
+  `).all() as Array<{ lifecycle: AttentionStoreLifecycle; agenda_json: string }>;
+  return rows.flatMap((row, index) => {
+    if (!options.includeSuppressed && row.lifecycle === "suppressed") return [];
+    if (!options.includeTerminal && (row.lifecycle === "terminal" || row.lifecycle === "stale")) return [];
+    return [parseStoredStrict<AgentAgendaItem>(
+      row.agenda_json,
+      AgentAgendaItemSchema,
+      `attention_agenda_items.agenda_json[${index}]`
+    )];
+  });
+}
+
 function listJsonColumn<T>(
   sqlite: SqliteDatabase,
   tableName: string,
@@ -720,12 +811,42 @@ function listJsonColumn<T>(
   return rows.flatMap((row) => parseStored<T>(row.value_json, schema));
 }
 
+function listJsonColumnStrict<T>(
+  sqlite: SqliteDatabase,
+  tableName: string,
+  columnName: string,
+  orderBy: string,
+  schema: z.ZodType
+): T[] {
+  const rows = sqlite.prepare(`
+    SELECT ${columnName} AS value_json
+    FROM ${tableName}
+    ORDER BY ${orderBy}
+  `).all() as Array<{ value_json: string }>;
+  return rows.map((row, index) => parseStoredStrict<T>(
+    row.value_json,
+    schema,
+    `${tableName}.${columnName}[${index}]`
+  ));
+}
+
 function parseStored<T>(json: string, schema: z.ZodType): T[] {
   try {
     const parsed = schema.safeParse(JSON.parse(json) as unknown);
     return parsed.success ? [parsed.data as T] : [];
   } catch {
     return [];
+  }
+}
+
+function parseStoredStrict<T>(json: string, schema: z.ZodType, context: string): T {
+  try {
+    const parsedJson = JSON.parse(json) as unknown;
+    const parsed = schema.safeParse(parsedJson);
+    if (parsed.success) return parsed.data as T;
+    throw new Error(parsed.error.message);
+  } catch (error) {
+    throw new Error(`invalid durable attention state row in ${context}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

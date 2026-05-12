@@ -134,6 +134,18 @@ export {
   buildCompanionRuntimeContract,
   evaluateCompanionOutputPolicy,
 } from "./runtime/companion-policy.js";
+export {
+  createAttentionContinuityInspection,
+  inspectAttentionContinuity,
+} from "./runtime/attention/attention-continuity.js";
+export type {
+  AttentionContinuityAgendaEntry,
+  AttentionContinuityFeedbackEntry,
+  AttentionContinuityInspection,
+  AttentionContinuityOutcomeEntry,
+  AttentionContinuityWarning,
+  InspectAttentionContinuityInput,
+} from "./runtime/attention/attention-continuity.js";
 export type {
   ChatIngressChannel,
   ChatIngressReplyTarget,
