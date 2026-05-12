@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-05-12T15:20:39.305Z",
+  "test_like_files": 781,
+  "current_lane_counts": {
+    "unit": 525,
+    "integration": 244,
+    "integration+smoke": 8,
+    "runtime-long-run": 3,
+    "not_in_current_lane": 1
+  },
+  "target_lane_counts": {
+    "unit": 689,
+    "integration": 75,
+    "golden-traces+replay": 10,
+    "slow": 7
+  },
+  "classification_counts": {
+    "keep": 712,
+    "move_to_unit": 33,
+    "replace": 10,
+    "move_to_integration": 19,
+    "move_to_slow": 7
+  },
+  "current_coverage_gap_count": 1,
+  "current_coverage_gaps": [
+    "tests/unit/test_example.spec.ts"
+  ],
+  "p0_trace_count": 40,
+  "p0_mapped_trace_count": 40,
+  "p0_unmapped_traces": [],
+  "phase0_completion": {
+    "inventory_covers_all_test_like_files": true,
+    "current_lane_target_lane_diff_explainable": true,
+    "at_least_one_p0_trace_mapped_to_old_test": true
+  }
+}
