@@ -283,38 +283,40 @@ export function createObservationEvent(input: CreateObservationEventInput): Obse
 }
 
 export function observationEventToAttentionInput(input: ObservationEventAttentionInput): AttentionInput {
-  const sessionRef = ref("observation_session", input.session.session_id);
-  if (input.event.session_ref.id !== sessionRef.id) {
-    throw new Error(`observation event "${input.event.event_id}" does not belong to session "${input.session.session_id}"`);
+  const session = ObservationSessionSchema.parse(input.session);
+  const event = ObservationEventSchema.parse(input.event);
+  const sessionRef = ref("observation_session", session.session_id);
+  if (event.session_ref.id !== sessionRef.id) {
+    throw new Error(`observation event "${event.event_id}" does not belong to session "${session.session_id}"`);
   }
-  if (input.event.modality !== input.session.source.modality && input.session.source.modality !== "multimodal") {
+  if (event.modality !== session.source.modality && session.source.modality !== "multimodal") {
     throw new Error(
-      `observation event modality "${input.event.modality}" does not match session modality "${input.session.source.modality}"`
+      `observation event modality "${event.modality}" does not match session modality "${session.source.modality}"`
     );
   }
-  assertObservationEventWithinSession(input.session, input.event);
-  assertObservationSessionCanEmitEvent(input.session, input.event);
+  assertObservationEventWithinSession(session, event);
+  assertObservationSessionCanEmitEvent(session, event);
 
-  const effectPolicy = input.event.attention_signal.effect_policy satisfies AttentionInputEffectPolicy;
-  const replayKey = `observation:${input.session.session_id}:${input.event.event_id}`;
+  const effectPolicy = event.attention_signal.effect_policy satisfies AttentionInputEffectPolicy;
+  const replayKey = `observation:${session.session_id}:${event.event_id}`;
   return AttentionInputSchema.parse({
     attention_input_id: `attention-input:observation_event:${stableId(replayKey)}`,
     source: {
       source_kind: "observation_event",
-      source_id: input.event.event_id,
-      source_epoch: input.session.source.source_epoch,
-      high_watermark: input.event.observed_at,
+      source_id: event.event_id,
+      source_epoch: session.source.source_epoch,
+      high_watermark: event.observed_at,
       replay_key: replayKey,
-      emitted_at: input.emitted_at ?? input.event.observed_at,
+      emitted_at: input.emitted_at ?? event.observed_at,
     },
     signal_source: "observation",
     signal_ref: {
-      ref: input.event.observation_ref ?? ref("observation_event", input.event.event_id),
+      ref: event.observation_ref ?? ref("observation_event", event.event_id),
       lifecycle: "active",
     },
     effect_policy: effectPolicy,
-    payload_class: `observation.${input.event.event_kind}`,
-    summary: input.event.summary,
+    payload_class: `observation.${event.event_kind}`,
+    summary: event.summary,
     active_surface_ref: input.active_surface_ref ?? null,
     current_session_refs: input.current_session_refs ?? [],
     current_goal_refs: input.current_goal_refs ?? [],

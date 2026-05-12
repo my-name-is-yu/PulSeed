@@ -312,6 +312,24 @@ describe("Observation sensory contracts", () => {
     ).toThrow("observation_event attention inputs require ObservationSession and ObservationEvent validation");
   });
 
+  it("re-validates raw observation payloads at the attention conversion boundary", () => {
+    const invalidEvent = {
+      ...sampleEvent(),
+      attention_signal: {
+        enters_attention: true,
+        direct_action: true,
+        effect_policy: { wake: true, notify: false, speak: false, act: false },
+      },
+    };
+
+    expect(() =>
+      observationEventToAttentionInput({
+        session: activeSession(),
+        event: invalidEvent as never,
+      })
+    ).toThrow();
+  });
+
   it("rejects events that are not linked to the declared observation session or modality", () => {
     const session = activeSession();
     expect(() =>
