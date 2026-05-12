@@ -18,12 +18,20 @@ import { createEnvelope } from "../types/envelope.js";
 import { runSupervisorMaintenanceCycleForDaemon } from "../daemon/maintenance.js";
 import { GuardrailStore } from "../guardrails/index.js";
 import { RuntimeHealthStore } from "../store/health-store.js";
-import { DaemonShutdownStore, DaemonStateStore, GoalTaskStateStore, SupervisorStateStore } from "../store/index.js";
+import {
+  DaemonShutdownStore,
+  DaemonStateStore,
+  GoalTaskStateStore,
+  RuntimeOperationStore,
+  SupervisorStateStore,
+  type RuntimeControlOperation,
+} from "../store/index.js";
 import { openControlDatabase } from "../store/control-db/index.js";
 import type { DaemonState } from "../../base/types/daemon.js";
 import { restoreInterruptedGoals } from "../daemon/persistence.js";
 import { upsertRelationshipProfileItem } from "../../platform/profile/relationship-profile.js";
 import { ProactiveInterventionStore } from "../store/proactive-intervention-store.js";
+import { AttentionStateStore } from "../store/attention-state-store.js";
 import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
 
 vi.setConfig({ testTimeout: 20_000 });
@@ -271,6 +279,54 @@ async function createPersistedStateFile(tmpDir: string, state: DaemonState): Pro
       await new DaemonStateStore(tmpDir).save(state);
     },
   };
+}
+
+function makeResidentGoal(id: string, status: Goal["status"] = "active"): Goal {
+  return {
+    id,
+    title: "Resident observation target",
+    description: "Target goal for resident observation.",
+    status,
+    dimensions: [],
+    gap_aggregation: "max",
+    dimension_mapping: null,
+    constraints: [],
+    children_ids: [],
+    target_date: null,
+    origin: "manual",
+    pace_snapshot: null,
+    deadline: null,
+    confidence_flag: null,
+    user_override: false,
+    feasibility_note: null,
+    uncertainty_weight: 1,
+    decomposition_depth: 0,
+    specificity_score: null,
+    loop_status: "idle",
+    parent_id: null,
+    node_type: "goal",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function saveVerifiedCompanionControl(
+  tmpDir: string,
+  kind: RuntimeControlOperation["kind"],
+): Promise<void> {
+  const now = new Date().toISOString();
+  await new RuntimeOperationStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir }).save({
+    operation_id: `test-control-${kind}`,
+    kind,
+    state: "verified",
+    requested_at: now,
+    updated_at: now,
+    requested_by: { surface: "cli" },
+    reply_target: { surface: "cli" },
+    reason: `test ${kind}`,
+    expected_health: { daemon_ping: false, gateway_acceptance: false },
+    result: { ok: true, message: `${kind} verified` },
+  }, { emitEvent: false });
 }
 
 describe("DaemonRunner durable runtime", () => {
@@ -982,7 +1038,7 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
-  it("runs resident dream maintenance from idle proactive ticks", async () => {
+  it("keeps pending resident dream maintenance inspectable after idle sleep admission", async () => {
     await upsertRelationshipProfileItem(tmpDir, {
       stableKey: "user.intervention.dream",
       kind: "intervention_policy",
@@ -1048,13 +1104,13 @@ describe("DaemonRunner durable runtime", () => {
       } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
-      (value) => value.resident_activity?.kind === "dream"
+      (value) => value.resident_activity?.kind === "sleep"
     );
 
     const suggestions = await suggestionStore.list();
 
     expect(state.status).toBe("idle");
-    expect(state.resident_activity?.summary).toContain("applied pending suggestion");
+    expect(state.resident_activity?.summary).toContain("stayed idle");
     expect(state.resident_activity).toEqual(expect.objectContaining({
       surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
       surface_inspection: expect.objectContaining({
@@ -1068,17 +1124,17 @@ describe("DaemonRunner durable runtime", () => {
         }),
       })],
     }));
-    expect(scheduleEngine.addEntry).toHaveBeenCalledOnce();
+    expect(scheduleEngine.addEntry).not.toHaveBeenCalled();
     expect(suggestions[0]).toEqual(expect.objectContaining({
-      status: "applied",
-      applied_entry_id: "schedule-entry-1",
+      status: "pending",
     }));
+    expect(suggestions[0]).not.toHaveProperty("applied_entry_id");
 
     daemon.stop();
     await startPromise;
   });
 
-  it("runs resident dream light analysis during idle sleep cycles", async () => {
+  it("does not run resident dream light analysis during idle sleep admission", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -1106,13 +1162,14 @@ describe("DaemonRunner durable runtime", () => {
       resident_activity: { kind: string; summary: string } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
-      (value) => value.resident_activity?.summary.includes("light analysis") ?? false,
+      (value) => value.resident_activity?.kind === "sleep",
       5_000
     );
 
     expect(state.resident_activity).toEqual(expect.objectContaining({
-      kind: "dream",
+      kind: "sleep",
     }));
+    expect(state.resident_activity?.summary).not.toContain("light analysis");
 
     daemon.stop();
     await startPromise;
@@ -1155,7 +1212,7 @@ describe("DaemonRunner durable runtime", () => {
     expect(scheduledSleepMs).toBe(5_000);
   }, 10_000);
 
-  it("records resident preemptive checks without directly activating CoreLoop", async () => {
+  it("holds resident preemptive checks in durable attention without direct work or Drive events", async () => {
     await upsertRelationshipProfileItem(tmpDir, {
       stableKey: "user.intervention.preemptive",
       kind: "intervention_policy",
@@ -1246,6 +1303,9 @@ describe("DaemonRunner durable runtime", () => {
         kind: string;
         summary: string;
         goal_id?: string;
+        attention_input_id?: string;
+        agenda_item_id?: string;
+        outcome_decision_id?: string;
         surface_id?: string;
         surface_included_count?: number;
         surface_excluded_count?: number;
@@ -1261,14 +1321,17 @@ describe("DaemonRunner durable runtime", () => {
       } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
-      (value) => value.resident_activity?.kind === "observation",
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("held by attention admission"),
     );
 
     expect(state.status).toBe("idle");
     expect(state.active_goals).not.toContain("resident-goal");
     expect(state.resident_activity).toEqual(expect.objectContaining({
-      kind: "observation",
-      goal_id: "resident-goal",
+      kind: "skipped",
+      attention_input_id: expect.stringContaining("attention-input:resident_proactive_maintenance:"),
+      agenda_item_id: expect.stringContaining("agenda:"),
+      outcome_decision_id: expect.stringContaining("outcome:resident:"),
       surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
       surface_included_count: 1,
       surface_excluded_count: 1,
@@ -1296,43 +1359,33 @@ describe("DaemonRunner durable runtime", () => {
     expect(JSON.stringify(state.resident_activity?.surface_inspection)).not.toContain(
       "Use sensitive private context for proactive timing."
     );
-    const proactiveEvents = await new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list();
-    expect(proactiveEvents).toEqual(expect.arrayContaining([
+    const interventionStore = new ProactiveInterventionStore(path.join(tmpDir, "runtime"));
+    await expect(interventionStore.list()).resolves.toEqual([]);
+    await expect(interventionStore.summarize()).resolves.toMatchObject({
+      total_interventions: 0,
+      pending_count: 0,
+    });
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.attention_inputs).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        event_type: "intervention",
-        activity: expect.objectContaining({
-          kind: "observation",
-          goal_id: "resident-goal",
-          surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
-          surface_included_count: 1,
-          surface_excluded_count: 1,
-          surface_inspection: expect.objectContaining({
-            target: "daemon",
-            inspection: expect.objectContaining({
-              excluded_summaries: [expect.objectContaining({
-                blocked_by: expect.arrayContaining(["sensitivity"]),
-              })],
-            }),
-          }),
-          surface_inspections: [expect.objectContaining({
-            inspection: expect.objectContaining({
-              surface_id: expect.stringContaining("surface:relationship-profile:daemon:proactive-maintenance"),
-            }),
-          })],
+        source: expect.objectContaining({
+          source_kind: "resident_proactive_maintenance",
+        }),
+      }),
+    ]));
+    expect(snapshot.outcome_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        requested_outcome: "prepare_action_candidate",
+        admission_status: "held",
+        downgrade_or_rejection_reason: expect.objectContaining({
+          code: "authority_unknown",
         }),
       }),
     ]));
     expect(
       (deps.driveSystem as unknown as { writeEvent: ReturnType<typeof vi.fn> }).writeEvent
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "resident-proactive",
-        data: expect.objectContaining({
-          event_type: "preemptive_check",
-          goal_id: "resident-goal",
-        }),
-      }),
-    );
+    ).not.toHaveBeenCalled();
     const runMock = (deps.coreLoop as unknown as { run: ReturnType<typeof vi.fn> }).run;
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(runMock.mock.calls.some((call: unknown[]) => call[0] === "resident-goal")).toBe(false);
@@ -1341,7 +1394,398 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
-  it("degrades to resident error when dream suggestion storage is malformed", async () => {
+  it("does not create goal-targeted resident attention when preemptive target is missing", async () => {
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "preemptive_check",
+          details: { goal_id: "missing-resident-goal" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        summary: string;
+        goal_id?: string;
+        attention_input_id?: string;
+        agenda_item_id?: string;
+        outcome_decision_id?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("was not found"),
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "skipped",
+      goal_id: "missing-resident-goal",
+    }));
+    expect(state.resident_activity?.attention_input_id).toBeUndefined();
+    expect(state.resident_activity?.agenda_item_id).toBeUndefined();
+    expect(state.resident_activity?.outcome_decision_id).toBeUndefined();
+    await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list()).resolves.toEqual([]);
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.attention_inputs).toEqual([]);
+    expect(snapshot.outcome_decisions).toEqual([]);
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("does not create goal-targeted resident attention when preemptive target is not current", async () => {
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "preemptive_check",
+          details: { goal_id: "completed-resident-goal" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+    const completedGoal = makeResidentGoal("completed-resident-goal", "completed");
+    const stateManager = {
+      getBaseDir: vi.fn().mockReturnValue(tmpDir),
+      loadGoal: vi.fn(async (goalId: string) => (goalId === completedGoal.id ? completedGoal : null)),
+      listGoalIds: vi.fn().mockResolvedValue([completedGoal.id]),
+      listTasksByStatus: vi.fn().mockResolvedValue([]),
+      listPipelinesByStatus: vi.fn().mockResolvedValue([]),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      stateManager: stateManager as unknown as DaemonDeps["stateManager"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: {
+        kind: string;
+        summary: string;
+        goal_id?: string;
+        attention_input_id?: string;
+        agenda_item_id?: string;
+        outcome_decision_id?: string;
+      } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("is not current"),
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      kind: "skipped",
+      goal_id: completedGoal.id,
+    }));
+    expect(state.resident_activity?.attention_input_id).toBeUndefined();
+    expect(state.resident_activity?.agenda_item_id).toBeUndefined();
+    expect(state.resident_activity?.outcome_decision_id).toBeUndefined();
+    await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list()).resolves.toEqual([]);
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.attention_inputs).toEqual([]);
+    expect(snapshot.outcome_decisions).toEqual([]);
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("holds resident suggest_goal when pause_proactivity is active", async () => {
+    await saveVerifiedCompanionControl(tmpDir, "pause_proactivity");
+    const goalNegotiator = {
+      suggestGoals: vi.fn().mockResolvedValue([]),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "suggest_goal",
+          details: { why: "prepare a quiet suggestion" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      goalNegotiator: goalNegotiator as unknown as DaemonDeps["goalNegotiator"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; summary: string; attention_input_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("pause_proactivity"),
+    );
+
+    expect(state.resident_activity?.attention_input_id).toContain("attention-input:resident_proactive_maintenance:");
+    expect(goalNegotiator.suggestGoals).not.toHaveBeenCalled();
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.inhibition_decisions.at(-1)).toEqual(expect.objectContaining({
+      decision: "hold",
+      reason: expect.stringContaining("pause_proactivity"),
+    }));
+    await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).summarize()).resolves.toMatchObject({
+      total_interventions: 0,
+      pending_count: 0,
+    });
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("suppresses resident investigation when suspend_companion is active", async () => {
+    await saveVerifiedCompanionControl(tmpDir, "suspend_companion");
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          action: "investigate",
+          details: { what: "quiet follow-up" },
+        }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; summary: string; attention_input_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("suspend_companion"),
+    );
+
+    expect(state.resident_activity?.attention_input_id).toContain("attention-input:resident_proactive_maintenance:");
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.inhibition_decisions.at(-1)).toEqual(expect.objectContaining({
+      decision: "suppress",
+      reason: expect.stringContaining("suspend_companion"),
+    }));
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("holds resident curiosity before proposals when pause_proactivity is active", async () => {
+    await saveVerifiedCompanionControl(tmpDir, "pause_proactivity");
+    const curiosityTrigger = {
+      type: "periodic_exploration",
+      detected_at: new Date().toISOString(),
+      source_goal_id: null,
+      details: "A possible resident curiosity target.",
+      severity: 0.4,
+    };
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn().mockResolvedValue([curiosityTrigger]),
+      generateProposals: vi.fn().mockResolvedValue([]),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; trigger: string; summary: string; attention_input_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("pause_proactivity"),
+    );
+
+    expect(state.resident_activity).toEqual(expect.objectContaining({
+      trigger: "proactive_tick",
+      attention_input_id: expect.stringContaining("attention-input:resident_curiosity:"),
+    }));
+    expect(curiosityEngine.generateProposals).not.toHaveBeenCalled();
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("holds zero-trigger scheduled resident curiosity without proactive feedback when pause_proactivity is active", async () => {
+    await saveVerifiedCompanionControl(tmpDir, "pause_proactivity");
+    const curiosityEngine = {
+      evaluateTriggers: vi.fn().mockResolvedValue([]),
+      generateProposals: vi.fn().mockResolvedValue([]),
+    };
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ action: "sleep" }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+        goal_review_interval_ms: 0,
+      },
+      curiosityEngine: curiosityEngine as unknown as DaemonDeps["curiosityEngine"],
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; trigger: string; summary: string; attention_input_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.trigger === "schedule"
+        && value.resident_activity?.summary.includes("pause_proactivity"),
+    );
+
+    expect(state.resident_activity?.attention_input_id).toContain("attention-input:resident_curiosity:");
+    expect(curiosityEngine.generateProposals).not.toHaveBeenCalled();
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).summarize()).resolves.toMatchObject({
+      total_interventions: 0,
+      pending_count: 0,
+    });
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("blocks resident sleep follow-on work when stop_all_quiet_work is active", async () => {
+    await saveVerifiedCompanionControl(tmpDir, "stop_all_quiet_work");
+    const scheduleEngine = {
+      tick: vi.fn().mockResolvedValue([]),
+      getEntries: vi.fn().mockReturnValue([]),
+      addEntry: vi.fn().mockResolvedValue({
+        id: "schedule-entry-1",
+        name: "Dream resident schedule",
+      }),
+    };
+    const suggestionStore = new DreamScheduleSuggestionStore(tmpDir);
+    await suggestionStore.save([
+      {
+        id: "dream-held",
+        type: "cron",
+        name: "Held dream schedule",
+        confidence: 0.9,
+        reason: "Should stay pending while quiet work is stopped.",
+        proposal: "0 * * * *",
+        status: "pending",
+      },
+    ], new Date().toISOString());
+    const llmClient = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: JSON.stringify({ action: "sleep" }),
+      }),
+      parseJSON: vi.fn((content: string) => JSON.parse(content)),
+    };
+
+    const deps = makeDeps(tmpDir, {
+      config: {
+        check_interval_ms: 50,
+        proactive_mode: true,
+        proactive_interval_ms: 0,
+      },
+      llmClient: llmClient as unknown as DaemonDeps["llmClient"],
+      scheduleEngine: scheduleEngine as unknown as DaemonDeps["scheduleEngine"],
+    });
+    const daemon = new DaemonRunner(deps);
+    currentDaemon = daemon;
+
+    const startPromise = daemon.start([]);
+    currentStartPromise = startPromise;
+
+    const state = await pollForJsonMatch<{
+      resident_activity: { kind: string; summary: string; attention_input_id?: string } | null;
+    }>(
+      path.join(tmpDir, "daemon-state.json"),
+      (value) => value.resident_activity?.kind === "skipped"
+        && value.resident_activity?.summary.includes("stop_all_quiet_work"),
+    );
+
+    expect(state.resident_activity?.attention_input_id).toContain("attention-input:resident_proactive_maintenance:");
+    expect(scheduleEngine.addEntry).not.toHaveBeenCalled();
+    const suggestions = await suggestionStore.list();
+    expect(suggestions[0]).toEqual(expect.objectContaining({
+      status: "pending",
+    }));
+    const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    expect(snapshot.outcome_decisions.at(-1)).toEqual(expect.objectContaining({
+      admission_status: "rejected",
+      downgrade_or_rejection_reason: expect.objectContaining({
+        code: "control_suppressed",
+      }),
+    }));
+
+    daemon.stop();
+    await startPromise;
+  });
+
+  it("does not read malformed dream suggestion storage from idle sleep admission", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -1397,11 +1841,11 @@ describe("DaemonRunner durable runtime", () => {
       resident_activity: { kind: string; summary: string } | null;
     }>(
       path.join(tmpDir, "daemon-state.json"),
-      (value) => value.resident_activity?.summary.includes("Resident dream maintenance failed") ?? false,
+      (value) => value.resident_activity?.kind === "sleep",
     );
 
     expect(state.status).toBe("idle");
-    expect(state.resident_activity?.summary).toContain("Resident dream maintenance failed");
+    expect(state.resident_activity?.summary).toContain("Resident proactive tick stayed idle.");
 
     daemon.stop();
     await startPromise;

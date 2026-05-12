@@ -1,6 +1,11 @@
-import { PulSeedEventSchema } from "../../base/types/drive.js";
+import type { Goal } from "../../base/types/goal.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
+import {
+  evaluateResidentAttentionAdmission,
+  residentAttentionActivityMetadata,
+} from "./resident-attention-orchestrator.js";
 import type {
+  ResidentActivityMetadata,
   DaemonRunnerResidentContext,
   ResidentSurfaceActivityMetadata,
 } from "./runner-resident-shared.js";
@@ -11,9 +16,6 @@ import {
   triggerResidentGoalDiscovery,
   triggerResidentInvestigation,
 } from "./runner-resident-curiosity.js";
-import {
-  triggerIdleResidentMaintenance,
-} from "./runner-resident-dream.js";
 
 function proactiveMaintenanceSurfaceActivityMetadata(
   result: ProactiveMaintenanceResult,
@@ -31,10 +33,10 @@ function proactiveMaintenanceSurfaceActivityMetadata(
 export async function triggerResidentPreemptiveCheck(
   context: Pick<
     DaemonRunnerResidentContext,
-    "stateManager" | "driveSystem" | "saveDaemonState" | "state" | "logger"
+    "stateManager" | "saveDaemonState" | "state" | "logger"
   >,
   details?: Record<string, unknown>,
-  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
+  surfaceActivityMetadata: ResidentActivityMetadata = {},
 ): Promise<void> {
   const goalId =
     typeof details?.["goal_id"] === "string" ? details["goal_id"].trim() : "";
@@ -61,23 +63,21 @@ export async function triggerResidentPreemptiveCheck(
       });
       return;
     }
+    if (!residentPreemptiveGoalIsCurrent(goal)) {
+      await persistResidentActivity(context, {
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: `Resident preemptive check skipped because goal "${goalId}" is not current.`,
+        goal_id: goalId,
+        ...surfaceActivityMetadata,
+      });
+      return;
+    }
 
-    await context.driveSystem.writeEvent(
-      PulSeedEventSchema.parse({
-        type: "external",
-        source: "resident-proactive",
-        timestamp: new Date().toISOString(),
-        data: {
-          event_type: "preemptive_check",
-          goal_id: goalId,
-          requested_by: "resident-daemon",
-        },
-      }),
-    );
     await persistResidentActivity(context, {
       kind: "observation",
       trigger: "proactive_tick",
-      summary: `Resident preemptive check recorded an attention candidate for goal "${goalId}".`,
+      summary: `Resident preemptive check remained an attention candidate for goal "${goalId}".`,
       goal_id: goalId,
       ...surfaceActivityMetadata,
     });
@@ -97,7 +97,7 @@ export async function triggerResidentPreemptiveCheck(
 export async function proactiveTick(
   context: Pick<
     DaemonRunnerResidentContext,
-    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem"
+    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore"
   >,
   lastProactiveTickAt: number,
   setLastProactiveTickAt: (value: number) => void,
@@ -134,6 +134,41 @@ export async function proactiveTick(
   }
 
   const surfaceActivityMetadata = proactiveMaintenanceSurfaceActivityMetadata(result);
+  if (result.decision.action === "preemptive_check") {
+    const goalId = typeof result.decision.details?.["goal_id"] === "string"
+      ? result.decision.details["goal_id"].trim()
+      : "";
+    const goal = goalId
+      ? await context.stateManager.loadGoal(goalId).catch(() => null)
+      : null;
+    if (!goal || !residentPreemptiveGoalIsCurrent(goal)) {
+      await triggerResidentPreemptiveCheck(context, result.decision.details, surfaceActivityMetadata);
+      return;
+    }
+  }
+
+  const attentionAdmission = await evaluateResidentAttentionAdmission(context, {
+    action: result.decision.action,
+    trigger: "proactive_tick",
+    details: result.decision.details,
+    goalId: typeof result.decision.details?.["goal_id"] === "string"
+      ? result.decision.details["goal_id"].trim()
+      : undefined,
+    summary: `Resident proactive maintenance selected ${result.decision.action}.`,
+    surfaceActivityMetadata,
+  });
+  const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+
+  if (!attentionAdmission.branch_admitted) {
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: attentionAdmission.summary,
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+    });
+    return;
+  }
 
   if (result.decision.action === "sleep") {
     await persistResidentActivity(context, {
@@ -141,13 +176,16 @@ export async function proactiveTick(
       trigger: "proactive_tick",
       summary: "Resident proactive tick stayed idle.",
       ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
     });
-    await triggerIdleResidentMaintenance(context, surfaceActivityMetadata);
     return;
   }
 
   if (result.decision.action === "suggest_goal") {
-    await triggerResidentGoalDiscovery(context, result.decision.details, surfaceActivityMetadata);
+    await triggerResidentGoalDiscovery(context, result.decision.details, {
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+    });
     return;
   }
 
@@ -157,13 +195,20 @@ export async function proactiveTick(
       trigger: "proactive_tick",
       summary: "Resident proactive maintenance selected investigation.",
       ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
     });
-    await triggerResidentInvestigation(context, result.decision.details, surfaceActivityMetadata);
+    await triggerResidentInvestigation(context, result.decision.details, {
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+    });
     return;
   }
 
   if (result.decision.action === "preemptive_check") {
-    await triggerResidentPreemptiveCheck(context, result.decision.details, surfaceActivityMetadata);
+    await triggerResidentPreemptiveCheck(context, result.decision.details, {
+      ...surfaceActivityMetadata,
+      ...attentionActivityMetadata,
+    });
     return;
   }
 
@@ -172,5 +217,10 @@ export async function proactiveTick(
     trigger: "proactive_tick",
     summary: `Resident proactive tick requested ${result.decision.action}, but no resident executor is wired for it yet.`,
     ...surfaceActivityMetadata,
+    ...attentionActivityMetadata,
   });
+}
+
+function residentPreemptiveGoalIsCurrent(goal: Goal): boolean {
+  return goal.status === "active";
 }

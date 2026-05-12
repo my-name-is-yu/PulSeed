@@ -18,7 +18,6 @@ export {
   legacyReportFromPlatformDream,
   runDreamAnalysis,
   runPlatformDreamConsolidation,
-  triggerIdleResidentMaintenance,
   triggerResidentDreamMaintenance,
   tryApplyPendingDreamSuggestion,
 } from "./runner-resident-dream.js";

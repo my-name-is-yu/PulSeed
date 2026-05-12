@@ -5,7 +5,7 @@ import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedul
 import { createRuntimeDreamSoilSyncService } from "../../platform/dream/dream-soil-sync.js";
 import type { DreamReport, DreamRunReport, DreamTier } from "../../platform/dream/dream-types.js";
 import { runDreamConsolidation } from "../../reflection/dream-consolidation.js";
-import type { DaemonRunnerResidentContext, ResidentSurfaceActivityMetadata } from "./runner-resident-shared.js";
+import type { DaemonRunnerResidentContext, ResidentActivityMetadata } from "./runner-resident-shared.js";
 import { persistResidentActivity } from "./runner-resident-shared.js";
 
 export async function tryApplyPendingDreamSuggestion(
@@ -119,7 +119,7 @@ export async function triggerResidentDreamMaintenance(
   >,
   details?: Record<string, unknown>,
   tier: DreamTier = "deep",
-  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
+  surfaceActivityMetadata: ResidentActivityMetadata = {},
 ): Promise<void> {
   try {
     const appliedBeforeAnalysis = await tryApplyPendingDreamSuggestion(context);
@@ -169,29 +169,4 @@ export async function triggerResidentDreamMaintenance(
       ...surfaceActivityMetadata,
     });
   }
-}
-
-export async function triggerIdleResidentMaintenance(
-  context: Pick<
-    DaemonRunnerResidentContext,
-    "currentGoalIds" | "baseDir" | "memoryLifecycle" | "knowledgeManager" | "llmClient" | "saveDaemonState" | "state" | "logger" | "scheduleEngine" | "stateManager"
-  >,
-  surfaceActivityMetadata: ResidentSurfaceActivityMetadata = {},
-): Promise<void> {
-  if (context.currentGoalIds.length > 0) {
-    return;
-  }
-
-  let hasDreamSuggestions = false;
-  try {
-    hasDreamSuggestions = (await new DreamScheduleSuggestionStore(context.baseDir).list()).length > 0;
-  } catch {
-    await triggerResidentDreamMaintenance(context, undefined, "light", surfaceActivityMetadata);
-    return;
-  }
-  if (!hasDreamSuggestions && !context.memoryLifecycle && !context.knowledgeManager && !context.llmClient) {
-    return;
-  }
-
-  await triggerResidentDreamMaintenance(context, undefined, "light", surfaceActivityMetadata);
 }
