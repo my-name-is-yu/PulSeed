@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchGatewayChatInputResult } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
+import { SurfaceDeliveryProjectionSchema, ref } from "../../attention/index.js";
 import { PluginChannelRuntimeStateStore } from "../../store/plugin-channel-runtime-state-store.js";
 import { createUserVisibleSeedyTurnPresence, type SeedyTurnPresencePhase } from "../../../interface/chat/seedy-turn-presence.js";
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
@@ -1113,6 +1114,70 @@ describe("TelegramGatewayAdapter", () => {
     await vi.waitFor(() => {
       expect(sentMessages).not.toContain("Fallback should not send.");
     });
+  });
+
+  it("does not send fallback after a quiet shared surface delivery", async () => {
+    const configDir = await writeConfig({
+      bot_token: "test-token",
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    });
+    const sentMessages: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "getMe") return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+      if (method === "getUpdates") {
+        return telegramResponse([{
+          update_id: 100,
+          message: { message_id: 2718, from: { id: 42 }, chat: { id: 314 }, text: "hello" },
+        }]);
+      }
+      if (method === "sendMessage") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
+        sentMessages.push(body.text ?? "");
+        return telegramResponse({ message_id: 9000 + sentMessages.length });
+      }
+      if (method === "sendChatAction") return telegramResponse(true);
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+    vi.mocked(dispatchGatewayChatInputResult).mockImplementationOnce(async (input) => {
+      await input.onEvent?.({
+        type: "surface_delivery",
+        runId: "run-1",
+        turnId: "turn-1",
+        createdAt: "2026-05-12T00:00:00.000Z",
+        projection: SurfaceDeliveryProjectionSchema.parse({
+          schema_version: "surface-delivery-projection-v1",
+          delivery_id: "surface-delivery:telegram:silence",
+          rendered_at: "2026-05-12T00:00:00.000Z",
+          surface_class: "gateway",
+          delivery_kind: "silence",
+          delivery_mode: "quiet_audit",
+          outcome_decision_ref: ref("outcome_decision", "outcome:telegram:silence"),
+          admission_status: "admitted",
+          should_render: false,
+          quiet_audit_reason: "admitted outcome intentionally stays silent",
+          audit_refs: [],
+        }),
+      });
+      await adapter.stop();
+      return { status: "ok", text: "Fallback should not send." };
+    });
+
+    await adapter.start();
+
+    expect(sentMessages).toEqual([]);
   });
 
   it("does not send fallback while async assistant_final delivery is still draining", async () => {

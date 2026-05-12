@@ -261,6 +261,11 @@ function assertCompanionProjectionCompatible(
   projection: CompanionActionProjection | null,
 ): void {
   if (!projection) return;
+  if (projection.executes_operation) {
+    throw new Error(
+      `CompanionActionProjection ${projection.projection_id} is side-effecting and cannot be used for ${deliveryKind} surface delivery`,
+    );
+  }
   const kind = projection.user_visible_action_kind;
   const compatible = (() => {
     switch (deliveryKind) {

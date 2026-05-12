@@ -1,6 +1,7 @@
 import type { ChatEvent } from "./chat-events.js";
 import { formatLifecycleFailureMessage } from "./failure-recovery.js";
 import type { AgentTimelineItem } from "../../orchestrator/execution/agent-loop/agent-timeline.js";
+import { renderSurfaceDeliveryProjection } from "../../runtime/attention/index.js";
 import type { ToolActivityCategory } from "../../tools/types.js";
 import { renderOperationProgress } from "./operation-progress.js";
 import { redactSetupSecrets } from "./setup-secret-intake.js";
@@ -344,6 +345,22 @@ export function applyChatEventToMessages(
       text,
       timestamp: new Date(event.item.createdAt),
       messageType: event.item.kind === "blocked" ? "warning" : "info",
+    }, maxMessages);
+  }
+
+  if (event.type === "surface_delivery") {
+    const text = renderSurfaceDeliveryProjection(event.projection);
+    if (!text) return messages;
+    const next = removeTransientActivityForTurn(messages, event.turnId);
+    return upsertMessage(next, {
+      id: event.projection.delivery_id,
+      role: "pulseed",
+      text: redactSetupSecrets(text),
+      timestamp,
+      messageType: event.projection.delivery_mode === "approval_request" ||
+        event.projection.delivery_mode === "urgent_alert"
+        ? "warning"
+        : "info",
     }, maxMessages);
   }
 

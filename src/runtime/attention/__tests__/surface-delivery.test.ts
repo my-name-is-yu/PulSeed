@@ -338,7 +338,7 @@ describe("surface delivery projection", () => {
         surfaceClass: "gateway",
         outcomeDecision: outcome(finalOutcome),
         companionActionProjection: companionProjection({ kind: "execute_now", executesOperation: true }),
-      })).toThrow(/incompatible/);
+      })).toThrow(/side-effecting|incompatible/);
     }
   });
 
@@ -363,6 +363,59 @@ describe("surface delivery projection", () => {
         })).toThrow(/incompatible/);
       }
     }
+  });
+
+  it("fails closed when an otherwise compatible CompanionActionProjection would execute", () => {
+    expect(() => projectSurfaceDelivery({
+      renderId: "render:silence:side-effect",
+      renderedAt: NOW,
+      surfaceClass: "gateway",
+      outcomeDecision: outcome("silence"),
+      companionActionProjection: companionProjection({ kind: "stay_silent", executesOperation: true }),
+    })).toThrow(/side-effecting/);
+
+    expect(() => projectSurfaceDelivery({
+      renderId: "render:digest:side-effect",
+      renderedAt: NOW,
+      surfaceClass: "digest",
+      outcomeDecision: outcome("add_to_digest"),
+      expressionDecision: expression("add_to_digest", ["digest"]),
+      visibilityPolicy: visibilityPolicy({
+        id: "visibility:add_to_digest",
+        outcomeId: "outcome:add_to_digest",
+        expressionId: "expression:add_to_digest",
+        digestOnly: true,
+      }),
+      companionActionProjection: companionProjection({ kind: "digest_later", executesOperation: true }),
+    })).toThrow(/side-effecting/);
+
+    expect(() => projectSurfaceDelivery({
+      renderId: "render:express:side-effect",
+      renderedAt: NOW,
+      surfaceClass: "gateway",
+      outcomeDecision: outcome("express_to_user"),
+      expressionDecision: expression("express_to_user", ["gateway"]),
+      visibilityPolicy: visibilityPolicy({
+        id: "visibility:express_to_user",
+        outcomeId: "outcome:express_to_user",
+        expressionId: "expression:express_to_user",
+      }),
+      companionActionProjection: companionProjection({ kind: "suggest", executesOperation: true }),
+    })).toThrow(/side-effecting/);
+
+    expect(() => projectSurfaceDelivery({
+      renderId: "render:approval-draft:side-effect",
+      renderedAt: NOW,
+      surfaceClass: "gateway",
+      outcomeDecision: outcome("request_approval"),
+      expressionDecision: expression("request_approval", ["gateway"]),
+      visibilityPolicy: visibilityPolicy({
+        id: "visibility:request_approval",
+        outcomeId: "outcome:request_approval",
+        expressionId: "expression:request_approval",
+      }),
+      companionActionProjection: companionProjection({ kind: "prepare_draft", executesOperation: true }),
+    })).toThrow(/side-effecting/);
   });
 
   it("fails closed when CompanionActionProjection would contradict the admitted outcome delivery", () => {

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChatEvent } from "../../../interface/chat/chat-events.js";
 import {
+  SurfaceDeliveryProjectionSchema,
+  ref,
+  type SurfaceDeliveryProjection,
+} from "../../attention/index.js";
+import {
   LIMITED_GATEWAY_DISPLAY_CAPABILITIES,
   TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
   createGatewayDisplayPolicy,
@@ -25,6 +30,29 @@ const timelineBase = {
   createdAt: base.createdAt,
   visibility: "user" as const,
 };
+
+function surfaceDelivery(input: {
+  deliveryId: string;
+  shouldRender: boolean;
+  text?: string;
+  reason?: string;
+}): SurfaceDeliveryProjection {
+  return SurfaceDeliveryProjectionSchema.parse({
+    schema_version: "surface-delivery-projection-v1",
+    delivery_id: input.deliveryId,
+    rendered_at: base.createdAt,
+    surface_class: "gateway",
+    delivery_kind: input.shouldRender ? "express_to_user" : "silence",
+    delivery_mode: input.shouldRender ? "body_message" : "quiet_audit",
+    outcome_decision_ref: ref("outcome_decision", `outcome:${input.deliveryId}`),
+    admission_status: "admitted",
+    should_render: input.shouldRender,
+    ...(input.shouldRender
+      ? { user_facing_text: input.text ?? "Shared delivery text" }
+      : { quiet_audit_reason: input.reason ?? "surface delivery is hidden by policy" }),
+    audit_refs: [],
+  });
+}
 
 function createTransport(): NonTuiDisplayTransport & { calls: string[] } {
   let nextId = 0;
@@ -119,6 +147,69 @@ describe("non-TUI display projector", () => {
     expect(transport.sendFinal).toHaveBeenCalledWith("Hel");
     expect(transport.editFinal).toHaveBeenCalledWith({ id: "final-1" }, "Hello");
     expect(transport.sendProgress).not.toHaveBeenCalled();
+  });
+
+  it("renders admitted surface delivery through the Telegram-shaped non-TUI final surface", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: {
+        capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
+        policy: {
+          ...createGatewayDisplayPolicy(TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities),
+          progressSurface: "editable",
+          finalSurface: "edit_stream",
+          cleanupPolicy: "collapse",
+        },
+      },
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "surface_delivery",
+      projection: surfaceDelivery({
+        deliveryId: "surface-delivery:telegram:express",
+        shouldRender: true,
+        text: "The admitted outcome is ready.",
+      }),
+    });
+
+    expect(transport.sendFinal).toHaveBeenCalledOnce();
+    expect(transport.sendFinal).toHaveBeenCalledWith("The admitted outcome is ready.");
+    expect(transport.sendProgress).not.toHaveBeenCalled();
+    expect(projector.deliveredAssistantOutput).toBe(true);
+  });
+
+  it("keeps quiet or hidden surface deliveries silent on Telegram-shaped non-TUI channels", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "surface_delivery",
+      projection: surfaceDelivery({
+        deliveryId: "surface-delivery:telegram:silence",
+        shouldRender: false,
+        reason: "admitted outcome intentionally stays silent",
+      }),
+    });
+    await projector.handle({
+      ...base,
+      type: "surface_delivery",
+      projection: surfaceDelivery({
+        deliveryId: "surface-delivery:telegram:hidden",
+        shouldRender: false,
+        reason: "surface delivery is hidden by the admitted visibility policy",
+      }),
+    });
+
+    expect(transport.sendFinal).not.toHaveBeenCalled();
+    expect(transport.sendProgress).not.toHaveBeenCalled();
+    expect(projector.renderedAssistantOutput).toBe(true);
+    expect(projector.deliveredAssistantOutput).toBe(false);
   });
 
   it("streams assistant chunks through one final-answer surface immediately", async () => {

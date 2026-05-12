@@ -108,6 +108,7 @@ export class SeedyPresenceProjector {
         await this.handleAssistantDelta(projection);
         return;
       case "assistant_final":
+      case "surface_delivery":
         await this.finish("final");
         return;
       case "lifecycle_error":
@@ -406,6 +407,7 @@ export class SeedyPresenceProjector {
     switch (event.type) {
       case "assistant_delta":
       case "assistant_final":
+      case "surface_delivery":
         return false;
       case "lifecycle_error":
         return false;

@@ -634,6 +634,7 @@ function isNonTerminalProgressEvent(event: ChatEvent): boolean {
     case "assistant_delta":
     case "assistant_final":
     case "lifecycle_error":
+    case "surface_delivery":
     case "lifecycle_end":
     case "lifecycle_start":
     case "presence_update":

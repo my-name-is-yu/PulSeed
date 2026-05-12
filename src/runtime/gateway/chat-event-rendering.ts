@@ -109,7 +109,7 @@ function formatFailureRecovery(guidance: FailureRecoveryGuidanceLike): string {
   ].join("\n");
 }
 
-function redactSetupSecrets(value: string): string {
+export function redactSetupSecrets(value: string): string {
   return value
     .replace(/bot_token=([^\s&]+)/gi, "bot_token=[REDACTED:token]")
     .replace(/([?&]token=)([^&\s]+)/gi, "$1[REDACTED:token]")
