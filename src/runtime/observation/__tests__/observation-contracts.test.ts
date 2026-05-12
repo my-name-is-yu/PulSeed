@@ -124,7 +124,21 @@ describe("Observation sensory contracts", () => {
       activeSession({
         started_at: null,
       })
-    ).toThrow("active observation sessions require started_at");
+    ).toThrow("started observation sessions require started_at");
+
+    expect(() =>
+      activeSession({
+        state: "ended",
+        started_at: null,
+      })
+    ).toThrow("started observation sessions require started_at");
+
+    expect(() =>
+      activeSession({
+        state: "expired",
+        started_at: null,
+      })
+    ).toThrow("started observation sessions require started_at");
 
     expect(() =>
       activeSession({

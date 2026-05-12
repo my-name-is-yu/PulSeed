@@ -199,11 +199,11 @@ export const ObservationSessionSchema = z.object({
       message: "observation session duration cannot exceed max_duration_ms",
     });
   }
-  if (session.state === "active" && !session.started_at) {
+  if (["active", "ended", "expired"].includes(session.state) && !session.started_at) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["started_at"],
-      message: "active observation sessions require started_at",
+      message: "started observation sessions require started_at",
     });
   }
   if (["active", "ended", "expired"].includes(session.state) && session.visible_indicator.state !== "shown") {
