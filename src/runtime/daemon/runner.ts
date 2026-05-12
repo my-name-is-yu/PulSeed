@@ -25,6 +25,7 @@ import type { Envelope } from "../types/envelope.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import { type ApprovalStore, type OutboxStore, type RuntimeHealthStore } from "../store/index.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
+import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
 import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import type { RuntimeControlOperationKind } from "../store/index.js";
 import type { LeaderLockManager } from "../leader-lock-manager.js";
@@ -182,6 +183,8 @@ export interface DaemonDeps {
   attentionStateStore?: AttentionStateStore;
   /** Optional runtime operation store for resident admission control tests. */
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  /** Optional feedback store for resident feedback decision tests. */
+  feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
   /** Optional operation boundary evaluator for resident operation-plan tests. */
   residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;
 }
@@ -244,6 +247,7 @@ export class DaemonRunner {
   private eventDispatcher: EventDispatcher | null = null;
   private attentionStateStore: AttentionStateStore;
   private runtimeOperationStore: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
+  private feedbackIngestionStore: Pick<FeedbackIngestionStore, "listEffects">;
   private readonly residentOperationBoundaryEvaluator: ResidentOperationBoundaryEvaluator | undefined;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
   private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
@@ -285,6 +289,10 @@ export class DaemonRunner {
       { controlBaseDir: this.baseDir },
     );
     this.runtimeOperationStore = deps.runtimeOperationStore ?? new RuntimeOperationStore(
+      this.runtimeRoot,
+      { controlBaseDir: this.baseDir },
+    );
+    this.feedbackIngestionStore = deps.feedbackIngestionStore ?? new FeedbackIngestionStore(
       this.runtimeRoot,
       { controlBaseDir: this.baseDir },
     );

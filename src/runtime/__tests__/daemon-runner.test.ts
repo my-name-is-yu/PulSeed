@@ -395,6 +395,25 @@ describe("DaemonRunner durable runtime", () => {
     expect(() => new DaemonRunner(deps)).not.toThrow();
   });
 
+  it("keeps one resident feedback ingestion store on the daemon context", () => {
+    const defaultDaemon = new DaemonRunner(makeDeps(tmpDir));
+    const defaultContext = defaultDaemon as unknown as {
+      feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
+    };
+    expect(defaultContext.feedbackIngestionStore).toBeInstanceOf(FeedbackIngestionStore);
+
+    const injectedStore: Pick<FeedbackIngestionStore, "listEffects"> = {
+      listEffects: vi.fn().mockResolvedValue([]),
+    };
+    const injectedDaemon = new DaemonRunner(makeDeps(tmpDir, {
+      feedbackIngestionStore: injectedStore,
+    }));
+    const injectedContext = injectedDaemon as unknown as {
+      feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
+    };
+    expect(injectedContext.feedbackIngestionStore).toBe(injectedStore);
+  });
+
   it("saves daemon-state.json with running status and active goals on start", async () => {
     const deps = makeDeps(tmpDir, { config: { check_interval_ms: 50 } });
     const daemon = new DaemonRunner(deps);
