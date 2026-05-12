@@ -12,6 +12,9 @@ import { StateManager } from "../../base/state/state-manager.js";
 import { BackgroundRunLedger } from "../store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { DaemonStateStore } from "../store/daemon-state-store.js";
+import { RuntimeOperationStore } from "../store/runtime-operation-store.js";
+import type { RuntimeControlOperation } from "../store/runtime-operation-schemas.js";
+import type { RuntimeEvent } from "../types/companion-state.js";
 import { ChatSessionDataStore } from "../../interface/chat/chat-session-data-store.js";
 import { SqliteAgentLoopSessionStateStore } from "../../orchestrator/execution/agent-loop/agent-loop-session-db-store.js";
 import { makeGoal } from "../../../tests/helpers/fixtures.js";
@@ -26,6 +29,52 @@ const createMockDriveSystem = (tmpDir: string) => ({
     fs.writeFileSync(file, JSON.stringify(event), "utf-8");
   }),
 });
+
+function makeRuntimeControlOperation(overrides: Partial<RuntimeControlOperation> = {}): RuntimeControlOperation {
+  return {
+    operation_id: "runtime-interface-op-1",
+    kind: "inspect_run",
+    state: "pending",
+    requested_at: "2026-05-12T00:00:00.000Z",
+    updated_at: "2026-05-12T00:01:00.000Z",
+    requested_by: { surface: "gateway", platform: "telegram" },
+    reply_target: { surface: "gateway", channel: "plugin_gateway", platform: "telegram" },
+    reason: "inspect runtime interface",
+    expected_health: { daemon_ping: false, gateway_acceptance: false },
+    ...overrides,
+  };
+}
+
+function makeRuntimeEvent(index: number, occurredAt: string): RuntimeEvent {
+  return {
+    schema_version: "runtime-event-v1",
+    event_id: `runtime-interface-event-${String(index).padStart(2, "0")}`,
+    event_type: "working",
+    item_ref: `runtime-control:event-${index}`,
+    occurred_at: occurredAt,
+    source: "test",
+    posture_before: null,
+    posture_after: "working",
+    authority_delta: {
+      before: null,
+      after: null,
+      changed_fields: [],
+    },
+    staleness_delta: {
+      before: null,
+      after: null,
+      changed_dimensions: [],
+    },
+    companion_control_delta: {
+      before: null,
+      after: null,
+      changed_controls: [],
+    },
+    surface_refs: [],
+    companion_state_refs: [],
+    audit_refs: [],
+  };
+}
 
 /** Start an EventServer on an OS-assigned port (no TOCTOU race). */
 async function startWithRetry(
@@ -965,6 +1014,100 @@ describe("snapshot and outbox replay", () => {
       kind: "coreloop_run",
       status: "running",
     }));
+  });
+
+  it("includes the resident runtime interface contract in the daemon snapshot", async () => {
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const now = new Date().toISOString();
+    await new DaemonStateStore(tmpDir).save({
+      pid: process.pid,
+      started_at: now,
+      last_loop_at: now,
+      loop_count: 1,
+      active_goals: [],
+      status: "running",
+      runtime_root: runtimeRoot,
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
+    const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: tmpDir });
+    await operationStore.save(
+      makeRuntimeControlOperation({ requested_at: now, updated_at: now })
+    );
+    const eventBaseMs = Date.parse(now) + 1_000;
+    for (let index = 0; index < 55; index += 1) {
+      await operationStore.importLegacyRuntimeEvent(
+        makeRuntimeEvent(index, new Date(eventBaseMs + index * 1_000).toISOString())
+      );
+    }
+
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      runtimeRoot,
+      controlBaseDir: tmpDir,
+    });
+    await server.start();
+
+    const result = await makeRequest(server.getPort(), "GET", "/snapshot");
+    expect(result.status).toBe(200);
+
+    const snapshot = JSON.parse(result.body) as {
+      resident_runtime_interface?: {
+        schema_version: string;
+        connection: { status: string; reason: string };
+        command_channel: {
+          requires_admission: boolean;
+          capability_discovery_grants_authority: boolean;
+          pending_operation_refs: string[];
+        };
+        event_stream: {
+          high_watermark: string;
+          event_refs: Array<{ event_id: string }>;
+        };
+        capability_discovery: {
+          authority_granted: boolean;
+          capabilities: Array<{ capability_id: string; can_execute: boolean; authority_granted: boolean }>;
+        };
+        dev_connector_projection: {
+          backend_contract_only: boolean;
+          gui_surface_included: boolean;
+          capability_authority_granted: boolean;
+        };
+      };
+    };
+    expect(snapshot.resident_runtime_interface?.schema_version).toBe("resident-runtime-interface-v1");
+    expect(snapshot.resident_runtime_interface?.connection).toMatchObject({
+      status: "online",
+      reason: "daemon_evidence_fresh",
+    });
+    expect(snapshot.resident_runtime_interface?.command_channel).toMatchObject({
+      requires_admission: true,
+      capability_discovery_grants_authority: false,
+      pending_operation_refs: ["runtime-interface-op-1"],
+    });
+    expect(snapshot.resident_runtime_interface?.event_stream.event_refs).toHaveLength(50);
+    expect(snapshot.resident_runtime_interface?.event_stream.event_refs[0]).toMatchObject({
+      event_id: "runtime-interface-event-05",
+    });
+    expect(snapshot.resident_runtime_interface?.event_stream.high_watermark).toBe("runtime-interface-event-54");
+    expect(snapshot.resident_runtime_interface?.capability_discovery.authority_granted).toBe(false);
+    expect(snapshot.resident_runtime_interface?.capability_discovery.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capability_id: "runtime.command_channel",
+          can_execute: false,
+          authority_granted: false,
+        }),
+      ])
+    );
+    expect(snapshot.resident_runtime_interface?.dev_connector_projection).toMatchObject({
+      backend_contract_only: true,
+      gui_surface_included: false,
+      capability_authority_granted: false,
+    });
   });
 
   it("reads auth handoff sessions from an explicitly configured runtime root", async () => {

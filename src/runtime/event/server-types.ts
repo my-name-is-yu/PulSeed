@@ -5,6 +5,7 @@ import type { OutboxStore } from "../store/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
 import type { RuntimeOperatorHandoffRecord } from "../store/operator-handoff-store.js";
 import type { RuntimeAutomationSnapshot } from "../store/index.js";
+import type { ResidentRuntimeInterfaceSnapshot } from "../resident-runtime-interface.js";
 
 export interface EventServerConfig {
   host?: string;
@@ -32,6 +33,7 @@ export interface EventServerSnapshot {
   runtime_automation?: RuntimeAutomationSnapshot;
   runtime_sessions?: RuntimeSessionRegistrySnapshot | null;
   operator_handoffs?: RuntimeOperatorHandoffRecord[];
+  resident_runtime_interface?: ResidentRuntimeInterfaceSnapshot;
 }
 
 export type ActiveWorkersProvider = () =>
