@@ -56,6 +56,14 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway secret setup intake -> typed secret writer -> redacted chat state",
     stateArtifact: "secret setup state, redacted transcript/event artifact",
+    deletedBlocks: [
+      {
+        block: "stores the detected Telegram token as transient value without offset artifacts",
+        replacementTrace: "gateway_secret_setup_redacts_token_and_confirms_write",
+        evidence: "2026-05-13: pre-delete unit `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts --config vitest.unit.config.ts` passed 2 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit passed 1 remaining URL-query redaction test.",
+      },
+    ],
+    remainingUnitValue: "URL query secret redaction remains as focused parser/unit coverage not yet represented by the gateway secret setup trace.",
   },
   {
     oldPath: "src/interface/chat/__tests__/cross-platform-session.test.ts",
@@ -209,55 +217,55 @@ const allP0Traces = [
 const sameCheckoutEvidenceByOldPath = new Map([
   [
     "src/interface/chat/__tests__/chat-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 185 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 184 tests.",
   ],
   [
     "src/interface/chat/__tests__/chat-runner-tools.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
   ],
   [
     "src/interface/chat/__tests__/setup-secret-intake.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
   ],
   [
     "src/interface/chat/__tests__/cross-platform-session.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
   ],
   [
     "src/runtime/control/__tests__/runtime-control-service.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/control/__tests__/runtime-control-service.test.ts --config vitest.integration.config.ts` passed 1 file / 41 tests.",
   ],
   [
     "src/runtime/__tests__/schedule-engine.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 142 tests.",
   ],
   [
     "src/runtime/__tests__/approval-broker.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 142 tests.",
   ],
   [
     "src/runtime/queue/__tests__/journal-backed-queue.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.smoke.config.ts` passed 1 file / 15 tests.",
   ],
   [
     "src/runtime/store/__tests__/attention-state-store.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 1 file / 14 tests.",
   ],
   [
     "src/runtime/__tests__/daemon-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped runtime integration batch passed 6 files / 260 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
   ],
   [
     "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and `npx vitest run src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 1 file / 21 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
   ],
   [
     "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
   ],
   [
     "src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 40 traces, `npm run test:replay` passed 7 replay fixtures, and the mapped unit batch passed 5 files / 185 tests.",
+    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
   ],
 ]);
 
@@ -482,7 +490,7 @@ function renderReplacementMap(summary) {
     "",
     `Generated: ${summary.generated_at}`,
     "",
-    "Deletion gate: old tests may only be deleted after the mapped replacement trace has landed and the old test plus new trace passed in the same checkout.",
+    "Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.",
     "",
     "## P0 Trace Coverage",
     "",
@@ -500,6 +508,16 @@ function renderReplacementMap(summary) {
     lines.push(`- State artifact: ${mapping.stateArtifact}`);
     lines.push(`- Old test file deletion allowed: ${blockGate.allowed ? "yes" : "no"}`);
     if (!blockGate.allowed) lines.push(`- No reason: ${blockGate.reason}`);
+    if (mapping.deletedBlocks?.length > 0) {
+      lines.push("- Deleted old-test blocks:");
+      for (const deletion of mapping.deletedBlocks) {
+        const deletionEvidence = evidenceForTrace(deletion.replacementTrace);
+        lines.push(`  - Block: ${deletion.block}`);
+        lines.push(`    - Replacement trace: ${deletion.replacementTrace}`);
+        lines.push(`    - Deletion allowed: ${deletionEvidence.allKnownRunnersReal ? "yes" : "no"}`);
+        lines.push(`    - Evidence: ${deletion.evidence}`);
+      }
+    }
     lines.push("- Replacement evidence:");
     for (const trace of mapping.traces) {
       const traceEvidence = evidenceForTrace(trace);
@@ -511,7 +529,7 @@ function renderReplacementMap(summary) {
       if (!blockGate.allowed) lines.push(`    - No reason: ${blockGate.reason}`);
     }
     lines.push(`- Simultaneous pass evidence: ${sameCheckoutEvidenceByOldPath.get(mapping.oldPath) ?? "pending until Phase 2/3 trace suites land."}`);
-    lines.push("- Delete condition: delete only when the old test file deletion gate above says yes.");
+    lines.push("- Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.");
     lines.push("");
   }
   if (summary.p0_unmapped_traces.length > 0) {
@@ -538,19 +556,16 @@ function deletionGateForBlock(mapping) {
       reason: `Mapped traces still include pending_real_runner or missing runner evidence: ${pending}.`,
     };
   }
-  if (
-    mapping.oldPath.includes("/queue/") ||
-    mapping.oldPath.includes("/store/") ||
-    mapping.oldPath.includes("/tools/fs/")
-  ) {
+  if (mapping.fileDeletionAllowed === true) {
     return {
-      allowed: false,
-      reason: "The old file still has pure helper/store/tool-unit value beyond the current production-path replacement traces.",
+      allowed: true,
+      reason: "",
     };
   }
   return {
-    allowed: true,
-    reason: "",
+    allowed: false,
+    reason: mapping.remainingUnitValue
+      ?? "File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.",
   };
 }
 

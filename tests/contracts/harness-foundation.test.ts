@@ -78,10 +78,10 @@ describe("test redesign harness foundation", () => {
 
   it("runs a normalized golden trace fixture", async () => {
     const fixture = new RuntimeFixtureBuilder(
-      "gateway_ordinary_chat_first_visible_no_progress",
-      "gateway",
-      "daemon/progress/final message ordering",
-      "Gateway ingress -> ChatRunner -> ChatEvent stream",
+      "harness_foundation_pending_fixture",
+      "harness",
+      "pending runner gate",
+      "unwired harness foundation boundary",
     )
       .event({ type: "lifecycle_start", at: "2026-05-13T00:00:00.000Z", visible: false, payload: { turn_id: "turn-1" } })
       .event({ type: "assistant_delta", at: "2026-05-13T00:00:00.000Z", visible: true, payload: { text: "hello" } })
@@ -100,14 +100,14 @@ describe("test redesign harness foundation", () => {
   it("runs a replay fixture and requires fresh/restart equivalence", async () => {
     const fixture: ReplayFixture = {
       schema_version: "pulseed.replay.v1",
-      contract_name: "state_attention_schema_ahead_fail_closed",
-      domain: "state",
-      p0_failure_mode: "state migration破壊",
-      production_boundary: "runtime startup/replay -> attention state store -> control DB",
+      contract_name: "harness_foundation_pending_replay",
+      domain: "harness",
+      p0_failure_mode: "pending replay runner gate",
+      production_boundary: "unwired harness replay boundary",
       input: {
         entrypoint: "runtime startup/replay",
         fake_now: "2026-05-13T00:00:00.000Z",
-        seed: "state_attention_schema_ahead_fail_closed",
+        seed: "harness_foundation_pending_replay",
       },
       initial_state: {
         "state/pulseed-control.json": { schema_version: 999 },
