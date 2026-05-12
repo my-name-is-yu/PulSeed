@@ -122,22 +122,12 @@ describe("LivingAutonomyDirectPathInventory", () => {
     }
   });
 
-  it("records current debt for non-exception paths that still have direct outward effects", () => {
-    const currentDebtPaths = LivingAutonomyDirectPathInventory.filter((entry) =>
+  it("records no current direct outward effects for non-exception paths", () => {
+    const currentOutwardPaths = LivingAutonomyDirectPathInventory.filter((entry) =>
       currentPreGateOutwardEffects(entry).length > 0
     );
 
-    expect(currentDebtPaths.map((entry) => entry.id)).toEqual(expect.arrayContaining([
-      "resident.proactive_maintenance",
-      "gateway.outbound",
-      "event_server.trigger_create_task",
-      "event_server.file_ingestion",
-      "event_server.sse_outbox_broadcast",
-    ]));
-    for (const entry of currentDebtPaths) {
-      expect(entry.requiresTypedAdmission, entry.id).toBe(true);
-      expect(entry.currentDebt, entry.id).toEqual(expect.any(String));
-    }
+    expect(currentOutwardPaths).toEqual([]);
   });
 
   it("keeps audited direct-path owner modules represented", () => {
@@ -191,7 +181,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/dispatcher.ts",
         "src/platform/drive/drive-system.ts",
       ]),
-      currentPreGateEffects: expect.arrayContaining(["enqueue", "start_work"]),
+      currentPreGateEffects: ["internal_signal", "quiet_audit"],
       preGateAllowedEffects: ["internal_signal", "quiet_audit"],
       requiresTypedAdmission: true,
     });
@@ -204,7 +194,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/server-command-handler.ts",
         "src/runtime/command-dispatcher.ts",
       ]),
-      currentPreGateEffects: expect.arrayContaining(["enqueue", "notify"]),
+      currentPreGateEffects: ["quiet_audit"],
       preGateAllowedEffects: ["quiet_audit"],
       requiresTypedAdmission: true,
     });
@@ -217,7 +207,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/server-command-handler.ts",
         "src/runtime/command-dispatcher.ts",
       ]),
-      currentPreGateEffects: expect.arrayContaining(["enqueue", "notify", "execute", "start_work"]),
+      currentPreGateEffects: ["quiet_audit"],
       preGateAllowedEffects: ["quiet_audit"],
       requiresTypedAdmission: true,
     });
@@ -226,17 +216,17 @@ describe("LivingAutonomyDirectPathInventory", () => {
     expect(byId.get("event_server.command_approval_response")?.existingBehavior).toContain("approval_resolved");
   });
 
-  it("pins trigger and file-ingested goal-linked events as current start-work debt", () => {
+  it("pins trigger and file-ingested goal-linked events as attention-only before admission", () => {
     const byId = directPathInventoryById();
 
     for (const id of ["event_server.trigger_create_task", "event_server.file_ingestion"] as const) {
       expect(byId.get(id)).toMatchObject({
         ownerModules: expect.arrayContaining(["src/runtime/event/dispatcher.ts"]),
-        currentPreGateEffects: expect.arrayContaining(["internal_signal", "enqueue", "start_work"]),
+        currentPreGateEffects: ["internal_signal", "quiet_audit"],
         preGateAllowedEffects: ["internal_signal", "quiet_audit"],
         requiresTypedAdmission: true,
       });
-      expect(byId.get(id)?.currentDebt).toContain("activate work");
+      expect(byId.get(id)?.existingBehavior).toContain("AttentionInput");
     }
   });
 });
