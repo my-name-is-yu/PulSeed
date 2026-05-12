@@ -351,13 +351,20 @@ function assertObservationEventWithinSession(session: ObservationSession, event:
   if (!Number.isFinite(observedAt) || !Number.isFinite(startsAt) || !Number.isFinite(expiresAt)) {
     throw new Error(`observation event "${event.event_id}" has ambiguous session timing`);
   }
-  if (observedAt < startsAt || observedAt > expiresAt) {
+  if (observedAt < startsAt || (observedAt > expiresAt && !isTerminalObservationEvent(event.event_kind))) {
     throw new Error(
       `observation event "${event.event_id}" occurred outside session "${session.session_id}" bounded window`
     );
+  }
+  if (event.event_kind === "session_expired" && observedAt < expiresAt) {
+    throw new Error(`observation event "${event.event_id}" cannot expire session "${session.session_id}" before expires_at`);
   }
 }
 
 function observationEventRequiresStartedSession(kind: ObservationEventKind): boolean {
   return kind !== "session_requested" && kind !== "permission_denied";
+}
+
+function isTerminalObservationEvent(kind: ObservationEventKind): boolean {
+  return kind === "session_ended" || kind === "session_expired";
 }

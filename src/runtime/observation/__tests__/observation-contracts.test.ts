@@ -239,6 +239,32 @@ describe("Observation sensory contracts", () => {
         }),
       })
     ).toThrow('observation event "observation-event-1" occurred outside session "observation-session-1" bounded window');
+
+    expect(() =>
+      observationEventToAttentionInput({
+        session,
+        event: sampleEvent({
+          event_kind: "session_expired",
+          observed_at: "2026-05-12T00:05:04.999Z",
+          summary: "The observation session cannot expire before the expiry boundary.",
+        }),
+      })
+    ).toThrow('observation event "observation-event-1" cannot expire session "observation-session-1" before expires_at');
+  });
+
+  it("allows terminal observation events to enter attention after delayed expiry processing", () => {
+    const input = observationEventToAttentionInput({
+      session: activeSession(),
+      event: sampleEvent({
+        event_kind: "session_expired",
+        observed_at: "2026-05-12T00:06:00.000Z",
+        summary: "The bounded observation session expired and emitted a delayed terminal event.",
+      }),
+    });
+
+    expect(input.source.high_watermark).toBe("2026-05-12T00:06:00.000Z");
+    expect(input.payload_class).toBe("observation.session_expired");
+    expect(input.signal_source).toBe("observation");
   });
 
   it("fails closed when sensory events try to enter attention before the session indicator is shown", () => {
