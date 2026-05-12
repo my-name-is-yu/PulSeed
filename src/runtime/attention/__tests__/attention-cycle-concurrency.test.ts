@@ -400,6 +400,58 @@ describe("attention cycle persistence and concurrency", () => {
     }
   });
 
+  it("reconciles pending blocks when a committed runtime outcome cycle is replayed", async () => {
+    const tmpDir = makeTempDir("pulseed-attention-cycle-replay-pending-");
+    try {
+      const store = new AttentionStateStore(`${tmpDir}/runtime`, { controlBaseDir: tmpDir });
+      const cycleScope = scope();
+      const idempotencyKey = "cycle:runtime-outcome:committed-before-clear";
+      await store.addPendingBlock({
+        scope: cycleScope,
+        triggerKind: "correction",
+        reason: "simulate crash after runtime outcome write and before pending block clear",
+        createdAt: NOW,
+      });
+      await store.saveMetabolismCycle({
+        cycle_id: "attention-cycle:committed-before-clear",
+        idempotency_key: idempotencyKey,
+        trigger_kind: "runtime_outcome",
+        scope: cycleScope,
+        expected_projection_revision: 0,
+        source_high_watermarks: ["runtime_event:1"],
+        clusters: [],
+        agendaItems: [],
+        decompositions: [],
+        admissionProposals: [],
+        events: [],
+        result: { cycleId: "attention-cycle:committed-before-clear", trigger: "runtime_outcome" },
+        created_at: NOW,
+        no_op_hash: "runtime-outcome-replay",
+      });
+      await expect(store.listPendingBlocks(cycleScope)).resolves.toHaveLength(1);
+
+      const replayed = await runAttentionCycle({
+        store,
+        cycle: {
+          now: "2026-05-12T01:06:00.000Z",
+          trigger: "runtime_outcome",
+          scope: cycleScope,
+          signalRefs: [sourceRef("runtime_event", "runtime:outcome:replay")],
+          sourceHighWatermarks: [{ source: "runtime_event", highWatermark: "1" }],
+          expectedProjectionRevision: 1,
+          cycleIdempotencyKey: idempotencyKey,
+          policyEpoch: "policy:cycle",
+          mode: "live",
+        },
+      });
+
+      expect(replayed.writeDisposition).toBe("no_op_elided");
+      await expect(store.listPendingBlocks(cycleScope)).resolves.toHaveLength(0);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("persists over-budget urges as deferred audit state instead of dropping them", async () => {
     const tmpDir = makeTempDir("pulseed-attention-cycle-deferred-");
     try {

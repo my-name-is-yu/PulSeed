@@ -179,6 +179,7 @@ export type AttentionMetabolismWriteDisposition =
 export interface AttentionMetabolismCycleWriteResult {
   writeDisposition: AttentionMetabolismWriteDisposition;
   projectionRevision: number;
+  replayedTriggerKind?: string;
 }
 
 export interface AttentionPendingBlockRecord {
@@ -536,18 +537,20 @@ export class AttentionStateStore {
       const key = scopeKey(input.scope);
       const scopedIdempotencyKey = `${key}:${input.idempotency_key}`;
       const existingCycle = sqlite.prepare(`
-        SELECT projection_revision, write_disposition
+        SELECT projection_revision, write_disposition, trigger_kind
         FROM attention_cycle_results
         WHERE idempotency_key = ?
       `).get(scopedIdempotencyKey) as {
         projection_revision: number;
         write_disposition: AttentionMetabolismWriteDisposition;
+        trigger_kind: string;
       } | undefined;
       const currentRevision = readProjectionRevision(sqlite, key);
       if (existingCycle && existingCycle.write_disposition !== "stale_rejected") {
         return {
           writeDisposition: "no_op_elided",
           projectionRevision: existingCycle.projection_revision,
+          replayedTriggerKind: existingCycle.trigger_kind,
         };
       }
       if (currentRevision !== input.expected_projection_revision) {

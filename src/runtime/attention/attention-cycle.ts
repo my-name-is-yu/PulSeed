@@ -225,6 +225,20 @@ export async function runAttentionCycle(input: {
     no_op_hash: stableId(JSON.stringify(resultPayload)),
   });
 
+  if (
+    shouldClearPendingBlocks
+    && (write.writeDisposition === "written"
+      || (write.writeDisposition === "no_op_elided" && write.replayedTriggerKind === "runtime_outcome"))
+  ) {
+    await input.store.clearPendingBlocks({
+      scope: input.cycle.scope,
+      clearedAt: input.cycle.now,
+      reason: write.writeDisposition === "written"
+        ? "runtime outcome committed; pending attention admission block reconciled"
+        : "runtime outcome replay reconciled pending attention admission block",
+    });
+  }
+
   if (write.writeDisposition !== "written") {
     return emptyCycleResult({
       cycleId,
@@ -236,14 +250,6 @@ export async function runAttentionCycle(input: {
       agendaUpdates: agenda,
       decompositions,
       silenceReasons,
-    });
-  }
-
-  if (shouldClearPendingBlocks) {
-    await input.store.clearPendingBlocks({
-      scope: input.cycle.scope,
-      clearedAt: input.cycle.now,
-      reason: "runtime outcome committed; pending attention admission block reconciled",
     });
   }
 
