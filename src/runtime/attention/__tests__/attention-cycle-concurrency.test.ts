@@ -182,6 +182,13 @@ describe("attention cycle persistence and concurrency", () => {
         runtimeOperationId: "runtime-operation:stale",
         updatedAt: "2026-05-12T01:01:00.000Z",
       });
+      await expect(store.listAdmissionProposals({ states: ["pending_handoff"] })).resolves.toEqual([
+        expect.objectContaining({
+          proposal_id: proposal!.proposal_id,
+          proposal: expect.objectContaining({ proposalState: "pending_handoff" }),
+          runtime_operation_id: "runtime-operation:stale",
+        }),
+      ]);
       await store.saveMetabolismCycle({
         cycle_id: "attention-cycle:proposal-reupsert",
         idempotency_key: "cycle:proposal-reupsert",
@@ -225,6 +232,7 @@ describe("attention cycle persistence and concurrency", () => {
       await expect(store.listAdmissionProposals({ states: ["terminal"] })).resolves.toEqual([
         expect.objectContaining({
           proposal_id: proposal!.proposal_id,
+          proposal: expect.objectContaining({ proposalState: "terminal" }),
           runtime_operation_id: "runtime-operation:confirmed",
         }),
       ]);

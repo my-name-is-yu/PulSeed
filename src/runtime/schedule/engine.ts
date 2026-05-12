@@ -15,6 +15,7 @@ import {
   type AttentionReevaluationPort,
 } from "../attention/index.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
+import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
 import {
   ScheduleHistoryStore,
   type ScheduleRunHistoryRecord,
@@ -113,9 +114,7 @@ export class ScheduleEngine {
     this.hookManager = deps.hookManager;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
-    const defaultAttentionStore = new AttentionStateStore(path.join(this.baseDir, "runtime"), {
-      controlBaseDir: this.baseDir,
-    });
+    const defaultAttentionStore = new AttentionStateStore(resolveConfiguredDaemonRuntimeRoot(this.baseDir));
     this.attentionReevaluation = deps.attentionReevaluation ?? {
       reevaluate: async (signalContext, context) => {
         const reevaluation = reevaluateSchedulerWakeThroughAttention(signalContext, context);

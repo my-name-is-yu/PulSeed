@@ -449,7 +449,8 @@ export class AttentionStateStore {
         UPDATE attention_admission_proposals
         SET state = ?,
           runtime_operation_id = COALESCE(?, runtime_operation_id),
-          updated_at = ?
+          updated_at = ?,
+          proposal_json = json_set(proposal_json, '$.proposalState', ?)
         WHERE proposal_id = ?
           AND (
             state NOT IN ('confirmed', 'terminal')
@@ -459,6 +460,7 @@ export class AttentionStateStore {
         input.state,
         input.runtimeOperationId ?? null,
         input.updatedAt,
+        input.state,
         input.proposalId,
         input.state,
       );

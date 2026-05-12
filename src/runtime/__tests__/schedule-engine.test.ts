@@ -2699,6 +2699,49 @@ describe("GoalTrigger execution (Phase 3)", () => {
     expect(concernState.decompositions[0]?.status).not.toBe("closed");
   });
 
+  it("default wait-resume path writes attention state through configured runtime root", async () => {
+    const configuredRuntimeRoot = path.join(tempDir, "configured-runtime-root");
+    fs.writeFileSync(path.join(tempDir, "daemon.json"), JSON.stringify({
+      runtime_root: configuredRuntimeRoot,
+    }));
+    const eng = new ScheduleEngine({ baseDir: tempDir });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      metadata: {
+        internal: true,
+        activation_kind: "wait_resume",
+        goal_id: "test-goal-id",
+        strategy_id: "strategy:wait",
+        wait_strategy_id: "strategy:wait",
+      },
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: false,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = new Date(Date.now() - 1000).toISOString();
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+    const configuredStore = new AttentionStateStore(configuredRuntimeRoot);
+    const defaultStore = new AttentionStateStore(path.join(tempDir, "runtime"), { controlBaseDir: tempDir });
+
+    expect(result.status).toBe("ok");
+    await expect(configuredStore.loadConcernState()).resolves.toMatchObject({
+      clusters: [expect.any(Object)],
+      agenda_items: [expect.any(Object)],
+      decompositions: [expect.any(Object)],
+    });
+    await expect(defaultStore.loadConcernState()).resolves.toMatchObject({
+      clusters: [],
+      agenda_items: [],
+      decompositions: [],
+    });
+  });
+
   it("keeps wait-resume replay identity stable for the same scheduled due instance", async () => {
     vi.useFakeTimers();
     const dueAt = "2026-05-12T00:00:00.000Z";
