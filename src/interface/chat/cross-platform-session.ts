@@ -76,22 +76,12 @@ import {
   type PendingPermissionGrantProposal,
 } from "../../runtime/permission-dialogue.js";
 import {
-  buildCompanionCurrentTargetContext,
   buildCompanionRuntimeContract,
   evaluateCompanionOutputPolicy,
 } from "../../runtime/companion-policy.js";
 import type {
-  CompanionCurrentTargetContext,
   CompanionRuntimeContract,
 } from "../../runtime/types/companion.js";
-import {
-  assembleCompanionDecisionFrame,
-  type CompanionDecisionEvidenceRef,
-  type CompanionDecisionFrame,
-  type CompanionDecisionInputRef,
-  type CompanionDecisionPolicyRef,
-  type CompanionDecisionTargetRef,
-} from "../../runtime/decision/index.js";
 import { EXTERNAL_SURFACE_METADATA_KEY } from "../../runtime/gateway/channel-policy.js";
 import { normalizeUserInput } from "./user-input.js";
 import type { ApprovalRequest } from "../../tools/types.js";
@@ -147,11 +137,6 @@ interface ManagedChatSession {
   info: CrossPlatformChatSessionInfo;
   queue: Promise<void>;
   lastRoute?: SelectedChatRoute;
-}
-
-interface ChatCompanionCognition {
-  companion: CompanionRuntimeContract;
-  companionDecisionFrame: CompanionDecisionFrame;
 }
 
 function createPermissionGrantProposalFromApprovalRequest(
@@ -497,7 +482,7 @@ export class CrossPlatformChatSessionManager {
   }
 
   async interruptAndRedirect(input: CrossPlatformIncomingChatMessage): Promise<ChatRunResult> {
-    const ingress = this.ensureCompanionCognition(this.createIngressMessage(input));
+    const ingress = this.ensureCompanionContract(this.createIngressMessage(input));
     const approvalReply = await this.tryResolveConversationalApprovalReply(ingress);
     if (approvalReply) {
       return {
@@ -522,7 +507,7 @@ export class CrossPlatformChatSessionManager {
     ingress: CrossPlatformIngressMessage,
     options: Pick<CrossPlatformIncomingChatMessage, "cwd" | "timeoutMs" | "onEvent" | "conversation_name" | "user_name"> = {}
   ): Promise<ChatRunResult> {
-    const normalizedIngress = this.ensureCompanionCognition(ingress);
+    const normalizedIngress = this.ensureCompanionContract(ingress);
     const decision = evaluateCompanionOutputPolicy(normalizedIngress.companion.turn_policy);
     if (!decision.delivered) {
       return {
@@ -833,38 +818,20 @@ export class CrossPlatformChatSessionManager {
     const identityKey = normalizeIdentity(input.identity_key) ?? undefined;
     const conversationId = normalizeIdentity(input.conversation_id) ?? undefined;
     const messageId = normalizeIdentity(input.message_id) ?? undefined;
-    const ingressId = randomUUID();
-    const receivedAt = new Date().toISOString();
-    const runtimeControl = resolveRuntimeControl(channel, input.runtimeControl, metadata, externalSurface);
-    const replyTarget = normalizeReplyTarget(channel, {
-      platform,
-      conversation_id: conversationId,
-      identity_key: identityKey,
-      user_id: userId,
-      message_id: messageId,
-      replyTarget: input.replyTarget,
-      metadata,
-      externalSurface,
-    });
-    const cognition = this.buildCompanionCognitionForIngress({
-      ingress_id: ingressId,
-      received_at: receivedAt,
-      channel,
+    const companion = this.buildCompanionContractForIngress({
       identity_key: identityKey,
       platform,
       conversation_id: conversationId,
       user_id: userId,
       message_id: messageId,
       goal_id: goalId,
-      replyTarget,
-      runtimeControl,
-      externalSurface,
+      replyTarget: input.replyTarget,
       companion: input.companion,
     });
 
     return {
-      ingress_id: ingressId,
-      received_at: receivedAt,
+      ingress_id: randomUUID(),
+      received_at: new Date().toISOString(),
       channel,
       ...(platform ? { platform } : {}),
       ...(identityKey ? { identity_key: identityKey } : {}),
@@ -882,45 +849,47 @@ export class CrossPlatformChatSessionManager {
         user_id: userId,
         actor: input.actor,
       }),
-      runtimeControl,
-      companion: cognition.companion,
-      companionDecisionFrame: cognition.companionDecisionFrame,
+      runtimeControl: resolveRuntimeControl(channel, input.runtimeControl, metadata, externalSurface),
+      companion,
       ...(externalSurface ? { externalSurface } : {}),
       metadata,
-      replyTarget,
+      replyTarget: normalizeReplyTarget(channel, {
+        platform,
+        conversation_id: conversationId,
+        identity_key: identityKey,
+        user_id: userId,
+        message_id: messageId,
+        replyTarget: input.replyTarget,
+        metadata,
+        externalSurface,
+      }),
     };
   }
 
-  private ensureCompanionCognition(ingress: CrossPlatformIngressMessage): CrossPlatformIngressMessage & { companion: CompanionRuntimeContract; companionDecisionFrame: CompanionDecisionFrame } {
-    if (ingress.companion && ingress.companionDecisionFrame) {
-      return ingress as CrossPlatformIngressMessage & { companion: CompanionRuntimeContract; companionDecisionFrame: CompanionDecisionFrame };
-    }
-    const cognition = this.buildCompanionCognitionForIngress({
-      ingress_id: ingress.ingress_id,
-      received_at: ingress.received_at,
-      channel: ingress.channel,
-      identity_key: ingress.identity_key,
-      platform: ingress.platform,
-      conversation_id: ingress.conversation_id,
-      user_id: ingress.user_id,
-      message_id: ingress.message_id,
-      goal_id: ingress.goal_id,
-      replyTarget: ingress.replyTarget,
-      runtimeControl: ingress.runtimeControl,
-      existingCompanion: ingress.companion,
-      externalSurface: ingress.externalSurface,
-    });
+  private ensureCompanionContract(ingress: CrossPlatformIngressMessage): CrossPlatformIngressMessage & { companion: CompanionRuntimeContract } {
     return {
       ...ingress,
-      companion: cognition.companion,
-      companionDecisionFrame: cognition.companionDecisionFrame,
+      companion: this.buildCompanionContractForIngress({
+        identity_key: ingress.identity_key,
+        platform: ingress.platform,
+        conversation_id: ingress.conversation_id,
+        user_id: ingress.user_id,
+        message_id: ingress.message_id,
+        goal_id: ingress.goal_id,
+        replyTarget: ingress.replyTarget,
+        companion: ingress.companion
+          ? {
+            presence: ingress.companion.presence,
+            turnPolicy: ingress.companion.turn_policy,
+            inputModality: ingress.companion.turn_policy.input_modality,
+            outputMode: ingress.companion.turn_policy.output_mode,
+          }
+          : undefined,
+      }),
     };
   }
 
-  private buildCompanionCognitionForIngress(input: {
-    ingress_id?: string;
-    received_at?: string;
-    channel?: ChatIngressMessage["channel"];
+  private buildCompanionContractForIngress(input: {
     identity_key?: string;
     platform?: string;
     conversation_id?: string;
@@ -928,11 +897,8 @@ export class CrossPlatformChatSessionManager {
     message_id?: string;
     goal_id?: string;
     replyTarget?: Partial<ChatIngressReplyTarget>;
-    runtimeControl?: Partial<ChatIngressMessage["runtimeControl"]>;
-    externalSurface?: ChatIngressMessage["externalSurface"];
     companion?: CrossPlatformIncomingChatMessage["companion"];
-    existingCompanion?: CompanionRuntimeContract;
-  }): ChatCompanionCognition {
+  }): CompanionRuntimeContract {
     const sessionKey = buildSessionKeyFromParts({
       identity_key: input.identity_key,
       platform: input.platform,
@@ -940,14 +906,7 @@ export class CrossPlatformChatSessionManager {
       user_id: input.user_id,
     });
     const replyTargetId = normalizeIdentity(input.replyTarget?.conversation_id ?? input.conversation_id ?? input.replyTarget?.identity_key ?? input.identity_key) ?? undefined;
-    const currentTarget = buildCompanionCurrentTargetContext({
-      sessionKey,
-      conversationId: input.conversation_id,
-      messageId: input.message_id,
-      goalId: input.goal_id,
-      replyTargetId,
-    });
-    const companion = input.existingCompanion ?? buildCompanionRuntimeContract({
+    return buildCompanionRuntimeContract({
       sessionKey,
       conversationId: input.conversation_id,
       messageId: input.message_id,
@@ -958,76 +917,6 @@ export class CrossPlatformChatSessionManager {
       inputModality: input.companion?.inputModality ?? "text",
       outputMode: input.companion?.outputMode,
     });
-    const surfaceRef = chatSurfaceRef(input.channel, input.platform, input.conversation_id, input.identity_key);
-    const activeTargetRef = chatActiveTargetRef(currentTarget);
-    const staleInputRefs = staleCompanionTargetInputRefs(currentTarget, input.companion);
-    const runtimePolicyResult = input.runtimeControl?.approvalMode ?? input.runtimeControl?.approval_mode ?? "unknown";
-    const policyRefs: CompanionDecisionPolicyRef[] = [
-      {
-        kind: "runtime_control",
-        ref: `runtime-control:${runtimePolicyResult}:${input.runtimeControl?.allowed === true ? "allowed" : "not-allowed"}`,
-        result: runtimePolicyResult,
-      },
-      {
-        kind: "companion_state",
-        ref: `companion-runtime-contract:${sessionKey}`,
-        result: companion.turn_policy.quieting,
-      },
-      ...(input.externalSurface ? [{
-        kind: "surface_policy" as const,
-        ref: `${surfaceRef}:external-surface`,
-        result: input.externalSurface.runtime_control_policy.approval_mode,
-      }] : []),
-    ];
-    const evidenceRefs: CompanionDecisionEvidenceRef[] = input.externalSurface ? [{
-      evidence_ref: `${surfaceRef}:external-surface`,
-      source: "runtime_control",
-      visibility: "audit_only",
-      summary: "Typed external surface policy supplied by channel ingress.",
-    }] : [];
-
-    return {
-      companion,
-      companionDecisionFrame: assembleCompanionDecisionFrame({
-        frameId: `companion-frame:${input.ingress_id ?? input.message_id ?? sessionKey}`,
-        assembledAt: input.received_at,
-        source: {
-          kind: "chat_turn",
-          source_ref: `chat:${input.ingress_id ?? input.message_id ?? sessionKey}`,
-          received_at: input.received_at ?? new Date().toISOString(),
-          surface_ref: surfaceRef,
-          session_ref: sessionKey,
-          ...(input.goal_id ? { goal_ref: input.goal_id } : {}),
-          ...(input.channel ? { channel: input.channel } : {}),
-        },
-        trigger: {
-          kind: "chat_message",
-          ref: input.message_id ? `chat-message:${input.message_id}` : `chat-ingress:${input.ingress_id ?? sessionKey}`,
-          role: "trigger",
-          freshness: "current",
-        },
-        inputRefs: [
-          {
-            kind: "session",
-            ref: sessionKey,
-            role: "context",
-            freshness: "current",
-          },
-          ...(input.goal_id ? [{
-            kind: "goal" as const,
-            ref: input.goal_id,
-            role: "target" as const,
-            freshness: "current" as const,
-          }] : []),
-          ...staleInputRefs,
-        ],
-        evidenceRefs,
-        policyRefs,
-        activeTargetRef,
-        activeSurfaceRef: surfaceRef,
-        companionStateRef: `companion-runtime-contract:${sessionKey}`,
-      }),
-    };
   }
 
   /**
@@ -1366,9 +1255,6 @@ export class CrossPlatformChatSessionManager {
     if (ingress.companion) {
       session.info.active_companion_contract = ingress.companion;
     }
-    if (ingress.companionDecisionFrame) {
-      session.info.active_companion_decision_frame = ingress.companionDecisionFrame;
-    }
     session.info.metadata = cloneMetadata(buildSessionMetadata({
       metadata: ingress.metadata,
       channel: ingress.channel,
@@ -1424,82 +1310,6 @@ export class CrossPlatformChatSessionManager {
       }
     }
   }
-}
-
-function chatSurfaceRef(
-  channel: ChatIngressMessage["channel"] | undefined,
-  platform: string | undefined,
-  conversationId: string | undefined,
-  identityKey: string | undefined,
-): string {
-  return [
-    "surface",
-    channel ?? "chat",
-    platform ?? "unknown-platform",
-    conversationId ?? identityKey ?? "unknown-conversation",
-  ].join(":");
-}
-
-function chatActiveTargetRef(currentTarget: CompanionCurrentTargetContext): CompanionDecisionTargetRef {
-  if (currentTarget.run_id) {
-    return { kind: "run", id: currentTarget.run_id };
-  }
-  if (currentTarget.goal_id) {
-    return { kind: "goal", id: currentTarget.goal_id };
-  }
-  if (currentTarget.session_key) {
-    return { kind: "session", id: currentTarget.session_key };
-  }
-  return {
-    kind: "surface",
-    id: currentTarget.reply_target_id ?? currentTarget.conversation_id ?? "unknown-surface",
-  };
-}
-
-function staleCompanionTargetInputRefs(
-  currentTarget: CompanionCurrentTargetContext,
-  companion: CrossPlatformIncomingChatMessage["companion"] | undefined,
-): CompanionDecisionInputRef[] {
-  const rawTargets = [
-    companion?.presence?.current_target,
-    companion?.turnPolicy?.current_target,
-  ];
-  const refs: CompanionDecisionInputRef[] = [];
-  const seen = new Set<string>();
-  for (const target of rawTargets) {
-    if (!target) continue;
-    appendStaleTargetRef(refs, seen, "session_key", "session", target.session_key, currentTarget.session_key);
-    appendStaleTargetRef(refs, seen, "conversation_id", "surface", target.conversation_id, currentTarget.conversation_id);
-    appendStaleTargetRef(refs, seen, "message_id", "chat_message", target.message_id, currentTarget.message_id);
-    appendStaleTargetRef(refs, seen, "run_id", "run", target.run_id, currentTarget.run_id);
-    appendStaleTargetRef(refs, seen, "goal_id", "goal", target.goal_id, currentTarget.goal_id);
-    appendStaleTargetRef(refs, seen, "reply_target_id", "surface", target.reply_target_id, currentTarget.reply_target_id);
-  }
-  return refs;
-}
-
-function appendStaleTargetRef(
-  refs: CompanionDecisionInputRef[],
-  seen: Set<string>,
-  field: keyof CompanionCurrentTargetContext,
-  kind: CompanionDecisionInputRef["kind"],
-  rawValue: string | null | undefined,
-  currentValue: string | null | undefined,
-): void {
-  const raw = normalizeIdentity(rawValue ?? undefined);
-  if (!raw) return;
-  const current = normalizeIdentity(currentValue ?? undefined);
-  if (raw === current) return;
-  const key = `${kind}:${raw}`;
-  if (seen.has(key)) return;
-  seen.add(key);
-  refs.push({
-    kind,
-    ref: raw,
-    role: "target",
-    freshness: "rejected_stale",
-    reason: `Caller-supplied companion ${field} does not match the current ingress target.`,
-  });
 }
 
 function formatCompanionPolicyDecision(decision: ReturnType<typeof evaluateCompanionOutputPolicy>): string {

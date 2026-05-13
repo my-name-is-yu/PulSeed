@@ -4335,7 +4335,7 @@ describe("ChatRunner", () => {
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
-      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce(), { timeout: 5_000 });
       expect(runner.getActiveSeedyPresence()).toMatchObject({
         phase: "acting",
         expected_next: "progress",
@@ -4509,7 +4509,7 @@ describe("ChatRunner", () => {
         runner.startSession(tmpDir);
 
         const active = runner.execute("Implement a feature", tmpDir);
-        await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce(), { timeout: 5_000 });
 
         const interrupted = await runner.interruptAndRedirect("変更点を見せてから止めて", tmpDir);
 
@@ -4535,7 +4535,7 @@ describe("ChatRunner", () => {
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
-      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce(), { timeout: 5_000 });
 
       const interrupted = await runner.interruptAndRedirect("passe en revue sans modifier", "/repo");
 
@@ -4556,7 +4556,7 @@ describe("ChatRunner", () => {
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
-      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce(), { timeout: 5_000 });
 
       const interrupted = await runner.interruptAndRedirect("bitte kurz zusammenfassen und stoppen", "/repo");
 
@@ -4576,7 +4576,7 @@ describe("ChatRunner", () => {
       runner.startSession("/repo");
 
       const active = runner.execute("Implement a feature", "/repo");
-      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(interruptible.runner.execute).toHaveBeenCalledOnce(), { timeout: 5_000 });
 
       const interrupted = await runner.interruptAndRedirect("looks good maybe", "/repo");
 

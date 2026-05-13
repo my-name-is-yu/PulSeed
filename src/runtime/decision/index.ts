@@ -62,32 +62,14 @@ export {
   createCoreCompanionMemoryProjectionInputRef,
 } from "./core-companion-memory-projection.js";
 export {
-  assembleCompanionDecisionFrame,
-} from "./companion-cognition-assembly.js";
-export {
   CompanionDecisionCallerPathKindSchema,
-  CompanionDecisionDispositionSchema,
-  CompanionDecisionEvidenceRefSchema,
-  CompanionDecisionEvidenceSourceSchema,
-  CompanionDecisionEvidenceVisibilitySchema,
-  CompanionDecisionFrameSchema,
-  CompanionDecisionHoldReasonSchema,
   CompanionDecisionInputFreshnessSchema,
   CompanionDecisionInputRefKindSchema,
   CompanionDecisionInputRefSchema,
   CompanionDecisionInputRoleSchema,
-  CompanionDecisionIntegrationStateSchema,
-  CompanionDecisionInternalPolicyStateSchema,
-  CompanionDecisionOutputSchema,
   CompanionDecisionPolicyRefKindSchema,
   CompanionDecisionPolicyRefSchema,
   CompanionDecisionProjectionBridgeSchema,
-  CompanionDecisionRouteSchema,
-  CompanionDecisionSourceKindSchema,
-  CompanionDecisionSourceSchema,
-  CompanionDecisionTargetRefKindSchema,
-  CompanionDecisionTargetRefSchema,
-  CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
 export type {
@@ -146,31 +128,13 @@ export type {
   CreateCoreCompanionMemoryProjectionFromSurfaceInput,
 } from "./core-companion-memory-projection.js";
 export type {
-  CompanionCognitionAssemblyInput,
-} from "./companion-cognition-assembly.js";
-export type {
   CompanionDecisionCallerPathKind,
-  CompanionDecisionDisposition,
-  CompanionDecisionEvidenceRef,
-  CompanionDecisionEvidenceSource,
-  CompanionDecisionEvidenceVisibility,
-  CompanionDecisionFrame,
-  CompanionDecisionHoldReason,
   CompanionDecisionInputFreshness,
   CompanionDecisionInputRef,
   CompanionDecisionInputRefKind,
   CompanionDecisionInputRole,
-  CompanionDecisionIntegrationState,
-  CompanionDecisionInternalPolicyState,
-  CompanionDecisionOutput,
   CompanionDecisionPolicyRef,
   CompanionDecisionPolicyRefKind,
   CompanionDecisionProjectionBridge,
-  CompanionDecisionRoute,
-  CompanionDecisionSource,
-  CompanionDecisionSourceKind,
-  CompanionDecisionTargetRef,
-  CompanionDecisionTargetRefKind,
-  CompanionDecisionTrace,
   CreateCompanionDecisionProjectionBridgeInput,
 } from "./companion-decision-contract.js";

@@ -95,11 +95,6 @@ export function resolveStateManagerBaseDir(stateManager?: { getBaseDir?: () => s
   return typeof stateManager?.getBaseDir === "function" ? stateManager.getBaseDir() : undefined;
 }
 
-export function nonEmptyString(value: string | undefined): string | undefined {
-  const text = value?.trim();
-  return text && text.length > 0 ? text : undefined;
-}
-
 export async function readJsonFile(filePath: string): Promise<JsonRecord | null> {
   try {
     const raw = await readTextFileWithinLimit(filePath, { maxBytes: GROUNDING_PROVIDER_JSON_MAX_BYTES });

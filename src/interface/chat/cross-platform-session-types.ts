@@ -11,7 +11,6 @@ import type {
   ConversationInputModality,
   ConversationOutputMode,
 } from "../../runtime/types/companion.js";
-import type { CompanionDecisionFrame } from "../../runtime/decision/index.js";
 import type { RuntimeControlActor } from "../../runtime/store/runtime-operation-schemas.js";
 import type { ExternalSurfaceDecision } from "../../runtime/gateway/channel-policy.js";
 import type { ChatEventHandler } from "./chat-events.js";
@@ -116,6 +115,5 @@ export interface CrossPlatformChatSessionInfo {
   chat_session_id?: string;
   active_reply_target?: ChatIngressReplyTarget;
   active_companion_contract?: CompanionRuntimeContract;
-  active_companion_decision_frame?: CompanionDecisionFrame;
   metadata: Record<string, unknown>;
 }

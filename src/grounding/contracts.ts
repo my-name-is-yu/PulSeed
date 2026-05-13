@@ -119,11 +119,7 @@ export interface GroundingMessage {
 export interface GroundingSoilHit {
   recordId?: string;
   soilId: string;
-  relativePath?: string;
   title: string;
-  kind?: string;
-  route?: string;
-  status?: string;
   summary?: string | null;
   snippet?: string;
   score?: number;

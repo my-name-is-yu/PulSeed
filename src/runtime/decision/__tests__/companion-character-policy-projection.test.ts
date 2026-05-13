@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CompanionDecisionFrameSchema,
   createCompanionCharacterPolicyDecisionInputRef,
   createCompanionCharacterPolicyDecisionPolicyRef,
   createCompanionCharacterPolicyProjection,
@@ -69,7 +68,7 @@ describe("CompanionCharacterPolicyProjection", () => {
     expect(projection.decision_policy.stall_threshold_multiplier_hint).toBe(1);
   });
 
-  it("can be carried by a companion decision frame as policy refs, not prompt text", () => {
+  it("emits typed policy refs without requiring a companion cognition frame", () => {
     const projection = createCompanionCharacterPolicyProjection({
       projectionId: "character-policy:frame",
       evaluatedAt: NOW,
@@ -83,46 +82,17 @@ describe("CompanionCharacterPolicyProjection", () => {
     const characterInputRef = createCompanionCharacterPolicyDecisionInputRef(projection);
     const characterPolicyRef = createCompanionCharacterPolicyDecisionPolicyRef(projection);
 
-    const frame = CompanionDecisionFrameSchema.parse({
-      schema_version: "companion-decision-frame/v1",
-      frame_id: "frame:character-policy",
-      assembled_at: NOW,
-      source: {
-        kind: "chat_turn",
-        source_ref: "chat:turn:character-policy",
-        received_at: NOW,
-        caller_path: "chat_native_agent_loop",
-        surface_ref: "surface:chat",
-        session_ref: "session:chat",
-        channel: "tui",
-      },
-      input_refs: [
-        {
-          kind: "chat_message",
-          ref: "chat:message:1",
-          role: "trigger",
-        },
-        characterInputRef,
-      ],
-      policy_refs: [characterPolicyRef],
-      active_surface_ref: "surface:chat",
-      active_target_ref: {
-        kind: "session",
-        id: "session:chat",
-      },
-    });
-
-    expect(frame.input_refs).toContainEqual(expect.objectContaining({
+    expect(characterInputRef).toEqual(expect.objectContaining({
       kind: "character_config_policy",
       ref: "character-policy:frame",
       role: "policy",
       freshness: "current",
     }));
-    expect(frame.policy_refs).toEqual([{
+    expect(characterPolicyRef).toEqual({
       kind: "character_config_policy",
       ref: "character-policy:frame",
       result: "policy_hint_only",
       epoch: NOW,
-    }]);
+    });
   });
 });
