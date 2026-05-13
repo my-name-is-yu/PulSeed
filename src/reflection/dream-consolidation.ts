@@ -8,6 +8,11 @@ import {
   createReflectionInputFromCognitionReplay,
   type CognitionReplayRecord,
 } from "../runtime/cognition/index.js";
+import { evaluateCognitionWritebackReflectionInput } from "./cognition-writeback-evaluator.js";
+import {
+  FileCognitionWritebackQueueStore,
+  type CognitionWritebackQueueStore,
+} from "./cognition-writeback-queue.js";
 
 // ─── Helpers ───
 
@@ -22,9 +27,17 @@ export async function runDreamConsolidation(deps: {
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
   cognitionReplayRecords?: CognitionReplayRecord[];
+  cognitionWritebackQueue?: CognitionWritebackQueueStore;
   baseDir: string;
 }): Promise<ConsolidationReport> {
-  const { stateManager, memoryLifecycle, knowledgeManager, cognitionReplayRecords = [], baseDir } = deps;
+  const {
+    stateManager,
+    memoryLifecycle,
+    knowledgeManager,
+    cognitionReplayRecords = [],
+    cognitionWritebackQueue = new FileCognitionWritebackQueueStore(deps.baseDir),
+    baseDir,
+  } = deps;
   const date = todayISO();
   const now = new Date().toISOString();
 
@@ -72,6 +85,15 @@ export async function runDreamConsolidation(deps: {
       return [];
     }
   });
+  const cognitionWritebackQueueEntries = cognitionReflectionInputs.flatMap((reflectionInput) =>
+    evaluateCognitionWritebackReflectionInput({
+      reflectionInput,
+      evaluatedAt: now,
+    })
+  );
+  for (const entry of cognitionWritebackQueueEntries) {
+    await cognitionWritebackQueue.enqueue(entry);
+  }
 
   const report = ConsolidationReportSchema.parse({
     date,
@@ -81,7 +103,9 @@ export async function runDreamConsolidation(deps: {
     stale_entries_found: staleEntriesFound,
     revalidation_tasks_created: revalidationTasksCreated,
     cognition_writeback_inputs_read: cognitionReflectionInputs.length,
+    cognition_writeback_queue_entries_evaluated: cognitionWritebackQueueEntries.length,
     cognition_runtime_authority_granted: false,
+    cognition_writeback_owner_writes_performed: false,
   });
 
   await saveReflectionReport(baseDir, "dream", date, report);

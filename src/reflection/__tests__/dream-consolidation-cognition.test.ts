@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCognitionReplayRecord, type CompanionCognitionOutput } from "../../runtime/cognition/index.js";
 import { runDreamConsolidation } from "../dream-consolidation.js";
+import { FileCognitionWritebackQueueStore } from "../index.js";
 
 let tempDir: string | null = null;
 
@@ -81,15 +82,24 @@ describe("dream consolidation cognition input", () => {
       output,
     });
 
+    const queue = new FileCognitionWritebackQueueStore(tempDir);
     const report = await runDreamConsolidation({
       stateManager: {
         listGoalIds: vi.fn().mockResolvedValue([]),
       } as never,
       baseDir: tempDir,
       cognitionReplayRecords: [record],
+      cognitionWritebackQueue: queue,
     });
 
     expect(report.cognition_writeback_inputs_read).toBe(1);
+    expect(report.cognition_writeback_queue_entries_evaluated).toBe(1);
     expect(report.cognition_runtime_authority_granted).toBe(false);
+    expect(report.cognition_writeback_owner_writes_performed).toBe(false);
+    expect(await queue.list()).toMatchObject([{
+      owner: "dream",
+      state: "ready_for_owner_review",
+      owner_write_performed: false,
+    }]);
   });
 });

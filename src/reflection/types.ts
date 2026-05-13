@@ -55,7 +55,9 @@ export const ConsolidationReportSchema = z.object({
   stale_entries_found: ReflectionNonnegativeSafeIntSchema,
   revalidation_tasks_created: ReflectionNonnegativeSafeIntSchema,
   cognition_writeback_inputs_read: ReflectionNonnegativeSafeIntSchema.default(0),
+  cognition_writeback_queue_entries_evaluated: ReflectionNonnegativeSafeIntSchema.optional(),
   cognition_runtime_authority_granted: z.literal(false).default(false),
+  cognition_writeback_owner_writes_performed: z.literal(false).optional(),
 });
 export type ConsolidationReport = z.infer<typeof ConsolidationReportSchema>;
 
