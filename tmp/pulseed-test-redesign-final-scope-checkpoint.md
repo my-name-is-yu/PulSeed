@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Queue legacy import safety blocker recovered; next is FileWrite unsafe-path and approval-order recovery.
+FileWrite unsafe-path and approval-order blockers recovered; next is attention-state-store inventory.
 
 ## Current Evidence Read
 
@@ -20,7 +20,7 @@ Queue legacy import safety blocker recovered; next is FileWrite unsafe-path and 
 
 Inventory summary currently reports:
 
-- `test_like_files`: 783
+- `test_like_files`: 784
 - `classification_counts.replace`: 12
 - `p0_trace_count`: 40
 - `p0_mapped_trace_count`: 40
@@ -82,6 +82,9 @@ Deletion is allowed only per block when replacement map records:
   - Deleted direct normal-file `checkPermissions` allowed assertion; replacement is the same production tool-catalog trace with `approval_request_count=0` and `read_success=true`.
 - `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
   - Removed the standalone `read APIs reflect writes from another queue instance` block after moving its value into the stronger multi-instance lock/reload test.
+- `src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts`
+  - Recovered already-deleted FileWrite blocks with a contract that executes real `ToolExecutor.execute("file_write")` calls through `PermissionWaitPlanStore` and `FileWriteTool.call`.
+  - Covered unsafe path traversal, `.env`, credentials, and `node_modules` writes under `preApproved=true`; all fail without approval prompts, artifacts, or filesystem mutation.
 
 ## Blocks Kept And Reason
 
@@ -99,6 +102,7 @@ Deletion is allowed only per block when replacement map records:
 - No new runner/trace/replay added yet.
 - Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
 - Added a migration contract test for legacy `runtime/queue.json` mixed safe/unsafe import through `importLegacyQueueDaemonScheduleState` and the control DB queue store.
+- Added `tests/contracts/tool-file-write-boundary.test.ts` as production-boundary contract evidence for ordered approval-before-mutation and unsafe FileWrite path denial.
 
 ## Replacement Map Updates
 
@@ -108,6 +112,7 @@ Deletion is allowed only per block when replacement map records:
   - Updated the deletion gate text to state that P0 golden/replay tests must fail on `pending_real_runner`.
   - Added queue final-scope retained/reworked block classifications and updated queue same-checkout evidence.
   - Reclassified the already-deleted unsafe legacy queue scalar blocks as `delete_now` covered by the new queue migration contract instead of unresolved obsolete rationale.
+  - Replaced FileWrite post-hoc deletion evidence with explicit contract evidence for ordered approval/wait-plan/tool-call events and unsafe path denial.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -136,6 +141,12 @@ Deletion is allowed only per block when replacement map records:
 - `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> first attempt failed because the test assumed a fixed legacy-import ordering
 - `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> after assertion fix passed 1 file / 4 tests
 - `node scripts/inventory-test-redesign.mjs` -> after queue migration safety recovery regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run tests/contracts/tool-file-write-boundary.test.ts --config vitest.contracts.config.ts` -> passed 1 file / 2 tests
+- `node scripts/inventory-test-redesign.mjs` -> after FileWrite contract evidence regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:contracts` -> passed 2 files / 9 tests
+- `npm run test:replay` -> after FileWrite contract passed 1 file / 9 tests
+- `npm run test:golden-traces` -> after one transient mismatch retry passed 1 file / 43 tests
+- `npm run typecheck` -> passed after FileWrite contract addition
 
 ## Reviewer Findings Applied
 
@@ -144,8 +155,8 @@ Deletion is allowed only per block when replacement map records:
 - Deletion Reviewer recommendations are available for queue, attention-store, runtime-control, schedule, approval, daemon/session-registry, chat-runner, and cross-platform-session. Use them as candidates, but verify with real file contents and safety reviewer before deleting.
 - Runtime Safety Reviewer found blocker coverage gaps that must be recovered before final completion:
   - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks needed a queue migration contract through `runtime/queue.json` -> control DB import. Recovered by `src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts`.
-  - Unsafe FileWrite path denial from already-deleted FileWrite blocks still needs production tool-boundary evidence.
-  - FileWrite approval-before-mutation evidence needs ordered event/state evidence, not a post-hoc boolean.
+  - Unsafe FileWrite path denial from already-deleted FileWrite blocks needed production tool-boundary evidence. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
+  - FileWrite approval-before-mutation evidence needed ordered event/state evidence, not a post-hoc boolean. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
   - Approval stale-origin mismatch and no-delivery branches need stronger coverage before deleting related approval-broker blocks.
   - `resume_companion` -> `resume_run` readmission gate needs a real RuntimeControlService trace before deleting that runtime-control block.
   - Schedule goal-trigger dispatch and active-goal skip need public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks.
@@ -154,6 +165,7 @@ Deletion is allowed only per block when replacement map records:
 
 - Initial pre-`npm ci` `npx vitest ... --config vitest.unit.config.ts` failed because `vitest` was not installed in this worktree.
 - Initial pre-`npm ci` `npm run test:golden-traces` failed because `vitest` was not installed in this worktree.
+- One parallel `npm run test:golden-traces` attempt reported a mismatch in `approval_delivery_unavailable_denies_not_executes`; direct expected-vs-actual comparison for that fixture matched byte-for-byte, and the immediate rerun passed 43/43. No active failing command remains from this attempt.
 
 ## Verification Commands To Run
 
@@ -180,4 +192,4 @@ Final required gates:
 
 ## Next
 
-Add FileWrite production-boundary denial/ordering evidence, then continue to `attention-state-store`.
+Continue to `attention-state-store`: inspect remaining assertions against existing state/replay evidence, then delete/rewrite only block-level items with explicit map coverage.

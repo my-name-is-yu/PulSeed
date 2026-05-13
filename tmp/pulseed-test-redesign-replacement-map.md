@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:09:41.847Z
+Generated: 2026-05-13T03:15:05.782Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -642,46 +642,48 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 
 ### src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts
 
-- Production boundary: tool approval gate -> local write mutation
-- State artifact: approval artifact, mutation artifact
+- Production boundary: ToolExecutor.execute(file_write) -> permission wait-plan -> FileWriteTool.call
+- State artifact: permission wait-plan state, ordered approval/tool-call events, mutation artifact
 - Old test file deletion allowed: yes
 - Deleted old-test blocks:
   - Block: mocked writes, directory creation, path resolution, byte count, and write-error handling
     - Old line range: 32-64, 95-112
     - Classification: delete_now
-    - Replacement trace: tool_write_local_records_approval_artifact_before_mutation
-    - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
-    - Production entrypoint exercised: golden: tool approval gate -> local write mutation
+    - Replacement contract: tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation
+    - Exported state artifact/assertion: contract: approval_requested < approval_callback < tool_call_started < write_artifact_recorded; approved file content exists; wait-plan states are resumed and denied
+    - Production entrypoint exercised: ToolExecutor.execute("file_write") -> PermissionWaitPlanStore -> real FileWriteTool.call
     - Deletion allowed: yes
-    - Evidence: Trace asserts approved_write_success=true, mutation_artifact_count=1, and approval_before_mutation=true through the production tool approval/mutation path.
+    - Evidence: Contract asserts ordered approval/wait-plan events before the real FileWriteTool call and verifies the approved file content plus mutation artifact.
   - Block: path traversal, sensitive file, and node_modules denial duplicates
     - Old line range: 65-93
-    - Classification: obsolete
-    - Replacement trace: none
-    - Deletion allowed: no
-    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Deleted duplicated FileWrite-level validation tests; validation remains owned by shared file-validation/tool-boundary coverage rather than a mocked write-file unit.
+    - Classification: delete_now
+    - Replacement contract: tests/contracts/tool-file-write-boundary.test.ts: blocks unsafe file_write paths at the ToolExecutor/FileWriteTool boundary even when pre-approved
+    - Exported state artifact/assertion: contract: traversal, .env, credentials, and node_modules writes return success=false, artifact_count=0, approval_request_count=0, and no target file exists
+    - Production entrypoint exercised: ToolExecutor.execute("file_write") with preApproved=true -> real FileWriteTool.call -> validateFilePath
+    - Deletion allowed: yes
+    - Evidence: Contract executes real file_write calls under the production ToolExecutor and proves validation blocks unsafe paths without artifacts or filesystem mutation even when approval is already granted.
   - Block: checkPermissions denies without preApproved and allows with preApproved
     - Old line range: 115-128
     - Classification: delete_now
-    - Replacement trace: tool_write_local_records_approval_artifact_before_mutation
-    - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
-    - Production entrypoint exercised: golden: tool approval gate -> local write mutation
+    - Replacement contract: tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation
+    - Exported state artifact/assertion: contract: denied approval returns not_executed/approval_denied with no tool_call_started and no denied file; pre-approved unsafe calls do not invoke approvalFn
+    - Production entrypoint exercised: ToolExecutor.execute("file_write") -> FileWriteTool.checkPermissions -> PermissionWaitPlanStore -> real FileWriteTool.call
     - Deletion allowed: yes
-    - Evidence: Trace asserts denied_execution_status=not_executed, denied_mutation_exists=false, approved_write_success=true, and wait_plan_count=0 at the approval gate.
+    - Evidence: Contract proves the public approval boundary: unapproved writes require approval before the tool call, denied approval does not mutate, and pre-approved unsafe calls still fail closed at validation.
   - Block: isConcurrencySafe and metadata permissionLevel/name
     - Old line range: 131-138
-    - Classification: obsolete
-    - Replacement trace: none
-    - Deletion allowed: no
-    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Deleted static implementation metadata assertions; no public registry contract requires this mocked file.
+    - Classification: delete_obsolete
+    - Replacement contract: tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation
+    - Exported state artifact/assertion: contract: ToolRegistry resolves the real file_write name, ToolExecutor treats the real tool as write_local approval-gated, and static metadata literals are not a separate public contract
+    - Production entrypoint exercised: ToolRegistry.register(real FileWriteTool) -> ToolExecutor.execute("file_write")
+    - Deletion allowed: yes
+    - Evidence: Deleted static implementation metadata assertions because the public contract is the executable registry/tool boundary, not direct field mirroring.
 - Replacement evidence:
   - Replacement trace name: tool_write_local_records_approval_artifact_before_mutation
     - Real production entrypoint used: golden: tool approval gate -> local write mutation
     - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: yes
-- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the surviving tool/setup unit command passed 2 files / 14 tests after deleting this mocked file.
+- Simultaneous pass evidence: 2026-05-13 final-scope evidence recovery: `npx vitest run tests/contracts/tool-file-write-boundary.test.ts --config vitest.contracts.config.ts` passed 1 file / 2 tests. Earlier post-delete evidence: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the surviving tool/setup unit command passed 2 files / 14 tests after deleting this mocked file.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 

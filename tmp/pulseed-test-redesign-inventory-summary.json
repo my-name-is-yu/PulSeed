@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-05-13T03:09:41.847Z",
-  "test_like_files": 783,
+  "generated_at": "2026-05-13T03:15:05.782Z",
+  "test_like_files": 784,
   "current_lane_counts": {
     "unit": 680,
     "integration": 90,
     "integration+smoke": 3,
     "unit+smoke": 1,
-    "contracts": 1,
+    "contracts": 2,
     "golden-traces": 1,
     "replay": 1,
     "runtime-long-run": 3,
@@ -16,13 +16,13 @@
     "unit": 686,
     "integration": 75,
     "golden-traces+replay": 12,
-    "contracts": 1,
+    "contracts": 2,
     "slow": 7,
     "golden-traces": 1,
     "replay": 1
   },
   "classification_counts": {
-    "keep": 712,
+    "keep": 713,
     "move_to_unit": 33,
     "replace": 12,
     "move_to_integration": 19,
