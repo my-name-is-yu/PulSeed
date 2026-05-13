@@ -48,6 +48,17 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway ingress -> ChatRunner -> readonly workspace tool boundary",
     stateArtifact: "tool request/result envelope, chat event stream",
+    deletedBlocks: [
+      {
+        block: "onToolStart/onToolEnd callback call-count, duration, fallback-summary, and optional-callback minutiae",
+        oldLineRange: "143-161, 309-390, 422-526",
+        classification: "delete_now",
+        replacementContract: "src/interface/chat/__tests__/chat-runner-tools.test.ts: production tool caller path keeps ToolExecutor routing, capability verification, typed activity events, and model-visible tool schema",
+        productionEntrypoint: "ChatRunner.execute() -> model tool loop -> ToolExecutor/ChatEvent stream",
+        artifactAssertion: "unit: ToolExecutor path is used instead of raw tool.call, capability verification/audit stores are passed through, typed tool_start/tool_update/tool_end events include activityCategory, and paraphrased English/Japanese requests see the same typed tool schema",
+        evidence: "Removed mock-heavy callback minutiae in favor of the surviving event-stream and ToolExecutor caller-path contracts.",
+      },
+    ],
   },
   {
     oldPath: "src/interface/chat/__tests__/setup-secret-intake.test.ts",
@@ -625,7 +636,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/interface/chat/__tests__/chat-runner-tools.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
+    "2026-05-13 final-scope chat tools cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner-tools.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests.",
   ],
   [
     "src/interface/chat/__tests__/setup-secret-intake.test.ts",
