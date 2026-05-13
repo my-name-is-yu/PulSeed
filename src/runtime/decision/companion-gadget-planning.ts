@@ -99,6 +99,19 @@ const READINESS_BLOCK_REASONS = new Set<CompanionGadgetPlanningBlockReason>([
   "readiness_stale",
 ]);
 
+const READINESS_STATE_RANK: Record<CompanionGadgetReadinessSummaryState, number> = {
+  missing: 0,
+  blocked: 1,
+  degraded: 2,
+  stored: 3,
+  discoverable: 4,
+  loadable: 5,
+  compatible: 6,
+  configured: 7,
+  authenticated: 8,
+  executable_verified: 9,
+};
+
 export const CompanionGadgetOutcomeFeedbackAdjustmentSchema = z.enum([
   "reduce_frequency",
   "require_confirmation",
@@ -426,7 +439,10 @@ function readinessSummaryState(
   if (snapshots.every((snapshot) => snapshot.state === "executable_verified")) {
     return "executable_verified";
   }
-  return snapshots[0]?.state ?? "missing";
+  return snapshots
+    .map((snapshot) => snapshot.state)
+    .filter((state) => state !== "executable_verified")
+    .sort((left, right) => READINESS_STATE_RANK[left] - READINESS_STATE_RANK[right])[0] ?? "missing";
 }
 
 function readinessBlockReasons(

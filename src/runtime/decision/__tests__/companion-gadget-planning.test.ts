@@ -202,13 +202,14 @@ function approvalRequiredAdmission(op: AutonomyOperationPlanInput): AdmissionPol
 
 function autonomy(
   op: AutonomyOperationPlanInput,
-  snapshot: CapabilityReadinessSnapshot,
+  snapshotOrSnapshots: CapabilityReadinessSnapshot | CapabilityReadinessSnapshot[],
   admission: AdmissionPolicyEvaluation,
   options: { userDirected?: boolean } = {}
 ): AutonomyDecision {
+  const readinessSnapshots = Array.isArray(snapshotOrSnapshots) ? snapshotOrSnapshots : [snapshotOrSnapshots];
   return evaluateAutonomyDecision({
     operation_plan: op,
-    readiness_snapshots: [snapshot],
+    readiness_snapshots: readinessSnapshots,
     admission_evaluation: admission,
     user_directed: options.userDirected ?? false,
     active_surface_ref: "surface:chat:slack",
@@ -340,6 +341,43 @@ describe("CompanionGadgetPlanning", () => {
     });
     expect(plan.action_candidates[0]?.blocked_reasons).toContain("readiness_unverified");
     expect(plan.user_facing_policy_projection?.executes_operation).toBe(false);
+  });
+
+  it("fails closed when matching readiness snapshots mix executable and unverified states", () => {
+    const op = operation();
+    const verified = readiness(op, {
+      snapshot_id: "readiness:workspace-search:verified",
+    });
+    const authenticated = readiness(op, {
+      snapshot_id: "readiness:workspace-search:authenticated",
+      state: "authenticated",
+      safe_user_visible_label: "Configured, verification required",
+    });
+    const admission = allowedAdmission(op);
+
+    const createPlan = (readinessSnapshots: CapabilityReadinessSnapshot[]) => {
+      const decision = autonomy(op, readinessSnapshots, admission, { userDirected: true });
+      return createCompanionGadgetPlan({
+        assetKind: "tool",
+        operationCandidate: operationCandidate(op, verified),
+        readinessSnapshots,
+        admissionEvaluation: admission,
+        autonomyDecision: decision,
+        actionProjection: projection(decision),
+        generatedAt: NOW,
+      });
+    };
+
+    for (const plan of [
+      createPlan([verified, authenticated]),
+      createPlan([authenticated, verified]),
+    ]) {
+      expect(plan.candidate.readiness_state).toBe("authenticated");
+      expect(plan.candidate.can_execute).toBe(false);
+      expect(plan.action_candidates[0]?.may_initiate).toBe(false);
+      expect(plan.action_candidates[0]?.normal_surface_advertises_executable).toBe(false);
+      expect(plan.action_candidates[0]?.blocked_reasons).toContain("readiness_unverified");
+    }
   });
 
   it("rejects normal-surface executable advertising when the action may not initiate", () => {
