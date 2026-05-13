@@ -220,6 +220,53 @@ describe("CompanionDecisionFrame", () => {
     expect(output.route.disposition).toBe("reground_before_action");
     expect(output.route.integration_state).toBe("contract_only");
   });
+
+  it("allows run refs to remain selected targets when decisions point at active runs", () => {
+    const frame = CompanionDecisionFrameSchema.parse(baseFrame({
+      frame_id: "frame:run-target",
+      source: {
+        kind: "chat_turn",
+        source_ref: "chat:turn:run",
+        received_at: NOW,
+        caller_path: "chat_native_agent_loop",
+        run_ref: "run:active",
+      },
+      input_refs: [
+        {
+          kind: "chat_message",
+          ref: "chat:message:run",
+          role: "trigger",
+        },
+        {
+          kind: "run",
+          ref: "run:active",
+          role: "target",
+          freshness: "current",
+        },
+      ],
+      active_target_ref: {
+        kind: "run",
+        id: "run:active",
+      },
+    }));
+    const output = CompanionDecisionOutputSchema.parse(baseOutput({
+      decision_id: "decision:run-target",
+      frame_id: frame.frame_id,
+      route: {
+        disposition: "continue_durable_work",
+        caller_path: "chat_native_agent_loop",
+        integration_state: "contract_only",
+        preserves_existing_runner: true,
+        target_ref: {
+          kind: "run",
+          id: "run:active",
+        },
+      },
+    }));
+
+    expect(frame.active_target_ref).toMatchObject({ kind: "run", id: "run:active" });
+    expect(output.route.target_ref).toMatchObject({ kind: "run", id: "run:active" });
+  });
 });
 
 describe("CompanionDecisionOutput", () => {

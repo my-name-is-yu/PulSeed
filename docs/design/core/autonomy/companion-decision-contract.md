@@ -41,6 +41,8 @@ The frame is intentionally small:
 - `source`: one of `chat_turn`, `task_execution`, or `resident_attention_cycle`
 - `input_refs`: typed refs for triggers, targets, state, policy, constraints,
   candidates, and bridge outputs
+- `active_target_ref`: selected surface, conversation, session, goal, task, run,
+  runtime item, attention, agenda, outcome, autonomy, or approval target
 - `evidence_refs`: refs from grounding, attention, companion state, admission,
   autonomy, runtime control, runners, projection, or feedback
 - `policy_refs`: safety, approval, runtime-control, attention, admission,

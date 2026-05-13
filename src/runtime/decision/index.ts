@@ -19,6 +19,8 @@ export {
   CompanionDecisionRouteSchema,
   CompanionDecisionSourceKindSchema,
   CompanionDecisionSourceSchema,
+  CompanionDecisionTargetRefKindSchema,
+  CompanionDecisionTargetRefSchema,
   CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
@@ -43,6 +45,8 @@ export type {
   CompanionDecisionRoute,
   CompanionDecisionSource,
   CompanionDecisionSourceKind,
+  CompanionDecisionTargetRef,
+  CompanionDecisionTargetRefKind,
   CompanionDecisionTrace,
   CreateCompanionDecisionProjectionBridgeInput,
 } from "./companion-decision-contract.js";

@@ -15,7 +15,6 @@ import {
   type CompanionProjectionContextInput,
 } from "../control/companion-action-projection.js";
 import {
-  CompanionAutonomyRefSchema,
   CompanionAutonomySourceRefSchema,
 } from "../types/companion-autonomy.js";
 
@@ -86,6 +85,29 @@ export const CompanionDecisionInputFreshnessSchema = z.enum([
   "unknown",
 ]);
 export type CompanionDecisionInputFreshness = z.infer<typeof CompanionDecisionInputFreshnessSchema>;
+
+export const CompanionDecisionTargetRefKindSchema = z.enum([
+  "surface",
+  "conversation",
+  "session",
+  "goal",
+  "task",
+  "run",
+  "runtime_item",
+  "attention_cycle",
+  "agent_agenda_item",
+  "outcome_decision",
+  "autonomy_decision",
+  "approval",
+]);
+export type CompanionDecisionTargetRefKind = z.infer<typeof CompanionDecisionTargetRefKindSchema>;
+
+export const CompanionDecisionTargetRefSchema = z.object({
+  kind: CompanionDecisionTargetRefKindSchema,
+  id: z.string().min(1),
+  version: z.string().min(1).optional(),
+}).strict();
+export type CompanionDecisionTargetRef = z.infer<typeof CompanionDecisionTargetRefSchema>;
 
 export const CompanionDecisionInputRefSchema = z.object({
   kind: CompanionDecisionInputRefKindSchema,
@@ -190,7 +212,7 @@ export const CompanionDecisionFrameSchema = z.object({
   input_refs: z.array(CompanionDecisionInputRefSchema).min(1),
   evidence_refs: z.array(CompanionDecisionEvidenceRefSchema).default([]),
   policy_refs: z.array(CompanionDecisionPolicyRefSchema).default([]),
-  active_target_ref: CompanionAutonomyRefSchema.nullable().default(null),
+  active_target_ref: CompanionDecisionTargetRefSchema.nullable().default(null),
   active_surface_ref: z.string().min(1).nullable().default(null),
   companion_state_ref: z.string().min(1).nullable().default(null),
   grounding_bundle_ref: z.string().min(1).nullable().default(null),
@@ -239,7 +261,7 @@ export const CompanionDecisionRouteSchema = z.object({
   caller_path: CompanionDecisionCallerPathKindSchema,
   integration_state: CompanionDecisionIntegrationStateSchema.default("contract_only"),
   preserves_existing_runner: z.boolean().default(true),
-  target_ref: CompanionAutonomyRefSchema.nullable().default(null),
+  target_ref: CompanionDecisionTargetRefSchema.nullable().default(null),
   requires_approval: z.boolean().default(false),
   emits_user_visible_projection: z.boolean().default(false),
   hold_reason: CompanionDecisionHoldReasonSchema.optional(),
