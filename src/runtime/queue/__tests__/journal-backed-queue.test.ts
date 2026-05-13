@@ -44,47 +44,6 @@ describe('JournalBackedQueue', () => {
     expect(reloaded.snapshot().completed).toContain(envelope.id);
   });
 
-  it('rejects unsafe envelope timestamps before writing the journal', () => {
-    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const envelope = {
-      ...createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' }),
-      created_at: Number.MAX_SAFE_INTEGER + 1,
-    };
-
-    expect(() => queue.accept(envelope)).toThrow();
-    expect(fs.existsSync(journalPath)).toBe(false);
-  });
-
-  it('skips persisted queue records with unsafe envelope scalars', () => {
-    const envelope = {
-      ...createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' }),
-      created_at: Number.MAX_SAFE_INTEGER + 1,
-    };
-    fs.writeFileSync(journalPath, JSON.stringify({
-      version: 1,
-      records: {
-        [envelope.id]: {
-          envelope,
-          status: 'pending',
-          attempt: 0,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      },
-      pending: {
-        critical: [],
-        high: [envelope.id],
-        normal: [],
-        low: [],
-      },
-      inflight: {},
-    }), 'utf-8');
-
-    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    expect(queue.get(envelope.id)).toBeUndefined();
-    expect(queue.size()).toBe(0);
-  });
-
   it('persists fractional safe lease deadlines from retry backoff', () => {
     const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
     const envelope = createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' });
@@ -138,37 +97,6 @@ describe('JournalBackedQueue', () => {
     const claim = queue.claim('worker-a', 5_000);
     expect(claim?.messageId).toBe(second.id);
     expect(claim?.envelope.payload).toEqual({ version: 2 });
-  });
-
-  it('rejects duplicate dedupe_key while the original item is inflight', () => {
-    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const original = createEnvelope({
-      type: 'event',
-      name: 'job',
-      source: 'test',
-      payload: { version: 1 },
-      priority: 'normal',
-      dedupe_key: 'logical-job',
-    });
-    const retry = createEnvelope({
-      type: 'event',
-      name: 'job',
-      source: 'test',
-      payload: { version: 2 },
-      priority: 'normal',
-      dedupe_key: 'logical-job',
-    });
-
-    queue.accept(original);
-    expect(queue.claim('worker-a', 5_000)).not.toBeNull();
-
-    expect(queue.accept(retry)).toEqual({
-      accepted: false,
-      duplicate: true,
-      messageId: original.id,
-    });
-    expect(queue.size()).toBe(0);
-    expect(queue.inflightSize()).toBe(1);
   });
 
   it('allows a dedupe_key to be accepted again after completion', () => {
@@ -289,46 +217,4 @@ describe('JournalBackedQueue', () => {
     expect(queue.snapshot().pending.normal).toEqual([first.id]);
   });
 
-  it('fences expired claims from renew/ack/nack before sweeper runs', () => {
-    let now = 1_000;
-    const queue = new JournalBackedQueue({ journalPath, now: () => now });
-    const envelope = createEnvelope({ type: 'command', name: 'job', source: 'test', payload: {}, priority: 'normal' });
-    queue.accept(envelope);
-
-    const claim = queue.claim('worker-a', 100)!;
-    now = 1_200;
-
-    expect(queue.renew(claim.claimToken, 100)).toBeNull();
-    expect(queue.ack(claim.claimToken)).toBe(false);
-    expect(queue.nack(claim.claimToken, 'late')).toBe(false);
-
-    const reloaded = new JournalBackedQueue({ journalPath, now: () => now });
-    expect(reloaded.get(envelope.id)?.status).toBe('inflight');
-    expect(reloaded.inflightSize()).toBe(1);
-  });
-
-  it('reclaims an orphaned lock directory with missing owner metadata', () => {
-    const lockPath = `${journalPath}.lock`;
-    fs.mkdirSync(lockPath, { recursive: true });
-
-    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const envelope = createEnvelope({ type: 'event', name: 'orphan-lock', source: 'test', payload: {}, priority: 'normal' });
-
-    expect(queue.accept(envelope).accepted).toBe(true);
-    expect(queue.size()).toBe(1);
-    expect(queue.get(envelope.id)?.status).toBe('pending');
-  });
-
-  it('reclaims an orphaned lock directory with malformed owner metadata', () => {
-    const lockPath = `${journalPath}.lock`;
-    fs.mkdirSync(lockPath, { recursive: true });
-    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({ acquiredAt: 'not-a-number' }), 'utf-8');
-
-    const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const envelope = createEnvelope({ type: 'event', name: 'malformed-lock', source: 'test', payload: {}, priority: 'normal' });
-
-    expect(queue.accept(envelope).accepted).toBe(true);
-    expect(queue.size()).toBe(1);
-    expect(queue.get(envelope.id)?.status).toBe('pending');
-  });
 });

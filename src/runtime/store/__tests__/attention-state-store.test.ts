@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {
@@ -227,22 +226,6 @@ describe("AttentionStateStore", () => {
       } finally {
         upgraded.close();
       }
-    } finally {
-      cleanupTempDir(tmpDir);
-    }
-  });
-
-  it("fails closed when the control DB schema is ahead of this code", async () => {
-    const tmpDir = makeTempDir("pulseed-attention-store-ahead-");
-    try {
-      const dbPath = path.join(tmpDir, "state", "pulseed-control.sqlite");
-      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-      const db = new Database(dbPath);
-      db.pragma("user_version = 999");
-      db.close();
-
-      const store = new AttentionStateStore(path.join(tmpDir, "runtime"));
-      await expect(store.ensureReady()).rejects.toThrow("newer than supported version");
     } finally {
       cleanupTempDir(tmpDir);
     }

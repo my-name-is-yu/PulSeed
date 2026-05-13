@@ -1981,46 +1981,6 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("blocks latest run control when only another conversation has selectable runs", async () => {
-    const tmpDir = makeTempDir("pulseed-runtime-control-service-latest-other-conversation-");
-    try {
-      const executor = vi.fn();
-      const service = new RuntimeControlService({
-        runtimeRoot: path.join(tmpDir, "runtime"),
-        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
-        executor,
-        sessionRegistry: {
-          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
-            makeRun({
-              id: "run:coreloop:other",
-              parent_session_id: "session:conversation:other",
-              goal_id: "goal-other",
-            }),
-          ])),
-        },
-      });
-
-      const result = await service.request({
-        intent: {
-          kind: "pause_run",
-          reason: "pause latest run",
-          targetSelector: { scope: "run", reference: "latest", sourceText: "latest run" },
-        },
-        cwd: "/repo",
-        requestedBy: { surface: "chat", conversation_id: "chat-1" },
-      });
-
-      expect(result).toMatchObject({
-        success: false,
-        state: "blocked",
-        message: expect.stringContaining("refusing to reuse another conversation"),
-      });
-      expect(executor).not.toHaveBeenCalled();
-    } finally {
-      cleanupTempDir(tmpDir);
-    }
-  });
-
   it("blocks session-scoped run control when only sessionless runs are selectable", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-session-scope-");
     try {
@@ -2062,35 +2022,6 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("rejects stale terminal runs for control operations", async () => {
-    const tmpDir = makeTempDir("pulseed-runtime-control-service-run-stale-");
-    try {
-      const service = new RuntimeControlService({
-        runtimeRoot: path.join(tmpDir, "runtime"),
-        operationStore: new RuntimeOperationStore(path.join(tmpDir, "runtime")),
-        sessionRegistry: {
-          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([
-            makeRun({ id: "run:coreloop:old", status: "succeeded", goal_id: "goal-old" }),
-          ])),
-        },
-      });
-
-      const result = await service.pauseRun({
-        runId: "run:coreloop:old",
-        reason: "pause old run",
-        cwd: "/repo",
-      });
-
-      expect(result).toMatchObject({
-        success: false,
-        state: "blocked",
-        message: expect.stringContaining("stale or terminal"),
-      });
-    } finally {
-      cleanupTempDir(tmpDir);
-    }
-  });
-
   it("blocks resume_run through CompanionState control policy while suspended", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-service-resume-suspended-");
     try {
@@ -2114,51 +2045,6 @@ describe("RuntimeControlService", () => {
       const result = await service.resumeRun({
         runId: "run:coreloop:active",
         reason: "resume while suspended",
-        cwd: "/repo",
-        approvalFn: vi.fn().mockResolvedValue(true),
-      });
-
-      expect(result).toMatchObject({
-        success: false,
-        state: "blocked",
-        resumeOutcome: "resume_rejected_safety",
-        message: expect.stringContaining("companion suspend state"),
-      });
-      expect(executor).not.toHaveBeenCalled();
-    } finally {
-      cleanupTempDir(tmpDir);
-    }
-  });
-
-  it("blocks resume_run after resume_companion until the held run is re-admitted", async () => {
-    const tmpDir = makeTempDir("pulseed-runtime-control-service-resume-after-lift-");
-    try {
-      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
-      const executor = vi.fn();
-      let nowTick = 0;
-      const service = new RuntimeControlService({
-        runtimeRoot: path.join(tmpDir, "runtime"),
-        operationStore,
-        executor,
-        sessionRegistry: {
-          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
-        },
-        now: () => new Date(Date.UTC(2026, 4, 8, 0, 0, nowTick++)),
-      });
-      await service.setCompanionControl({
-        control: "suspend_companion",
-        reason: "suspend companion",
-        cwd: "/repo",
-      });
-      await service.setCompanionControl({
-        control: "resume_companion",
-        reason: "resume companion without flushing work",
-        cwd: "/repo",
-      });
-
-      const result = await service.resumeRun({
-        runId: "run:coreloop:active",
-        reason: "resume held run",
         cwd: "/repo",
         approvalFn: vi.fn().mockResolvedValue(true),
       });
@@ -2264,42 +2150,4 @@ describe("RuntimeControlService", () => {
     }
   });
 
-  it("records approval-gated finalize proposals without executing external actions", async () => {
-    const tmpDir = makeTempDir("pulseed-runtime-control-service-finalize-");
-    try {
-      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
-      const executor = vi.fn();
-      const operatorHandoffStore = { create: vi.fn().mockResolvedValue({ handoff_id: "handoff-1" }) };
-      const service = new RuntimeControlService({
-        runtimeRoot: path.join(tmpDir, "runtime"),
-        operationStore,
-        executor,
-        operatorHandoffStore,
-        sessionRegistry: {
-          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
-        },
-      });
-
-      const result = await service.finalizeRun({
-        runId: "run:coreloop:active",
-        reason: "finalize but do not submit externally",
-        externalActions: ["submit"],
-        cwd: "/repo",
-        approvalFn: vi.fn().mockResolvedValue(true),
-      });
-
-      expect(result).toMatchObject({
-        success: true,
-        state: "blocked",
-        message: expect.stringContaining("No external submit/publish/secret/production/destructive action was executed"),
-      });
-      expect(operatorHandoffStore.create).toHaveBeenCalledWith(expect.objectContaining({
-        run_id: "run:coreloop:active",
-        triggers: expect.arrayContaining(["finalization", "external_action"]),
-      }));
-      expect(executor).not.toHaveBeenCalled();
-    } finally {
-      cleanupTempDir(tmpDir);
-    }
-  });
 });

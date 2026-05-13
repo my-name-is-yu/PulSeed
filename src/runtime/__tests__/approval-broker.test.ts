@@ -205,52 +205,6 @@ describe("ApprovalBroker", () => {
     );
   });
 
-  it("restores pending approvals from durable storage", async () => {
-    tmpDir = makeTempDir();
-    const store = new ApprovalStore(tmpDir);
-    const expiresAt = Date.now() + 60_000;
-    await store.savePending({
-      approval_id: "approval-restored",
-      goal_id: "goal-2",
-      request_envelope_id: "approval-restored",
-      correlation_id: "approval-restored",
-      state: "pending",
-      created_at: Date.now(),
-      expires_at: expiresAt,
-      payload: {
-        task: {
-          id: "task-2",
-          description: "Approve restored change",
-          action: "apply",
-        },
-      },
-    });
-
-    const broker = new ApprovalBroker({ store });
-    await broker.start();
-
-    expect(broker.getPendingApprovalEvents()).toEqual([
-      {
-        requestId: "approval-restored",
-        goalId: "goal-2",
-        task: {
-          id: "task-2",
-          description: "Approve restored change",
-          action: "apply",
-        },
-        expiresAt,
-        restored: true,
-      },
-    ]);
-
-    await expect(broker.resolveApproval("approval-restored", false, "http")).resolves.toBe(true);
-
-    await expect(store.loadResolved("approval-restored")).resolves.toMatchObject({
-      state: "denied",
-      response_channel: "http",
-    });
-  });
-
   it("does not restore invalid permission task expiry metadata into approval events", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
@@ -495,49 +449,6 @@ describe("ApprovalBroker", () => {
     await expect(request).resolves.toBe(false);
   });
 
-  it("does not resolve conversational approvals from stale or mismatched origins", async () => {
-    tmpDir = makeTempDir();
-    const store = new ApprovalStore(tmpDir);
-    const origin = {
-      channel: "telegram",
-      conversation_id: "chat-1",
-      user_id: "user-1",
-      session_id: "session-current",
-      turn_id: "turn-current",
-    };
-    const broker = new ApprovalBroker({
-      store,
-      deliverConversationalApproval: async () => ({ delivered: true }),
-      createId: () => "approval-bound",
-    });
-
-    const request = broker.requestConversationalApproval("goal-1", {
-      id: "task-bound",
-      description: "Delete remote artifact",
-      action: "delete",
-    }, {
-      origin,
-    });
-    await waitForPendingApproval(store, "approval-bound");
-
-    await expect(broker.resolveConversationalApproval("approval-bound", true, {
-      ...origin,
-      channel: "slack",
-    })).resolves.toBe(false);
-    await expect(broker.resolveConversationalApproval("approval-bound", true, {
-      ...origin,
-      user_id: "user-2",
-    })).resolves.toBe(false);
-    await expect(broker.resolveConversationalApproval("approval-bound", true, {
-      ...origin,
-      turn_id: "turn-previous",
-    })).resolves.toBe(false);
-    expect(await store.loadPending("approval-bound")).toMatchObject({ state: "pending", origin });
-
-    await expect(broker.resolveConversationalApproval("approval-bound", false, origin)).resolves.toBe(true);
-    await expect(request).resolves.toBe(false);
-  });
-
   it("does not resolve conversational approvals when binding metadata is incomplete", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
@@ -609,67 +520,6 @@ describe("ApprovalBroker", () => {
 
     await expect(broker.resolveConversationalApproval("approval-origin-only", false, origin)).resolves.toBe(true);
     await expect(request).resolves.toBe(false);
-  });
-
-  it("denies conversational approvals when the originating channel is unreachable", async () => {
-    tmpDir = makeTempDir();
-    const store = new ApprovalStore(tmpDir);
-    const broker = new ApprovalBroker({
-      store,
-      deliverConversationalApproval: async () => ({
-        delivered: false,
-        reason: "channel_unreachable",
-      }),
-      createId: () => "approval-undelivered",
-    });
-
-    const request = broker.requestConversationalApproval("goal-1", {
-      id: "task-undelivered",
-      description: "Publish external report",
-      action: "publish",
-    }, {
-      origin: {
-        channel: "discord",
-        conversation_id: "thread-1",
-        user_id: "user-1",
-      },
-    });
-
-    await expect(request).resolves.toBe(false);
-    const resolved = await store.loadResolved("approval-undelivered");
-    expect(resolved).toMatchObject({
-      state: "denied",
-      response_channel: "discord",
-    });
-  });
-
-  it("denies conversational approvals when no delivery surface is configured", async () => {
-    tmpDir = makeTempDir();
-    const store = new ApprovalStore(tmpDir);
-    const broker = new ApprovalBroker({
-      store,
-      createId: () => "approval-no-delivery",
-    });
-
-    const request = broker.requestConversationalApproval("goal-1", {
-      id: "task-no-delivery",
-      description: "Rotate production secret",
-      action: "rotate_secret",
-    }, {
-      origin: {
-        channel: "slack",
-        conversation_id: "thread-1",
-        user_id: "user-1",
-        session_id: "session-1",
-        turn_id: "turn-1",
-      },
-    });
-
-    await expect(request).resolves.toBe(false);
-    expect(await store.loadResolved("approval-no-delivery")).toMatchObject({
-      state: "denied",
-      response_channel: "slack",
-    });
   });
 
   it("transitions the linked permission wait plan when approvals resolve", async () => {
