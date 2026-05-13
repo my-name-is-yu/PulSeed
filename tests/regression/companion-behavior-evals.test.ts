@@ -17,6 +17,25 @@ import {
   createCompanionGadgetPlan,
 } from "../../src/runtime/decision/index.js";
 import {
+  createCloudComputeAuthorizationRequest,
+  createCognitionReplayRecord,
+  evaluateCloudBoundaryForCognition,
+} from "../../src/runtime/cognition/index.js";
+import {
+  createCognitiveReplayIndexEntry,
+} from "../../src/runtime/visibility/index.js";
+import {
+  createCognitionWritebackQueueEntry,
+} from "../../src/reflection/index.js";
+import {
+  createProactivePolicyState,
+  decideProactiveDelivery,
+  reduceProactivePolicyState,
+} from "../../src/runtime/attention/index.js";
+import {
+  createProceduralMemoryCandidate,
+} from "../../src/platform/dream/index.js";
+import {
   projectCompanionAction,
 } from "../../src/runtime/control/companion-action-projection.js";
 import type { CapabilityReadinessSnapshot } from "../../src/platform/observation/types/capability.js";
@@ -141,6 +160,11 @@ describe("companion behavior eval contract", () => {
       "quiet_held_behavior",
       "gadget_selection",
       "approval_preservation",
+      "cognition_replay",
+      "cloud_boundary",
+      "writeback_review",
+      "proactive_restraint",
+      "procedural_memory",
     ]));
     for (const scenario of plan.scenarios) {
       expect(scenario.prompt_variants.length).toBeGreaterThanOrEqual(2);
@@ -149,6 +173,70 @@ describe("companion behavior eval contract", () => {
         expect(judgment.deterministic_precondition_assertion_ids.length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("runs deterministic baseline gates for replay, cloud, writeback, proactive restraint, and procedural memory", () => {
+    const event = eventRef("chat:event:baseline");
+    const cloud = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:baseline",
+      mode: "local_only",
+      contextRefs: [event],
+    });
+    const replay = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:baseline",
+      record: createCognitionReplayRecord({
+        recordId: "replay:baseline",
+        createdAt: NOW,
+        input: {
+          cognition_id: "cognition:baseline",
+          caller_path: "chat_user_turn",
+          event_refs: [event],
+        },
+        failure: { message: "baseline refs-only failure record" },
+      }),
+    });
+    const writeback = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:baseline",
+      createdAt: NOW,
+      proposal: {
+        proposal_id: "writeback:baseline",
+        proposal_kind: "episode",
+        source_event_refs: [event],
+        proposed_target: "dream",
+        admission_state: "pending_review",
+        auto_apply: false,
+        source_content_materialized: false,
+      },
+    });
+    const quiet = reduceProactivePolicyState(createProactivePolicyState({
+      policyId: "policy:baseline",
+      now: NOW,
+      maxDeliveryKind: "suggest",
+    }), {
+      kind: "quiet_lifted",
+      control_ref: { kind: "runtime_control", ref: "quiet:off" },
+      recorded_at: "2026-05-13T00:10:00.000Z",
+    });
+    const proactive = decideProactiveDelivery({
+      state: quiet,
+      requestedDeliveryKind: "suggest",
+      candidateCreatedAt: "2026-05-13T00:05:00.000Z",
+    });
+    const procedural = createProceduralMemoryCandidate({
+      proceduralMemoryId: "procedural:baseline",
+      kind: "playbook",
+      title: "Use focused verification",
+      sourceTraceRefs: [event],
+      confidence: 0.8,
+      createdAt: NOW,
+    });
+
+    expect(createCloudComputeAuthorizationRequest).toBeDefined();
+    expect(cloud.external_service_context_allowed).toBe(false);
+    expect(replay.retention_policy.refs_only).toBe(true);
+    expect(writeback).toMatchObject({ review_required: true, owner_write_performed: false });
+    expect(proactive).toMatchObject({ reason: "no_backlog_flush", allowed_delivery_kind: "hold" });
+    expect(procedural).toMatchObject({ planning_evidence_only: true, execution_authority: false });
   });
 });
 
@@ -625,6 +713,17 @@ function gatewayMemoryProjection() {
       forbidden_count: 1,
     },
   });
+}
+
+function eventRef(refId: string) {
+  return {
+    ref: refId,
+    source_store: "chat_history" as const,
+    source_event_type: "behavior_eval",
+    schema_version: 1,
+    replay_key: refId,
+    redaction_policy: "metadata_only" as const,
+  };
 }
 
 function memorySource(memoryId: string, overrides: Record<string, unknown> = {}) {
