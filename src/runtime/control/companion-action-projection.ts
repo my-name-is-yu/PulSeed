@@ -16,6 +16,35 @@ export const CompanionUserVisibleActionKindSchema = z.enum([
 ]);
 export type CompanionUserVisibleActionKind = z.infer<typeof CompanionUserVisibleActionKindSchema>;
 
+export const CompanionOrdinaryActionPolicySchema = z.enum([
+  "allow",
+  "ask",
+  "suggest",
+  "deny",
+]);
+export type CompanionOrdinaryActionPolicy = z.infer<typeof CompanionOrdinaryActionPolicySchema>;
+
+export const CompanionOrdinaryActionPolicySourceRefsSchema = z.object({
+  projection_ref: z.string().min(1),
+  operation_ref: z.string().min(1),
+  autonomy_decision_ref: z.string().min(1),
+  admission_evaluation_ref: z.string().min(1).optional(),
+  readiness_refs: z.array(z.string().min(1)).default([]),
+  audit_refs: z.array(z.string().min(1)).default([]),
+}).strict();
+export type CompanionOrdinaryActionPolicySourceRefs = z.infer<
+  typeof CompanionOrdinaryActionPolicySourceRefsSchema
+>;
+
+export const CompanionOrdinaryActionPolicyProjectionSchema = z.object({
+  schema_version: z.literal("companion-ordinary-action-policy-projection/v1"),
+  ordinary_action_policy: CompanionOrdinaryActionPolicySchema,
+  source_refs: CompanionOrdinaryActionPolicySourceRefsSchema,
+}).strict();
+export type CompanionOrdinaryActionPolicyProjection = z.infer<
+  typeof CompanionOrdinaryActionPolicyProjectionSchema
+>;
+
 export const CompanionProjectionSurfaceKindSchema = z.enum([
   "normal_companion",
   "operator",
@@ -61,6 +90,7 @@ export const CompanionActionProjectionSchema = z.object({
   decision_id: z.string().min(1),
   evaluated_at: z.string().min(1),
   user_visible_action_kind: CompanionUserVisibleActionKindSchema,
+  ordinary_action_policy_projection: CompanionOrdinaryActionPolicyProjectionSchema,
   next_best_safe_action: z.string().min(1),
   brief_reason: z.string().min(1).optional(),
   hidden_reason_refs: z.array(z.string().min(1)).default([]),
@@ -75,13 +105,24 @@ export const CompanionActionProjectionSchema = z.object({
     normal_capability_catalog_suppressed: z.boolean(),
     raw_policy_state_suppressed: z.boolean(),
   }).strict(),
-}).strict();
+}).strict().superRefine((projection, ctx) => {
+  const expectedPolicy = ordinaryActionPolicyForActionKind(projection.user_visible_action_kind);
+  if (expectedPolicy === undefined) return;
+  if (projection.ordinary_action_policy_projection.ordinary_action_policy !== expectedPolicy) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "ordinary_action_policy must match user_visible_action_kind",
+      path: ["ordinary_action_policy_projection", "ordinary_action_policy"],
+    });
+  }
+});
 export type CompanionActionProjection = z.infer<typeof CompanionActionProjectionSchema>;
 
 export const CompanionUserFacingPolicyProjectionSchema = z.object({
   schema_version: z.literal("companion-user-facing-policy-projection/v1"),
   evaluated_at: z.string().min(1),
   user_visible_action_kind: CompanionUserVisibleActionKindSchema,
+  ordinary_action_policy: CompanionOrdinaryActionPolicySchema,
   next_best_safe_action: z.string().min(1),
   brief_reason: z.string().min(1).optional(),
   executes_operation: z.boolean(),
@@ -95,14 +136,21 @@ export function projectCompanionAction(input: CompanionActionProjectionInput): C
   const evaluatedAt = parsed.evaluated_at ?? new Date().toISOString();
   const actionKind = actionKindFor(parsed);
   const surfacePolicy = surfacePolicyFor(parsed.context);
+  const resolvedProjectionId = parsed.projection_id
+    ?? projectionId(parsed.decision.decision_id, parsed.context.surface_ref, evaluatedAt);
 
   return CompanionActionProjectionSchema.parse({
     schema_version: "companion-action-projection/v1",
-    projection_id: parsed.projection_id ?? projectionId(parsed.decision.decision_id, parsed.context.surface_ref, evaluatedAt),
+    projection_id: resolvedProjectionId,
     operation_id: parsed.decision.operation_id,
     decision_id: parsed.decision.decision_id,
     evaluated_at: evaluatedAt,
     user_visible_action_kind: actionKind,
+    ordinary_action_policy_projection: ordinaryActionPolicyProjectionFor({
+      actionKind,
+      decision: parsed.decision,
+      projectionId: resolvedProjectionId,
+    }),
     next_best_safe_action: nextBestSafeActionFor(actionKind, parsed),
     ...briefReasonPart(actionKind, parsed, surfacePolicy),
     hidden_reason_refs: hiddenReasonRefs(parsed.decision),
@@ -145,6 +193,7 @@ export function toCompanionUserFacingPolicyProjection(
     schema_version: "companion-user-facing-policy-projection/v1",
     evaluated_at: projection.evaluated_at,
     user_visible_action_kind: projection.user_visible_action_kind,
+    ordinary_action_policy: projection.ordinary_action_policy_projection.ordinary_action_policy,
     next_best_safe_action: projection.next_best_safe_action,
     ...(policy.user_visible_reason === "brief" && projection.brief_reason
       ? { brief_reason: projection.brief_reason }
@@ -170,6 +219,49 @@ function actionKindFor(input: ParsedProjectionInput): CompanionUserVisibleAction
     case "prohibited":
       return "refuse_with_alternative";
   }
+}
+
+function ordinaryActionPolicyForActionKind(
+  actionKind: CompanionUserVisibleActionKind
+): CompanionOrdinaryActionPolicy | undefined {
+  switch (actionKind) {
+    case "execute_now":
+      return "allow";
+    case "ask_for_approval":
+      return "ask";
+    case "stay_silent":
+    case "suggest":
+    case "prepare_draft":
+    case "digest_later":
+      return "suggest";
+    case "refuse_with_alternative":
+      return "deny";
+    case "challenge":
+      return undefined;
+  }
+}
+
+function ordinaryActionPolicyProjectionFor(input: {
+  actionKind: CompanionUserVisibleActionKind;
+  decision: AutonomyDecision;
+  projectionId: string;
+}): CompanionOrdinaryActionPolicyProjection {
+  const ordinaryActionPolicy = ordinaryActionPolicyForActionKind(input.actionKind);
+  if (ordinaryActionPolicy === undefined) {
+    throw new Error("Challenge action kinds are not produced by the current companion action projection path.");
+  }
+  return CompanionOrdinaryActionPolicyProjectionSchema.parse({
+    schema_version: "companion-ordinary-action-policy-projection/v1",
+    ordinary_action_policy: ordinaryActionPolicy,
+    source_refs: {
+      projection_ref: input.projectionId,
+      operation_ref: input.decision.operation_id,
+      autonomy_decision_ref: input.decision.decision_id,
+      admission_evaluation_ref: input.decision.metadata.admission_evaluation_ref,
+      readiness_refs: input.decision.metadata.readiness_refs,
+      audit_refs: auditRefsFor(input.decision),
+    },
+  });
 }
 
 function nextBestSafeActionFor(
