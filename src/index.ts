@@ -228,6 +228,7 @@ export {
   RuntimeControlService,
   recognizeRuntimeControlIntent,
 } from "./runtime/control/index.js";
+export * from "./runtime/decision/index.js";
 export {
   admitInitiativeGateDecision,
   advanceAttentionMaturation,
