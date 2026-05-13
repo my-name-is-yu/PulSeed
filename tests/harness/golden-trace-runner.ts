@@ -92,7 +92,11 @@ async function runProductionConformanceTrace(
   if (fixture.contract_name.startsWith("runtime_control_")) {
     return runRuntimeControlTrace(fixture, stateRoot);
   }
-  if (fixture.contract_name.startsWith("gateway_approval_") || fixture.contract_name.startsWith("approval_")) {
+  if (
+    fixture.contract_name.startsWith("gateway_approval_") ||
+    fixture.contract_name === "gateway_multi_approval_reentrant_same_turn" ||
+    fixture.contract_name.startsWith("approval_")
+  ) {
     return runApprovalTrace(fixture, stateRoot);
   }
   if (fixture.contract_name.startsWith("schedule_")) {
@@ -609,6 +613,51 @@ async function runApprovalTrace(
   });
 
   let requestResult: boolean | null = null;
+  if (fixture.contract_name === "gateway_multi_approval_reentrant_same_turn") {
+    const firstId = `approval-${fixture.contract_name}-first`;
+    const secondId = `approval-${fixture.contract_name}-second`;
+    const first = broker.requestConversationalApproval("goal-approval", approvalTaskFor(`${fixture.contract_name}-write`), {
+      approvalId: firstId,
+      origin,
+    });
+    const second = broker.requestConversationalApproval("goal-approval", approvalTaskFor(`${fixture.contract_name}-other_tool`), {
+      approvalId: secondId,
+      origin: { ...origin, turn_id: "turn:approval:second" },
+    });
+    void first.catch(() => undefined);
+    void second.catch(() => undefined);
+    await waitForPendingApproval(store, firstId);
+    await waitForPendingApproval(store, secondId);
+    const firstResolved = await broker.resolveConversationalApproval(firstId, true, origin);
+    const secondResolved = await broker.resolveConversationalApproval(secondId, true, { ...origin, turn_id: "turn:approval:second" });
+    const requestResults = await Promise.all([first, second]);
+    await broker.stop();
+    const firstPending = await store.loadPending(firstId);
+    const secondPending = await store.loadPending(secondId);
+    const firstRecord = await store.loadResolved(firstId);
+    const secondRecord = await store.loadResolved(secondId);
+    const assertions: JsonObject = {
+      approval_request_count: 2,
+      both_requests_resolved: requestResults.every((result) => result === true),
+      first_resolved: firstResolved,
+      pending_after_resolution: firstPending !== null || secondPending !== null,
+      resolved_count: [firstRecord, secondRecord].filter(Boolean).length,
+      second_resolved: secondResolved,
+    };
+    return buildRealGoldenResult(fixture, stateRoot, {
+      kind: "approval_broker_multi_reentrant",
+      exportedState: {
+        assertions,
+        events,
+        resolved_records: [
+          firstRecord ? approvalRecordSummary(firstRecord) : null,
+          secondRecord ? approvalRecordSummary(secondRecord) : null,
+        ],
+      },
+      assertions,
+    });
+  }
+
   if (fixture.contract_name === "approval_pending_restored_after_daemon_restart") {
     const pendingPromise = broker.requestConversationalApproval("goal-approval", approvalTaskFor(fixture.contract_name), {
       approvalId: `approval-${fixture.contract_name}`,
@@ -1286,20 +1335,95 @@ async function runGatewayTrace(
     });
   }
 
-  const events = gatewayEventStreamFor(fixture);
+  const stateManager = new StateManager(stateRoot.controlDbBase, undefined, { walEnabled: false });
+  const events: TraceEvent[] = [];
+  const readTrace = fixture.contract_name === "gateway_read_workspace_under_protected_paths_no_approval";
+  let approvalRequested = false;
+  let readToolCallCount = 0;
+  const registry = new ToolRegistry();
+  if (readTrace) {
+    await fsp.writeFile(
+      path.join(stateRoot.workspaceRoot, "README.md"),
+      "PulSeed gateway read trace fixture.\nThis file is safe to read from the workspace.\n",
+      "utf8",
+    );
+    registry.register(new ReadTool());
+  }
+  const llmClient = makeGatewayChatTraceLlmClient(fixture);
+  const runner = new ChatRunner({
+    stateManager,
+    adapter: {
+      adapterType: "trace-adapter",
+      async execute() {
+        throw new Error("Gateway trace must use the gateway model loop.");
+      },
+    },
+    llmClient,
+    ...(readTrace ? { registry } : {}),
+    approvalRequestFn: async () => {
+      approvalRequested = true;
+      return false;
+    },
+    onToolStart: (toolName) => {
+      if (toolName === "read") readToolCallCount += 1;
+    },
+    onEvent: (event) => {
+      events.push(chatEventToTraceEvent(fixture, event as Record<string, unknown>));
+    },
+  });
+  const selectedRoute: SelectedChatRoute = {
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+  const ingress = buildStandaloneIngressMessage({
+    channel: "plugin_gateway",
+    conversation_id: `conversation:${fixture.contract_name}`,
+    cwd: stateRoot.workspaceRoot,
+    identity_key: `telegram:user:${fixture.contract_name}`,
+    message_id: `message:${fixture.contract_name}`,
+    platform: "telegram",
+    runtimeControl: { allowed: true, approvalMode: "interactive" },
+    text: readTrace
+      ? "README を読んで要約して"
+      : "こんにちは",
+    user_id: `user:${fixture.contract_name}`,
+  });
+  const result = await runner.executeIngressMessage(ingress, stateRoot.workspaceRoot, 120_000, selectedRoute);
   const visible = events.filter((event) => event.visible);
   const finalIndex = events.findIndex((event) => event.type === "assistant_final");
+  const readToolEnd = events.find((event) => event.type === "tool_end" && event.payload?.["tool_name"] === "read");
   const assertions: JsonObject = {
     assistant_delta_before_final: events.findIndex((event) => event.type === "assistant_delta") !== -1
       && finalIndex !== -1
       && events.findIndex((event) => event.type === "assistant_delta") < finalIndex,
     final_count: events.filter((event) => event.type === "assistant_final").length,
+    ...(readTrace
+      ? {
+          approval_requested: approvalRequested,
+          model_continued_after_read: llmClient.getRequests().length === 2 && result.success,
+          read_tool_executed: readToolCallCount === 1 && readToolEnd?.payload?.["success"] === true,
+        }
+      : {}),
     no_progress_after_final: finalIndex === -1 || events.slice(finalIndex + 1).every((event) => event.type !== "activity" && event.type !== "typing"),
     visible_event_count: visible.length,
   };
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "gateway_chat_event_stream",
-    exportedState: { assertions, events },
+    exportedState: {
+      assertions,
+      chat_result: {
+        output: result.output,
+        success: result.success,
+      },
+      events,
+      model_loop: llmClient.getRequests().map((request, index) => ({
+        index,
+        message_roles: request.messages.map((message) => message.role),
+      })),
+    },
     assertions,
   });
 }
@@ -1922,24 +2046,72 @@ function makeGatewayUnavailableToolLlmClient(): ILLMClient & {
   } as ILLMClient & { getRequests(): Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> };
 }
 
+function makeGatewayChatTraceLlmClient(fixture: GoldenTraceFixture): ILLMClient & {
+  getRequests(): Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }>;
+} {
+  const requests: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
+  const finalText = fixture.contract_name === "gateway_final_visible_suppresses_late_progress_and_typing"
+    ? "Done."
+    : "Hello.";
+  const responses: LLMResponse[] = fixture.contract_name === "gateway_read_workspace_under_protected_paths_no_approval"
+    ? [
+        {
+          content: "README を確認します。",
+          stop_reason: "tool_calls",
+          tool_calls: [{
+            id: "call-read-readme",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: JSON.stringify({ file_path: "README.md", limit: 5 }),
+            },
+          }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        {
+          content: "README was read through the gateway-safe read tool.",
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ]
+    : [{
+        content: finalText,
+        stop_reason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }];
+  const next = (messages: LLMMessage[], options?: LLMRequestOptions): LLMResponse => {
+    requests.push({ messages: JSON.parse(JSON.stringify(messages)) as LLMMessage[], options });
+    return responses.shift() ?? {
+      content: "No more scripted responses.",
+      stop_reason: "end_turn",
+      usage: { input_tokens: 0, output_tokens: 0 },
+    };
+  };
+  return {
+    async sendMessage(messages, options) {
+      return next(messages, options);
+    },
+    async sendMessageStream(messages, options, handlers: LLMStreamHandlers) {
+      const response = next(messages, options);
+      if (!response.tool_calls?.length && response.content) {
+        handlers.onTextDelta?.(response.content);
+      }
+      return response;
+    },
+    parseJSON(content: string, schema: { parse(value: unknown): unknown }) {
+      return schema.parse(JSON.parse(content));
+    },
+    supportsToolCalling: () => true,
+    getRequests: () => requests,
+  } as ILLMClient & { getRequests(): Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> };
+}
+
 function runtimeReplyTargetFromMetadata(value: unknown): RuntimeControlReplyTarget | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record["surface"] !== "gateway") return null;
   if (typeof record["conversation_id"] !== "string") return null;
   return record as RuntimeControlReplyTarget;
-}
-
-function gatewayEventStreamFor(fixture: GoldenTraceFixture): TraceEvent[] {
-  const finalText = fixture.contract_name === "gateway_final_visible_suppresses_late_progress_and_typing"
-    ? "Done."
-    : "Hello.";
-  return [
-    eventFor(fixture, "lifecycle_start", false, { turn_id: "turn:gateway" }),
-    eventFor(fixture, "assistant_delta", true, { delta: finalText, text: finalText }),
-    eventFor(fixture, "assistant_final", true, { persisted: true, text: finalText }),
-    eventFor(fixture, "lifecycle_end", false, { status: "completed" }),
-  ];
 }
 
 function sanitizeUnknown(value: unknown): JsonObject {

@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T00:25:05.929Z
+Generated: 2026-05-13T00:49:08.727Z
 
 Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.
 
@@ -60,7 +60,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - Replacement evidence:
   - Replacement trace name: gateway_read_workspace_under_protected_paths_no_approval
     - Real production entrypoint used: golden: Gateway ingress -> ChatRunner -> readonly workspace tool boundary
-    - Exported state artifact/assertion: golden: state/gateway/gateway_read_workspace_under_protected_paths_no_approval.json; assertions assistant_delta_before_final, final_count, no_progress_after_final, visible_event_count
+    - Exported state artifact/assertion: golden: state/gateway/gateway_read_workspace_under_protected_paths_no_approval.json; assertions approval_requested, assistant_delta_before_final, final_count, model_continued_after_read, no_progress_after_final, read_tool_executed, visible_event_count
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
@@ -235,7 +235,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: gateway_multi_approval_reentrant_same_turn
     - Real production entrypoint used: golden: Gateway turn approval manager -> approval_records
-    - Exported state artifact/assertion: golden: state/approval/gateway_multi_approval_reentrant_same_turn.json; assertions assistant_delta_before_final, final_count, no_progress_after_final, visible_event_count
+    - Exported state artifact/assertion: golden: state/approval/gateway_multi_approval_reentrant_same_turn.json; assertions approval_request_count, both_requests_resolved, first_resolved, pending_after_resolution, resolved_count, second_resolved
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.

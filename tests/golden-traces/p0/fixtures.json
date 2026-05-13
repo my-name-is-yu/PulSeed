@@ -184,7 +184,7 @@
               "assistant_delta_before_final": true,
               "final_count": 1,
               "no_progress_after_final": true,
-              "visible_event_count": 2
+              "visible_event_count": 3
             },
             "disposition": "ok",
             "kind": "gateway_chat_event_stream",
@@ -201,8 +201,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_ordinary_chat_first_visible_no_progress.json",
-          "sha256": "07020e7e79bd6a5ea143996d40163c171e30585d13a8d267f20877f0e71208b9",
-          "size": 1731,
+          "sha256": "ef4a5e58cbc44078cb58f285bc76dc1062b354afa4187b70c4ff26d5cbb8090f",
+          "size": 3511,
           "type": "file"
         }
       ],
@@ -405,7 +405,7 @@
               "assistant_delta_before_final": true,
               "final_count": 1,
               "no_progress_after_final": true,
-              "visible_event_count": 2
+              "visible_event_count": 3
             },
             "disposition": "ok",
             "kind": "gateway_chat_event_stream",
@@ -422,8 +422,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_assistant_delta_before_model_terminal.json",
-          "sha256": "711741ba103aa41674937837f81d909d2e7f3cab63e0059607e7b7def4663635",
-          "size": 1719,
+          "sha256": "70262c491024fe8878ab5b02924d39696a0ab4d27309bc3a1159daf6c21c660c",
+          "size": 3487,
           "type": "file"
         }
       ],
@@ -625,8 +625,11 @@
             "assertions": {
               "assistant_delta_before_final": true,
               "final_count": 1,
+              "approval_requested": false,
+              "model_continued_after_read": true,
+              "read_tool_executed": true,
               "no_progress_after_final": true,
-              "visible_event_count": 2
+              "visible_event_count": 7
             },
             "disposition": "ok",
             "kind": "gateway_chat_event_stream",
@@ -643,8 +646,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_read_workspace_under_protected_paths_no_approval.json",
-          "sha256": "58bd8fa70c9db8e62dda944cc37da0564bdd975bb4b7ae8f7964685db6fa9e59",
-          "size": 1778,
+          "sha256": "b11a34d0a19de1eaa07fa7ff5103bbae04226bc23baea378925517ec09c173d9",
+          "size": 6406,
           "type": "file"
         }
       ],
@@ -1954,7 +1957,7 @@
               "assistant_delta_before_final": true,
               "final_count": 1,
               "no_progress_after_final": true,
-              "visible_event_count": 2
+              "visible_event_count": 3
             },
             "disposition": "ok",
             "kind": "gateway_chat_event_stream",
@@ -1971,8 +1974,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_final_visible_suppresses_late_progress_and_typing.json",
-          "sha256": "d2398aafcfa016fbc23207ed2a4af693cb6334e86103a3a82dab216a87673b7d",
-          "size": 1797,
+          "sha256": "cc30c69263e21df4c6d12401b9604f18413832d965a9aabb55ceda14b21c98f4",
+          "size": 3638,
           "type": "file"
         }
       ],
@@ -2763,7 +2766,7 @@
         {
           "at": "<TIMESTAMP>",
           "payload": {
-            "kind": "gateway_chat_event_stream",
+            "kind": "approval_broker_multi_reentrant",
             "runner_status": "real_production_path",
             "status": "checked"
           },
@@ -2841,13 +2844,15 @@
         "records": [
           {
             "assertions": {
-              "assistant_delta_before_final": true,
-              "final_count": 1,
-              "no_progress_after_final": true,
-              "visible_event_count": 2
+              "approval_request_count": 2,
+              "both_requests_resolved": true,
+              "first_resolved": true,
+              "pending_after_resolution": false,
+              "resolved_count": 2,
+              "second_resolved": true
             },
             "disposition": "ok",
-            "kind": "gateway_chat_event_stream",
+            "kind": "approval_broker_multi_reentrant",
             "production_boundary": "Gateway turn approval manager -> approval_records"
           }
         ],
@@ -2861,8 +2866,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_multi_approval_reentrant_same_turn.json",
-          "sha256": "1ff5318dad4e7ffe0c11011e9d0f3ab187ed468fad94b37289526ef05f4d4d04",
-          "size": 1680,
+          "sha256": "9e07ada392570f44a7ae88cbd4020e4e29888b3f38188c5ffc666d4a6c201539",
+          "size": 6010,
           "type": "file"
         }
       ],
