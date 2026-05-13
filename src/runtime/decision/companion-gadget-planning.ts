@@ -58,6 +58,7 @@ export const CompanionGadgetPlanningRefKindSchema = z.enum([
   "runtime_control",
   "user_request",
   "feedback_signal",
+  "procedural_memory",
 ]);
 export type CompanionGadgetPlanningRefKind = z.infer<typeof CompanionGadgetPlanningRefKindSchema>;
 
