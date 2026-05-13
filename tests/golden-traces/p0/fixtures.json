@@ -5349,6 +5349,312 @@
   },
   {
     "schema_version": "pulseed.golden-trace.v1",
+    "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+    "domain": "schedule",
+    "p0_failure_mode": "schedule goal trigger lost command",
+    "production_boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+      "steps": []
+    },
+    "expected": {
+      "events": [
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "lifecycle_start",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "artifact_ref": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+            "disposition": "production_exported",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "state_artifact",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "kind": "schedule_goal_trigger_dispatch",
+            "runner_status": "real_production_path",
+            "status": "checked"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "operation_progress",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+            "disposition": "ok",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "contract_observed",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "once": true,
+            "runner_status": "real_production_path",
+            "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "assistant_final",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "status": "ok"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "lifecycle_end",
+          "visible": false
+        }
+      ],
+      "surface": {
+        "final": {
+          "once": true,
+          "runner_status": "real_production_path",
+          "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+        },
+        "visible_events": [
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+              "disposition": "ok",
+              "runner_status": "real_production_path"
+            },
+            "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "type": "contract_observed",
+            "visible": true
+          },
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "once": true,
+              "runner_status": "real_production_path",
+              "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+            },
+            "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "type": "assistant_final",
+            "visible": true
+          }
+        ]
+      },
+      "control_db_export": {
+        "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+        "domain": "schedule",
+        "p0_failure_mode": "schedule goal trigger lost command",
+        "records": [
+          {
+            "assertions": {
+              "core_loop_run_count": 1,
+              "entry_total_executions": 1,
+              "first_history_goal_id": "goal-schedule-dispatch",
+              "first_history_status": "ok",
+              "first_result_goal_id": "goal-schedule-dispatch",
+              "first_result_status": "ok",
+              "history_count": 1,
+              "result_count": 1,
+              "state_load_goal_count": 0,
+              "tokens_used_today": 321,
+              "bounded_goal_dispatch": true,
+              "result_tokens_used": 321
+            },
+            "disposition": "ok",
+            "kind": "schedule_goal_trigger_dispatch",
+            "production_boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact"
+          }
+        ],
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+          "production_entrypoint": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+          "same_checkout_pass_command": "npm run test:golden-traces",
+          "status": "real_production_path"
+        }
+      },
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+          "sha256": "356c4166d805529f3844b83f71d9360e35cde0054941e8518561aa1e13289f3b",
+          "size": 1379,
+          "type": "file"
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  {
+    "schema_version": "pulseed.golden-trace.v1",
+    "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+    "domain": "schedule",
+    "p0_failure_mode": "stale target reuse",
+    "production_boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() -> active goal state skip artifact",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+      "steps": []
+    },
+    "expected": {
+      "events": [
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "lifecycle_start",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "artifact_ref": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+            "disposition": "production_exported",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "state_artifact",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "kind": "schedule_goal_trigger_active_skip",
+            "runner_status": "real_production_path",
+            "status": "checked"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "operation_progress",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+            "disposition": "ok",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "contract_observed",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "once": true,
+            "runner_status": "real_production_path",
+            "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "assistant_final",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "status": "ok"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "lifecycle_end",
+          "visible": false
+        }
+      ],
+      "surface": {
+        "final": {
+          "once": true,
+          "runner_status": "real_production_path",
+          "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+        },
+        "visible_events": [
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+              "disposition": "ok",
+              "runner_status": "real_production_path"
+            },
+            "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "type": "contract_observed",
+            "visible": true
+          },
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "once": true,
+              "runner_status": "real_production_path",
+              "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+            },
+            "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "type": "assistant_final",
+            "visible": true
+          }
+        ]
+      },
+      "control_db_export": {
+        "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+        "domain": "schedule",
+        "p0_failure_mode": "stale target reuse",
+        "records": [
+          {
+            "assertions": {
+              "core_loop_run_count": 0,
+              "entry_total_executions": 1,
+              "first_history_goal_id": null,
+              "first_history_status": "skipped",
+              "first_result_goal_id": null,
+              "first_result_status": "skipped",
+              "history_count": 1,
+              "result_count": 1,
+              "state_load_goal_count": 1,
+              "tokens_used_today": 0,
+              "active_goal_skip": true,
+              "result_error_message": "goal goal-schedule-active is already active"
+            },
+            "disposition": "ok",
+            "kind": "schedule_goal_trigger_active_skip",
+            "production_boundary": "ScheduleEngine.tick() -> active goal state skip artifact"
+          }
+        ],
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+          "production_entrypoint": "ScheduleEngine.tick() -> active goal state skip artifact",
+          "same_checkout_pass_command": "npm run test:golden-traces",
+          "status": "real_production_path"
+        }
+      },
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+          "sha256": "b1e63d62d6356e25e601e97aff410dd0186884495ff6fa0b70367bba62736023",
+          "size": 1287,
+          "type": "file"
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  {
+    "schema_version": "pulseed.golden-trace.v1",
     "contract_name": "schedule_wait_resume_before_due_no_attention_or_notification",
     "domain": "schedule",
     "p0_failure_mode": "observe due 前実行",

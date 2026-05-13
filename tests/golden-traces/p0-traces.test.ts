@@ -30,6 +30,8 @@ const expectedP0TraceNames = [
   "runtime_control_finalize_records_proposal_without_external_action",
   "eventserver_command_accept_durable_before_200",
   "eventserver_approval_unknown_request_rejected_before_accept",
+  "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+  "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
   "schedule_wait_resume_before_due_no_attention_or_notification",
   "schedule_wait_resume_due_creates_held_attention_artifact",
   "schedule_wait_resume_retry_same_due_idempotent",

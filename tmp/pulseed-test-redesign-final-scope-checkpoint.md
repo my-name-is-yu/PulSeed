@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Approval stale-origin/no-delivery P0 traces upgraded; next is schedule goal-trigger public tick evidence.
+Schedule goal-trigger public tick evidence recovered; next is daemon/session-registry and chat old-block inventory.
 
 ## Current Evidence Read
 
@@ -22,8 +22,8 @@ Inventory summary currently reports:
 
 - `test_like_files`: 784
 - `classification_counts.replace`: 12
-- `p0_trace_count`: 40
-- `p0_mapped_trace_count`: 40
+- `p0_trace_count`: 42
+- `p0_mapped_trace_count`: 42
 - `current_coverage_gap_count`: 0
 
 Runner and fixture scan confirms the P0 fixture set records `runner_status: real_production_path`; `pending_real_runner` support still exists in harness code, but current replacement fixtures must not use it as deletion evidence.
@@ -92,6 +92,9 @@ Deletion is allowed only per block when replacement map records:
 - `src/runtime/__tests__/approval-broker.test.ts`
   - Recovered stale conversational origin evidence by trying channel, conversation, user, session, and turn mismatches; the approval remains pending and no mutation is recorded.
   - Recovered no-delivery evidence with an `ApprovalBroker` that has no `deliverConversationalApproval` callback; request resolves false, record is denied, and the reason is `approval_channel_unreachable`.
+- `src/runtime/__tests__/schedule-engine.test.ts`
+  - Deleted direct `(eng as any).executeGoalTrigger` private-method token/call-argument blocks.
+  - Replaced them with public `ScheduleEngine.tick()` traces for bounded CoreLoop dispatch and active-goal skip; artifacts include core loop calls, schedule history, persisted execution counters, and skipped-result state.
 
 ## Blocks Kept And Reason
 
@@ -108,13 +111,13 @@ Deletion is allowed only per block when replacement map records:
 
 ## Added Runner / Trace / Replay
 
-- No new runner/trace/replay added yet.
 - Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
 - Added a migration contract test for legacy `runtime/queue.json` mixed safe/unsafe import through `importLegacyQueueDaemonScheduleState` and the control DB queue store.
 - Added `tests/contracts/tool-file-write-boundary.test.ts` as production-boundary contract evidence for ordered approval-before-mutation and unsafe FileWrite path denial.
 - Added focused autonomy regression coverage for legacy agenda-shaped records defaulting to regrounding-only state before admission.
 - Upgraded the existing `runtime_control_resume_after_companion_revival_requires_readmission` golden trace to exercise the real companion-control sequence before the blocked `resume_run`.
 - Upgraded approval golden traces for origin-bound mismatch variants and missing delivery callback fail-closed behavior.
+- Added `schedule_goal_trigger_due_dispatches_coreloop_artifact` and `schedule_goal_trigger_active_goal_skips_coreloop_artifact` to the P0 golden lane.
 
 ## Replacement Map Updates
 
@@ -128,6 +131,7 @@ Deletion is allowed only per block when replacement map records:
   - Added attention-state-store assertion inventory, including retained high-value store contracts and the moved old agenda-shape block.
 - Regenerated the runtime-control replacement evidence after the readmission fixture gained `companion_suspend_recorded`, `companion_resume_recorded`, `resume_outcome`, and `resume_requires_readmission` assertions.
 - Regenerated the approval replacement evidence after the origin fixture gained mismatch field assertions and the delivery fixture switched from delivered=false callback to no delivery callback.
+- Added schedule goal-trigger public tick traces to the replacement map and reclassified the direct `executeGoalTrigger` private-method blocks as deleted with replacement evidence.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -178,6 +182,11 @@ Deletion is allowed only per block when replacement map records:
 - `npm run typecheck` -> passed after approval runner update
 - `npm run test:replay` -> passed after approval runner update
 - `node scripts/inventory-test-redesign.mjs` -> after approval runner update regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:golden-traces` -> after schedule goal-trigger runner addition and private-method deletion passed 1 file / 45 tests
+- `npx vitest run src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` -> after schedule private-method deletion passed 1 file / 92 tests
+- `npm run typecheck` -> passed after schedule runner/deletion update
+- `npm run test:replay` -> passed after schedule runner/deletion update
+- `node scripts/inventory-test-redesign.mjs` -> after schedule runner/deletion update regenerated 784 inventory records, 0 current include gaps, 42/42 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -190,7 +199,7 @@ Deletion is allowed only per block when replacement map records:
   - FileWrite approval-before-mutation evidence needed ordered event/state evidence, not a post-hoc boolean. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
   - Approval stale-origin mismatch and no-delivery branches needed stronger coverage before deleting related approval-broker blocks. Recovered by upgrading `approval_origin_bound_stale_reply_rejected` and `approval_delivery_unavailable_denies_not_executes`.
   - `resume_companion` -> `resume_run` readmission gate needed a real RuntimeControlService trace before deleting that runtime-control block. Recovered by upgrading `runtime_control_resume_after_companion_revival_requires_readmission`.
-  - Schedule goal-trigger dispatch and active-goal skip need public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks.
+  - Schedule goal-trigger dispatch and active-goal skip needed public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks. Recovered by `schedule_goal_trigger_due_dispatches_coreloop_artifact` and `schedule_goal_trigger_active_goal_skips_coreloop_artifact`.
 
 ## Commands Failing
 
@@ -223,4 +232,4 @@ Final required gates:
 
 ## Next
 
-Recover the remaining Safety Reviewer blocker before deleting corresponding old blocks: schedule goal-trigger public tick artifacts.
+Continue with daemon/session-registry, then chat-runner/cross-platform-session old-block inventory and deletion. Keep gateway/chat deletions block-scoped.

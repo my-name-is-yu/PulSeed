@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-13T03:27:48.676Z",
+  "generated_at": "2026-05-13T03:35:09.785Z",
   "test_like_files": 784,
   "current_lane_counts": {
     "unit": 680,
@@ -30,8 +30,8 @@
   },
   "current_coverage_gap_count": 0,
   "current_coverage_gaps": [],
-  "p0_trace_count": 40,
-  "p0_mapped_trace_count": 40,
+  "p0_trace_count": 42,
+  "p0_mapped_trace_count": 42,
   "p0_unmapped_traces": [],
   "phase0_completion": {
     "inventory_covers_all_test_like_files": true,

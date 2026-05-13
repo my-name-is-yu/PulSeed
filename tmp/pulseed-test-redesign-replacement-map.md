@@ -1,12 +1,12 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:27:48.676Z
+Generated: 2026-05-13T03:35:09.785Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
 ## P0 Trace Coverage
 
-- Mapped P0 traces: 40/40
+- Mapped P0 traces: 42/42
 - Unmapped P0 traces: 0
 
 ## Old Test Blocks
@@ -238,12 +238,21 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted direct `(eng as any).executeCron` tests that asserted mocked context, prompt interpolation, notification, output summary, missing config, and reflection helper details instead of the public schedule tick contract.
   - Block: Direct executeGoalTrigger private-method assertions
-    - Old line range: 2480-2607
-    - Classification: obsolete
-    - Replacement trace: none
-    - Deletion allowed: no
-    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Deleted direct `(eng as any).executeGoalTrigger` tests that followed CoreLoop call arguments and budget internals rather than a production goal-trigger schedule artifact.
+    - Old line range: 2467-2497, 2813-2840
+    - Classification: delete_now
+    - Replacement trace: schedule_goal_trigger_due_dispatches_coreloop_artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json; assertions bounded_goal_dispatch, core_loop_run_count, entry_total_executions, first_history_goal_id, first_history_status, first_result_goal_id, first_result_status, history_count, result_count, result_tokens_used, state_load_goal_count, tokens_used_today
+    - Production entrypoint exercised: golden: ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact
+    - Deletion allowed: yes
+    - Evidence: Deleted direct `(eng as any).executeGoalTrigger` tests after the public tick runner began asserting bounded goal dispatch, persisted history, execution counters, and tokens through `ScheduleEngine.tick()`.
+  - Block: Goal-trigger active-goal skip branch
+    - Old line range: historical direct goal-trigger skip assertions
+    - Classification: delete_now
+    - Replacement trace: schedule_goal_trigger_active_goal_skips_coreloop_artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json; assertions active_goal_skip, core_loop_run_count, entry_total_executions, first_history_goal_id, first_history_status, first_result_goal_id, first_result_status, history_count, result_count, result_error_message, state_load_goal_count, tokens_used_today
+    - Production entrypoint exercised: golden: ScheduleEngine.tick() -> active goal state skip artifact
+    - Deletion allowed: yes
+    - Evidence: Recovered the active-goal skip branch through a public `ScheduleEngine.tick()` trace that loads the goal state, records skipped history, and proves coreLoop was not invoked.
   - Block: routes wait-resume schedule wakes through attention re-evaluation without notification
     - Old line range: 2608-2667
     - Classification: delete_now
@@ -276,6 +285,18 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted implementation-routing assertions that verified private dispatch selection through mocks; visible cron and goal-trigger behavior remains in surviving public tick tests until dedicated runner traces exist.
 - Replacement evidence:
+  - Replacement trace name: schedule_goal_trigger_due_dispatches_coreloop_artifact
+    - Real production entrypoint used: golden: ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json; assertions bounded_goal_dispatch, core_loop_run_count, entry_total_executions, first_history_goal_id, first_history_status, first_result_goal_id, first_result_status, history_count, result_count, result_tokens_used, state_load_goal_count, tokens_used_today
+    - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
+    - Deletion allowed: no
+    - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+  - Replacement trace name: schedule_goal_trigger_active_goal_skips_coreloop_artifact
+    - Real production entrypoint used: golden: ScheduleEngine.tick() -> active goal state skip artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json; assertions active_goal_skip, core_loop_run_count, entry_total_executions, first_history_goal_id, first_history_status, first_result_goal_id, first_result_status, history_count, result_count, result_error_message, state_load_goal_count, tokens_used_today
+    - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
+    - Deletion allowed: no
+    - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: schedule_wait_resume_before_due_no_attention_or_notification
     - Real production entrypoint used: golden: ScheduleEngine.tick() -> schedule store/history -> attention projection
     - Exported state artifact/assertion: golden: state/schedule/schedule_wait_resume_before_due_no_attention_or_notification.json; assertions due_result_count, next_fire_in_future, notification_count
@@ -300,7 +321,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 105 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope schedule recovery: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 1 file / 92 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/__tests__/approval-broker.test.ts

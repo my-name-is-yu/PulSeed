@@ -829,6 +829,93 @@ async function runScheduleTrace(
   fixture: GoldenTraceFixture,
   stateRoot: IsolatedStateRoot,
 ): Promise<GoldenTraceRunResult> {
+  if (
+    fixture.contract_name === "schedule_goal_trigger_due_dispatches_coreloop_artifact" ||
+    fixture.contract_name === "schedule_goal_trigger_active_goal_skips_coreloop_artifact"
+  ) {
+    const activeSkip = fixture.contract_name === "schedule_goal_trigger_active_goal_skips_coreloop_artifact";
+    const dueAt = "2026-05-12T00:00:00.000Z";
+    const coreLoopCalls: JsonObject[] = [];
+    const stateGoalLoads: JsonObject[] = [];
+    const coreLoop = {
+      run: async (goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident" }) => {
+        coreLoopCalls.push({
+          goal_id: goalId,
+          max_iterations: options?.maxIterations ?? null,
+          run_policy: options?.runPolicy ?? null,
+        });
+        return { finalStatus: "completed", goalId, tokensUsed: 321, totalIterations: 2 };
+      },
+    };
+    const stateManager = activeSkip
+      ? {
+        loadGoal: async (goalId: string) => {
+          stateGoalLoads.push({ goal_id: goalId });
+          return { id: goalId, status: "active" };
+        },
+      } as unknown as StateManager
+      : undefined;
+    const engine = new ScheduleEngine({
+      baseDir: stateRoot.controlDbBase,
+      coreLoop,
+      ...(stateManager ? { stateManager } : {}),
+    });
+    const entry = await engine.addEntry(makeGoalTriggerScheduleInput({
+      goalId: activeSkip ? "goal-schedule-active" : "goal-schedule-dispatch",
+      maxIterations: 4,
+      skipIfActive: activeSkip,
+      suffix: activeSkip ? "active-skip" : "dispatch",
+    }));
+    engine.getEntries()[0]!.next_fire_at = dueAt;
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    const results = await engine.tick();
+    const history = await engine.getRecentHistory(10, entry.id);
+    const updatedEntry = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    const firstResult = results[0] ?? null;
+    const assertions: JsonObject = {
+      core_loop_run_count: coreLoopCalls.length,
+      entry_total_executions: updatedEntry.total_executions,
+      first_history_goal_id: history[0]?.goal_id ?? null,
+      first_history_status: history[0]?.status ?? null,
+      first_result_goal_id: firstResult?.goal_id ?? null,
+      first_result_status: firstResult?.status ?? null,
+      history_count: history.length,
+      result_count: results.length,
+      state_load_goal_count: stateGoalLoads.length,
+      tokens_used_today: updatedEntry.tokens_used_today,
+    };
+    if (activeSkip) {
+      assertions["active_goal_skip"] = coreLoopCalls.length === 0
+        && firstResult?.status === "skipped"
+        && firstResult?.error_message === "goal goal-schedule-active is already active";
+      assertions["result_error_message"] = firstResult?.error_message ?? null;
+    } else {
+      assertions["bounded_goal_dispatch"] = coreLoopCalls[0]?.["goal_id"] === "goal-schedule-dispatch"
+        && coreLoopCalls[0]?.["max_iterations"] === 4
+        && coreLoopCalls[0]?.["run_policy"] === "bounded";
+      assertions["result_tokens_used"] = firstResult?.tokens_used ?? null;
+    }
+
+    return buildRealGoldenResult(fixture, stateRoot, {
+      kind: activeSkip ? "schedule_goal_trigger_active_skip" : "schedule_goal_trigger_dispatch",
+      exportedState: {
+        assertions,
+        core_loop_calls: coreLoopCalls,
+        history: history.map((record) => ({
+          goal_id: record.goal_id ?? null,
+          reason: record.reason,
+          scheduled_for: record.scheduled_for,
+          status: record.status,
+          tokens_used: record.tokens_used ?? null,
+        })),
+        state_goal_loads: stateGoalLoads,
+      },
+      assertions,
+    });
+  }
+
   if (fixture.contract_name === "schedule_wait_resume_before_due_no_attention_or_notification") {
     const notifications: JsonObject[] = [];
     const engine = new ScheduleEngine({
@@ -1842,6 +1929,26 @@ function makeWaitResumeScheduleInput(suffix: string): Parameters<ScheduleEngine[
       goal_id: "goal-wait-resume",
       max_iterations: 5,
       skip_if_active: false,
+    },
+  };
+}
+
+function makeGoalTriggerScheduleInput(input: {
+  goalId: string;
+  maxIterations: number;
+  skipIfActive: boolean;
+  suffix: string;
+}): Parameters<ScheduleEngine["addEntry"]>[0] {
+  return {
+    name: `goal-trigger-${input.suffix}`,
+    layer: "goal_trigger",
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+    enabled: true,
+    goal_trigger: {
+      goal_id: input.goalId,
+      max_iterations: input.maxIterations,
+      run_policy: "bounded",
+      skip_if_active: input.skipIfActive,
     },
   };
 }

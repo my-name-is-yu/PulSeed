@@ -123,6 +123,8 @@ const p0TraceMappings = [
   {
     oldPath: "src/runtime/__tests__/schedule-engine.test.ts",
     traces: [
+      "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+      "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
       "schedule_wait_resume_before_due_no_attention_or_notification",
       "schedule_wait_resume_due_creates_held_attention_artifact",
       "schedule_wait_resume_retry_same_due_idempotent",
@@ -154,10 +156,17 @@ const p0TraceMappings = [
       },
       {
         block: "Direct executeGoalTrigger private-method assertions",
-        oldLineRange: "2480-2607",
-        classification: "obsolete",
-        replacementTrace: null,
-        evidence: "Deleted direct `(eng as any).executeGoalTrigger` tests that followed CoreLoop call arguments and budget internals rather than a production goal-trigger schedule artifact.",
+        oldLineRange: "2467-2497, 2813-2840",
+        classification: "delete_now",
+        replacementTrace: "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+        evidence: "Deleted direct `(eng as any).executeGoalTrigger` tests after the public tick runner began asserting bounded goal dispatch, persisted history, execution counters, and tokens through `ScheduleEngine.tick()`.",
+      },
+      {
+        block: "Goal-trigger active-goal skip branch",
+        oldLineRange: "historical direct goal-trigger skip assertions",
+        classification: "delete_now",
+        replacementTrace: "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+        evidence: "Recovered the active-goal skip branch through a public `ScheduleEngine.tick()` trace that loads the goal state, records skipped history, and proves coreLoop was not invoked.",
       },
       {
         block: "routes wait-resume schedule wakes through attention re-evaluation without notification",
@@ -562,6 +571,8 @@ const allP0Traces = [
   "runtime_control_finalize_records_proposal_without_external_action",
   "eventserver_command_accept_durable_before_200",
   "eventserver_approval_unknown_request_rejected_before_accept",
+  "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+  "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
   "schedule_wait_resume_before_due_no_attention_or_notification",
   "schedule_wait_resume_due_creates_held_attention_artifact",
   "schedule_wait_resume_retry_same_due_idempotent",
@@ -603,7 +614,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/__tests__/schedule-engine.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 105 tests.",
+    "2026-05-13 final-scope schedule recovery: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 1 file / 92 tests.",
   ],
   [
     "src/runtime/__tests__/approval-broker.test.ts",
