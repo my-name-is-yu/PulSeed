@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:24:20.405Z
+Generated: 2026-05-13T03:27:48.676Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -117,13 +117,13 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: approval_origin_bound_stale_reply_rejected
     - Real production entrypoint used: golden: Approval response -> origin-bound approval broker
-    - Exported state artifact/assertion: golden: state/approval/approval_origin_bound_stale_reply_rejected.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_origin_bound_stale_reply_rejected.json; assertions all_origin_mismatches_rejected, mutation_executed, origin_mismatch_fields, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: approval_delivery_unavailable_denies_not_executes
     - Real production entrypoint used: golden: Gateway approval delivery -> channel availability gate
-    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions delivery_callback_configured, delivery_unavailable_denied, mutation_executed, pending_after_resolution, request_result, resolution_reason, resolved, resolved_state, stale_reply_rejected
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
@@ -322,7 +322,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Old line range: 498-540
     - Classification: delete_now
     - Replacement trace: approval_origin_bound_stale_reply_rejected
-    - Exported state artifact/assertion: golden: state/approval/approval_origin_bound_stale_reply_rejected.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_origin_bound_stale_reply_rejected.json; assertions all_origin_mismatches_rejected, mutation_executed, origin_mismatch_fields, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
     - Production entrypoint exercised: golden: Approval response -> origin-bound approval broker
     - Deletion allowed: yes
     - Evidence: Trace asserts stale origin replies are rejected, the pending approval remains pending, and no mutation executes.
@@ -330,7 +330,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Old line range: 614-645
     - Classification: delete_now
     - Replacement trace: approval_delivery_unavailable_denies_not_executes
-    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions delivery_callback_configured, delivery_unavailable_denied, mutation_executed, pending_after_resolution, request_result, resolution_reason, resolved, resolved_state, stale_reply_rejected
     - Production entrypoint exercised: golden: Gateway approval delivery -> channel availability gate
     - Deletion allowed: yes
     - Evidence: Trace asserts unavailable delivery denies the approval request, records denied state, and prevents mutation execution.
@@ -338,7 +338,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Old line range: 646-674
     - Classification: delete_now
     - Replacement trace: approval_delivery_unavailable_denies_not_executes
-    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions delivery_callback_configured, delivery_unavailable_denied, mutation_executed, pending_after_resolution, request_result, resolution_reason, resolved, resolved_state, stale_reply_rejected
     - Production entrypoint exercised: golden: Gateway approval delivery -> channel availability gate
     - Deletion allowed: yes
     - Evidence: Trace covers the same delivery-unavailable denial contract at the approval/tool gate with no execution.

@@ -665,7 +665,7 @@ async function runApprovalTrace(
     createId: () => `approval-${fixture.contract_name}`,
     now: () => Date.parse(fixture.input.fake_now),
     broadcast: (eventType, data) => events.push({ event_type: eventType, data: sanitizeUnknown(data) }),
-    deliverConversationalApproval: delivery,
+    ...(delivery ? { deliverConversationalApproval: delivery } : {}),
   });
 
   let requestResult: boolean | null = null;
@@ -756,23 +756,41 @@ async function runApprovalTrace(
   if (fixture.contract_name !== "approval_delivery_unavailable_denies_not_executes") {
     await waitForPendingApproval(store, `approval-${fixture.contract_name}`);
   }
-  const resolved = fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
-    ? false
-    : await broker.resolveConversationalApproval(
+  const staleOriginAttempts: JsonObject[] = [];
+  let resolved: boolean;
+  if (fixture.contract_name === "approval_delivery_unavailable_denies_not_executes") {
+    requestResult = await pending;
+    resolved = false;
+  } else if (fixture.contract_name === "approval_origin_bound_stale_reply_rejected") {
+    const attempts: Array<{ field: string; origin: typeof origin }> = [
+      { field: "channel", origin: { ...origin, channel: "slack" } },
+      { field: "conversation_id", origin: { ...origin, conversation_id: "approval-chat-stale" } },
+      { field: "user_id", origin: { ...origin, user_id: "operator-stale" } },
+      { field: "session_id", origin: { ...origin, session_id: "session:approval:stale" } },
+      { field: "turn_id", origin: { ...origin, turn_id: "turn:stale" } },
+    ];
+    for (const attempt of attempts) {
+      const accepted = await broker.resolveConversationalApproval(
+        `approval-${fixture.contract_name}`,
+        true,
+        attempt.origin,
+      );
+      staleOriginAttempts.push({ accepted, field: attempt.field });
+    }
+    resolved = staleOriginAttempts.some((attempt) => attempt["accepted"] === true);
+    requestResult = null;
+  } else {
+    resolved = await broker.resolveConversationalApproval(
       `approval-${fixture.contract_name}`,
       !fixture.contract_name.includes("denial"),
-      fixture.contract_name === "approval_origin_bound_stale_reply_rejected"
-        ? { ...origin, turn_id: "turn:stale" }
-        : origin,
+      origin,
     );
-  requestResult = fixture.contract_name.includes("denial") ||
-    fixture.contract_name === "approval_origin_bound_stale_reply_rejected" ||
-    fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
-    ? null
-    : resolved;
+    requestResult = fixture.contract_name.includes("denial") ? null : resolved;
+  }
   await broker.stop();
   const pendingRecord = await store.loadPending(`approval-${fixture.contract_name}`);
   const resolvedRecord = await store.loadResolved(`approval-${fixture.contract_name}`);
+  const resolvedEvent = events.find((event) => event["event_type"] === "approval_resolved");
   const assertions: JsonObject = {
     mutation_executed: false,
     pending_after_resolution: pendingRecord !== null,
@@ -781,6 +799,19 @@ async function runApprovalTrace(
     resolved_state: resolvedRecord?.state ?? null,
     stale_reply_rejected: fixture.contract_name === "approval_origin_bound_stale_reply_rejected" ? resolved === false : null,
   };
+  if (fixture.contract_name === "approval_origin_bound_stale_reply_rejected") {
+    assertions["all_origin_mismatches_rejected"] = staleOriginAttempts.every((attempt) => attempt["accepted"] === false);
+    assertions["origin_mismatch_fields"] = staleOriginAttempts.map((attempt) => attempt["field"]);
+  }
+  if (fixture.contract_name === "approval_delivery_unavailable_denies_not_executes") {
+    assertions["delivery_callback_configured"] = delivery !== undefined;
+    assertions["delivery_unavailable_denied"] = pendingRecord === null
+      && resolvedRecord?.state === "denied"
+      && requestResult === false;
+    assertions["resolution_reason"] = typeof resolvedEvent?.["data"] === "object" && resolvedEvent["data"] !== null
+      ? ((resolvedEvent["data"] as Record<string, unknown>)["reason"] ?? null)
+      : null;
+  }
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "approval_broker_scope_gate",
     exportedState: {
@@ -788,6 +819,7 @@ async function runApprovalTrace(
       events,
       pending_record: pendingRecord ? approvalRecordSummary(pendingRecord) : null,
       resolved_record: resolvedRecord ? approvalRecordSummary(resolvedRecord) : null,
+      ...(staleOriginAttempts.length > 0 ? { stale_origin_attempts: staleOriginAttempts } : {}),
     },
     assertions,
   });
@@ -1746,9 +1778,9 @@ function backgroundRun(overrides: Partial<BackgroundRun>): BackgroundRun {
   };
 }
 
-function deliveryForApprovalTrace(contractName: string): () => ConversationalApprovalDelivery {
+function deliveryForApprovalTrace(contractName: string): (() => ConversationalApprovalDelivery) | undefined {
   if (contractName === "approval_delivery_unavailable_denies_not_executes") {
-    return () => ({ delivered: false, reason: "channel_unavailable" });
+    return undefined;
   }
   return () => ({ delivered: true });
 }

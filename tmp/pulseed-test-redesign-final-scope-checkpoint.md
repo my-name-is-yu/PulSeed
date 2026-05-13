@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Runtime-control resume-after-companion-lift P0 trace upgraded; next is approval stale-origin/no-delivery blockers.
+Approval stale-origin/no-delivery P0 traces upgraded; next is schedule goal-trigger public tick evidence.
 
 ## Current Evidence Read
 
@@ -89,6 +89,9 @@ Deletion is allowed only per block when replacement map records:
   - Removed raw legacy DB row insertion block for old agenda shapes; moved the meaningful default/regrounding/admission assertion to `tests/regression/companion-autonomy-contracts.test.ts`.
 - `src/runtime/control/__tests__/runtime-control-service.test.ts`
   - Recovered the resume-after-companion-lift readmission block by upgrading the golden runner to execute `suspend_companion -> resume_companion -> resume_run` through `RuntimeControlService`; the final resume is blocked with `resume_rejected_safety` and executor count stays zero.
+- `src/runtime/__tests__/approval-broker.test.ts`
+  - Recovered stale conversational origin evidence by trying channel, conversation, user, session, and turn mismatches; the approval remains pending and no mutation is recorded.
+  - Recovered no-delivery evidence with an `ApprovalBroker` that has no `deliverConversationalApproval` callback; request resolves false, record is denied, and the reason is `approval_channel_unreachable`.
 
 ## Blocks Kept And Reason
 
@@ -111,6 +114,7 @@ Deletion is allowed only per block when replacement map records:
 - Added `tests/contracts/tool-file-write-boundary.test.ts` as production-boundary contract evidence for ordered approval-before-mutation and unsafe FileWrite path denial.
 - Added focused autonomy regression coverage for legacy agenda-shaped records defaulting to regrounding-only state before admission.
 - Upgraded the existing `runtime_control_resume_after_companion_revival_requires_readmission` golden trace to exercise the real companion-control sequence before the blocked `resume_run`.
+- Upgraded approval golden traces for origin-bound mismatch variants and missing delivery callback fail-closed behavior.
 
 ## Replacement Map Updates
 
@@ -123,6 +127,7 @@ Deletion is allowed only per block when replacement map records:
   - Replaced FileWrite post-hoc deletion evidence with explicit contract evidence for ordered approval/wait-plan/tool-call events and unsafe path denial.
   - Added attention-state-store assertion inventory, including retained high-value store contracts and the moved old agenda-shape block.
 - Regenerated the runtime-control replacement evidence after the readmission fixture gained `companion_suspend_recorded`, `companion_resume_recorded`, `resume_outcome`, and `resume_requires_readmission` assertions.
+- Regenerated the approval replacement evidence after the origin fixture gained mismatch field assertions and the delivery fixture switched from delivered=false callback to no delivery callback.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -168,6 +173,11 @@ Deletion is allowed only per block when replacement map records:
 - `node scripts/inventory-test-redesign.mjs` -> after runtime-control readmission recovery regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
 - `npm run typecheck` -> passed after runtime-control readmission runner update
 - `npm run test:replay` -> passed after runtime-control readmission runner update
+- `npm run test:golden-traces` -> first approval runner upgrade attempt failed expectedly because the fixtures still described the older weaker approval outputs
+- `npm run test:golden-traces` -> after approval fixture update passed 1 file / 43 tests
+- `npm run typecheck` -> passed after approval runner update
+- `npm run test:replay` -> passed after approval runner update
+- `node scripts/inventory-test-redesign.mjs` -> after approval runner update regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -178,7 +188,7 @@ Deletion is allowed only per block when replacement map records:
   - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks needed a queue migration contract through `runtime/queue.json` -> control DB import. Recovered by `src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts`.
   - Unsafe FileWrite path denial from already-deleted FileWrite blocks needed production tool-boundary evidence. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
   - FileWrite approval-before-mutation evidence needed ordered event/state evidence, not a post-hoc boolean. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
-  - Approval stale-origin mismatch and no-delivery branches need stronger coverage before deleting related approval-broker blocks.
+  - Approval stale-origin mismatch and no-delivery branches needed stronger coverage before deleting related approval-broker blocks. Recovered by upgrading `approval_origin_bound_stale_reply_rejected` and `approval_delivery_unavailable_denies_not_executes`.
   - `resume_companion` -> `resume_run` readmission gate needed a real RuntimeControlService trace before deleting that runtime-control block. Recovered by upgrading `runtime_control_resume_after_companion_revival_requires_readmission`.
   - Schedule goal-trigger dispatch and active-goal skip need public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks.
 
@@ -213,4 +223,4 @@ Final required gates:
 
 ## Next
 
-Recover the remaining Safety Reviewer blockers before deleting corresponding old blocks: approval stale-origin/no-delivery and schedule goal-trigger public tick artifacts.
+Recover the remaining Safety Reviewer blocker before deleting corresponding old blocks: schedule goal-trigger public tick artifacts.

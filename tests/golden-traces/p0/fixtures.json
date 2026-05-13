@@ -3072,7 +3072,15 @@
               "request_result": null,
               "resolved": false,
               "resolved_state": null,
-              "stale_reply_rejected": true
+              "stale_reply_rejected": true,
+              "all_origin_mismatches_rejected": true,
+              "origin_mismatch_fields": [
+                "channel",
+                "conversation_id",
+                "user_id",
+                "session_id",
+                "turn_id"
+              ]
             },
             "disposition": "ok",
             "kind": "approval_broker_scope_gate",
@@ -3089,8 +3097,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_origin_bound_stale_reply_rejected.json",
-          "sha256": "5583744e2330861e5e1cf983e9bc00c76f61b36170c072e1b1b6f4935d95f26e",
-          "size": 2963,
+          "sha256": "2c58be2cc433de10739ae86a0a5463906cfb1fcbf6f608ab84a11da692cc346c",
+          "size": 3560,
           "type": "file"
         }
       ],
@@ -3513,10 +3521,13 @@
             "assertions": {
               "mutation_executed": false,
               "pending_after_resolution": false,
-              "request_result": null,
+              "request_result": false,
               "resolved": false,
               "resolved_state": "denied",
-              "stale_reply_rejected": null
+              "stale_reply_rejected": null,
+              "delivery_callback_configured": false,
+              "delivery_unavailable_denied": true,
+              "resolution_reason": "approval_channel_unreachable"
             },
             "disposition": "ok",
             "kind": "approval_broker_scope_gate",
@@ -3533,8 +3544,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_delivery_unavailable_denies_not_executes.json",
-          "sha256": "bde140949cf7fa6de4b2f9038f22a7cab3f8604fff83fd877ce006c7d660487c",
-          "size": 3398,
+          "sha256": "1922e890f983ee3c37bd0690d2acbffaded03acf9452f8359bab1342feaa7804",
+          "size": 3555,
           "type": "file"
         }
       ],
