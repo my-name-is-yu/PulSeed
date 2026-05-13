@@ -26,6 +26,7 @@ import {
   type ChatSession,
   type RunSpecConfirmationState,
 } from "./chat-session-contracts.js";
+import type { CognitionReplayRecord } from "../../runtime/cognition/contracts.js";
 export {
   CHAT_COMPACTION_RECORD_SCHEMA_VERSION,
   ChatCompactionRecordSchema,
@@ -312,6 +313,19 @@ export class ChatHistory {
       eventContext: event,
       createdAt: event.createdAt,
       payload: projection.payload,
+    });
+    if (options.persist !== false) {
+      await this.persist();
+    }
+  }
+
+  async recordCognitionAudit(record: CognitionReplayRecord, options: { persist?: boolean } = {}): Promise<void> {
+    this.pushRolloutRecord({
+      kind: "cognition_audit",
+      source: "cognition_audit",
+      visibility: "debug",
+      createdAt: typeof record.created_at === "string" ? record.created_at : undefined,
+      payload: record,
     });
     if (options.persist !== false) {
       await this.persist();

@@ -21,7 +21,7 @@ The planning contract composes these current implementation paths:
 | readiness, policy, approval, feedback, and autonomy decision | `src/runtime/control/autonomy-governor.ts` |
 | normal companion action projection | `src/runtime/control/companion-action-projection.ts` |
 | gadget candidate, plan, and action candidate contract | `src/runtime/decision/companion-gadget-planning.ts` |
-| companion decision input refs | `src/runtime/decision/companion-decision-contract.ts` |
+| cognition context refs | `src/runtime/decision/companion-decision-contract.ts`, `src/runtime/cognition/contracts.ts` |
 | governed memory projection input | `src/runtime/decision/core-companion-memory-projection.ts` |
 | AgentLoop execution substrate | `src/orchestrator/execution/agent-loop/` |
 | approval and runtime-control substrate | `src/runtime/control/`, `src/runtime/store/` |
@@ -43,7 +43,7 @@ The planning contract composes these current implementation paths:
 ## Planning Flow
 
 ```text
-CompanionDecisionFrame and CoreCompanionMemoryProjection
+CompanionCognitionOutput and CoreCompanionMemoryProjection
   -> candidate capability or tool retrieval
   -> CapabilityOperationPlanCandidate
   -> CapabilityReadinessSnapshot filtering
@@ -82,7 +82,7 @@ operation through its canonical approval and audit path.
 
 ## Composition With Memory And Decision Contracts
 
-`CompanionDecisionFrame` owns the turn-level situation and caller-path refs.
+`CompanionCognitionOutput` owns the turn/intervention situation and caller-path refs.
 `CoreCompanionMemoryProjection` supplies governed memory inputs with explicit
 use policy. Gadget planning may cite both as source refs, but neither memory nor
 model text becomes runtime authority. Stale or corrected memory should already

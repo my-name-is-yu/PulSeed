@@ -118,6 +118,10 @@ export const ResidentActivitySchema = z.object({
   ]).optional(),
   operation_preparation_allowed: z.boolean().optional(),
   operation_execution_allowed: z.boolean().optional(),
+  cognition_id: z.string().optional(),
+  cognition_response_plan_id: z.string().optional(),
+  cognition_delivery_kind: z.enum(["hold", "digest", "suggest", "notify", "speak", "prepare", "execute"]).optional(),
+  cognition_writeback_proposal_count: DaemonNonnegativeSafeIntSchema.optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 

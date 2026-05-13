@@ -2,6 +2,7 @@ import type { AgentLoopReasoningEffort, AgentLoopToolObservationExecution } from
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 import type { ToolActivityCategory } from "../../../tools/types.js";
+import type { CompanionCognitionOutput } from "../../../runtime/cognition/contracts.js";
 
 export type AgentLoopCommandResultCategory = "verification" | "observation" | "other";
 export type AgentLoopCommandEvidenceSource = "verification_plan" | "tool_activity_category";
@@ -102,6 +103,7 @@ export interface AgentLoopResult<TOutput> {
   activeBudgetMs?: number;
   generatedEstimateMs?: number;
   requiresPostVerificationBeforeSuccessLedger?: boolean;
+  cognitionOutput?: CompanionCognitionOutput;
 }
 
 export interface AgentLoopCompletionValidationResult {

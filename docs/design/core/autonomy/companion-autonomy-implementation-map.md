@@ -25,7 +25,7 @@ The parent contracts are design lanes, not GitHub issue identifiers:
 | `RuntimeItem`, authority, staleness, and control policy | [Runtime Control Plane](../../infrastructure/runtime/runtime-control-plane.md) |
 | `AuditTrace` and `VisibilityPolicy` | [Runtime Control Plane](../../infrastructure/runtime/runtime-control-plane.md) |
 | `PermissionGrant` lifecycle and evaluator parent | [Runtime Control Plane](../../infrastructure/runtime/runtime-control-plane.md) |
-| `CompanionDecisionFrame` pre-runner decision surface | [Companion Decision Contract](companion-decision-contract.md) |
+| `CompanionCognitionOutput` turn/intervention advisory artifact | [Companion Decision Contract](companion-decision-contract.md) |
 | `CompanionGadgetPlan` over verified capability operations | [Companion Gadget Planning](companion-gadget-planning.md), [Companion Capability Runtime](../../infrastructure/runtime/companion-capability-runtime.md) |
 | end-to-end companion behavior eval plan | [Companion Behavior Evals](companion-behavior-evals.md) |
 
@@ -39,10 +39,10 @@ evidence and traces
   -> CompanionStateSnapshot
   -> UrgeCandidate / AgentAgendaItem
   -> InitiativeGateDecision
-  -> CompanionDecisionFrame
+  -> CompanionCognitionOutput
   -> CompanionGadgetPlan
   -> RuntimeItem admission
-  -> CompanionDecisionOutput
+  -> SurfaceResponseGuidance
   -> OutcomeDecision
   -> ExpressionDecision
   -> AuditTrace / VisibilityPolicy

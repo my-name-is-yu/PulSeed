@@ -173,10 +173,19 @@ export type ResidentOperationPlanActivityMetadata = Partial<Pick<
   | "operation_execution_allowed"
 >>;
 
+export type ResidentCognitionActivityMetadata = Partial<Pick<
+  ResidentActivity,
+  | "cognition_id"
+  | "cognition_response_plan_id"
+  | "cognition_delivery_kind"
+  | "cognition_writeback_proposal_count"
+>>;
+
 export type ResidentActivityMetadata =
   ResidentSurfaceActivityMetadata &
   ResidentAttentionActivityMetadata &
-  ResidentOperationPlanActivityMetadata;
+  ResidentOperationPlanActivityMetadata &
+  ResidentCognitionActivityMetadata;
 
 export function residentOperationBoundaryAllowsPreparation(
   metadata: ResidentOperationPlanActivityMetadata,

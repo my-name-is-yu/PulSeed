@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  createCompanionCharacterPolicyDecisionInputRef,
-  createCompanionCharacterPolicyDecisionPolicyRef,
+  createCompanionCharacterPolicyCognitionPolicyRef,
+  createCompanionCharacterPolicyCognitionRef,
   createCompanionCharacterPolicyProjection,
 } from "../index.js";
 
@@ -79,8 +79,8 @@ describe("CompanionCharacterPolicyProjection", () => {
         proactivity_level: 2,
       },
     });
-    const characterInputRef = createCompanionCharacterPolicyDecisionInputRef(projection);
-    const characterPolicyRef = createCompanionCharacterPolicyDecisionPolicyRef(projection);
+    const characterInputRef = createCompanionCharacterPolicyCognitionRef(projection);
+    const characterPolicyRef = createCompanionCharacterPolicyCognitionPolicyRef(projection);
 
     expect(characterInputRef).toEqual(expect.objectContaining({
       kind: "character_config_policy",

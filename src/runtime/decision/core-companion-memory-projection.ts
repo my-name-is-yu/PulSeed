@@ -19,10 +19,10 @@ import {
   type GovernedMemoryAllowedUseClass,
 } from "../../platform/profile/governed-memory.js";
 import {
-  CompanionDecisionCallerPathKindSchema,
-  CompanionDecisionInputRefSchema,
-  type CompanionDecisionCallerPathKind,
-  type CompanionDecisionInputRef,
+  CognitionContextRefSchema,
+  CognitionProjectionCallerPathKindSchema,
+  type CognitionContextRef,
+  type CognitionProjectionCallerPathKind,
 } from "./companion-decision-contract.js";
 
 export const CoreCompanionMemoryGroundingProfileIdSchema = z.enum([
@@ -229,10 +229,10 @@ export const CoreCompanionMemoryProjectionSchema = z.object({
   schema_version: z.literal("core-companion-memory-projection/v1"),
   projection_id: z.string().min(1),
   created_at: z.string().datetime(),
-  caller_path: CompanionDecisionCallerPathKindSchema,
+  caller_path: CognitionProjectionCallerPathKindSchema,
   grounding_profile_id: CoreCompanionMemoryGroundingProfileIdSchema.optional(),
   grounding_bundle_ref: z.string().min(1).optional(),
-  decision_frame_ref: z.string().min(1).optional(),
+  cognition_ref: z.string().min(1).optional(),
   source_refs: z.array(CoreCompanionMemoryProjectionSourceRefSchema).min(1),
   surface_ref: z.string().min(1),
   requested_use: SurfaceRequestedUseSchema,
@@ -263,11 +263,11 @@ export type CoreCompanionMemoryProjection = z.infer<typeof CoreCompanionMemoryPr
 
 export interface CreateCoreCompanionMemoryProjectionFromSurfaceInput {
   surfaceProjection: unknown;
-  callerPath: CompanionDecisionCallerPathKind;
+  callerPath: CognitionProjectionCallerPathKind;
   projectionId?: string;
   groundingProfileId?: GroundingProfileId;
   groundingBundleRef?: string;
-  decisionFrameRef?: string;
+  cognitionRef?: string;
   correctionEventRefs?: string[];
   createdAt?: string;
 }
@@ -296,7 +296,7 @@ export function createCoreCompanionMemoryProjectionFromSurface(
     caller_path: input.callerPath,
     ...(input.groundingProfileId ? { grounding_profile_id: input.groundingProfileId } : {}),
     ...(input.groundingBundleRef ? { grounding_bundle_ref: input.groundingBundleRef } : {}),
-    ...(input.decisionFrameRef ? { decision_frame_ref: input.decisionFrameRef } : {}),
+    ...(input.cognitionRef ? { cognition_ref: input.cognitionRef } : {}),
     source_refs: projectionSourceRefs(surface, input),
     surface_ref: surface.id,
     requested_use: surface.requested_use,
@@ -317,10 +317,10 @@ export function createCoreCompanionMemoryProjectionFromSurface(
   });
 }
 
-export function createCoreCompanionMemoryProjectionInputRef(
+export function createCoreCompanionMemoryProjectionCognitionRef(
   projection: Pick<CoreCompanionMemoryProjection, "projection_id">
-): CompanionDecisionInputRef {
-  return CompanionDecisionInputRefSchema.parse({
+): CognitionContextRef {
+  return CognitionContextRefSchema.parse({
     kind: "memory_projection",
     ref: projection.projection_id,
     role: "context",

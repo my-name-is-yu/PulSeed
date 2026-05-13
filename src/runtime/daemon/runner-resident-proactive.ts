@@ -3,6 +3,11 @@ import {
   evaluateResidentOperationBoundary,
   residentOperationBoundaryActivityMetadata,
 } from "../capability-operation-planner.js";
+import {
+  CompanionCognitionService,
+  createRelationshipProfileCognitionMemoryPort,
+  type CompanionCognitionInput,
+} from "../cognition/index.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
 import {
   evaluateResidentAttentionAdmission,
@@ -11,6 +16,7 @@ import {
 import type {
   ResidentActivityMetadata,
   DaemonRunnerResidentContext,
+  ResidentCognitionActivityMetadata,
   ResidentSurfaceActivityMetadata,
 } from "./runner-resident-shared.js";
 import {
@@ -190,15 +196,29 @@ export async function proactiveTick(
     invalidationEvidence: feedbackDecisionContext.invalidationEvidence,
   });
   const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
+  const cognitionActivityMetadata = await evaluateResidentProactiveCognition({
+    attentionAdmission,
+    operationActivityMetadata,
+    surfaceActivityMetadata,
+    baseDir: context.baseDir,
+    goalId: typeof result.decision.details?.["goal_id"] === "string"
+      ? result.decision.details["goal_id"].trim()
+      : undefined,
+    logger: context.logger,
+  });
+  const residentActivityMetadata = {
+    ...surfaceActivityMetadata,
+    ...attentionActivityMetadata,
+    ...operationActivityMetadata,
+    ...cognitionActivityMetadata,
+  };
 
   if (!attentionAdmission.branch_admitted) {
     await persistResidentActivity(context, {
       kind: "skipped",
       trigger: "proactive_tick",
       summary: attentionAdmission.summary,
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
@@ -208,9 +228,7 @@ export async function proactiveTick(
       kind: "sleep",
       trigger: "proactive_tick",
       summary: "Resident proactive tick stayed idle.",
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
@@ -220,18 +238,14 @@ export async function proactiveTick(
       kind: "skipped",
       trigger: "proactive_tick",
       summary: `Resident ${result.decision.action} held by operation boundary: ${operationActivityMetadata.operation_plan_reason}`,
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
 
   if (result.decision.action === "suggest_goal") {
     await triggerResidentGoalDiscovery(context, result.decision.details, {
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
@@ -241,23 +255,17 @@ export async function proactiveTick(
       kind: "observation",
       trigger: "proactive_tick",
       summary: "Resident proactive maintenance selected investigation.",
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     await triggerResidentInvestigation(context, result.decision.details, {
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
 
   if (result.decision.action === "preemptive_check") {
     await triggerResidentPreemptiveCheck(context, result.decision.details, {
-      ...surfaceActivityMetadata,
-      ...attentionActivityMetadata,
-      ...operationActivityMetadata,
+      ...residentActivityMetadata,
     });
     return;
   }
@@ -266,10 +274,122 @@ export async function proactiveTick(
     kind: "skipped",
     trigger: "proactive_tick",
     summary: `Resident proactive tick requested ${result.decision.action}, but no resident executor is wired for it yet.`,
-    ...surfaceActivityMetadata,
-    ...attentionActivityMetadata,
-    ...operationActivityMetadata,
+    ...residentActivityMetadata,
   });
+}
+
+export async function evaluateResidentProactiveCognition(input: {
+  attentionAdmission: Awaited<ReturnType<typeof evaluateResidentAttentionAdmission>>;
+  operationActivityMetadata: ResidentActivityMetadata;
+  surfaceActivityMetadata: ResidentSurfaceActivityMetadata;
+  baseDir?: string;
+  goalId?: string;
+  logger: DaemonRunnerResidentContext["logger"];
+}): Promise<ResidentCognitionActivityMetadata> {
+  const cognitionId = `cognition:resident:${input.attentionAdmission.initiative_gate_decision_id}`;
+  const eventRef = {
+    ref: input.attentionAdmission.initiative_gate_decision_id,
+    source_store: "attention_ledger" as const,
+    source_event_type: "resident_attention_admission",
+    schema_version: 1,
+    source_epoch: input.attentionAdmission.initiative_gate_decision_id,
+    redaction_policy: "metadata_only" as const,
+  };
+  const operationBoundary = residentOperationBoundaryAllowsPreparation(input.operationActivityMetadata)
+    ? "allowed"
+    : input.operationActivityMetadata.operation_plan_status === "planned"
+      ? "held"
+      : "blocked";
+  const maxDeliveryKind = operationBoundary === "allowed" ? "suggest" : "hold";
+  const cognitionInput: CompanionCognitionInput = {
+    cognition_id: cognitionId,
+    caller_path: "resident_proactive_check",
+    event_refs: [eventRef],
+    working_context: {
+      input_ref: eventRef,
+      route_ref: {
+        kind: "resident_action",
+        ref: input.attentionAdmission.action,
+      },
+      turn_started_at: new Date().toISOString(),
+      hidden_prompt_content_materialized: false,
+    },
+    attention_context: {
+      attention_input_ref: {
+        kind: "attention_input",
+        ref: input.attentionAdmission.attention_input_id,
+      },
+      agenda_ref: {
+        kind: "agent_agenda_item",
+        ref: input.attentionAdmission.agenda_item_id,
+      },
+      admission_status: input.attentionAdmission.admission_status === "admitted"
+        ? "admitted"
+        : input.attentionAdmission.replay_disposition === "duplicate"
+          ? "duplicate"
+          : input.attentionAdmission.admission_status === "not_selected"
+            ? "not_selected"
+            : "held",
+      initiative_gate_decision_id: input.attentionAdmission.initiative_gate_decision_id,
+      operation_boundary: operationBoundary,
+      ...(input.operationActivityMetadata.operation_plan_id ? { operation_plan_ref: input.operationActivityMetadata.operation_plan_id } : {}),
+      max_delivery_kind: maxDeliveryKind,
+      feedback_policy_refs: [],
+    },
+    goal_context: input.goalId
+      ? {
+          active_goals: [{
+            goal_id: input.goalId,
+            goal_ref: {
+              kind: "goal",
+              ref: input.goalId,
+            },
+            lifecycle: "active",
+            priority: "unknown",
+          }],
+          active_intention_refs: [],
+          stale_target_refs: [],
+        }
+      : undefined,
+    memory_context_request: {
+      request_id: `${cognitionId}:memory-request`,
+      requested_uses: ["proactive_action_candidate", "behavioral_inhibition"],
+      caller_path: "resident_proactive_check",
+      query_ref: eventRef,
+      surface_projection_required: true,
+      side_effect_authorization_allowed: false,
+      include_sensitive_content: false,
+    },
+    surface_target: "internal_audit",
+  };
+
+  try {
+    const output = await new CompanionCognitionService({
+      ...(input.baseDir
+        ? {
+            memoryPort: createRelationshipProfileCognitionMemoryPort({
+              baseDir: input.baseDir,
+            }),
+          }
+        : {}),
+    }).evaluateIntervention(cognitionInput);
+    return {
+      cognition_id: output.cognition_id,
+      cognition_response_plan_id: output.response_plan.plan_id,
+      cognition_delivery_kind: output.response_plan.delivery_kind,
+      cognition_writeback_proposal_count: output.memory_writeback.length,
+    };
+  } catch (err) {
+    input.logger.warn("Resident proactive cognition failed; continuing with resident gates", {
+      error: err instanceof Error ? err.message : String(err),
+      cognition_id: cognitionId,
+    });
+    return {
+      cognition_id: cognitionId,
+      cognition_delivery_kind: "hold",
+      cognition_writeback_proposal_count: 0,
+    };
+  }
 }
 
 function residentPreemptiveGoalIsCurrent(goal: Goal): boolean {

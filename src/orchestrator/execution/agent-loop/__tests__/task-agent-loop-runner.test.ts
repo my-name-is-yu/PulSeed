@@ -1,5 +1,9 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
+import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import type { AgentLoopModelClient, AgentLoopModelRegistry } from "../agent-loop-model.js";
 import { TaskAgentLoopRunner } from "../task-agent-loop-runner.js";
@@ -100,6 +104,16 @@ describe("TaskAgentLoopRunner", () => {
 
   it("continues into the bounded runner when Soil vector prefetch fails auth", async () => {
     const cwd = process.cwd();
+    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-memory-"));
+    await upsertRelationshipProfileItem(cognitionMemoryBaseDir, {
+      stableKey: "task.status_style",
+      kind: "preference",
+      value: "Keep long-running task status concise.",
+      source: "cli_update",
+      allowedScopes: ["local_planning"],
+      sensitivity: "private",
+      now: "2026-05-14T00:00:00.000Z",
+    });
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -155,6 +169,7 @@ describe("TaskAgentLoopRunner", () => {
         defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
       } as unknown as AgentLoopModelRegistry,
       contextAssembler: new AgentLoopContextAssembler(),
+      cognitionMemoryBaseDir,
       soilPrefetch: async () => {
         await vectorIndex.search("query", 5, 0);
         return null;
@@ -170,6 +185,19 @@ describe("TaskAgentLoopRunner", () => {
     const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
     expect(userMessage).toContain("Soil prefetch failed; continuing without Soil context");
     expect(userMessage).toContain("OpenAI embedding request failed: 401 Unauthorized");
+    expect(result.cognitionOutput).toMatchObject({
+      caller_path: "long_running_task_turn",
+      selected_intention: {
+        goal_ref: {
+          goal_id: "goal-1",
+        },
+      },
+      response_plan: {
+        guidance_kind: "continue_route",
+      },
+    });
+    expect(result.cognitionOutput?.relationship_state.relationship_refs).toHaveLength(1);
+    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
   });
 
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {

@@ -86,6 +86,8 @@ describe("ReflectionReportStateStore", () => {
       entries_compressed: 0,
       stale_entries_found: 0,
       revalidation_tasks_created: 0,
+      cognition_writeback_inputs_read: 0,
+      cognition_runtime_authority_granted: false,
     });
     await store.close();
 

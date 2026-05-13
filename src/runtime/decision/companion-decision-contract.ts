@@ -11,7 +11,7 @@ import {
   type CompanionProjectionContextInput,
 } from "../control/companion-action-projection.js";
 
-export const CompanionDecisionCallerPathKindSchema = z.enum([
+export const CognitionProjectionCallerPathKindSchema = z.enum([
   "chat_gateway_model_loop",
   "chat_native_agent_loop",
   "chat_runtime_control",
@@ -21,9 +21,9 @@ export const CompanionDecisionCallerPathKindSchema = z.enum([
   "resident_attention_cycle",
   "projection_only",
 ]);
-export type CompanionDecisionCallerPathKind = z.infer<typeof CompanionDecisionCallerPathKindSchema>;
+export type CognitionProjectionCallerPathKind = z.infer<typeof CognitionProjectionCallerPathKindSchema>;
 
-export const CompanionDecisionInputRefKindSchema = z.enum([
+export const CognitionContextRefKindSchema = z.enum([
   "chat_message",
   "task",
   "attention_cycle",
@@ -47,10 +47,12 @@ export const CompanionDecisionInputRefKindSchema = z.enum([
   "memory_projection",
   "gadget_plan",
   "character_config_policy",
+  "cognition_output",
+  "cognition_audit",
 ]);
-export type CompanionDecisionInputRefKind = z.infer<typeof CompanionDecisionInputRefKindSchema>;
+export type CognitionContextRefKind = z.infer<typeof CognitionContextRefKindSchema>;
 
-export const CompanionDecisionInputRoleSchema = z.enum([
+export const CognitionContextRefRoleSchema = z.enum([
   "trigger",
   "target",
   "context",
@@ -59,10 +61,11 @@ export const CompanionDecisionInputRoleSchema = z.enum([
   "constraint",
   "candidate",
   "bridge",
+  "audit",
 ]);
-export type CompanionDecisionInputRole = z.infer<typeof CompanionDecisionInputRoleSchema>;
+export type CognitionContextRefRole = z.infer<typeof CognitionContextRefRoleSchema>;
 
-export const CompanionDecisionInputFreshnessSchema = z.enum([
+export const CognitionContextFreshnessSchema = z.enum([
   "current",
   "aging",
   "stale",
@@ -70,19 +73,19 @@ export const CompanionDecisionInputFreshnessSchema = z.enum([
   "rejected_stale",
   "unknown",
 ]);
-export type CompanionDecisionInputFreshness = z.infer<typeof CompanionDecisionInputFreshnessSchema>;
+export type CognitionContextFreshness = z.infer<typeof CognitionContextFreshnessSchema>;
 
-export const CompanionDecisionInputRefSchema = z.object({
-  kind: CompanionDecisionInputRefKindSchema,
+export const CognitionContextRefSchema = z.object({
+  kind: CognitionContextRefKindSchema,
   ref: z.string().min(1),
-  role: CompanionDecisionInputRoleSchema,
-  freshness: CompanionDecisionInputFreshnessSchema.default("current"),
+  role: CognitionContextRefRoleSchema,
+  freshness: CognitionContextFreshnessSchema.default("current"),
   epoch: z.string().min(1).optional(),
   reason: z.string().min(1).optional(),
 }).strict();
-export type CompanionDecisionInputRef = z.infer<typeof CompanionDecisionInputRefSchema>;
+export type CognitionContextRef = z.infer<typeof CognitionContextRefSchema>;
 
-export const CompanionDecisionPolicyRefKindSchema = z.enum([
+export const CognitionPolicyRefKindSchema = z.enum([
   "safety_boundary",
   "approval_gate",
   "runtime_control",
@@ -94,17 +97,17 @@ export const CompanionDecisionPolicyRefKindSchema = z.enum([
   "surface_policy",
   "character_config_policy",
 ]);
-export type CompanionDecisionPolicyRefKind = z.infer<typeof CompanionDecisionPolicyRefKindSchema>;
+export type CognitionPolicyRefKind = z.infer<typeof CognitionPolicyRefKindSchema>;
 
-export const CompanionDecisionPolicyRefSchema = z.object({
-  kind: CompanionDecisionPolicyRefKindSchema,
+export const CognitionPolicyRefSchema = z.object({
+  kind: CognitionPolicyRefKindSchema,
   ref: z.string().min(1),
   result: z.string().min(1).optional(),
   epoch: z.string().min(1).optional(),
 }).strict();
-export type CompanionDecisionPolicyRef = z.infer<typeof CompanionDecisionPolicyRefSchema>;
+export type CognitionPolicyRef = z.infer<typeof CognitionPolicyRefSchema>;
 
-export const CompanionDecisionProjectionBridgeSchema = z.object({
+export const CompanionProjectionBridgeSchema = z.object({
   bridge_kind: z.literal("companion_action_projection"),
   autonomy_decision_ref: z.string().min(1),
   surface_ref: z.string().min(1),
@@ -126,9 +129,9 @@ export const CompanionDecisionProjectionBridgeSchema = z.object({
     });
   }
 });
-export type CompanionDecisionProjectionBridge = z.infer<typeof CompanionDecisionProjectionBridgeSchema>;
+export type CompanionProjectionBridge = z.infer<typeof CompanionProjectionBridgeSchema>;
 
-export interface CreateCompanionDecisionProjectionBridgeInput {
+export interface CreateCompanionProjectionBridgeInput {
   decision: AutonomyDecision;
   context: CompanionProjectionContextInput;
   preparedArtifactRefs?: string[];
@@ -138,9 +141,9 @@ export interface CreateCompanionDecisionProjectionBridgeInput {
   projectionId?: string;
 }
 
-export function createCompanionDecisionProjectionBridge(
-  input: CreateCompanionDecisionProjectionBridgeInput
-): CompanionDecisionProjectionBridge {
+export function createCompanionProjectionBridge(
+  input: CreateCompanionProjectionBridgeInput
+): CompanionProjectionBridge {
   const decision = AutonomyDecisionSchema.parse(input.decision);
   const context = CompanionProjectionContextSchema.parse(input.context);
   const projection: CompanionActionProjection = projectCompanionAction({
@@ -153,7 +156,7 @@ export function createCompanionDecisionProjectionBridge(
     ...(input.projectionId ? { projection_id: input.projectionId } : {}),
   });
 
-  return CompanionDecisionProjectionBridgeSchema.parse({
+  return CompanionProjectionBridgeSchema.parse({
     bridge_kind: "companion_action_projection",
     autonomy_decision_ref: decision.decision_id,
     surface_ref: context.surface_ref,

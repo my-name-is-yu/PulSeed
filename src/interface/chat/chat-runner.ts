@@ -84,6 +84,7 @@ import { createTurnStartOperation, createTurnSteerOperation } from "./turn-proto
 import {
   buildChatTurnContext,
   toTurnContextSnapshot,
+  type ChatTurnContext,
 } from "./turn-context.js";
 import {
   createRunSpecStore,
@@ -108,6 +109,12 @@ import {
 import { createFeedbackIngestion } from "../../runtime/attention/index.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime-root.js";
 import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
+import {
+  CompanionCognitionService,
+  createCognitionReplayRecord,
+  createRelationshipProfileCognitionMemoryPort,
+  type CompanionCognitionInput,
+} from "../../runtime/cognition/index.js";
 
 export type {
   ChatRunResult,
@@ -173,9 +180,15 @@ export class ChatRunner {
   private eventJournalHistory: ChatHistory | null = null;
   private eventJournalDirty = false;
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
+  private readonly companionCognitionService: Pick<CompanionCognitionService, "evaluateTurn">;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.feedbackIngestionStore = deps.feedbackIngestionStore ?? createDefaultChatFeedbackIngestionStore(deps.stateManager);
+    this.companionCognitionService = deps.companionCognitionService ?? new CompanionCognitionService({
+      memoryPort: createRelationshipProfileCognitionMemoryPort({
+        baseDir: this.providerConfigBaseDir(),
+      }),
+    });
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -886,6 +899,9 @@ export class ChatRunner {
       activatedTools: this.activatedTools,
     });
     await history.recordTurnContext(toTurnContextSnapshot(turnContext));
+    if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
+      await this.recordShadowCognition(turnContext, history);
+    }
 
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
       const elapsed_ms = Date.now() - start;
@@ -943,6 +959,113 @@ export class ChatRunner {
     );
     this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
     return this.flushAndReturn({ success: false, output, elapsed_ms });
+  }
+
+  private async recordShadowCognition(turnContext: ChatTurnContext, history: ChatHistory): Promise<void> {
+    const input = this.buildChatCognitionInput(turnContext);
+    const createdAt = new Date().toISOString();
+    try {
+      const output = await this.companionCognitionService.evaluateTurn(input);
+      await history.recordCognitionAudit(createCognitionReplayRecord({
+        recordId: `${input.cognition_id}:chat-history-record`,
+        createdAt,
+        input,
+        output,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await history.recordCognitionAudit(createCognitionReplayRecord({
+        recordId: `${input.cognition_id}:chat-history-record`,
+        createdAt,
+        input,
+        failure: {
+          message,
+          retryable: true,
+        },
+      }));
+    }
+  }
+
+  private buildChatCognitionInput(turnContext: ChatTurnContext): CompanionCognitionInput {
+    const turn = turnContext.modelVisible.turn;
+    const session = turnContext.modelVisible.session;
+    const routeKind = session.route?.kind === "agent_loop" ? "agent_loop" : "gateway_model_loop";
+    const inputRef = {
+      ref: `${session.sessionId ?? "session:none"}:${turn.turnId}:user_input`,
+      source_store: "chat_history" as const,
+      source_event_type: "user_input",
+      schema_version: 1,
+      source_epoch: turn.turnId,
+      redaction_policy: "metadata_only" as const,
+    };
+    const cognitionId = `cognition:chat:${turn.turnId}`;
+    return {
+      cognition_id: cognitionId,
+      caller_path: "chat_user_turn",
+      event_refs: [inputRef],
+      working_context: {
+        input_ref: inputRef,
+        current_text_ref: `${session.sessionId ?? "session:none"}:${turn.turnId}:text`,
+        route_ref: {
+          kind: "chat_route",
+          ref: routeKind,
+        },
+        ...(session.sessionId
+          ? {
+              session_ref: {
+                kind: "chat_session",
+                ref: session.sessionId,
+              },
+            }
+          : {}),
+        turn_started_at: turn.startedAt,
+        hidden_prompt_content_materialized: false,
+      },
+      session_context: {
+        session_ref: {
+          kind: "chat_session",
+          ref: session.sessionId ?? "session:none",
+        },
+        turn_ref: {
+          kind: "chat_turn",
+          ref: turn.turnId,
+        },
+        run_ref: {
+          kind: "chat_run",
+          ref: turn.runId,
+        },
+        route_kind: routeKind,
+        runtime_control_allowed: turnContext.modelVisible.runtime.runtimeControlAllowed,
+        approval_mode: turnContext.modelVisible.runtime.approvalMode,
+        quieting_active: false,
+        stale_reply_target_refs: [],
+      },
+      goal_context: turnContext.hostOnly.execution.goalId
+        ? {
+            active_goals: [{
+              goal_id: turnContext.hostOnly.execution.goalId,
+              goal_ref: {
+                kind: "goal",
+                ref: turnContext.hostOnly.execution.goalId,
+              },
+              lifecycle: "active",
+              priority: "unknown",
+            }],
+            active_intention_refs: [],
+            stale_target_refs: [],
+          }
+        : undefined,
+      memory_context_request: {
+        request_id: `${cognitionId}:memory-request`,
+        requested_uses: ["runtime_grounding", "user_facing_reference"],
+        caller_path: "chat_user_turn",
+        query_ref: inputRef,
+        surface_projection_required: true,
+        side_effect_authorization_allowed: false,
+        include_sensitive_content: false,
+      },
+      surface_target: "internal_audit",
+    };
   }
 
   getSessionCwd(): string | null {

@@ -37,6 +37,7 @@ export const ChatRolloutJournalRecordKindSchema = z.enum([
   "tool_call",
   "tool_result",
   "permission_decision",
+  "cognition_audit",
   "display_event",
   "completion_state",
 ]);
@@ -51,7 +52,7 @@ export const ChatRolloutJournalRecordSchema = z.object({
   sequence: ChatSafeNonnegativeIntSchema,
   createdAt: z.string(),
   kind: ChatRolloutJournalRecordKindSchema,
-  source: z.enum(["chat_history", "chat_event", "agent_timeline", "approval_store"]).default("chat_history"),
+  source: z.enum(["chat_history", "chat_event", "agent_timeline", "approval_store", "cognition_audit"]).default("chat_history"),
   visibility: z.enum(["model_visible", "display", "debug", "host_only"]),
   payload: z.unknown(),
 }).passthrough();
