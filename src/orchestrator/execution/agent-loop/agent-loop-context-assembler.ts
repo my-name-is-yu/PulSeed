@@ -126,6 +126,7 @@ export class AgentLoopContextAssembler {
     const bundle = await this.groundingGateway.build({
       surface: "agent_loop",
       purpose: "task_execution",
+      userVisibleSink: false,
       workspaceRoot: cwd,
       goalId: input.task.goal_id,
       taskId: input.task.id,

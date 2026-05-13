@@ -828,6 +828,7 @@ export class ChatRunner {
           const groundingBundle = await this.groundingGateway.build({
             surface: "chat",
             purpose: "general_turn",
+            userVisibleSink: true,
             workspaceRoot: executionCwd,
             goalId: executionGoalId,
             userMessage: safeInput,
