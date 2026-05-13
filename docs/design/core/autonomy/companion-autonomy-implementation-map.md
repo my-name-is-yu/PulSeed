@@ -27,6 +27,7 @@ The parent contracts are design lanes, not GitHub issue identifiers:
 | `PermissionGrant` lifecycle and evaluator parent | [Runtime Control Plane](../../infrastructure/runtime/runtime-control-plane.md) |
 | `CompanionDecisionFrame` pre-runner decision surface | [Companion Decision Contract](companion-decision-contract.md) |
 | `CompanionGadgetPlan` over verified capability operations | [Companion Gadget Planning](companion-gadget-planning.md), [Companion Capability Runtime](../../infrastructure/runtime/companion-capability-runtime.md) |
+| end-to-end companion behavior eval plan | [Companion Behavior Evals](companion-behavior-evals.md) |
 
 The core flow remains:
 
@@ -175,6 +176,7 @@ The paths below are target placement, not edits in this map.
 | redacted companion-state inspection | companion-state inspection projection | redacted inspection tests |
 | multi-surface semantics | chat/TUI/CLI/daemon/gateway/future GUI adapters | shared semantics tests across surfaces |
 | gadget candidate and plan contract | `src/runtime/decision/companion-gadget-planning.ts`, capability operation plan substrate, admission, autonomy, action projection | schema tests plus gateway chat, AgentLoop/task, and resident/runtime-control caller-path evals |
+| companion behavior eval contract | `src/runtime/decision/companion-behavior-eval-contract.ts`, `tests/regression/companion-behavior-evals.test.ts` | typed deterministic assertions in unit/regression lane; saved transcript semantic judgments only in slow eval lane |
 | remaining PermissionGrant parent work | runtime permission contract/evaluator | lifecycle, stale, revoke, reuse, exclusion, and caller-path tests not already covered by completed slices |
 | conversational grant decisions | chat permission classifier into grant evaluator | typed decision tests with ambiguous and multilingual paraphrases |
 | waiting_for_permission stored plans | runtime permission wait/resume state | keep stored-plan resume tests as dependency context |
