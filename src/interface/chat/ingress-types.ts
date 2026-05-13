@@ -5,6 +5,7 @@ import type {
   RuntimeControlReplyTarget,
 } from "../../runtime/store/runtime-operation-schemas.js";
 import type { CompanionRuntimeContract } from "../../runtime/types/companion.js";
+import type { CompanionDecisionFrame } from "../../runtime/decision/index.js";
 import type { ExternalSurfaceDecision } from "../../runtime/gateway/channel-policy.js";
 
 export type IngressChannel = "tui" | "plugin_gateway" | "cli" | "web";
@@ -44,6 +45,7 @@ export interface ChatIngressMessage {
   actor: RuntimeControlActor;
   runtimeControl: ChatIngressRuntimeControl;
   companion?: CompanionRuntimeContract;
+  companionDecisionFrame?: CompanionDecisionFrame;
   externalSurface?: ExternalSurfaceDecision;
   deliveryMode?: IngressDeliveryMode;
   metadata: Record<string, unknown>;

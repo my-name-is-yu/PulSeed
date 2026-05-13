@@ -13,6 +13,7 @@ import type { AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { AgentLoopVerificationPlan } from "./agent-loop-command-classifier.js";
+import type { CompanionDecisionFrame } from "../../../runtime/decision/index.js";
 
 export interface AgentLoopToolPolicy {
   allowedTools?: readonly string[];
@@ -41,6 +42,9 @@ export interface AgentLoopTurnContext<TOutput> {
   toolPolicy: AgentLoopToolPolicy;
   toolCallContext: ToolCallContext;
   executionPolicy?: ExecutionPolicy;
+  decisionContext?: {
+    companion?: CompanionDecisionFrame;
+  };
   verificationPlan?: AgentLoopVerificationPlan;
   completionValidator?: (input: {
     output: TOutput;

@@ -14,6 +14,7 @@ import { TaskAgentLoopOutputSchema, type TaskAgentLoopOutput } from "./task-agen
 import { buildAgentLoopBaseInstructions } from "./agent-loop-prompts.js";
 import { isTaskRelevantVerificationCommand } from "./task-agent-loop-verification.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
+import type { CompanionDecisionFrame } from "../../../runtime/decision/index.js";
 import { verifyTaskArtifactContract } from "../task/task-artifact-contract.js";
 
 function formatArtifactContractSection(task: Task): string {
@@ -46,6 +47,7 @@ export interface TaskAgentLoopContextInput {
   profileName?: string;
   reasoningEffort?: AgentLoopReasoningEffort;
   executionPolicy?: ExecutionPolicy;
+  companionDecisionFrame?: CompanionDecisionFrame;
 }
 
 export function buildTaskAgentLoopTurnContext(
@@ -93,6 +95,7 @@ export function buildTaskAgentLoopTurnContext(
     modelInfo: input.modelInfo,
     ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
     ...(executionPolicy ? { executionPolicy } : {}),
+    ...(input.companionDecisionFrame ? { decisionContext: { companion: input.companionDecisionFrame } } : {}),
     messages: [
       {
         role: "system",

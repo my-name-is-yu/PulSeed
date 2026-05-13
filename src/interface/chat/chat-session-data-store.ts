@@ -217,6 +217,7 @@ function normalizeCrossPlatformSessionInfo(info: CrossPlatformChatSessionInfo): 
     ...(normalizeString(info.chat_session_id) ? { chat_session_id: normalizeString(info.chat_session_id)! } : {}),
     ...(info.active_reply_target ? { active_reply_target: info.active_reply_target } : {}),
     ...(info.active_companion_contract ? { active_companion_contract: info.active_companion_contract } : {}),
+    ...(info.active_companion_decision_frame ? { active_companion_decision_frame: info.active_companion_decision_frame } : {}),
     metadata: { ...(info.metadata ?? {}) },
   };
 }
