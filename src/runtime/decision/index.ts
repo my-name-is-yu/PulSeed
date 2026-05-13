@@ -1,4 +1,24 @@
 export {
+  CompanionCharacterCautionStanceSchema,
+  CompanionCharacterDecisionPolicySchema,
+  CompanionCharacterDialogueStrategySchema,
+  CompanionCharacterDirectnessSchema,
+  CompanionCharacterEscalationSuggestionPolicySchema,
+  CompanionCharacterExecutionSummaryVerbositySchema,
+  CompanionCharacterInitiativePostureSchema,
+  CompanionCharacterPolicyProjectionSchema,
+  CompanionCharacterPolicySourceKindSchema,
+  CompanionCharacterPolicySourceRefSchema,
+  CompanionCharacterResponseShapeSchema,
+  CompanionCharacterStallResponseSchema,
+  CompanionCharacterSurfacePolicySchema,
+  createCompanionCharacterPolicyDecisionInputRef,
+  createCompanionCharacterPolicyDecisionPolicyRef,
+  createCompanionCharacterPolicyProjection,
+  getCharacterFeasibilityThresholdHint,
+  getCharacterStallThresholdMultiplierHint,
+} from "./companion-character-policy-projection.js";
+export {
   CompanionBehaviorDeterministicAssertionSchema,
   CompanionBehaviorEvalArtifactKindSchema,
   CompanionBehaviorEvalAssertionKindSchema,
@@ -67,6 +87,22 @@ export {
   CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
+export type {
+  CompanionCharacterCautionStance,
+  CompanionCharacterDecisionPolicy,
+  CompanionCharacterDialogueStrategy,
+  CompanionCharacterDirectness,
+  CompanionCharacterEscalationSuggestionPolicy,
+  CompanionCharacterExecutionSummaryVerbosity,
+  CompanionCharacterInitiativePosture,
+  CompanionCharacterPolicyProjection,
+  CompanionCharacterPolicySourceKind,
+  CompanionCharacterPolicySourceRef,
+  CompanionCharacterResponseShape,
+  CompanionCharacterStallResponse,
+  CompanionCharacterSurfacePolicy,
+  CreateCompanionCharacterPolicyProjectionInput,
+} from "./companion-character-policy-projection.js";
 export type {
   CompanionBehaviorDeterministicAssertion,
   CompanionBehaviorEvalArtifactKind,

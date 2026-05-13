@@ -1,14 +1,15 @@
 import type { Report } from "../base/types/report.js";
-import type { CharacterConfig } from "../base/types/character.js";
+import type { CharacterConfig } from "../platform/traits/types/character.js";
+import { createCompanionCharacterPolicyProjection } from "../runtime/decision/companion-character-policy-projection.js";
 import type { ExecutionSummaryParams, NotificationType, NotificationContext } from "./reporting-types.js";
 
 // ─── getVerbosityLevel ───
 
 export function getVerbosityLevel(characterConfig: CharacterConfig): "brief" | "normal" | "detailed" {
-  const p = characterConfig.proactivity_level;
-  if (p === 1) return "brief";
-  if (p <= 3) return "normal";
-  return "detailed";
+  return createCompanionCharacterPolicyProjection({
+    characterConfig,
+    projectionId: "reporting:execution-summary:character-policy",
+  }).surface_policy.execution_summary_verbosity;
 }
 
 export function readMetadataOrContent<T>(
@@ -323,6 +324,16 @@ export function buildNotificationContent(
 ): { reportType: Report["report_type"]; title: string; content: string } {
   const now = new Date().toISOString();
   const { goalId, message, details } = context;
+  const characterPolicy = createCompanionCharacterPolicyProjection({
+    characterConfig,
+    projectionId: `reporting:notification:${type}:${goalId}`,
+    evaluatedAt: now,
+    sourceRefs: [{
+      kind: "character_config",
+      ref: "reporting-engine:character-config",
+      role: "surface",
+    }],
+  });
 
   let reportType: Report["report_type"];
   let title: string;
@@ -352,18 +363,18 @@ export function buildNotificationContent(
 
   const detailsSection = details ? `\n\n### Details\n\n${details}` : "";
 
-  const directness = characterConfig.communication_directness;
+  const suggestionPolicy = characterPolicy.surface_policy.escalation_suggestion_policy;
   const isEscalation = type === "stall_escalation" || type === "capability_insufficient";
   const isStall = type === "stall_escalation";
   let suggestionsSection = "";
-  if (directness <= 2) {
-    if (isEscalation) {
-      suggestionsSection = "\n\n### Suggested next actions:\n\n- Review current strategy and consider pivoting\n- Check available resources and constraints\n- Escalate to human operator if needed";
-    }
-  } else if (directness === 3) {
-    if (isEscalation && !isStall) {
-      suggestionsSection = "\n\n### Suggested next actions:\n\n- Review current strategy and consider pivoting\n- Check available resources and constraints\n- Escalate to human operator if needed";
-    }
+  if (
+    isEscalation
+    && (
+      suggestionPolicy === "include_for_all_escalations"
+      || (suggestionPolicy === "include_for_non_stall_escalations" && !isStall)
+    )
+  ) {
+    suggestionsSection = "\n\n### Suggested next actions:\n\n- Review current strategy and consider pivoting\n- Check available resources and constraints\n- Escalate to human operator if needed";
   }
 
   const content =

@@ -94,8 +94,9 @@ Future slices can adopt the contract incrementally:
    and resident attention-cycle start.
 2. Persist decision output refs beside existing admission, autonomy, projection,
    or attention audit records.
-3. Let #1951 memory projection, #1952 gadget planning, and character-config
-   policy add new typed input refs without changing runner ownership.
+3. Let #1951 memory projection, #1952 gadget planning, and
+   `CompanionCharacterPolicyProjection` add typed input refs without changing
+   runner ownership.
 4. Add caller-path tests only when production paths start consuming the frame.
 
 Until then, the tests for this slice stay contract-level and prove that the same
