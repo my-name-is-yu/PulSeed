@@ -373,6 +373,7 @@ describe("CompanionGadgetPlanning", () => {
       createPlan([authenticated, verified]),
     ]) {
       expect(plan.candidate.readiness_state).toBe("authenticated");
+      expect(plan.candidate.safe_user_visible_label).toBe("Configured, verification required");
       expect(plan.candidate.can_execute).toBe(false);
       expect(plan.action_candidates[0]?.may_initiate).toBe(false);
       expect(plan.action_candidates[0]?.normal_surface_advertises_executable).toBe(false);

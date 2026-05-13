@@ -547,7 +547,7 @@ function safeLabelFor(
   state: CompanionGadgetReadinessSummaryState,
   snapshots: CapabilityReadinessSnapshot[]
 ): string {
-  const explicit = snapshots.find((snapshot) => snapshot.safe_user_visible_label)?.safe_user_visible_label;
+  const explicit = snapshots.find((snapshot) => snapshot.state === state)?.safe_user_visible_label;
   if (explicit) return explicit;
   if (state === "blocked") return "Blocked";
   if (state === "degraded") return "Degraded";
