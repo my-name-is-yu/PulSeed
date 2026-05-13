@@ -28,6 +28,7 @@ import {
   AttentionStateStore,
   BackgroundRunLedger,
   PermissionWaitPlanStore,
+  resolveControlDbPath,
   RuntimeOperationStore,
 } from "../../src/runtime/store/index.js";
 import type { RuntimeControlReplyTarget } from "../../src/runtime/store/runtime-operation-schemas.js";
@@ -824,7 +825,7 @@ async function runStateDaemonTrace(
   stateRoot: IsolatedStateRoot,
 ): Promise<GoldenTraceRunResult> {
   if (fixture.contract_name === "state_attention_schema_ahead_fail_closed") {
-    const dbPath = path.join(stateRoot.controlDbBase, "pulseed-control.sqlite");
+    const dbPath = resolveControlDbPath({ baseDir: stateRoot.controlDbBase });
     await fsp.mkdir(path.dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.pragma("user_version = 999");
