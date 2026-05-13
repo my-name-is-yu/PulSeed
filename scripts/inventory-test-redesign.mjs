@@ -40,6 +40,17 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway ingress -> ChatRunner -> ChatEvent stream",
     stateArtifact: "chat session transcript, visible surface events",
+    deletedBlocks: [
+      {
+        block: "routeHost private key inventory",
+        oldLineRange: "496-522",
+        classification: "delete_obsolete",
+        replacementContract: "P0 gateway traces and surviving ChatRunner caller-path tests exercise the route host through public ChatRunner entrypoints",
+        productionEntrypoint: "ChatRunner.execute()/executeIngressMessage() -> gateway/default model loop",
+        artifactAssertion: "golden: ordinary gateway chat, runtime status, final/progress ordering, and unavailable-tool traces; unit: setup redaction and direct model-loop results use public ChatRunner entrypoints instead of routeHost()",
+        evidence: "Deleted a private method key-list test that froze current class wiring rather than a user-visible ChatRunner contract.",
+      },
+    ],
   },
   {
     oldPath: "src/interface/chat/__tests__/chat-runner-tools.test.ts",
@@ -632,7 +643,7 @@ const allP0Traces = [
 const sameCheckoutEvidenceByOldPath = new Map([
   [
     "src/interface/chat/__tests__/chat-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 184 tests.",
+    "2026-05-13 final-scope chat-runner cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts --config vitest.unit.config.ts` passed 1 file / 139 tests.",
   ],
   [
     "src/interface/chat/__tests__/chat-runner-tools.test.ts",

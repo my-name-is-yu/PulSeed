@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-ChatRunner tool callback minutiae removed; next is chat-runner and cross-platform-session block-scoped inventory.
+ChatRunner private route-host inventory removed; next is cross-platform-session block-scoped inventory.
 
 ## Current Evidence Read
 
@@ -102,6 +102,8 @@ Deletion is allowed only per block when replacement map records:
 - `src/interface/chat/__tests__/chat-runner-tools.test.ts`
   - Deleted mock-heavy `onToolStart`/`onToolEnd` callback call-count, duration, fallback-summary, and optional-callback minutiae.
   - Kept production `ToolExecutor`, capability-verification, typed activity event stream, and model-visible tool-schema tests.
+- `src/interface/chat/__tests__/chat-runner.test.ts`
+  - Deleted the private `routeHost()` key-list inventory that froze current class wiring instead of exercising public ChatRunner behavior.
 
 ## Blocks Kept And Reason
 
@@ -134,6 +136,7 @@ Deletion is allowed only per block when replacement map records:
 - Upgraded `session_registry_dead_process_not_running` to expose durable run title, process session id, and duplicate-count assertions.
 - Added `src/runtime/daemon/__tests__/signals.test.ts` as a focused pure protocol test for daemon cron entry generation.
 - Reused the surviving ChatRunner tool caller-path tests as replacement evidence for deleted callback minutiae: ToolExecutor routing, capability verification/auditing, typed tool activity events, and stable typed schemas across English/Japanese paraphrases.
+- Reused public ChatRunner/gateway caller-path evidence for the removed private route-host inventory.
 
 ## Replacement Map Updates
 
@@ -150,6 +153,7 @@ Deletion is allowed only per block when replacement map records:
 - Added schedule goal-trigger public tick traces to the replacement map and reclassified the direct `executeGoalTrigger` private-method blocks as deleted with replacement evidence.
 - Added daemon/session deleted-block evidence for dead process projection and moved cron-entry helper coverage.
 - Added chat-runner-tools deleted-block evidence for callback minutiae removed in favor of typed event stream and production tool caller path coverage.
+- Added chat-runner deleted-block evidence for the private `routeHost()` key-list test.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -217,6 +221,11 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:replay` -> after chat tools cleanup passed 1 file / 9 tests
 - `npm run typecheck` -> passed after chat tools cleanup
 - `node scripts/inventory-test-redesign.mjs` -> after chat tools cleanup regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts --config vitest.unit.config.ts` -> after private route-host deletion passed 1 file / 139 tests
+- `npm run test:golden-traces` -> after private route-host deletion passed 1 file / 45 tests
+- `npm run test:replay` -> after private route-host deletion passed 1 file / 9 tests
+- `npm run typecheck` -> passed after private route-host deletion
+- `node scripts/inventory-test-redesign.mjs` -> after private route-host deletion regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -263,4 +272,4 @@ Final required gates:
 
 ## Next
 
-Continue with chat-runner and cross-platform-session old-block inventory. Keep gateway/chat deletions block-scoped.
+Continue with cross-platform-session old-block inventory. Keep gateway/chat deletions block-scoped.

@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:42:54.496Z
+Generated: 2026-05-13T03:44:13.199Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -17,6 +17,15 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 - State artifact: chat session transcript, visible surface events
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: routeHost private key inventory
+    - Old line range: 496-522
+    - Classification: delete_obsolete
+    - Replacement contract: P0 gateway traces and surviving ChatRunner caller-path tests exercise the route host through public ChatRunner entrypoints
+    - Exported state artifact/assertion: golden: ordinary gateway chat, runtime status, final/progress ordering, and unavailable-tool traces; unit: setup redaction and direct model-loop results use public ChatRunner entrypoints instead of routeHost()
+    - Production entrypoint exercised: ChatRunner.execute()/executeIngressMessage() -> gateway/default model loop
+    - Deletion allowed: yes
+    - Evidence: Deleted a private method key-list test that froze current class wiring rather than a user-visible ChatRunner contract.
 - Replacement evidence:
   - Replacement trace name: gateway_ordinary_chat_first_visible_no_progress
     - Real production entrypoint used: golden: Gateway ingress -> ChatRunner -> ChatEvent stream
@@ -48,7 +57,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 184 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope chat-runner cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts --config vitest.unit.config.ts` passed 1 file / 139 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/interface/chat/__tests__/chat-runner-tools.test.ts
