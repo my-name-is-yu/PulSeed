@@ -57,11 +57,21 @@ export const CloudBoundaryEvaluationSchema = z.object({
         message: "external-service cognition requires admission and autonomy refs",
       });
     }
-    if (evaluation.context_refs.length > 0 && evaluation.redaction_refs.length === 0) {
+    if (evaluation.model_visible_context_refs.length > 0 && evaluation.redaction_refs.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["redaction_refs"],
         message: "external-service cognition requires redaction refs for model-visible context",
+      });
+    }
+  }
+  const contextRefKeys = new Set(evaluation.context_refs.map(cognitionEventRefKey));
+  for (const [index, modelVisibleRef] of evaluation.model_visible_context_refs.entries()) {
+    if (!contextRefKeys.has(cognitionEventRefKey(modelVisibleRef))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["model_visible_context_refs", index],
+        message: "model-visible context refs must be drawn from evaluated cognition context refs",
       });
     }
   }
@@ -74,11 +84,14 @@ export function evaluateCloudBoundaryForCognition(input: {
   contextRefs?: CognitionEventRef[];
   cloudComputeRequest?: CloudComputeRequest;
 }): CloudBoundaryEvaluation {
-  const contextRefs = input.contextRefs ?? [];
+  const contextRefs = z.array(CognitionEventRefSchema).parse(input.contextRefs ?? []);
   const cloudComputeRequest = input.cloudComputeRequest
     ? CloudComputeRequestSchema.parse(input.cloudComputeRequest)
     : undefined;
   const allowed = input.mode === "gated_external_service" && Boolean(cloudComputeRequest);
+  const modelVisibleContextRefs = allowed && cloudComputeRequest
+    ? approvedModelVisibleContextRefs(contextRefs, cloudComputeRequest.model_visible_context_refs)
+    : [];
 
   return CloudBoundaryEvaluationSchema.parse({
     schema_version: "cognition-cloud-boundary-evaluation/v1",
@@ -86,7 +99,7 @@ export function evaluateCloudBoundaryForCognition(input: {
     mode: input.mode,
     ...(cloudComputeRequest ? { cloud_request_id: cloudComputeRequest.request_id } : {}),
     context_refs: contextRefs,
-    model_visible_context_refs: allowed ? contextRefs : [],
+    model_visible_context_refs: modelVisibleContextRefs,
     redaction_refs: cloudComputeRequest?.redaction_refs ?? [],
     ...(cloudComputeRequest ? {
       admission_evaluation_ref: cloudComputeRequest.admission_evaluation_ref,
@@ -97,4 +110,17 @@ export function evaluateCloudBoundaryForCognition(input: {
     runtime_authority: false,
     memory_authority: false,
   });
+}
+
+function approvedModelVisibleContextRefs(
+  contextRefs: CognitionEventRef[],
+  approvedRefs: CognitionEventRef[]
+): CognitionEventRef[] {
+  const approvedRefKeys = new Set(approvedRefs.map(cognitionEventRefKey));
+  return contextRefs.filter((ref) => approvedRefKeys.has(cognitionEventRefKey(ref)));
+}
+
+function cognitionEventRefKey(ref: CognitionEventRef): string {
+  const parsed = CognitionEventRefSchema.parse(ref);
+  return `${parsed.source_store}:${parsed.ref}`;
 }

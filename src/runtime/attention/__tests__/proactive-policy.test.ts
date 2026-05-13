@@ -71,4 +71,34 @@ describe("proactive policy state", () => {
       reason: "allowed",
     });
   });
+
+  it("compares quiet-lift no-backlog cutoffs as instants", () => {
+    const initial = createProactivePolicyState({
+      policyId: "policy:resident",
+      now: "2026-05-14T00:00:00.000Z",
+      maxDeliveryKind: "suggest",
+    });
+    const active = reduceProactivePolicyState(initial, {
+      kind: "quiet_lifted",
+      control_ref: { kind: "runtime_control", ref: "quiet:off" },
+      recorded_at: "2026-05-14T00:10:00Z",
+    });
+
+    expect(decideProactiveDelivery({
+      state: active,
+      requestedDeliveryKind: "suggest",
+      candidateCreatedAt: "2026-05-14T00:10:00.500Z",
+    })).toMatchObject({
+      allowed_delivery_kind: "suggest",
+      reason: "allowed",
+    });
+    expect(decideProactiveDelivery({
+      state: active,
+      requestedDeliveryKind: "suggest",
+      candidateCreatedAt: "2026-05-14T00:09:59.999Z",
+    })).toMatchObject({
+      allowed_delivery_kind: "hold",
+      reason: "no_backlog_flush",
+    });
+  });
 });

@@ -10,6 +10,8 @@ import {
 export const ProactivePolicyModeSchema = z.enum(["active", "quiet", "suspended"]);
 export type ProactivePolicyMode = z.infer<typeof ProactivePolicyModeSchema>;
 
+const DateTimeStringSchema = z.string().datetime();
+
 export const ProactivePolicyStateSchema = z.object({
   schema_version: z.literal("proactive-policy-state/v1"),
   policy_id: z.string().min(1),
@@ -121,10 +123,14 @@ export function decideProactiveDelivery(input: {
   candidateCreatedAt: string;
 }): ProactiveDeliveryPolicyDecision {
   const state = ProactivePolicyStateSchema.parse(input.state);
+  const candidateCreatedAtMs = instantMs(input.candidateCreatedAt);
   if (state.mode !== "active") {
     return decision(input.requestedDeliveryKind, "hold", "quiet_or_suspended", state.cooldown_refs);
   }
-  if (state.no_backlog_flush_after_quiet_lift_at && input.candidateCreatedAt < state.no_backlog_flush_after_quiet_lift_at) {
+  if (
+    state.no_backlog_flush_after_quiet_lift_at
+    && candidateCreatedAtMs < instantMs(state.no_backlog_flush_after_quiet_lift_at)
+  ) {
     return decision(input.requestedDeliveryKind, "hold", "no_backlog_flush", []);
   }
   if (state.cooldown_refs.length > 0 && deliveryKindRank(state.max_delivery_kind) <= deliveryKindRank("digest")) {
@@ -150,6 +156,10 @@ function decision(
 
 function minDelivery(left: ProactiveDeliveryKind, right: ProactiveDeliveryKind): ProactiveDeliveryKind {
   return deliveryKindRank(left) <= deliveryKindRank(right) ? left : right;
+}
+
+function instantMs(value: string): number {
+  return Date.parse(DateTimeStringSchema.parse(value));
 }
 
 function uniqueRefs(refs: CognitionRef[]): CognitionRef[] {

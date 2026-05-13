@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createReflectionInputFromCognitionReplay,
   createCognitionReplayRecord,
+  type CognitionSourceStore,
   type MemoryWritebackProposal,
 } from "../../runtime/cognition/index.js";
 import {
   CognitionWritebackQueueEntrySchema,
   FileCognitionWritebackQueueStore,
+  cognitionWritebackSourceStateKey,
   createCognitionWritebackQueueEntry,
   decideCognitionWritebackQueueEntry,
   evaluateCognitionWritebackReflectionInput,
@@ -26,11 +28,11 @@ afterEach(() => {
   }
 });
 
-function eventRef(ref = "chat:event:1") {
+function eventRef(ref = "chat:event:1", sourceStore: CognitionSourceStore = "chat_history") {
   return {
     ref,
-    source_store: "chat_history" as const,
-    source_event_type: "user_input",
+    source_store: sourceStore,
+    source_event_type: sourceStore === "runtime_operation" ? "agent_loop_command_result" : "user_input",
     schema_version: 1,
     source_epoch: "turn:1",
     redaction_policy: "metadata_only" as const,
@@ -217,6 +219,35 @@ describe("cognition writeback queue", () => {
       owner: "profile",
       state: "ready_for_owner_review",
       owner_write_performed: false,
+    }]);
+  });
+
+  it("resolves invalid source states by source store and ref", () => {
+    const chatRef = eventRef("shared:event:1", "chat_history");
+    const runtimeRef = eventRef("shared:event:1", "runtime_operation");
+    const entries = evaluateCognitionWritebackReflectionInput({
+      reflectionInput: {
+        schema_version: "cognition-writeback-reflection-input/v1",
+        input_id: "reflection:cognition:qualified-source-state",
+        episode_refs: [chatRef],
+        writeback_proposals: [proposal({
+          proposal_id: "writeback:shared-source-ref",
+          source_event_refs: [chatRef, runtimeRef],
+        })],
+        tool_trace_refs: [],
+        feedback_refs: [],
+        runtime_authority: false,
+      },
+      evaluatedAt: NOW,
+      sourceStates: {
+        [cognitionWritebackSourceStateKey(runtimeRef)]: "deleted_or_tombstoned",
+      },
+    });
+
+    expect(entries).toMatchObject([{
+      state: "blocked_source_invalid",
+      source_state: "deleted_or_tombstoned",
+      invalidation_refs: [runtimeRef],
     }]);
   });
 

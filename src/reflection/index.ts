@@ -3,6 +3,7 @@ export { runEveningCatchup } from "./evening-catchup.js";
 export { runDreamConsolidation } from "./dream-consolidation.js";
 export { runWeeklyReview } from "./weekly-review.js";
 export {
+  cognitionWritebackSourceStateKey,
   evaluateCognitionWritebackReflectionInput,
 } from "./cognition-writeback-evaluator.js";
 export {
@@ -23,6 +24,9 @@ export type {
   ConsolidationReport,
   WeeklyReviewReport,
 } from "./types.js";
+export type {
+  CognitionWritebackSourceStateMap,
+} from "./cognition-writeback-evaluator.js";
 export type {
   CognitionWritebackQueueAuditEvent,
   CognitionWritebackQueueDecision,

@@ -172,6 +172,8 @@ describe("Companion cognition contracts", () => {
   });
 
   it("requires redaction, admission, and autonomy refs before cloud-visible context leaves local cognition", () => {
+    const approvedContext = eventRef("memory:private-context");
+    const unapprovedContext = eventRef("memory:unapproved-context");
     const cloud = CloudComputeRequestSchema.parse({
       request_id: "cloud:admitted",
       provider_ref: "openai:responses",
@@ -180,18 +182,18 @@ describe("Companion cognition contracts", () => {
       privacy_profile: "external_service",
       admission_evaluation_ref: { kind: "admission", ref: "admission:cloud" },
       autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:cloud" },
-      model_visible_context_refs: [eventRef("memory:private-context")],
+      model_visible_context_refs: [approvedContext],
     });
 
     const allowed = evaluateCloudBoundaryForCognition({
       evaluationId: "cloud-boundary:gated",
       mode: "gated_external_service",
-      contextRefs: [eventRef("memory:private-context")],
+      contextRefs: [approvedContext, unapprovedContext],
       cloudComputeRequest: cloud,
     });
 
     expect(allowed.external_service_context_allowed).toBe(true);
-    expect(allowed.model_visible_context_refs).toHaveLength(1);
+    expect(allowed.model_visible_context_refs).toEqual([approvedContext]);
     expect(() => CloudBoundaryEvaluationSchema.parse({
       ...allowed,
       redaction_refs: [],
