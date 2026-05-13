@@ -572,6 +572,8 @@ export const CognitionReplayStableOutputSchema = z.object({
   cognition_id: z.string().min(1),
   caller_path: CompanionCognitionCallerPathSchema,
   situation_model: SituationModelSchema,
+  relationship_state: RelationshipStateProjectionSchema,
+  selected_intention: IntentionSelectionSchema.nullable(),
   response_plan: ResponsePlanSchema,
   tool_candidates: z.array(ToolCandidateSchema).default([]),
   authorization_requests: z.array(AuthorizationRequestSchema).default([]),

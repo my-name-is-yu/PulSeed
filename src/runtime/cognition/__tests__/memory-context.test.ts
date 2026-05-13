@@ -1,8 +1,15 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { CoreCompanionMemoryProjectionSchema } from "../../decision/core-companion-memory-projection.js";
 import { CompanionCognitionService } from "../companion-cognition-service.js";
-import { cognitionMemoryResultFromCoreProjection } from "../memory-context.js";
-import type { CompanionCognitionInput } from "../contracts.js";
+import {
+  cognitionMemoryResultFromCoreProjection,
+  createRelationshipProfileCognitionMemoryPort,
+} from "../memory-context.js";
+import { CognitionMemoryRequestSchema, type CompanionCognitionInput } from "../contracts.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
 
@@ -121,6 +128,117 @@ describe("cognition memory context", () => {
     expect(cognition.relationship_state.withheld_memory_refs).toHaveLength(1);
     expect(cognition.uncertainty.map((item) => item.kind)).toContain("missing_surface");
   });
+
+  it("retrieves governed relationship profile memory for live cognition caller requests", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-cognition-memory-port-"));
+    try {
+      await upsertRelationshipProfileItem(baseDir, {
+        stableKey: "operator.status_style",
+        kind: "preference",
+        value: "Prefer concise implementation status updates.",
+        source: "cli_update",
+        allowedScopes: ["memory_retrieval"],
+        sensitivity: "private",
+        now: NOW,
+      });
+
+      const memoryPort = createRelationshipProfileCognitionMemoryPort({
+        baseDir,
+        now: () => new Date(NOW),
+      });
+      const result = await memoryPort.retrieveMemory(
+        CognitionMemoryRequestSchema.parse(chatInput().memory_context_request),
+      );
+
+      expect(result.included).toHaveLength(1);
+      expect(result.included[0]).toMatchObject({
+        source_kind: "semantic",
+        excerpt: "Prefer concise implementation status updates.",
+        allowed_uses: ["runtime_grounding"],
+        memory_ref: {
+          source_store: "profile",
+          source_event_type: "preference",
+        },
+      });
+
+      const cognition = await new CompanionCognitionService({ memoryPort }).evaluateTurn(chatInput());
+      expect(cognition.relationship_state.relationship_refs).toHaveLength(1);
+      expect(cognition.audit_refs).toContain("core-memory:memory-request:chat:1");
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies governed knowledge facts as semantic cognition memory", () => {
+    const projection = CoreCompanionMemoryProjectionSchema.parse({
+      schema_version: "core-companion-memory-projection/v1",
+      projection_id: "core-memory:knowledge-fact-test",
+      created_at: NOW,
+      caller_path: "task_agent_loop",
+      source_refs: [{
+        kind: "surface_projection",
+        ref: "surface:knowledge-fact-test",
+      }],
+      surface_ref: "surface:knowledge-fact-test",
+      requested_use: "goal_planning",
+      included_entries: [{
+        entry_id: "core-memory-entry:knowledge",
+        lane: "knowledge",
+        source_ref: memorySource("knowledge:fact:1", {
+          ownerKind: "knowledge",
+          role: "knowledge",
+          recordKind: "knowledge_fact",
+        }),
+        content: {
+          state: "available",
+          excerpt: "The local architecture prefers typed contracts.",
+        },
+        use_policy: {
+          remembered: true,
+          usable: true,
+          speakable: false,
+          actionable: false,
+          inhibition_only: false,
+          planning_only: true,
+          forbidden: false,
+          memory_is_runtime_authority: false,
+          required_confirmation: "none",
+          requested_use: "goal_planning",
+          allowed_use_classes: ["goal_planning", "surface_projection"],
+          blocked_use_classes: ["side_effect_authorization"],
+        },
+        source_projection_ref: "surface:knowledge-fact-test",
+        audit_refs: ["audit:knowledge:fact:1"],
+      }],
+      restricted_entries: [],
+      ordinary_surface_policy: {},
+      summary: {
+        included_count: 1,
+        restricted_count: 0,
+        remembered_count: 1,
+        usable_count: 1,
+        speakable_count: 0,
+        actionable_count: 0,
+        inhibition_only_count: 0,
+        planning_only_count: 1,
+        forbidden_count: 0,
+      },
+    });
+
+    const result = cognitionMemoryResultFromCoreProjection({
+      requestId: "memory-request:task:knowledge",
+      projection,
+      requestedUse: "goal_planning",
+    });
+
+    expect(result.included[0]).toMatchObject({
+      source_kind: "semantic",
+      memory_ref: {
+        source_store: "knowledge",
+        source_event_type: "knowledge_fact",
+      },
+    });
+  });
 });
 
 function chatInput(overrides: Partial<CompanionCognitionInput> = {}): CompanionCognitionInput {
@@ -166,15 +284,18 @@ function chatInput(overrides: Partial<CompanionCognitionInput> = {}): CompanionC
 
 function memorySource(memoryId: string, overrides: Record<string, unknown> = {}) {
   const sensitivity = typeof overrides["sensitivity"] === "string" ? overrides["sensitivity"] : "private";
+  const ownerKind = typeof overrides["ownerKind"] === "string" ? overrides["ownerKind"] : "relationship_profile";
+  const role = typeof overrides["role"] === "string" ? overrides["role"] : "relationship";
+  const recordKind = typeof overrides["recordKind"] === "string" ? overrides["recordKind"] : "preference";
   return {
     memory_id: memoryId,
     owning_store_ref: {
-      kind: "relationship_profile",
+      kind: ownerKind,
       store_ref: "relationship-profile:cognition-test",
       record_ref: memoryId,
     },
-    role: "relationship",
-    record_kind: "preference",
+    role,
+    record_kind: recordKind,
     domain_fields: {
       target: "cognition memory test",
       preference: memoryId === "memory:sensitive" ? "sensitive-secret" : "current preference",
@@ -194,7 +315,7 @@ function memorySource(memoryId: string, overrides: Record<string, unknown> = {})
       kind: "memory_record",
       ref: memoryId,
       owning_store_ref: {
-        kind: "relationship_profile",
+        kind: ownerKind,
         store_ref: "relationship-profile:cognition-test",
         record_ref: memoryId,
       },

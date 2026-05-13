@@ -1,4 +1,5 @@
 import {
+  RelationshipStateProjectionSchema,
   CognitionReplayStableOutputSchema,
   CognitionReplayRecordSchema,
   type CognitionEventRef,
@@ -39,6 +40,8 @@ export function createCognitionReplayRecord(input: {
             cognition_id: input.output.cognition_id,
             caller_path: input.output.caller_path,
             situation_model: input.output.situation_model,
+            relationship_state: replayRelationshipState(input.output.relationship_state),
+            selected_intention: input.output.selected_intention,
             response_plan: input.output.response_plan,
             tool_candidates: input.output.tool_candidates,
             authorization_requests: input.output.authorization_requests,
@@ -55,6 +58,18 @@ export function createCognitionReplayRecord(input: {
       refs_only: true,
       invalidates_on_source_tombstone: true,
     },
+  });
+}
+
+function replayRelationshipState(
+  relationshipState: CompanionCognitionOutput["relationship_state"],
+): CompanionCognitionOutput["relationship_state"] {
+  return RelationshipStateProjectionSchema.parse({
+    ...relationshipState,
+    relationship_refs: relationshipState.relationship_refs.map((source) => {
+      const { excerpt: _excerpt, ...refsOnlySource } = source;
+      return refsOnlySource;
+    }),
   });
 }
 

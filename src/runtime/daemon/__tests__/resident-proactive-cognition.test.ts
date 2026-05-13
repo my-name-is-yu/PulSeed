@@ -1,8 +1,22 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { evaluateResidentProactiveCognition } from "../runner-resident-proactive.js";
 
 describe("resident proactive cognition", () => {
   it("records hold-only cognition metadata when the resident operation boundary blocks preparation", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-resident-cognition-memory-"));
+    await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "resident.preemptive_boundary",
+      kind: "intervention_policy",
+      value: "Only suggest proactive checks after runtime gates admit preparation.",
+      source: "cli_update",
+      allowedScopes: ["resident_behavior"],
+      sensitivity: "private",
+      now: "2026-05-14T00:00:00.000Z",
+    });
     const metadata = await evaluateResidentProactiveCognition({
       attentionAdmission: {
         action: "preemptive_check",
@@ -26,6 +40,7 @@ describe("resident proactive cognition", () => {
         operation_execution_allowed: false,
       },
       surfaceActivityMetadata: {},
+      baseDir,
       logger: {
         debug: vi.fn(),
         info: vi.fn(),
@@ -39,5 +54,6 @@ describe("resident proactive cognition", () => {
       cognition_delivery_kind: "hold",
       cognition_writeback_proposal_count: 1,
     });
+    fs.rmSync(baseDir, { recursive: true, force: true });
   });
 });

@@ -112,6 +112,7 @@ import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-s
 import {
   CompanionCognitionService,
   createCognitionReplayRecord,
+  createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
 } from "../../runtime/cognition/index.js";
 
@@ -183,7 +184,11 @@ export class ChatRunner {
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.feedbackIngestionStore = deps.feedbackIngestionStore ?? createDefaultChatFeedbackIngestionStore(deps.stateManager);
-    this.companionCognitionService = deps.companionCognitionService ?? new CompanionCognitionService();
+    this.companionCognitionService = deps.companionCognitionService ?? new CompanionCognitionService({
+      memoryPort: createRelationshipProfileCognitionMemoryPort({
+        baseDir: this.providerConfigBaseDir(),
+      }),
+    });
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,

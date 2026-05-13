@@ -11,6 +11,7 @@ import type { SelectedChatRoute } from "../ingress-router.js";
 import type { AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { CompanionCognitionService, type CompanionCognitionInput } from "../../../runtime/cognition/index.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
@@ -41,6 +42,15 @@ afterEach(() => {
 describe("chat caller path cognition integration", () => {
   it("records shadow cognition for production ChatRunner agent-loop turns", async () => {
     const stateManager = makeStateManager();
+    await upsertRelationshipProfileItem(stateManager.getBaseDir(), {
+      stableKey: "chat.status_style",
+      kind: "preference",
+      value: "Prefer direct implementation progress updates.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval"],
+      sensitivity: "private",
+      now: "2026-05-14T00:00:00.000Z",
+    });
     const runner = new ChatRunner({
       stateManager,
       adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
@@ -61,11 +71,19 @@ describe("chat caller path cognition integration", () => {
       schema_version: "cognition-replay-record/v1",
       caller_path: "chat_user_turn",
       stable_output: {
+        relationship_state: {
+          relationship_refs: [{
+            memory_ref: {
+              source_event_type: "preference",
+            },
+          }],
+        },
         response_plan: {
           guidance_kind: "continue_route",
         },
       },
     });
+    expect(JSON.stringify(cognitionRecords[0]?.payload)).not.toContain("Prefer direct implementation progress updates.");
   });
 
   it("uses the same cognition contract for gateway model-loop turns", async () => {

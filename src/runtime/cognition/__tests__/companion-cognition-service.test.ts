@@ -80,6 +80,13 @@ describe("CompanionCognitionService", () => {
     });
     expect(sink.list()).toHaveLength(1);
     expect(sink.list()[0]).toMatchObject({
+      stable_output: {
+        relationship_state: {
+          relationship_refs: [],
+          withheld_memory_refs: [],
+        },
+        selected_intention: null,
+      },
       retention_policy: {
         materialized_content: false,
         refs_only: true,

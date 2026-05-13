@@ -1,5 +1,6 @@
 import type { Task } from "../../../base/types/task.js";
 import type { Goal } from "../../../base/types/goal.js";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import type {
@@ -30,6 +31,7 @@ import type { ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import {
   CompanionCognitionService,
+  createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionOutput,
 } from "../../../runtime/cognition/index.js";
 
@@ -45,6 +47,7 @@ export interface TaskAgentLoopRunnerDeps {
   defaultReasoningEffort?: AgentLoopReasoningEffort;
   defaultProfileName?: string;
   defaultExecutionPolicy?: ExecutionPolicy;
+  cognitionMemoryBaseDir?: string;
   contextAssembler?: AgentLoopContextAssembler;
   soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   cwd?: string;
@@ -68,6 +71,12 @@ export interface TaskAgentLoopRunInput {
 
 export class TaskAgentLoopRunner {
   constructor(private readonly deps: TaskAgentLoopRunnerDeps) {}
+
+  private cognitionMemoryBaseDir(): string {
+    return this.deps.cognitionMemoryBaseDir
+      ?? this.deps.defaultToolCallContext?.providerConfigBaseDir
+      ?? getPulseedDirPath();
+  }
 
   async runTask(input: TaskAgentLoopRunInput): Promise<AgentLoopResult<TaskAgentLoopOutput>> {
     const model = input.model ?? this.deps.defaultModel ?? await this.deps.modelRegistry.defaultModel();
@@ -99,6 +108,7 @@ export class TaskAgentLoopRunner {
         task: input.task,
         cwd: assembled.cwd,
         phaseRef: "task-agent-loop:assemble",
+        baseDir: this.cognitionMemoryBaseDir(),
       }).catch(() => undefined);
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
@@ -178,6 +188,7 @@ async function evaluateTaskAgentLoopCognition(input: {
   task: Task;
   cwd: string;
   phaseRef: string;
+  baseDir: string;
 }): Promise<CompanionCognitionOutput> {
   const cognitionId = `cognition:task:${input.task.id}`;
   const eventRef = {
@@ -188,7 +199,11 @@ async function evaluateTaskAgentLoopCognition(input: {
     source_epoch: input.task.started_at ?? input.task.created_at ?? input.task.id,
     redaction_policy: "metadata_only" as const,
   };
-  return new CompanionCognitionService().evaluateTaskContext({
+  return new CompanionCognitionService({
+    memoryPort: createRelationshipProfileCognitionMemoryPort({
+      baseDir: input.baseDir,
+    }),
+  }).evaluateTaskContext({
     cognition_id: cognitionId,
     caller_path: "long_running_task_turn",
     event_refs: [eventRef],

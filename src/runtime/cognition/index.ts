@@ -46,6 +46,7 @@ export {
 } from "./contracts.js";
 export {
   createEmptyCognitionMemoryResult,
+  createRelationshipProfileCognitionMemoryPort,
   cognitionMemoryResultFromCoreProjection,
 } from "./memory-context.js";
 export {

@@ -1,11 +1,42 @@
-import type { CoreCompanionMemoryProjection } from "../decision/core-companion-memory-projection.js";
+import {
+  buildRelationshipProfileSurfaceProjection,
+  loadRelationshipProfileSurfaceContext,
+} from "../../grounding/profile-surface.js";
+import type { SurfaceProjectionTarget } from "../../grounding/surface-contracts.js";
+import {
+  GovernedMemoryAllowedUseClassSchema,
+  type GovernedMemoryAllowedUseClass,
+} from "../../platform/profile/governed-memory.js";
+import type { RelationshipProfileConsentScope } from "../../platform/profile/relationship-profile.js";
+import {
+  createCoreCompanionMemoryProjectionFromSurface,
+  type CoreCompanionMemoryProjection,
+} from "../decision/core-companion-memory-projection.js";
+import type { CognitionProjectionCallerPathKind } from "../decision/companion-decision-contract.js";
 import {
   CognitionEventRefSchema,
   CognitionMemoryResultSchema,
+  type CognitionMemoryRequest,
   type CognitionMemoryResult,
   type CognitionMemorySource,
   type CognitionRequestedMemoryUse,
 } from "./contracts.js";
+import type { CognitionMemoryPort } from "./ports.js";
+
+type GovernedCognitionMemoryUse = Extract<CognitionRequestedMemoryUse, GovernedMemoryAllowedUseClass>;
+
+interface RelationshipProfileCognitionMemoryPortInput {
+  baseDir: string;
+  now?: () => Date;
+}
+
+interface RelationshipProfileCognitionBinding {
+  callerPath: CognitionProjectionCallerPathKind;
+  purpose: string;
+  requestedUse: GovernedCognitionMemoryUse;
+  scope: RelationshipProfileConsentScope;
+  target: SurfaceProjectionTarget;
+}
 
 export function createEmptyCognitionMemoryResult(input: {
   requestId: string;
@@ -76,6 +107,48 @@ export function cognitionMemoryResultFromCoreProjection(input: {
   });
 }
 
+export function createRelationshipProfileCognitionMemoryPort(
+  input: RelationshipProfileCognitionMemoryPortInput,
+): CognitionMemoryPort {
+  return {
+    async retrieveMemory(request: CognitionMemoryRequest): Promise<CognitionMemoryResult> {
+      const binding = relationshipProfileBindingForCognitionRequest(request);
+      const now = input.now?.() ?? new Date();
+      const surfaceContext = await loadRelationshipProfileSurfaceContext({
+        baseDir: input.baseDir,
+        scope: binding.scope,
+        includeSensitive: true,
+      });
+      const surfaceProjection = buildRelationshipProfileSurfaceProjection({
+        context: surfaceContext,
+        target: binding.target,
+        scopeRef: request.query_ref.ref,
+        purpose: binding.purpose,
+        requestedUse: binding.requestedUse,
+        now: now.toISOString(),
+      });
+      if (!surfaceProjection) {
+        return createEmptyCognitionMemoryResult({
+          requestId: request.request_id,
+          auditRefs: [],
+        });
+      }
+      const coreProjection = createCoreCompanionMemoryProjectionFromSurface({
+        surfaceProjection,
+        callerPath: binding.callerPath,
+        projectionId: `core-memory:${request.request_id}`,
+        cognitionRef: request.request_id,
+        createdAt: now.toISOString(),
+      });
+      return cognitionMemoryResultFromCoreProjection({
+        requestId: request.request_id,
+        projection: coreProjection,
+        requestedUse: binding.requestedUse,
+      });
+    },
+  };
+}
+
 function sourceStoreForMemoryOwner(owner: string): CognitionMemorySource["memory_ref"]["source_store"] {
   if (owner === "soil") return "soil";
   if (owner === "knowledge") return "knowledge";
@@ -87,8 +160,58 @@ function sourceStoreForMemoryOwner(owner: string): CognitionMemorySource["memory
 function sourceKindForMemoryRole(role: string): CognitionMemorySource["source_kind"] {
   if (role === "work_memory") return "working";
   if (role === "seed") return "episodic";
-  if (role === "knowledge") return "procedural";
+  if (role === "knowledge") return "semantic";
   return "semantic";
+}
+
+function relationshipProfileBindingForCognitionRequest(
+  request: CognitionMemoryRequest,
+): RelationshipProfileCognitionBinding {
+  if (request.caller_path === "resident_proactive_check") {
+    return {
+      callerPath: "resident_attention_cycle",
+      purpose: "companion_cognition_resident_proactive",
+      requestedUse: requestedUseFor(request, [
+        "proactive_action_candidate",
+        "behavioral_inhibition",
+        "attention_prioritization",
+      ]),
+      scope: "resident_behavior",
+      target: "daemon",
+    };
+  }
+  if (request.caller_path === "long_running_task_turn") {
+    return {
+      callerPath: "task_agent_loop",
+      purpose: "companion_cognition_task_agent_loop",
+      requestedUse: requestedUseFor(request, ["goal_planning", "runtime_grounding"]),
+      scope: "local_planning",
+      target: "agent_loop",
+    };
+  }
+  return {
+    callerPath: "chat_gateway_model_loop",
+    purpose: "companion_cognition_chat_turn",
+    requestedUse: requestedUseFor(request, ["runtime_grounding", "user_facing_reference"]),
+    scope: "memory_retrieval",
+    target: "chat",
+  };
+}
+
+function requestedUseFor(
+  request: CognitionMemoryRequest,
+  preferred: GovernedCognitionMemoryUse[],
+): GovernedCognitionMemoryUse {
+  const requestedUses = new Set<CognitionRequestedMemoryUse>(request.requested_uses);
+  const preferredMatch = preferred.find((use) => requestedUses.has(use));
+  if (preferredMatch) return preferredMatch;
+  return request.requested_uses.find(isGovernedCognitionMemoryUse) ?? "runtime_grounding";
+}
+
+function isGovernedCognitionMemoryUse(
+  value: CognitionRequestedMemoryUse,
+): value is GovernedCognitionMemoryUse {
+  return GovernedMemoryAllowedUseClassSchema.safeParse(value).success;
 }
 
 function lifecycleForWithheld(

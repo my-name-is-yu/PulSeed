@@ -3,7 +3,11 @@ import {
   evaluateResidentOperationBoundary,
   residentOperationBoundaryActivityMetadata,
 } from "../capability-operation-planner.js";
-import { CompanionCognitionService, type CompanionCognitionInput } from "../cognition/index.js";
+import {
+  CompanionCognitionService,
+  createRelationshipProfileCognitionMemoryPort,
+  type CompanionCognitionInput,
+} from "../cognition/index.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
 import {
   evaluateResidentAttentionAdmission,
@@ -196,6 +200,7 @@ export async function proactiveTick(
     attentionAdmission,
     operationActivityMetadata,
     surfaceActivityMetadata,
+    baseDir: context.baseDir,
     goalId: typeof result.decision.details?.["goal_id"] === "string"
       ? result.decision.details["goal_id"].trim()
       : undefined,
@@ -277,6 +282,7 @@ export async function evaluateResidentProactiveCognition(input: {
   attentionAdmission: Awaited<ReturnType<typeof evaluateResidentAttentionAdmission>>;
   operationActivityMetadata: ResidentActivityMetadata;
   surfaceActivityMetadata: ResidentSurfaceActivityMetadata;
+  baseDir?: string;
   goalId?: string;
   logger: DaemonRunnerResidentContext["logger"];
 }): Promise<ResidentCognitionActivityMetadata> {
@@ -358,7 +364,15 @@ export async function evaluateResidentProactiveCognition(input: {
   };
 
   try {
-    const output = await new CompanionCognitionService().evaluateIntervention(cognitionInput);
+    const output = await new CompanionCognitionService({
+      ...(input.baseDir
+        ? {
+            memoryPort: createRelationshipProfileCognitionMemoryPort({
+              baseDir: input.baseDir,
+            }),
+          }
+        : {}),
+    }).evaluateIntervention(cognitionInput);
     return {
       cognition_id: output.cognition_id,
       cognition_response_plan_id: output.response_plan.plan_id,
