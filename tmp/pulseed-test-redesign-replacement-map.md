@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T01:03:54.200Z
+Generated: 2026-05-13T01:40:20.470Z
 
 Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.
 
@@ -76,6 +76,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - Deleted old-test blocks:
   - Block: stores the detected Telegram token as transient value without offset artifacts
     - Replacement trace: gateway_secret_setup_redacts_token_and_confirms_write
+    - Exported state artifact/assertion: golden: state/gateway/gateway_secret_setup_redacts_token_and_confirms_write.json; assertions config_written, redacted_text_contains_secret, secret_count, token_value_persisted
+    - Production entrypoint exercised: golden: Gateway secret setup intake -> typed secret writer -> redacted chat state
     - Deletion allowed: yes
     - Evidence: 2026-05-13: pre-delete unit `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts --config vitest.unit.config.ts` passed 2 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit passed 1 remaining URL-query redaction test.
 - Replacement evidence:
@@ -134,6 +136,39 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: runtime_operations, background_runs, runtime events
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: blocks latest run control when only another conversation has selectable runs
+    - Old line range: 1984-2023
+    - Classification: delete_now
+    - Replacement trace: runtime_control_latest_other_conversation_blocked
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_latest_other_conversation_blocked.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Production entrypoint exercised: golden: Gateway runtime-control request -> conversation-scoped run resolver
+    - Deletion allowed: yes
+    - Evidence: Trace asserts the chat conversation scope blocks reuse of another conversation's run, records blocked runtime_operation state, and keeps executor_call_count=0.
+  - Block: rejects stale terminal runs for control operations
+    - Old line range: 2065-2093
+    - Classification: delete_now
+    - Replacement trace: runtime_control_terminal_run_stale_blocked
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_terminal_run_stale_blocked.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Production entrypoint exercised: golden: Gateway runtime-control request -> terminal run guard
+    - Deletion allowed: yes
+    - Evidence: Trace asserts terminal run rejection through the runtime-control request artifact with operation_state=blocked and executor_call_count=0.
+  - Block: blocks resume_run after resume_companion until the held run is re-admitted
+    - Old line range: 2133-2177
+    - Classification: delete_now
+    - Replacement trace: runtime_control_resume_after_companion_revival_requires_readmission
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Production entrypoint exercised: golden: Companion resume -> runtime-control readmission gate
+    - Deletion allowed: yes
+    - Evidence: Trace asserts the post-revival run remains blocked until readmission and records the blocked operation without executor dispatch.
+  - Block: records approval-gated finalize proposals without executing external actions
+    - Old line range: 2267-2304
+    - Classification: delete_now
+    - Replacement trace: runtime_control_finalize_records_proposal_without_external_action
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_finalize_records_proposal_without_external_action.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Production entrypoint exercised: golden: Gateway finalize request -> runtime_operations proposal store
+    - Deletion allowed: yes
+    - Evidence: Trace asserts finalize is recorded as a blocked proposal with no executor call and no external action execution.
 - Replacement evidence:
   - Replacement trace name: runtime_control_pause_current_run_conversation_scoped
     - Real production entrypoint used: golden: Gateway runtime-control request -> RuntimeControlService -> runtime_operations
@@ -171,7 +206,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/control/__tests__/runtime-control-service.test.ts --config vitest.integration.config.ts` passed 1 file / 41 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/control/__tests__/runtime-control-service.test.ts --config vitest.integration.config.ts` passed 1 file / 37 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/__tests__/schedule-engine.test.ts
@@ -180,6 +215,61 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: schedule entries/history, attention projections, notification outbox
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: Probe execution private-path block
+    - Old line range: 1300-1569
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted as mocked adapter/LLM coverage of the internal probe execution route; the surviving ChangeDetector unit keeps the pure reducer contract and broader probe behavior needs a production schedule-source trace before being reintroduced.
+  - Block: Probe execution edge cases for missing LLM, schedule_change notification, and missing probe config
+    - Old line range: 1900-1975
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted as private executeProbe plumbing and mock notification coverage; no stable public runner artifact depended on these implementation details.
+  - Block: Direct executeCron private-method assertions
+    - Old line range: 2111-2134, 2216-2334, 2399-2456
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted direct `(eng as any).executeCron` tests that asserted mocked context, prompt interpolation, notification, output summary, missing config, and reflection helper details instead of the public schedule tick contract.
+  - Block: Direct executeGoalTrigger private-method assertions
+    - Old line range: 2480-2607
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted direct `(eng as any).executeGoalTrigger` tests that followed CoreLoop call arguments and budget internals rather than a production goal-trigger schedule artifact.
+  - Block: routes wait-resume schedule wakes through attention re-evaluation without notification
+    - Old line range: 2608-2667
+    - Classification: delete_now
+    - Replacement trace: schedule_wait_resume_due_creates_held_attention_artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_wait_resume_due_creates_held_attention_artifact.json; assertions agenda_item_count, cycle_result_count, first_result_status, history_count, notification_count, second_result_count
+    - Production entrypoint exercised: golden: ScheduleEngine.tick() -> wait-resume attention projection
+    - Deletion allowed: yes
+    - Evidence: Trace asserts a due wait-resume tick produces one held attention artifact, zero notifications, and one schedule history record through the production tick runner.
+  - Block: default wait-resume path persists store-backed attention cycle state
+    - Old line range: 2668-2701
+    - Classification: delete_now
+    - Replacement trace: schedule_wait_resume_due_creates_held_attention_artifact
+    - Exported state artifact/assertion: golden: state/schedule/schedule_wait_resume_due_creates_held_attention_artifact.json; assertions agenda_item_count, cycle_result_count, first_result_status, history_count, notification_count, second_result_count
+    - Production entrypoint exercised: golden: ScheduleEngine.tick() -> wait-resume attention projection
+    - Deletion allowed: yes
+    - Evidence: Trace covers the durable attention cycle output with agenda_item_count=1 and cycle_result_count=1 through the exported state artifact.
+  - Block: default wait-resume attention cycle is idempotent for the same scheduled due instance
+    - Old line range: 2751-2807
+    - Classification: delete_now
+    - Replacement trace: schedule_wait_resume_retry_same_due_idempotent
+    - Exported state artifact/assertion: golden: state/schedule/schedule_wait_resume_retry_same_due_idempotent.json; assertions agenda_item_count, cycle_result_count, first_result_status, history_count, notification_count, second_result_count
+    - Production entrypoint exercised: golden: ScheduleEngine.tick() replay -> due idempotency guard
+    - Deletion allowed: yes
+    - Evidence: Trace asserts retry of the same due instance remains idempotent with one agenda item, one cycle result, two history rows, and no notification.
+  - Block: tick() routing Phase 3 cron/goal-trigger dispatch assertions
+    - Old line range: 3082-3138
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted implementation-routing assertions that verified private dispatch selection through mocks; visible cron and goal-trigger behavior remains in surviving public tick tests until dedicated runner traces exist.
 - Replacement evidence:
   - Replacement trace name: schedule_wait_resume_before_due_no_attention_or_notification
     - Real production entrypoint used: golden: ScheduleEngine.tick() -> schedule store/history -> attention projection
@@ -205,7 +295,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 142 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 105 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/__tests__/approval-broker.test.ts
@@ -214,6 +304,39 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: approval_records, tool approval artifact
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: restores pending approvals from durable storage
+    - Old line range: 208-253
+    - Classification: delete_now
+    - Replacement trace: approval_pending_restored_after_daemon_restart
+    - Exported state artifact/assertion: golden: state/approval/approval_pending_restored_after_daemon_restart.json; assertions pending_restored_event_count, request_result, resolved, resolved_state; replay: state/approval/approval_pending_restored_after_daemon_restart.json; assertions fresh_restarted_equal, startup_replay_path
+    - Production entrypoint exercised: golden: daemon restart -> ApprovalBroker -> approval store; replay: daemon restart -> ApprovalBroker -> approval store
+    - Deletion allowed: yes
+    - Evidence: Golden and replay traces assert pending approval restoration across restart plus successful resolution into approved durable state.
+  - Block: does not resolve conversational approvals from stale or mismatched origins
+    - Old line range: 498-540
+    - Classification: delete_now
+    - Replacement trace: approval_origin_bound_stale_reply_rejected
+    - Exported state artifact/assertion: golden: state/approval/approval_origin_bound_stale_reply_rejected.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Production entrypoint exercised: golden: Approval response -> origin-bound approval broker
+    - Deletion allowed: yes
+    - Evidence: Trace asserts stale origin replies are rejected, the pending approval remains pending, and no mutation executes.
+  - Block: denies conversational approvals when the originating channel is unreachable
+    - Old line range: 614-645
+    - Classification: delete_now
+    - Replacement trace: approval_delivery_unavailable_denies_not_executes
+    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Production entrypoint exercised: golden: Gateway approval delivery -> channel availability gate
+    - Deletion allowed: yes
+    - Evidence: Trace asserts unavailable delivery denies the approval request, records denied state, and prevents mutation execution.
+  - Block: denies conversational approvals when no delivery surface is configured
+    - Old line range: 646-674
+    - Classification: delete_now
+    - Replacement trace: approval_delivery_unavailable_denies_not_executes
+    - Exported state artifact/assertion: golden: state/approval/approval_delivery_unavailable_denies_not_executes.json; assertions mutation_executed, pending_after_resolution, request_result, resolved, resolved_state, stale_reply_rejected
+    - Production entrypoint exercised: golden: Gateway approval delivery -> channel availability gate
+    - Deletion allowed: yes
+    - Evidence: Trace covers the same delivery-unavailable denial contract at the approval/tool gate with no execution.
 - Replacement evidence:
   - Replacement trace name: gateway_approval_denial_never_executes_write
     - Real production entrypoint used: golden: Gateway approval reply -> tool approval gate -> mutation executor
@@ -245,7 +368,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 142 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 105 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/queue/__tests__/journal-backed-queue.test.ts
@@ -254,6 +377,41 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: queue journal, command envelope, claim state
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: rejects unsafe envelope timestamps before writing the journal
+    - Old line range: 47-57
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted as legacy journal JSON import/file-shape behavior outside the normal Control DB queue path; no supported public migration boundary depends on this direct journal file mutation.
+  - Block: skips persisted queue records with unsafe envelope scalars
+    - Old line range: 58-87
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted as legacy persisted journal scalar-shape coverage; normal queue safety is now enforced through typed queue/control DB boundaries rather than direct JSON salvage tests.
+  - Block: rejects duplicate dedupe_key while the original item is inflight
+    - Old line range: 143-173
+    - Classification: delete_now
+    - Replacement trace: queue_dedupe_inflight_rejects_replacement
+    - Exported state artifact/assertion: golden: state/queue/queue_dedupe_inflight_rejects_replacement.json; assertions claimed_message_id, inflight_size, original_accept, pending_size, retry_accept, retry_record_present, snapshot
+    - Production entrypoint exercised: golden: JournalBackedQueue enqueue -> inflight dedupe guard
+    - Deletion allowed: yes
+    - Evidence: Trace asserts original accept, claim, duplicate retry rejection, pending_size=0, inflight_size=1, and no retry record through the queue runner.
+  - Block: fences expired claims from renew/ack/nack before sweeper runs
+    - Old line range: 292-309
+    - Classification: delete_now
+    - Replacement trace: queue_expired_claim_rejects_late_ack_and_reclaims
+    - Exported state artifact/assertion: golden: state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json; assertions accepted, initial_claim, late_ack_accepted, late_nack_accepted, persisted_before_sweep_status, post_sweep_snapshot, renew_after_expiry_returned_claim, sweep_result; replay: state/queue/queue_expired_claim_rejects_late_ack_and_reclaims.json; assertions fresh_restarted_equal, startup_replay_path
+    - Production entrypoint exercised: golden: JournalBackedQueue claim -> sweeper -> late ack reject; replay: JournalBackedQueue claim -> sweeper -> late ack reject
+    - Deletion allowed: yes
+    - Evidence: Golden and replay traces assert late ack/nack/renew rejection, persisted inflight-before-sweep state, sweep reclaim, and restarted replay equivalence.
+  - Block: reclaims orphaned lock directories with missing or malformed owner metadata
+    - Old line range: 310-333
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted as obsolete legacy `.lock` compatibility behavior; current queue ownership is Control DB-backed and this lock-directory salvage path is not a supported public contract.
 - Replacement evidence:
   - Replacement trace name: eventserver_command_accept_durable_before_200
     - Real production entrypoint used: golden: EventServer HTTP -> durable queue/journal -> 200 response
@@ -279,7 +437,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.smoke.config.ts` passed 1 file / 15 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/store/__tests__/attention-state-store.test.ts
@@ -288,6 +446,15 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: attention state tables, migration audit
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: fails closed when the control DB schema is ahead of this code
+    - Old line range: 235-250
+    - Classification: delete_now
+    - Replacement trace: state_attention_schema_ahead_fail_closed
+    - Exported state artifact/assertion: golden: state/state/state_attention_schema_ahead_fail_closed.json; assertions fail_closed, message_contains_newer_schema; replay: state/state/state_attention_schema_ahead_fail_closed.json; assertions fresh_restarted_equal, startup_replay_path
+    - Production entrypoint exercised: golden: runtime startup/replay -> attention state store -> control DB; replay: runtime startup/replay -> attention state store -> control DB
+    - Deletion allowed: yes
+    - Evidence: Golden and replay traces now seed the real control DB path and assert fail_closed=true plus message_contains_newer_schema=true for fresh and restarted states.
 - Replacement evidence:
   - Replacement trace name: state_attention_schema_ahead_fail_closed
     - Real production entrypoint used: golden: runtime startup/replay -> attention state store -> control DB; replay: runtime startup/replay -> attention state store -> control DB
@@ -307,7 +474,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 1 file / 14 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/__tests__/daemon-runner.test.ts
@@ -366,6 +533,29 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - State artifact: tool result envelope
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: artifacts contains the file path
+    - Old line range: 94-98
+    - Classification: delete_now
+    - Replacement trace: tool_readonly_fs_no_write_approval_under_workspace
+    - Exported state artifact/assertion: golden: state/tool/tool_readonly_fs_no_write_approval_under_workspace.json; assertions approval_request_count, read_success, result_has_read_artifact, write_probe_exists
+    - Production entrypoint exercised: golden: tool catalog -> readonly filesystem tool execution
+    - Deletion allowed: yes
+    - Evidence: Trace asserts result_has_read_artifact=true through the readonly filesystem tool execution artifact.
+  - Block: checkPermissions allows active workspace reads even when self-protection protects the workspace root
+    - Old line range: 156-174
+    - Classification: delete_now
+    - Replacement trace: tool_readonly_fs_no_write_approval_under_workspace
+    - Exported state artifact/assertion: golden: state/tool/tool_readonly_fs_no_write_approval_under_workspace.json; assertions approval_request_count, read_success, result_has_read_artifact, write_probe_exists
+    - Production entrypoint exercised: golden: tool catalog -> readonly filesystem tool execution
+    - Deletion allowed: yes
+    - Evidence: Trace asserts approval_request_count=0 and read_success=true for a readonly workspace path under protected self-protection.
+  - Block: isConcurrencySafe returns true
+    - Old line range: 175-177
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted static metadata assertion; no scheduler/tool-registry concurrency contract is being asserted here.
 - Replacement evidence:
   - Replacement trace name: tool_readonly_fs_no_write_approval_under_workspace
     - Real production entrypoint used: golden: tool catalog -> readonly filesystem tool execution
@@ -373,22 +563,49 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts --config vitest.unit.config.ts` passed 2 files / 14 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts
 
 - Production boundary: tool approval gate -> local write mutation
 - State artifact: approval artifact, mutation artifact
-- Old test file deletion allowed: no
-- No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Old test file deletion allowed: yes
+- Deleted old-test blocks:
+  - Block: mocked writes, directory creation, path resolution, byte count, and write-error handling
+    - Old line range: 32-64, 95-112
+    - Classification: delete_now
+    - Replacement trace: tool_write_local_records_approval_artifact_before_mutation
+    - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
+    - Production entrypoint exercised: golden: tool approval gate -> local write mutation
+    - Deletion allowed: yes
+    - Evidence: Trace asserts approved_write_success=true, mutation_artifact_count=1, and approval_before_mutation=true through the production tool approval/mutation path.
+  - Block: path traversal, sensitive file, and node_modules denial duplicates
+    - Old line range: 65-93
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted duplicated FileWrite-level validation tests; validation remains owned by shared file-validation/tool-boundary coverage rather than a mocked write-file unit.
+  - Block: checkPermissions denies without preApproved and allows with preApproved
+    - Old line range: 115-128
+    - Classification: delete_now
+    - Replacement trace: tool_write_local_records_approval_artifact_before_mutation
+    - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
+    - Production entrypoint exercised: golden: tool approval gate -> local write mutation
+    - Deletion allowed: yes
+    - Evidence: Trace asserts denied_execution_status=not_executed, denied_mutation_exists=false, approved_write_success=true, and wait_plan_count=0 at the approval gate.
+  - Block: isConcurrencySafe and metadata permissionLevel/name
+    - Old line range: 131-138
+    - Classification: obsolete
+    - Replacement trace: none
+    - Deletion allowed: yes
+    - Evidence: Deleted static implementation metadata assertions; no public registry contract requires this mocked file.
 - Replacement evidence:
   - Replacement trace name: tool_write_local_records_approval_artifact_before_mutation
     - Real production entrypoint used: golden: tool approval gate -> local write mutation
     - Exported state artifact/assertion: golden: state/tool/tool_write_local_records_approval_artifact_before_mutation.json; assertions approval_before_mutation, approved_write_success, denied_execution_status, denied_mutation_exists, mutation_artifact_count, wait_plan_count
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
-    - Deletion allowed: no
-    - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.
+    - Deletion allowed: yes
+- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the surviving tool/setup unit command passed 2 files / 14 tests after deleting this mocked file.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
