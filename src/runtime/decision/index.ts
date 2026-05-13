@@ -1,4 +1,17 @@
 export {
+  CompanionGadgetActionCandidateSchema,
+  CompanionGadgetAssetKindSchema,
+  CompanionGadgetCandidateSchema,
+  CompanionGadgetOutcomeFeedbackAdjustmentSchema,
+  CompanionGadgetOutcomeFeedbackPolicySchema,
+  CompanionGadgetPlanSchema,
+  CompanionGadgetPlanningBlockReasonSchema,
+  CompanionGadgetPlanningRefKindSchema,
+  CompanionGadgetPlanningSourceRefSchema,
+  CompanionGadgetReadinessSummaryStateSchema,
+  createCompanionGadgetPlan,
+} from "./companion-gadget-planning.js";
+export {
   CoreCompanionMemoryAvailableContentSchema,
   CoreCompanionMemoryContentSchema,
   CoreCompanionMemoryEntrySchema,
@@ -41,6 +54,19 @@ export {
   CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
+export type {
+  CompanionGadgetActionCandidate,
+  CompanionGadgetAssetKind,
+  CompanionGadgetCandidate,
+  CompanionGadgetOutcomeFeedbackAdjustment,
+  CompanionGadgetOutcomeFeedbackPolicy,
+  CompanionGadgetPlan,
+  CompanionGadgetPlanningBlockReason,
+  CompanionGadgetPlanningRefKind,
+  CompanionGadgetPlanningSourceRef,
+  CompanionGadgetReadinessSummaryState,
+  CreateCompanionGadgetPlanInput,
+} from "./companion-gadget-planning.js";
 export type {
   CoreCompanionMemoryContent,
   CoreCompanionMemoryEntry,
