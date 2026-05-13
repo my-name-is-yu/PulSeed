@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Gateway/chat block inventory completed; next is final verification.
+Final verification in progress. Local `test:unit` is now green after tightening the typed approval stale-target test synchronization.
 
 ## Current Evidence Read
 
@@ -236,6 +236,8 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:replay` -> after gateway/chat retained-block classification passed 1 file / 9 tests
 - `npm run typecheck` -> passed after gateway/chat retained-block classification
 - `node scripts/inventory-test-redesign.mjs` -> after gateway/chat retained-block classification regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts` -> after typed approval stale-target synchronization fix passed 1 file / 89 tests
+- `npm run test:unit` -> after clearing test-generated `$TMPDIR` artifacts and tightening typed approval stale-target synchronization passed 681 files / 9592 tests, 3 skipped
 
 ## Reviewer Findings Applied
 
@@ -256,6 +258,8 @@ Deletion is allowed only per block when replacement map records:
 - Initial pre-`npm ci` `npm run test:golden-traces` failed because `vitest` was not installed in this worktree.
 - One parallel `npm run test:golden-traces` attempt reported a mismatch in `approval_delivery_unavailable_denies_not_executes`; direct expected-vs-actual comparison for that fixture matched byte-for-byte, and the immediate rerun passed 43/43. No active failing command remains from this attempt.
 - `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` reported no files because daemon tests are intentionally excluded from the unit lane; the same test passed under `vitest.integration.config.ts`.
+- First final `npm run test:unit` failed with cascading `ENOSPC` / SQLite disk-full errors after `$TMPDIR` contained 67,585 PulSeed test-generated directories. Removed only matching test temp prefixes from `$TMPDIR`, restoring about 97GB free.
+- Second final `npm run test:unit` failed only `cross-platform-session.test.ts` typed stale-target approval because the test waited for the pending approval but not for the initial runtime-control classifier mock response to be consumed. Tightened the test to wait for both the pending approval and the classifier call before advancing the side-question turn.
 
 ## Verification Commands To Run
 
