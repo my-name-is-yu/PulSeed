@@ -1,4 +1,17 @@
 export {
+  CompanionBehaviorDeterministicAssertionSchema,
+  CompanionBehaviorEvalArtifactKindSchema,
+  CompanionBehaviorEvalAssertionKindSchema,
+  CompanionBehaviorEvalCallerPathSchema,
+  CompanionBehaviorEvalCoverageSchema,
+  CompanionBehaviorEvalLaneSchema,
+  CompanionBehaviorEvalPlanSchema,
+  CompanionBehaviorEvalScenarioSchema,
+  CompanionBehaviorEvalSourceRefSchema,
+  CompanionBehaviorSemanticJudgmentSchema,
+  createDefaultCompanionBehaviorEvalPlan,
+} from "./companion-behavior-eval-contract.js";
+export {
   CompanionGadgetActionCandidateSchema,
   CompanionGadgetAssetKindSchema,
   CompanionGadgetCandidateSchema,
@@ -54,6 +67,18 @@ export {
   CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
+export type {
+  CompanionBehaviorDeterministicAssertion,
+  CompanionBehaviorEvalArtifactKind,
+  CompanionBehaviorEvalAssertionKind,
+  CompanionBehaviorEvalCallerPath,
+  CompanionBehaviorEvalCoverage,
+  CompanionBehaviorEvalLane,
+  CompanionBehaviorEvalPlan,
+  CompanionBehaviorEvalScenario,
+  CompanionBehaviorEvalSourceRef,
+  CompanionBehaviorSemanticJudgment,
+} from "./companion-behavior-eval-contract.js";
 export type {
   CompanionGadgetActionCandidate,
   CompanionGadgetAssetKind,

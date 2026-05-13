@@ -51,6 +51,7 @@ personality.
 - [Relationship Memory And Surface](core/autonomy/relationship-memory-surface.md)
 - [Core Companion Memory Projection](core/autonomy/core-companion-memory-projection.md)
 - [Companion Gadget Planning](core/autonomy/companion-gadget-planning.md)
+- [Companion Behavior Evals](core/autonomy/companion-behavior-evals.md)
 - [Attention Metabolism And Initiative](core/autonomy/attention-metabolism-initiative.md)
 - [Dream Mode](core/autonomy/dream-mode.md)
 
