@@ -4,7 +4,9 @@ import {
 } from "../../cognition/index.js";
 import {
   CognitiveReplayIndexEntrySchema,
+  CognitiveReplayInspectionViewSchema,
   createCognitiveReplayIndexEntry,
+  createCognitiveReplayInspectionView,
   defaultCognitiveReplayOwnerStore,
 } from "../index.js";
 
@@ -113,5 +115,106 @@ describe("cognitive replay index", () => {
         source_store: "cognition_audit",
       },
     })).toThrow(/not valid for caller path/);
+  });
+
+  it("creates redacted inspection views that expose refs only to operator surfaces", () => {
+    const event = eventRef();
+    const record = createCognitionReplayRecord({
+      recordId: "cognition:chat:inspect:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:inspect",
+        caller_path: "chat_user_turn",
+        event_refs: [event],
+      },
+      output: {
+        cognition_id: "cognition:chat:inspect",
+        caller_path: "chat_user_turn",
+        situation_model: {
+          situation_id: "situation:inspect",
+          summary_ref: event,
+          caller_path: "chat_user_turn",
+          current_target_refs: [],
+          stale_target_refs: [],
+          protocol_bypass: false,
+          confidence: 0.7,
+        },
+        relationship_state: {
+          projection_id: "relationship:inspect",
+          relationship_refs: [],
+          withheld_memory_refs: [],
+          conflict_refs: [],
+          overreach_risk: "unknown",
+          ordinary_surface_debug_visible: false,
+        },
+        selected_intention: null,
+        response_plan: {
+          plan_id: "response:inspect",
+          guidance_kind: "continue_route",
+          public_summary: "Continue route.",
+          surface_target: "internal_audit",
+          quieting_applied: false,
+          operator_debug_refs: [],
+          hidden_policy_state_visible_to_normal_user: false,
+        },
+        tool_candidates: [{
+          candidate_id: "candidate:inspect",
+          authority_stage: "suggest",
+          expected_effect: "Suggest a safe operator review.",
+          risk_class: "low",
+          required_context_refs: [],
+          required_authorization_refs: [],
+          can_execute: false,
+          may_execute: false,
+          observability_refs: [],
+          failure_recovery_refs: [],
+          failed_trace_requires_repair: false,
+          memory_is_authority: false,
+          model_text_is_authority: false,
+        }],
+        authorization_requests: [],
+        memory_writeback: [],
+        reflection_hints: [],
+        audit_refs: [],
+        uncertainty: [],
+      },
+    });
+    const entry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:inspect",
+      record,
+    });
+    const operatorView = createCognitiveReplayInspectionView({
+      viewId: "view:operator",
+      surfaceTarget: "operator_debug",
+      indexEntries: [entry],
+      replayRecords: [record],
+    });
+    const normalView = createCognitiveReplayInspectionView({
+      viewId: "view:normal",
+      surfaceTarget: "normal_user",
+      indexEntries: [entry],
+      replayRecords: [record],
+    });
+
+    expect(operatorView.items[0]).toMatchObject({
+      debug_refs_visible: true,
+      source_refs: [event],
+      response_plan_ref: { kind: "response_plan", ref: "response:inspect" },
+      tool_authority_stages: ["suggest"],
+      raw_content_visible: false,
+    });
+    expect(normalView).toMatchObject({
+      normal_surface_debug_visible: false,
+      raw_memory_visible: false,
+      raw_prompt_visible: false,
+      items: [{
+        debug_refs_visible: false,
+        source_refs: [],
+      }],
+    });
+    expect(() => CognitiveReplayInspectionViewSchema.parse({
+      ...normalView,
+      items: [{ ...normalView.items[0], debug_refs_visible: true }],
+    })).toThrow(/normal user replay inspection/);
   });
 });

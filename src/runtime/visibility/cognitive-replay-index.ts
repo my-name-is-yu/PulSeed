@@ -3,14 +3,17 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   CognitionEventRefSchema,
+  CognitionRefSchema,
   CognitionReplayRecordSchema,
   CognitionRedactionPolicySchema,
   CognitionSourceStoreSchema,
   CompanionCognitionCallerPathSchema,
+  CompanionCognitionSurfaceTargetSchema,
   type CognitionEventRef,
   type CognitionReplayRecord,
   type CognitionSourceStore,
   type CompanionCognitionCallerPath,
+  type CompanionCognitionSurfaceTarget,
 } from "../cognition/contracts.js";
 import { cognitionAuditEventRef } from "../cognition/audit-sink.js";
 
@@ -91,6 +94,46 @@ export interface CognitiveReplayIndexStore {
   list(): Promise<CognitiveReplayIndexEntry[]>;
 }
 
+export const CognitiveReplayInspectionItemSchema = z.object({
+  index_entry_id: z.string().min(1),
+  cognition_id: z.string().min(1),
+  caller_path: CompanionCognitionCallerPathSchema,
+  owner_store: CognitionSourceStoreSchema,
+  replay_record_ref: CognitionEventRefSchema,
+  source_refs: z.array(CognitionEventRefSchema).default([]),
+  invalidation_state: CognitiveReplayIndexInvalidationStateSchema,
+  redaction_policy: CognitionRedactionPolicySchema,
+  response_plan_ref: CognitionRefSchema.optional(),
+  tool_authority_stages: z.array(z.enum(["read", "suggest", "prepare", "execute"])).default([]),
+  writeback_proposal_refs: z.array(CognitionRefSchema).default([]),
+  raw_content_visible: z.literal(false).default(false),
+  debug_refs_visible: z.boolean().default(false),
+}).strict();
+export type CognitiveReplayInspectionItem = z.infer<typeof CognitiveReplayInspectionItemSchema>;
+
+export const CognitiveReplayInspectionViewSchema = z.object({
+  schema_version: z.literal("cognitive-replay-inspection-view/v1"),
+  view_id: z.string().min(1),
+  surface_target: CompanionCognitionSurfaceTargetSchema,
+  items: z.array(CognitiveReplayInspectionItemSchema).default([]),
+  normal_surface_debug_visible: z.literal(false).default(false),
+  raw_memory_visible: z.literal(false).default(false),
+  raw_prompt_visible: z.literal(false).default(false),
+}).strict().superRefine((view, ctx) => {
+  if (view.surface_target === "normal_user") {
+    for (const [index, item] of view.items.entries()) {
+      if (item.debug_refs_visible) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["items", index, "debug_refs_visible"],
+          message: "normal user replay inspection cannot expose debug refs",
+        });
+      }
+    }
+  }
+});
+export type CognitiveReplayInspectionView = z.infer<typeof CognitiveReplayInspectionViewSchema>;
+
 const OWNER_STORES_BY_CALLER_PATH: Record<CompanionCognitionCallerPath, readonly CognitionSourceStore[]> = {
   chat_user_turn: ["chat_history", "chat_events"],
   resident_proactive_check: ["attention_ledger", "proactive_intervention"],
@@ -147,6 +190,48 @@ export function createCognitiveReplayIndexEntry(input: {
     normal_surface_visible: false,
     operator_inspectable: true,
     cognition_service_is_owner: false,
+  });
+}
+
+export function createCognitiveReplayInspectionView(input: {
+  viewId: string;
+  surfaceTarget: CompanionCognitionSurfaceTarget;
+  indexEntries: CognitiveReplayIndexEntry[];
+  replayRecords?: CognitionReplayRecord[];
+}): CognitiveReplayInspectionView {
+  const recordsByRef = new Map((input.replayRecords ?? []).map((record) => [record.record_id, CognitionReplayRecordSchema.parse(record)]));
+  const debugVisible = input.surfaceTarget === "operator_debug" || input.surfaceTarget === "internal_audit";
+  return CognitiveReplayInspectionViewSchema.parse({
+    schema_version: "cognitive-replay-inspection-view/v1",
+    view_id: input.viewId,
+    surface_target: input.surfaceTarget,
+    items: input.indexEntries.map((entry) => {
+      const parsedEntry = CognitiveReplayIndexEntrySchema.parse(entry);
+      const replayRecord = recordsByRef.get(parsedEntry.cognition_replay_ref.ref);
+      return CognitiveReplayInspectionItemSchema.parse({
+        index_entry_id: parsedEntry.index_entry_id,
+        cognition_id: replayRecord?.cognition_id ?? parsedEntry.cognition_replay_ref.ref,
+        caller_path: parsedEntry.caller_path,
+        owner_store: parsedEntry.owner_store,
+        replay_record_ref: parsedEntry.cognition_replay_ref,
+        source_refs: debugVisible ? parsedEntry.source_refs : [],
+        invalidation_state: parsedEntry.invalidation_state,
+        redaction_policy: parsedEntry.redaction_policy,
+        response_plan_ref: replayRecord?.stable_output?.response_plan
+          ? { kind: "response_plan", ref: replayRecord.stable_output.response_plan.plan_id }
+          : undefined,
+        tool_authority_stages: replayRecord?.stable_output?.tool_candidates.map((candidate) => candidate.authority_stage) ?? [],
+        writeback_proposal_refs: replayRecord?.stable_output?.memory_writeback.map((proposal) => ({
+          kind: "memory_writeback_proposal",
+          ref: proposal.proposal_id,
+        })) ?? [],
+        raw_content_visible: false,
+        debug_refs_visible: debugVisible,
+      });
+    }),
+    normal_surface_debug_visible: false,
+    raw_memory_visible: false,
+    raw_prompt_visible: false,
   });
 }
 

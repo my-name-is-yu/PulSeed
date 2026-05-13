@@ -2,8 +2,11 @@ export {
   CognitiveReplayIndexEntrySchema,
   CognitiveReplayIndexInvalidationStateSchema,
   CognitiveReplayIndexSourceStateSchema,
+  CognitiveReplayInspectionItemSchema,
+  CognitiveReplayInspectionViewSchema,
   FileCognitiveReplayIndexStore,
   createCognitiveReplayIndexEntry,
+  createCognitiveReplayInspectionView,
   defaultCognitiveReplayOwnerStore,
   ownerStoreAllowedForCallerPath,
 } from "./cognitive-replay-index.js";
@@ -36,4 +39,6 @@ export type {
   CognitiveReplayIndexInvalidationState,
   CognitiveReplayIndexStore,
   CognitiveReplayIndexSourceState,
+  CognitiveReplayInspectionItem,
+  CognitiveReplayInspectionView,
 } from "./cognitive-replay-index.js";
