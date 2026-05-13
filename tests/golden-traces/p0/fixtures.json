@@ -1288,6 +1288,8 @@
             "assertions": {
               "reply_target_after_restart": "plugin_gateway:conversation:gateway-restart",
               "reply_target_preserved": true,
+              "restored_reply_target_loaded": true,
+              "stale_fallback_rejected": true,
               "transcript_reloaded": true
             },
             "disposition": "ok",
@@ -1305,8 +1307,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_routed_ingress_preserves_reply_target_after_restart.json",
-          "sha256": "3e3e804dbf14ed30dfd8b187b9498554c96a9092937054b9d6e8dc950334ba61",
-          "size": 698,
+          "sha256": "f31562a9a8d21971eac80f8d41e6766ac6b013936e23fc3fb8fe0b54547889c7",
+          "size": 1571,
           "type": "file"
         }
       ],
@@ -1748,8 +1750,8 @@
       "artifact_tree": [
         {
           "path": "state/gateway/gateway_runspec_epoch_changed_rejects_start.json",
-          "sha256": "7741fb8edeeda1306fbbdd1b53016bd1263f07cf7531bedd344c6698c0b57e0a",
-          "size": 721,
+          "sha256": "e61ea6f91fdaeefe86f813c9549c99e50b5aedbeb2e79d1186a2a9b0d10f6c2e",
+          "size": 1194,
           "type": "file"
         }
       ],
@@ -5071,8 +5073,8 @@
         "records": [
           {
             "assertions": {
-              "accepted_before_response": false,
-              "claimed_message_id": null,
+              "accepted_before_response": true,
+              "claimed_message_id": "<claimed-message-id>",
               "command_envelope_count": 1,
               "envelope_name": "goal_start",
               "http_status": 200,
@@ -5094,8 +5096,8 @@
       "artifact_tree": [
         {
           "path": "state/queue/eventserver_command_accept_durable_before_200.json",
-          "sha256": "e9ffeec1baa50f4ae6edfeb83c03db197f4d031aaaa9a9cea830dde6189bf79f",
-          "size": 1146,
+          "sha256": "6751984d1ea29994fe6e1e1704a976411e3a7aee8a1ecbe3a07b73332d78c2e7",
+          "size": 1163,
           "type": "file"
         }
       ],
@@ -7397,6 +7399,7 @@
             "assertions": {
               "model_continuation_after_tool_error": true,
               "structured_tool_error_returned": true,
+              "tool_end_event_recorded": true,
               "unavailable_tool_executed": false
             },
             "disposition": "ok",
@@ -7414,8 +7417,8 @@
       "artifact_tree": [
         {
           "path": "state/tool/tool_unavailable_returned_to_model_before_final.json",
-          "sha256": "cd3807e8dff61f6797077fe11fda1bbddbfcfcdc95fc83b63efa0fc729ff87fa",
-          "size": 927,
+          "sha256": "3ac4649f9a3413890b784e4e5fbad245a3bccb14925f5f342611f29a05ca74c4",
+          "size": 5617,
           "type": "file"
         }
       ],

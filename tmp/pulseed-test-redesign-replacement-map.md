@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-12T23:29:12.402Z
+Generated: 2026-05-13T00:25:05.929Z
 
 Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.
 
@@ -44,7 +44,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: tool_unavailable_returned_to_model_before_final
     - Real production entrypoint used: golden: ChatRunner tool executor -> structured tool error -> model continuation
-    - Exported state artifact/assertion: golden: state/tool/tool_unavailable_returned_to_model_before_final.json; assertions model_continuation_after_tool_error, structured_tool_error_returned, unavailable_tool_executed
+    - Exported state artifact/assertion: golden: state/tool/tool_unavailable_returned_to_model_before_final.json; assertions model_continuation_after_tool_error, structured_tool_error_returned, tool_end_event_recorded, unavailable_tool_executed
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
@@ -97,7 +97,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
 - Replacement evidence:
   - Replacement trace name: gateway_routed_ingress_preserves_reply_target_after_restart
     - Real production entrypoint used: golden: Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; replay: Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage
-    - Exported state artifact/assertion: golden: state/gateway/gateway_routed_ingress_preserves_reply_target_after_restart.json; assertions reply_target_after_restart, reply_target_preserved, transcript_reloaded; replay: state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json; assertions fresh_restarted_equal, startup_replay_path
+    - Exported state artifact/assertion: golden: state/gateway/gateway_routed_ingress_preserves_reply_target_after_restart.json; assertions reply_target_after_restart, reply_target_preserved, restored_reply_target_loaded, stale_fallback_rejected, transcript_reloaded; replay: state/chat-session/gateway_routed_ingress_preserves_reply_target_after_restart.json; assertions fresh_restarted_equal, startup_replay_path
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.

@@ -4,15 +4,17 @@ import * as fsp from "node:fs/promises";
 import * as http from "node:http";
 import * as path from "node:path";
 import Database from "better-sqlite3";
-import type { ILLMClient } from "../../src/base/llm/llm-client.js";
+import { z } from "zod";
+import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, LLMStreamHandlers } from "../../src/base/llm/llm-client.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { ChatRunner, type ChatRunnerDeps } from "../../src/interface/chat/chat-runner.js";
 import { ChatRunnerEventBridge } from "../../src/interface/chat/chat-runner-event-bridge.js";
-import { formatRuntimeStatus } from "../../src/interface/chat/chat-runner-runtime.js";
+import { buildStandaloneIngressMessageFromContext, formatRuntimeStatus } from "../../src/interface/chat/chat-runner-runtime.js";
+import { ChatSessionDataStore } from "../../src/interface/chat/chat-session-data-store.js";
 import { ChatSessionCatalog } from "../../src/interface/chat/chat-session-store.js";
 import { buildStandaloneIngressMessage, type SelectedChatRoute } from "../../src/interface/chat/ingress-router.js";
 import { intakeSetupSecrets } from "../../src/interface/chat/setup-secret-intake.js";
-import { createRunSpecStore } from "../../src/runtime/run-spec/index.js";
+import { createRunSpecStore, type RunSpecConfirmationSnapshot } from "../../src/runtime/run-spec/index.js";
 import { ApprovalBroker, type ConversationalApprovalDelivery } from "../../src/runtime/approval-broker.js";
 import { RuntimeControlService } from "../../src/runtime/control/runtime-control-service.js";
 import { EventServer } from "../../src/runtime/event/server.js";
@@ -28,12 +30,13 @@ import {
   PermissionWaitPlanStore,
   RuntimeOperationStore,
 } from "../../src/runtime/store/index.js";
+import type { RuntimeControlReplyTarget } from "../../src/runtime/store/runtime-operation-schemas.js";
 import type { Envelope, EnvelopePriority, EnvelopeType } from "../../src/runtime/types/envelope.js";
 import { ConcurrencyController, ToolExecutor, ToolPermissionManager, ToolRegistry } from "../../src/tools/index.js";
 import { FileWriteTool } from "../../src/tools/fs/FileWriteTool/FileWriteTool.js";
 import { ReadTool } from "../../src/tools/fs/ReadTool/ReadTool.js";
 import { createRunSpecHandoffTools } from "../../src/tools/runtime/RunSpecHandoffTools.js";
-import type { ToolCallContext, ToolResult } from "../../src/tools/types.js";
+import type { ITool, ToolCallContext, ToolResult } from "../../src/tools/types.js";
 import { EventRecorder } from "./event-recorder.js";
 import { createIsolatedStateRoot, type IsolatedStateRoot } from "./isolated-state-root.js";
 import { normalizeJson } from "./normalizers.js";
@@ -255,7 +258,7 @@ async function runEventServerTrace(
   );
   server.setCommandEnvelopeHook((envelope) => {
     envelopes.push(envelope);
-    acceptedBeforeResponse.push(queue.accept(envelope));
+    acceptedBeforeResponse.push(queue.accept(envelope).accepted);
   });
 
   try {
@@ -299,7 +302,7 @@ async function runEventServerTrace(
     const claimed = queue.claim("dispatcher", 5_000);
     const assertions: JsonObject = {
       accepted_before_response: acceptedBeforeResponse[0] === true,
-      claimed_message_id: claimed?.messageId ?? null,
+      claimed_message_id: claimed ? "<claimed-message-id>" : null,
       command_envelope_count: envelopes.length,
       envelope_name: envelopes[0]?.name ?? null,
       http_status: response.status,
@@ -435,19 +438,77 @@ async function runToolTrace(
     });
   }
 
+  const stateManager = new StateManager(stateRoot.controlDbBase, undefined, { walEnabled: false });
+  const events: TraceEvent[] = [];
+  let readToolCallCount = 0;
+  const registry = new ToolRegistry();
+  registry.register(makeGatewayReadTraceTool(() => { readToolCallCount += 1; }));
+  const llmClient = makeGatewayUnavailableToolLlmClient();
+  const runner = new ChatRunner({
+    stateManager,
+    adapter: {
+      adapterType: "trace-adapter",
+      async execute() {
+        throw new Error("Tool-unavailable trace must use the gateway model loop.");
+      },
+    },
+    llmClient,
+    registry,
+    onEvent: (event) => {
+      events.push(chatEventToTraceEvent(fixture, event as Record<string, unknown>));
+    },
+  });
+  const selectedRoute: SelectedChatRoute = {
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+  const ingress = buildStandaloneIngressMessage({
+    channel: "plugin_gateway",
+    conversation_id: "conversation:tool-unavailable",
+    cwd: stateRoot.workspaceRoot,
+    identity_key: "telegram:user:tool-unavailable",
+    message_id: "message:tool-unavailable",
+    platform: "telegram",
+    runtimeControl: { allowed: true, approvalMode: "interactive" },
+    text: "README を読んで答えて",
+    user_id: "user:tool-unavailable",
+  });
+  const result = await runner.executeIngressMessage(ingress, stateRoot.workspaceRoot, 120_000, selectedRoute);
+  const modelRequests = llmClient.getRequests();
+  const secondRequestToolMessage = modelRequests[1]?.messages.find((message) => message.role === "tool");
+  const toolEndEvents = events.filter((event) => event.type === "tool_end");
   const assertions: JsonObject = {
-    model_continuation_after_tool_error: true,
-    structured_tool_error_returned: true,
-    unavailable_tool_executed: false,
+    model_continuation_after_tool_error: result.success && modelRequests.length === 2 && result.output.includes("read_file"),
+    structured_tool_error_returned: typeof secondRequestToolMessage?.content === "string"
+      && secondRequestToolMessage.content.includes("\"error\":\"unavailable_tool\"")
+      && secondRequestToolMessage.content.includes("\"denial_class\":\"unknown_tool\""),
+    tool_end_event_recorded: toolEndEvents.some((event) => event.payload?.["success"] === false),
+    unavailable_tool_executed: readToolCallCount > 0,
   };
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "chatrunner_tool_unavailable_continuation",
     exportedState: {
       assertions,
-      model_loop: [
-        { phase: "tool_call", tool_name: "missing_tool", result: "not_found" },
-        { phase: "model_continuation", final: "Tool unavailable; no side effect executed." },
-      ],
+      chat_result: {
+        output: result.output,
+        success: result.success,
+      },
+      events,
+      model_loop: modelRequests.map((request, index) => ({
+        index,
+        message_roles: request.messages.map((message) => message.role),
+        tool_message: index === 1 && secondRequestToolMessage?.role === "tool"
+          ? {
+              content: secondRequestToolMessage.content,
+              name: secondRequestToolMessage.name ?? null,
+              tool_call_id: secondRequestToolMessage.tool_call_id,
+            }
+          : null,
+      })),
+      read_tool_call_count: readToolCallCount,
     },
     assertions,
   });
@@ -1072,33 +1133,155 @@ async function runGatewayTrace(
   }
 
   if (fixture.contract_name === "gateway_runspec_epoch_changed_rejects_start") {
+    const stateManager = new StateManager(stateRoot.controlDbBase, undefined, { walEnabled: false });
+    let daemonStartCount = 0;
+    const pendingRef: { value: RunSpecConfirmationSnapshot | null } = { value: null };
+    const tools = new Map(createRunSpecHandoffTools({
+      stateManager,
+      llmClient: makeRunspecDraftLlmClient({ includeRecoveryPrelude: false }),
+      daemonClient: {
+        async startGoal(): Promise<never> {
+          daemonStartCount += 1;
+          return { id: "unexpected-start" } as never;
+        },
+      },
+    }).map((tool) => [tool.metadata.name, tool]));
+    const context = makeRunSpecToolContext(stateRoot.workspaceRoot, pendingRef, {
+      conversationSessionId: "session:runspec-epoch",
+      replyTarget: {
+        surface: "gateway",
+        channel: "plugin_gateway",
+        platform: "telegram",
+        conversation_id: "conversation:runspec-epoch",
+        message_id: "message:runspec-epoch",
+        identity_key: "telegram:user:runspec-epoch",
+      },
+    });
+    const propose = tools.get("runspec_propose");
+    const confirm = tools.get("runspec_confirm");
+    if (!propose || !confirm) {
+      throw new Error("RunSpec epoch trace could not find required handoff tools.");
+    }
+    const proposed = await propose.call({
+      request: "Run Kaggle optimization until score exceeds 0.98",
+    }, context);
+    const observedEpoch = typeof (proposed.data as Record<string, unknown>)["observed_run_spec_epoch"] === "string"
+      ? String((proposed.data as Record<string, unknown>)["observed_run_spec_epoch"])
+      : pendingRef.value?.updatedAt ?? "";
+    const runSpecId = pendingRef.value?.spec.id ?? "";
+    pendingRef.value = pendingRef.value
+      ? {
+          ...pendingRef.value,
+          updatedAt: "2026-05-13T00:02:00.000Z",
+          spec: {
+            ...pendingRef.value.spec,
+            updated_at: "2026-05-13T00:02:00.000Z",
+          },
+        }
+      : null;
+    if (pendingRef.value) {
+      await createRunSpecStore(stateManager).save(pendingRef.value.spec);
+    }
+    const staleConfirm = await confirm.call({
+      observed_run_spec_epoch: observedEpoch,
+      run_spec_id: runSpecId,
+    }, context);
     const assertions: JsonObject = {
-      background_run_started: false,
-      epoch_changed_rejected: true,
-      stale_confirmation_consumed: false,
+      background_run_started: daemonStartCount > 0,
+      epoch_changed_rejected: staleConfirm.success === false
+        && staleConfirm.execution?.status === "not_executed"
+        && staleConfirm.execution?.reason === "stale_state",
+      stale_confirmation_consumed: pendingRef.value === null || pendingRef.value.state !== "pending",
     };
     return buildRealGoldenResult(fixture, stateRoot, {
       kind: "gateway_runspec_epoch_gate",
       exportedState: {
         assertions,
         confirmation: {
-          observed_epoch: "runspec-epoch:1",
-          current_epoch: "runspec-epoch:2",
+          current_epoch: pendingRef.value?.updatedAt ?? null,
+          observed_epoch: observedEpoch ? "<observed-run-spec-epoch>" : null,
+          run_spec_id: runSpecId ? "<run-spec-id>" : null,
         },
+        propose_result: stableToolResult(proposed),
+        stale_confirm_result: stableToolResult({
+          ...staleConfirm,
+          error: staleConfirm.error ? "<stale-run-spec-error>" : undefined,
+        }),
       },
       assertions,
     });
   }
 
   if (fixture.contract_name === "gateway_routed_ingress_preserves_reply_target_after_restart") {
+    const stateManager = new StateManager(stateRoot.controlDbBase, undefined, { walEnabled: false });
+    const persistedReplyTarget: RuntimeControlReplyTarget = {
+      surface: "gateway",
+      channel: "plugin_gateway",
+      platform: "telegram",
+      conversation_id: "conversation:gateway-restart",
+      message_id: "msg-gateway-restart",
+      identity_key: "operator",
+      user_id: "operator",
+    };
+    const staleFallbackReplyTarget: RuntimeControlReplyTarget = {
+      ...persistedReplyTarget,
+      conversation_id: "conversation:stale-fallback",
+      message_id: "msg-stale-fallback",
+    };
+    await new ChatSessionDataStore(stateRoot.controlDbBase).save({
+      id: "gateway-restart",
+      cwd: stateRoot.workspaceRoot,
+      createdAt: fixture.input.fake_now,
+      updatedAt: fixture.input.fake_now,
+      title: "Gateway restart",
+      messages: [
+        {
+          role: "user",
+          content: "continue",
+          timestamp: fixture.input.fake_now,
+          turnIndex: 0,
+        },
+      ],
+      notificationReplyTarget: {
+        channel: "plugin_gateway",
+        target_id: "conversation:gateway-restart",
+        thread_id: "msg-gateway-restart",
+        metadata: persistedReplyTarget,
+      },
+    });
+    const restored = await new ChatSessionCatalog(stateManager).loadSession("gateway-restart");
+    const restoredReplyTarget = runtimeReplyTargetFromMetadata(restored?.notificationReplyTarget?.metadata);
+    const ingress = buildStandaloneIngressMessageFromContext("continue", {
+      ...(restoredReplyTarget ? { replyTarget: restoredReplyTarget } : {}),
+      actor: {
+        surface: "gateway",
+        platform: "telegram",
+        identity_key: "operator",
+        user_id: "operator",
+      },
+      allowed: true,
+      approvalMode: "interactive",
+      explicit: false,
+    }, {
+      stateManager,
+      runtimeReplyTarget: staleFallbackReplyTarget,
+    });
     const assertions: JsonObject = {
-      reply_target_after_restart: "plugin_gateway:conversation:gateway-restart",
-      reply_target_preserved: true,
-      transcript_reloaded: true,
+      reply_target_after_restart: `${ingress.replyTarget.channel}:${ingress.replyTarget.conversation_id}`,
+      reply_target_preserved: ingress.replyTarget.conversation_id === "conversation:gateway-restart",
+      restored_reply_target_loaded: restoredReplyTarget?.conversation_id === "conversation:gateway-restart",
+      stale_fallback_rejected: ingress.replyTarget.conversation_id !== "conversation:stale-fallback",
+      transcript_reloaded: (restored?.messages.length ?? 0) > 0,
     };
     return buildRealGoldenResult(fixture, stateRoot, {
       kind: "gateway_reply_target_restart",
-      exportedState: { assertions },
+      exportedState: {
+        assertions,
+        ingress_reply_target: sanitizeUnknown(ingress.replyTarget),
+        restored_notification_reply_target: restored?.notificationReplyTarget
+          ? sanitizeUnknown(restored.notificationReplyTarget)
+          : null,
+      },
       assertions,
     });
   }
@@ -1506,6 +1689,13 @@ function stableChatEventPayload(event: Record<string, unknown>): JsonObject {
       source_id: typeof event["sourceId"] === "string" ? event["sourceId"] : null,
     };
   }
+  if (type === "tool_end") {
+    return {
+      success: event["success"] === true,
+      summary: typeof event["summary"] === "string" ? event["summary"] : "",
+      tool_name: typeof event["toolName"] === "string" ? event["toolName"] : "",
+    };
+  }
   return {
     type,
   };
@@ -1555,10 +1745,8 @@ function sanitizeSecretIntake(intake: ReturnType<typeof intakeSetupSecrets>): Js
   };
 }
 
-function makeRunspecDraftLlmClient(): ILLMClient {
-  const responses = [
-    JSON.stringify({ kind: "none", confidence: 0.94, rationale: "This is new work, not recovery." }),
-    JSON.stringify({
+function makeRunspecDraftLlmClient(options: { includeRecoveryPrelude?: boolean } = {}): ILLMClient {
+  const draft = JSON.stringify({
       decision: "run_spec_request",
       confidence: 0.92,
       profile: "kaggle",
@@ -1601,7 +1789,12 @@ function makeRunspecDraftLlmClient(): ILLMClient {
       },
       missing_fields: [],
       reason: "The operator requested long-running Kaggle optimization.",
-    }),
+    });
+  const responses = [
+    ...(options.includeRecoveryPrelude === false
+      ? []
+      : [JSON.stringify({ kind: "none", confidence: 0.94, rationale: "This is new work, not recovery." })]),
+    draft,
   ];
   return {
     async sendMessage() {
@@ -1616,6 +1809,125 @@ function makeRunspecDraftLlmClient(): ILLMClient {
       return schema.parse(JSON.parse(content));
     },
   } as unknown as ILLMClient;
+}
+
+function makeRunSpecToolContext(
+  cwd: string,
+  pendingRef: { value: RunSpecConfirmationSnapshot | null },
+  options: {
+    conversationSessionId: string;
+    replyTarget: RuntimeControlReplyTarget;
+  },
+): ToolCallContext {
+  return {
+    cwd,
+    goalId: "goal:runspec-trace",
+    trustBalance: 0,
+    preApproved: true,
+    approvalFn: async () => false,
+    conversationSessionId: options.conversationSessionId,
+    runtimeReplyTarget: options.replyTarget,
+    runSpecConfirmation: {
+      get: () => pendingRef.value,
+      set: (value) => {
+        pendingRef.value = value as RunSpecConfirmationSnapshot | null;
+      },
+    },
+    sessionId: options.conversationSessionId,
+  };
+}
+
+function makeGatewayReadTraceTool(onCall: () => void): ITool<Record<string, unknown>> {
+  return {
+    metadata: {
+      name: "read",
+      aliases: [],
+      permissionLevel: "read_only",
+      isReadOnly: true,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: false,
+      maxConcurrency: 0,
+      maxOutputChars: 8000,
+      tags: ["read"],
+      activityCategory: "read",
+      gatewayExposure: "default_safe",
+    },
+    inputSchema: z.object({}).passthrough(),
+    description: () => "Read a workspace file.",
+    async call() {
+      onCall();
+      return {
+        success: true,
+        data: { ok: true },
+        summary: "read ran",
+        durationMs: 1,
+      };
+    },
+    async checkPermissions() {
+      return { status: "allowed" };
+    },
+    isConcurrencySafe: () => true,
+  };
+}
+
+function makeGatewayUnavailableToolLlmClient(): ILLMClient & {
+  getRequests(): Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }>;
+} {
+  const requests: Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> = [];
+  const responses: LLMResponse[] = [
+    {
+      content: "README を確認します。",
+      stop_reason: "tool_calls",
+      tool_calls: [{
+        id: "call-read-file",
+        type: "function",
+        function: {
+          name: "read_file",
+          arguments: JSON.stringify({ file_path: "README.md" }),
+        },
+      }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+    {
+      content: "read_file is unavailable in this gateway scope, so no file side effect executed.",
+      stop_reason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  ];
+  const next = (messages: LLMMessage[], options?: LLMRequestOptions): LLMResponse => {
+    requests.push({ messages: JSON.parse(JSON.stringify(messages)) as LLMMessage[], options });
+    return responses.shift() ?? {
+      content: "No more scripted responses.",
+      stop_reason: "end_turn",
+      usage: { input_tokens: 0, output_tokens: 0 },
+    };
+  };
+  return {
+    async sendMessage(messages, options) {
+      return next(messages, options);
+    },
+    async sendMessageStream(messages, options, handlers: LLMStreamHandlers) {
+      const response = next(messages, options);
+      if (!response.tool_calls?.length && response.content) {
+        handlers.onTextDelta?.(response.content);
+      }
+      return response;
+    },
+    parseJSON(content: string, schema: { parse(value: unknown): unknown }) {
+      return schema.parse(JSON.parse(content));
+    },
+    supportsToolCalling: () => true,
+    getRequests: () => requests,
+  } as ILLMClient & { getRequests(): Array<{ messages: LLMMessage[]; options?: LLMRequestOptions }> };
+}
+
+function runtimeReplyTargetFromMetadata(value: unknown): RuntimeControlReplyTarget | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record["surface"] !== "gateway") return null;
+  if (typeof record["conversation_id"] !== "string") return null;
+  return record as RuntimeControlReplyTarget;
 }
 
 function gatewayEventStreamFor(fixture: GoldenTraceFixture): TraceEvent[] {
