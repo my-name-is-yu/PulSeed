@@ -108,9 +108,9 @@ export async function buildChatGroundingBundle(
 
 export async function buildChatAgentLoopSystemPrompt(options: GroundingOptions): Promise<string> {
   const bundle = await buildChatGroundingBundle(options, {
-      surface: "agent_loop",
-      purpose: "task_execution",
-      userVisibleSink: true,
+    surface: "agent_loop",
+    purpose: "task_execution",
+    userVisibleSink: false,
     include: {
       progress_history: false,
       session_history: false,
