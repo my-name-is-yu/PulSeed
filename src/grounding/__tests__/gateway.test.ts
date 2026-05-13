@@ -10,7 +10,6 @@ import {
 } from "../../platform/profile/relationship-profile.js";
 import { buildStaticSystemPrompt } from "../../interface/chat/grounding.js";
 import { createGroundingGateway } from "../gateway.js";
-import { MemoryGatewayRequestSchema, MemoryGatewayResultSchema } from "../memory-gateway.js";
 
 function makeStateManager(overrides: Partial<StateManager> = {}): StateManager {
   return {
@@ -33,78 +32,6 @@ afterEach(() => {
 });
 
 describe("GroundingGateway", () => {
-  it("requires an explicit MemoryGateway user-visible sink and strict contentless exclusions", () => {
-    const requestBase = {
-      target: "agent_loop",
-      purpose: "task_execution",
-      scope_ref: "task-1",
-      requested_use: "runtime_grounding",
-      query: "Find memory",
-      home_dir: "/tmp/pulseed-home",
-      soil_root_dir: "/tmp/pulseed-home/soil",
-    };
-    expect(MemoryGatewayRequestSchema.safeParse(requestBase).success).toBe(false);
-    expect(MemoryGatewayRequestSchema.safeParse({ ...requestBase, user_visible_sink: false }).success).toBe(true);
-
-    const source = {
-      source_id: "source:1",
-      source_kind: "relationship_profile",
-      owner_ref: { kind: "relationship_profile", store_ref: "relationship-profile", record_ref: "profile-item-1" },
-      retrieval_source: "relationship_profile_surface",
-      provenance_refs: [],
-      lifecycle: "active",
-      correction: "current",
-      quarantine: "not_quarantined",
-      sensitivity: "private",
-      scope: "memory_retrieval",
-      allowed_uses: ["runtime_grounding"],
-      blocked_uses: [],
-    };
-    const resultBase = {
-      schema_version: "memory-gateway/v1",
-      retrieval_id: "memory-gateway:test",
-      query_ref: "query:abc:chars:3",
-      target: "agent_loop",
-      purpose: "task_execution",
-      scope_ref: "task-1",
-      requested_use: "runtime_grounding",
-      user_visible_sink: false,
-      selected_section: null,
-      selected_entries: [],
-      excluded_entries: [{
-        entry_id: "excluded:1",
-        source_ref: source,
-        prompt_eligible: false,
-        user_visible_eligible: false,
-        redaction_ref: "redaction:source:1",
-        rationale: "test",
-        blocked_by: ["test"],
-      }],
-      sources: [source],
-      selection: { rationale: "test", selected_source_order: [] },
-      governance: {
-        current_count: 1,
-        corrected_count: 0,
-        superseded_count: 0,
-        retracted_count: 0,
-        forgotten_count: 0,
-        quarantined_count: 0,
-        restricted_count: 1,
-        unknown_governance_count: 0,
-      },
-      warnings: [],
-      soil_usage_record_ids: [],
-    };
-    expect(MemoryGatewayResultSchema.safeParse({
-      ...resultBase,
-      excluded_entries: [{ ...resultBase.excluded_entries[0], content: { state: "available", text: "raw leak" } }],
-    }).success).toBe(false);
-    expect(MemoryGatewayResultSchema.safeParse({
-      ...resultBase,
-      query_ref: "Find memory\nwith raw prompt",
-    }).success).toBe(false);
-  });
-
   it("keeps history out of chat/general_turn but includes it for chat/handoff", async () => {
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
     const common = {
@@ -234,54 +161,6 @@ describe("GroundingGateway", () => {
   });
 
   it("prefers Soil knowledge over broader knowledge results when Soil hits exist", async () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-prefers-"));
-    const homeDir = path.join(tmpRoot, "home");
-    const rootDir = path.join(homeDir, "soil");
-    vi.stubEnv("OPENAI_API_KEY", "");
-    const repository = await SqliteSoilRepository.create({ rootDir });
-    try {
-      await repository.applyMutation({
-        records: [{
-          record_id: "rec-grounding-plan",
-          record_key: "fact.grounding-plan",
-          version: 1,
-          record_type: "fact",
-          soil_id: "knowledge/grounding-plan",
-          title: "Grounding plan",
-          summary: "Use Soil first",
-          canonical_text: "Implement the grounding gateway by using Soil first.",
-          goal_id: null,
-          task_id: null,
-          status: "active",
-          confidence: 0.9,
-          importance: 0.7,
-          source_reliability: 0.8,
-          valid_from: null,
-          valid_to: null,
-          supersedes_record_id: null,
-          is_active: true,
-          source_type: "test",
-          source_id: "grounding-plan-source",
-          metadata_json: {},
-          created_at: "2026-05-02T00:00:00.000Z",
-          updated_at: "2026-05-02T00:00:00.000Z",
-        }],
-        chunks: [{
-          chunk_id: "chunk-grounding-plan",
-          record_id: "rec-grounding-plan",
-          soil_id: "knowledge/grounding-plan",
-          chunk_index: 0,
-          chunk_kind: "paragraph",
-          heading_path_json: ["Knowledge"],
-          chunk_text: "Implement the grounding gateway by using Soil first.",
-          token_count: 8,
-          checksum: "grounding-plan-chunk",
-          created_at: "2026-05-02T00:00:00.000Z",
-        }],
-      });
-    } finally {
-      repository.close();
-    }
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
     const knowledgeQuery = vi.fn().mockResolvedValue({
       retrievalId: "knowledge:test",
@@ -291,70 +170,67 @@ describe("GroundingGateway", () => {
     const bundle = await gateway.build({
       surface: "agent_loop",
       purpose: "task_execution",
-      homeDir,
       workspaceRoot: "/repo",
       userMessage: "Implement the grounding gateway",
       query: "Implement the grounding gateway",
+      soilQuery: async () => ({
+        retrievalSource: "prefetch",
+        warnings: [],
+        hits: [{ soilId: "soil:1", title: "Grounding plan", summary: "Use Soil first" }],
+      }),
       knowledgeQuery,
     });
 
     expect(bundle.dynamicSections.some((section) => section.key === "soil_knowledge")).toBe(true);
     expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
     expect(knowledgeQuery).not.toHaveBeenCalled();
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("honors knowledge-only include overrides without Soil suppressing knowledge", async () => {
+  it("fails closed for user-visible chat memory grounding", async () => {
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
-    const soilQuery = vi.fn().mockResolvedValue({
-      retrievalSource: "prefetch",
-      warnings: [],
-      hits: [{
-        recordId: "soil-1",
-        soilId: "soil-1",
-        title: "Soil result",
-        summary: "Soil should be disabled by include policy",
-      }],
-    });
     const knowledgeQuery = vi.fn().mockResolvedValue({
-      retrievalId: "knowledge:include-only",
-      items: [{ id: "k1", content: "Knowledge include result", source: "test" }],
+      retrievalId: "knowledge:chat",
+      items: [{ id: "k1", content: "Fallback knowledge", source: "test" }],
     });
 
     const bundle = await gateway.build({
-      surface: "agent_loop",
-      purpose: "task_execution",
+      surface: "chat",
+      purpose: "handoff",
       workspaceRoot: "/repo",
-      userMessage: "Find relevant memory",
-      query: "Find relevant memory",
-      include: { soil_knowledge: false, knowledge_query: true },
-      soilQuery,
+      userMessage: "Remember the private deployment note",
+      query: "Remember the private deployment note",
+      soilQuery: async () => ({
+        retrievalSource: "prefetch",
+        warnings: ["Private retrieval warning"],
+        hits: [{ soilId: "soil:private", title: "Private memory", summary: "Do not leak this content" }],
+      }),
       knowledgeQuery,
     });
 
-    expect(soilQuery).not.toHaveBeenCalled();
-    expect(knowledgeQuery).toHaveBeenCalledTimes(1);
-    expect(bundle.dynamicSections.some((section) => section.key === "soil_knowledge")).toBe(false);
-    const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
-    expect(knowledgeSection?.content).toContain("Knowledge include result");
+    const rendered = String(bundle.render("prompt"));
+    expect(rendered).not.toContain("Do not leak this content");
+    expect(rendered).not.toContain("Private retrieval warning");
+    expect(rendered).not.toContain("Fallback knowledge");
+    expect(bundle.dynamicSections.find((section) => section.key === "soil_knowledge")?.content).toContain("No relevant Soil knowledge found.");
+    expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
+    expect(knowledgeQuery).not.toHaveBeenCalled();
   });
 
-  it("passes the canonical Soil root to custom Soil queries before owner admission", async () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-query-root-"));
-    const homeDir = path.join(tmpRoot, "home");
-    const rootDir = path.join(homeDir, "soil");
+  it("excludes corrected SQLite Soil hits before task grounding falls back to knowledge", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-correction-"));
+    const rootDir = path.join(tmpRoot, "soil");
     const repository = await SqliteSoilRepository.create({ rootDir });
     try {
       await repository.applyMutation({
         records: [{
-          record_id: "rec-custom-root",
-          record_key: "fact.custom-root",
+          record_id: "rec-corrected",
+          record_key: "fact.corrected",
           version: 1,
           record_type: "fact",
-          soil_id: "knowledge/custom-root",
-          title: "Custom root",
-          summary: "Use the canonical Soil root for owner admission.",
-          canonical_text: "Use the canonical Soil root for owner admission.",
+          soil_id: "knowledge/corrected",
+          title: "Corrected fact",
+          summary: "Corrected search target",
+          canonical_text: "Corrected search target must not reach task grounding.",
           goal_id: null,
           task_id: null,
           status: "active",
@@ -366,62 +242,69 @@ describe("GroundingGateway", () => {
           supersedes_record_id: null,
           is_active: true,
           source_type: "test",
-          source_id: "custom-root-source",
+          source_id: "corrected-source",
           metadata_json: {},
           created_at: "2026-05-02T00:00:00.000Z",
           updated_at: "2026-05-02T00:00:00.000Z",
         }],
         chunks: [{
-          chunk_id: "chunk-custom-root",
-          record_id: "rec-custom-root",
-          soil_id: "knowledge/custom-root",
+          chunk_id: "chunk-corrected",
+          record_id: "rec-corrected",
+          soil_id: "knowledge/corrected",
           chunk_index: 0,
           chunk_kind: "paragraph",
           heading_path_json: ["Knowledge"],
-          chunk_text: "Use the canonical Soil root for owner admission.",
+          chunk_text: "Corrected search target must not reach task grounding.",
           token_count: 8,
-          checksum: "custom-root-chunk",
+          checksum: "corrected-chunk",
           created_at: "2026-05-02T00:00:00.000Z",
+        }],
+        corrections: [{
+          correction_id: "correction-corrected",
+          target_ref: { kind: "soil_record", id: "rec-corrected" },
+          correction_kind: "corrected",
+          replacement_ref: null,
+          actor: "user",
+          reason: "User corrected this memory.",
+          created_at: "2026-05-02T00:01:00.000Z",
+          provenance: { source: "user" },
+          audit: { status: "active", retained_for_audit: true },
         }],
       });
     } finally {
       repository.close();
     }
-    const soilQuery = vi.fn().mockResolvedValue({
-      retrievalSource: "sqlite",
-      warnings: [],
-      hits: [{
-        recordId: "rec-custom-root",
-        soilId: "knowledge/custom-root",
-        title: "Custom root",
-        summary: "Use the canonical Soil root for owner admission.",
-      }],
+
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:fallback",
+      items: [{ id: "k1", content: "Fallback knowledge result", source: "test" }],
     });
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
-
     const bundle = await gateway.build({
       surface: "agent_loop",
       purpose: "task_execution",
-      homeDir,
-      workspaceRoot: "/repo",
-      userMessage: "Find custom root memory",
-      query: "Find custom root memory",
-      knowledgeContext: "Caller supplied task guidance",
-      soilQuery,
+      workspaceRoot: rootDir,
+      userMessage: "Corrected search target",
+      query: "Corrected search target",
+      soilQuery: async () => ({
+        retrievalSource: "sqlite",
+        warnings: [],
+        hits: [{
+          recordId: "rec-corrected",
+          soilId: "knowledge/corrected",
+          title: "Corrected fact",
+          summary: "Corrected search target",
+          snippet: "Corrected search target must not reach task grounding.",
+        }],
+      }),
+      knowledgeQuery,
     });
 
-    expect(soilQuery).toHaveBeenCalledWith(expect.objectContaining({ rootDir }));
-    const soilSource = bundle.traces.source.find((source) => source.sectionKey === "soil_knowledge");
-    const memoryGateway = soilSource?.metadata?.["memoryGateway"] as {
-      selected_entries?: Array<{ source_ref?: { source_kind?: string; owner_ref?: { record_ref?: string } } }>;
-    } | undefined;
-    expect(memoryGateway?.selected_entries?.[0]?.source_ref).toMatchObject({
-      source_kind: "soil",
-      owner_ref: { record_ref: "rec-custom-root" },
-    });
-    expect(bundle.dynamicSections.some((section) => section.key === "soil_knowledge")).toBe(true);
-    const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
-    expect(knowledgeSection?.content).toContain("Caller supplied task guidance");
+    const rendered = String(bundle.render("prompt"));
+    expect(rendered).not.toContain("Corrected search target must not reach task grounding.");
+    expect(rendered).toContain("Fallback knowledge result");
+    expect(knowledgeQuery).toHaveBeenCalledTimes(1);
+
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
@@ -462,7 +345,6 @@ describe("GroundingGateway", () => {
     });
 
     expect(knowledgeQuery).toHaveBeenCalledTimes(1);
-    expect(knowledgeQuery.mock.calls[0]?.[0]?.query).toBe("Find relevant memory");
     const profileContext = knowledgeQuery.mock.calls[0]?.[0]?.relationshipProfileContext;
     expect(profileContext).toMatchObject({
       scope: "memory_retrieval",
@@ -478,36 +360,6 @@ describe("GroundingGateway", () => {
     );
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
-  });
-
-  it("caps legacy knowledge results to the grounding hit budget", async () => {
-    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
-    const knowledgeQuery = vi.fn().mockResolvedValue({
-      retrievalId: "knowledge:budget",
-      items: Array.from({ length: 6 }, (_, index) => ({
-        id: `k${index + 1}`,
-        content: `Knowledge result ${index + 1}`,
-        source: "test",
-      })),
-    });
-
-    const bundle = await gateway.build({
-      surface: "agent_loop",
-      purpose: "task_execution",
-      workspaceRoot: "/repo",
-      userMessage: "Find relevant memory",
-      query: "Find relevant memory",
-      include: { soil_knowledge: false, knowledge_query: true },
-      knowledgeQuery,
-    });
-
-    const knowledgeSection = bundle.dynamicSections.find((section) => section.key === "knowledge_query");
-    expect(knowledgeSection?.content).toContain("Knowledge result 4");
-    expect(knowledgeSection?.content).not.toContain("Knowledge result 5");
-    const memoryGateway = knowledgeSection?.sources[0]?.metadata?.["memoryGateway"] as {
-      selected_entries?: unknown[];
-    } | undefined;
-    expect(memoryGateway?.selected_entries).toHaveLength(4);
   });
 
   it("attaches typed relationship profile context to prefetched knowledge grounding", async () => {
@@ -555,23 +407,6 @@ describe("GroundingGateway", () => {
     expect(knowledgeSection?.content).toContain("Prefer concise status reports.");
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
-  });
-
-  it("excludes unknown-governance prefetched knowledge from user-visible chat grounding", async () => {
-    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
-    const bundle = await gateway.build({
-      surface: "chat",
-      purpose: "general_turn",
-      userVisibleSink: true,
-      workspaceRoot: "/repo",
-      userMessage: "Find visible memory context",
-      query: "Find visible memory context",
-      knowledgeContext: "Private prefetched memory should not be visible.",
-      include: { knowledge_query: true },
-    });
-
-    expect(String(bundle.render("prompt"))).not.toContain("Private prefetched memory should not be visible.");
-    expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
   });
 
   it("does not let caller-supplied out-of-scope profile context bypass Surface admission", async () => {
@@ -682,7 +517,7 @@ describe("GroundingGateway", () => {
     const sensitiveSurface = sensitiveKnowledgeSource?.metadata?.["relationshipProfileSurface"] as {
       inspection?: { excluded_summaries?: unknown[] };
     } | undefined;
-    expect(sensitiveSurface?.inspection?.excluded_summaries).toHaveLength(2);
+    expect(sensitiveSurface?.inspection?.excluded_summaries).toHaveLength(1);
     expect(JSON.stringify(sensitiveKnowledgeSource?.metadata)).not.toContain("Do not retrieve health context unless explicitly allowed.");
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -817,90 +652,6 @@ describe("GroundingGateway", () => {
       const [record] = await updatedRepository.loadRecords({ record_ids: ["rec-grounding"] });
       expect(record?.use_count).toBe(1);
       expect(record?.last_used_at).not.toBeNull();
-    } finally {
-      updatedRepository.close();
-      fs.rmSync(tmpRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("excludes searchable corrected Soil records through gateway owner-state admission", async () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-corrected-"));
-    const homeDir = path.join(tmpRoot, "home");
-    const rootDir = path.join(homeDir, "soil");
-    vi.stubEnv("OPENAI_API_KEY", "");
-    const repository = await SqliteSoilRepository.create({ rootDir });
-    try {
-      await repository.applyMutation({
-        records: [{
-          record_id: "rec-corrected",
-          record_key: "fact.corrected",
-          version: 1,
-          record_type: "fact",
-          soil_id: "knowledge/corrected",
-          title: "Corrected memory",
-          summary: "Corrected memory should be excluded",
-          canonical_text: "Corrected memory should be excluded from prompt content.",
-          goal_id: null,
-          task_id: null,
-          status: "corrected",
-          confidence: 0.9,
-          importance: 0.7,
-          source_reliability: 0.8,
-          valid_from: null,
-          valid_to: null,
-          supersedes_record_id: null,
-          is_active: true,
-          source_type: "test",
-          source_id: "corrected-source",
-          metadata_json: {},
-          created_at: "2026-05-02T00:00:00.000Z",
-          updated_at: "2026-05-02T00:00:00.000Z",
-        }],
-        chunks: [{
-          chunk_id: "chunk-corrected",
-          record_id: "rec-corrected",
-          soil_id: "knowledge/corrected",
-          chunk_index: 0,
-          chunk_kind: "paragraph",
-          heading_path_json: ["Knowledge"],
-          chunk_text: "Corrected memory should be excluded from prompt content.",
-          token_count: 8,
-          checksum: "corrected-chunk",
-          created_at: "2026-05-02T00:00:00.000Z",
-        }],
-      });
-    } finally {
-      repository.close();
-    }
-
-    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
-    const bundle = await gateway.build({
-      surface: "agent_loop",
-      purpose: "task_execution",
-      userVisibleSink: false,
-      homeDir,
-      workspaceRoot: "/repo",
-      userMessage: "Corrected memory should be excluded",
-      query: "Corrected memory should be excluded",
-      knowledgeQuery: vi.fn(),
-    });
-
-    expect(String(bundle.render("prompt"))).not.toContain("Corrected memory should be excluded from prompt content.");
-    const soilSource = bundle.traces.source.find((source) => source.sectionKey === "soil_knowledge");
-    const memoryGateway = soilSource?.metadata?.["memoryGateway"] as {
-      excluded_entries?: Array<{ source_ref?: { correction?: string }; rationale?: string }>;
-      governance?: { corrected_count?: number };
-      soil_usage_record_ids?: string[];
-    } | undefined;
-    expect(MemoryGatewayResultSchema.safeParse(memoryGateway).success).toBe(true);
-    expect(memoryGateway?.governance?.corrected_count).toBe(1);
-    expect(memoryGateway?.excluded_entries?.[0]?.source_ref?.correction).toBe("corrected");
-    expect(memoryGateway?.soil_usage_record_ids).toEqual([]);
-
-    const updatedRepository = await SqliteSoilRepository.create({ rootDir });
-    try {
-      const [record] = await updatedRepository.loadRecords({ record_ids: ["rec-corrected"], active_only: false });
-      expect(record?.use_count).toBe(0);
     } finally {
       updatedRepository.close();
       fs.rmSync(tmpRoot, { recursive: true, force: true });

@@ -409,7 +409,6 @@ describe("agentloop phase 4 context injection", () => {
       task: makeTask(),
       cwd: tmpDir,
       workspaceContext: "Workspace block",
-      knowledgeContext: "Budget and evidence guidance",
       soilPrefetch: async (query) => ({
         content: `Soil result for ${query.rootDir}`,
         soilIds: ["soil:1"],
@@ -420,9 +419,7 @@ describe("agentloop phase 4 context injection", () => {
     expect(assembled.userPrompt).toContain("Root instruction");
     expect(assembled.userPrompt).toContain("Workspace block");
     expect(assembled.userPrompt).toContain("Soil result");
-    expect(assembled.userPrompt).toContain("Budget and evidence guidance");
     expect(assembled.contextBlocks.map((b) => b.id)).toContain("soil-prefetch");
-    expect(assembled.contextBlocks.map((b) => b.id)).toContain("knowledge_query");
   });
 });
 

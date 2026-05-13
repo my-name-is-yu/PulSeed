@@ -1,39 +1,27 @@
 import {
-  getMemoryGatewayResult,
-  retrieveGroundingMemory,
-  setMemoryGatewayResult,
-} from "../memory-gateway.js";
-import type { GroundingProvider } from "../contracts.js";
-import { makeSection, makeSource, nonEmptyString, resolveHomeDir, resolveStateManagerBaseDir, soilRootFromHome } from "./helpers.js";
+  loadRelationshipProfileRetrievalContext,
+  summarizeRelationshipProfileRetrievalContext,
+} from "../../platform/profile/retrieval-context.js";
+import {
+  contextFromRelationshipProfileSurfaceProjection,
+  formatRelationshipProfileSurfaceContext,
+  buildRelationshipProfileSurfaceProjection,
+  relationshipProfileSurfaceInspectionMetadata,
+} from "../profile-surface.js";
+import type {
+  GroundingKnowledgeResult,
+  GroundingProvider,
+} from "../contracts.js";
+import { makeSection, makeSource, resolveHomeDir, resolveStateManagerBaseDir } from "./helpers.js";
 
-async function resolveGatewayResult(context: Parameters<GroundingProvider["build"]>[0]) {
-  const cached = getMemoryGatewayResult(context.runtime);
-  if (cached) return cached;
-  const query = context.request.query ?? context.request.userMessage;
-  const homeDir = resolveHomeDir(context.request.homeDir ?? resolveStateManagerBaseDir(context.deps.stateManager));
-  const taskId = nonEmptyString(context.request.taskId);
-  const goalId = nonEmptyString(context.request.goalId);
-  const result = await retrieveGroundingMemory({
-    target: context.request.surface,
-    purpose: context.request.purpose,
-    user_visible_sink: context.request.userVisibleSink ?? context.request.surface === "chat",
-    scope_ref: taskId ?? goalId ?? nonEmptyString(context.request.query) ?? nonEmptyString(context.request.userMessage) ?? "grounding",
-    requested_use: "runtime_grounding",
-    query,
-    workspace_root: context.request.workspaceRoot ?? process.cwd(),
-    home_dir: homeDir,
-    soil_root_dir: soilRootFromHome(homeDir),
-    goal_id: goalId,
-    task_id: taskId,
-    max_hits: context.profile.budgets.maxKnowledgeHits,
-    include_sensitive_relationship_profile: context.request.relationshipProfileRetrieval?.includeSensitive === true,
-    soilQuery: context.profile.include.soil_knowledge ? context.request.soilQuery : async () => null,
-    knowledgeQuery: context.profile.include.knowledge_query ? context.request.knowledgeQuery : undefined,
-    knowledgeContext: context.profile.include.knowledge_query ? context.request.knowledgeContext : undefined,
-    relationshipProfileContext: context.request.relationshipProfileContext,
+async function buildRelationshipProfileRetrievalContext(
+  context: Parameters<GroundingProvider["build"]>[0]
+): ReturnType<typeof loadRelationshipProfileRetrievalContext> {
+  const baseDir = resolveHomeDir(context.request.homeDir ?? resolveStateManagerBaseDir(context.deps.stateManager));
+  return loadRelationshipProfileRetrievalContext({
+    baseDir,
+    includeSensitive: context.request.relationshipProfileRetrieval?.includeSensitive,
   });
-  setMemoryGatewayResult(context.runtime, result);
-  return result;
 }
 
 export const knowledgeQueryProvider: GroundingProvider = {
@@ -44,35 +32,80 @@ export const knowledgeQueryProvider: GroundingProvider = {
     if (!query?.trim()) {
       return null;
     }
-
-    const result = await resolveGatewayResult(context);
-    const items = result.selected_entries.filter((entry) => entry.section === "knowledge_query");
-    if (items.length === 0) {
+    const userVisibleSink = context.request.userVisibleSink ?? context.request.surface === "chat";
+    const soilHitCount = Number(context.runtime.get("soil_hit_count") ?? 0);
+    if (soilHitCount > 0 && !context.request.knowledgeContext?.trim()) {
       return null;
     }
-    context.runtime.set("knowledge_hit_count", items.length);
-    const body = items.map((entry) => entry.content.text).join("\n");
-    const content = [
-      result.relationship_profile_prompt_context,
-      body || "No broader knowledge results.",
-    ].filter((part) => part.trim().length > 0).join("\n\n");
+    if (userVisibleSink) {
+      context.runtime.set("knowledge_hit_count", 0);
+      return null;
+    }
 
+    let result: GroundingKnowledgeResult | null = null;
+    const rawRelationshipProfileContext = context.request.relationshipProfileContext
+      ?? await buildRelationshipProfileRetrievalContext(context);
+    const relationshipProfileSurface = buildRelationshipProfileSurfaceProjection({
+      context: rawRelationshipProfileContext,
+      target: context.request.surface,
+      scopeRef: context.request.taskId ?? context.request.goalId ?? context.request.query ?? context.request.userMessage ?? "grounding",
+      purpose: context.request.purpose,
+      now: new Date().toISOString(),
+    });
+    const relationshipProfileContext = contextFromRelationshipProfileSurfaceProjection(
+      rawRelationshipProfileContext,
+      relationshipProfileSurface,
+    );
+    const relationshipProfileBlock = formatRelationshipProfileSurfaceContext(relationshipProfileSurface);
+    if (context.request.knowledgeContext?.trim()) {
+      result = {
+        retrievalId: "knowledge:prefetched",
+        warnings: relationshipProfileContext.items.length > 0
+          ? [`relationship_profile_context_items:${relationshipProfileContext.items.length}`]
+          : undefined,
+        items: [
+          {
+            id: "knowledge:prefetched",
+            content: context.request.knowledgeContext.trim(),
+            source: "request.knowledgeContext",
+          },
+        ],
+      };
+    } else if (context.request.knowledgeQuery) {
+      result = await context.request.knowledgeQuery({
+        query,
+        goalId: context.request.goalId,
+        limit: context.profile.budgets.maxKnowledgeHits,
+        relationshipProfileContext,
+        relationshipProfilePromptContext: relationshipProfileBlock,
+      });
+    }
+
+    const items = result?.items ?? [];
+    context.runtime.set("knowledge_hit_count", items.length);
+    const relationshipProfileMetadata = summarizeRelationshipProfileRetrievalContext(relationshipProfileContext);
+    const relationshipProfileSurfaceMetadata = relationshipProfileSurfaceInspectionMetadata(
+      relationshipProfileSurface,
+      context.request.surface,
+    );
     return makeSection(
       "knowledge_query",
-      content,
+      items.length > 0
+        ? [
+          relationshipProfileBlock,
+          items.slice(0, context.profile.budgets.maxKnowledgeHits).map((item) => `- ${item.content}`).join("\n"),
+        ].filter((part) => part.trim().length > 0).join("\n\n")
+        : "No broader knowledge results.",
       [
         makeSource("knowledge_query", "knowledge query", {
           type: items.length > 0 ? "tool" : "none",
           trusted: true,
           accepted: true,
-          retrievalId: items.length > 0 ? result.retrieval_id : "none:knowledge_query",
+          retrievalId: items.length > 0 ? result?.retrievalId ?? "knowledge:query" : "none:knowledge_query",
           metadata: {
-            memoryGateway: result,
-            relationshipProfileContext: result.relationship_profile_metadata,
-            ...(result.relationship_profile_surface_metadata
-              ? { relationshipProfileSurface: result.relationship_profile_surface_metadata }
-              : {}),
-            ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+            ...(result?.warnings ? { warnings: result.warnings } : {}),
+            relationshipProfileContext: relationshipProfileMetadata,
+            ...(relationshipProfileSurfaceMetadata ? { relationshipProfileSurface: relationshipProfileSurfaceMetadata } : {}),
           },
         }),
       ],

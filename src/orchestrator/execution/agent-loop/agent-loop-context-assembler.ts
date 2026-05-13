@@ -2,16 +2,9 @@ import { resolve } from "node:path";
 import type { Task } from "../../../base/types/task.js";
 import { createGroundingGateway, type GroundingGateway } from "../../../grounding/gateway.js";
 import { discoverAgentInstructionCandidates } from "../../../grounding/providers/agents-provider.js";
-import type { GroundingBundle, GroundingSection } from "../../../grounding/contracts.js";
+import type { GroundingSection } from "../../../grounding/contracts.js";
 import type { RelationshipProfileRetrievalContext } from "../../../platform/profile/retrieval-context.js";
 import { renderPromptSections } from "../../../grounding/renderers/prompt-renderer.js";
-import {
-  assembleCompanionDecisionFrame,
-  type CompanionDecisionEvidenceRef,
-  type CompanionDecisionFrame,
-  type CompanionDecisionInputRef,
-  type CompanionDecisionPolicyRef,
-} from "../../../runtime/decision/index.js";
 
 export interface AgentLoopContextBlock {
   id: string;
@@ -49,7 +42,6 @@ export interface TaskAgentLoopAssembly {
   systemPrompt: string;
   userPrompt: string;
   contextBlocks: AgentLoopContextBlock[];
-  companionDecisionFrame: CompanionDecisionFrame;
 }
 
 function formatArtifactContractSection(task: Task): string {
@@ -147,7 +139,6 @@ export class AgentLoopContextAssembler {
     });
 
     const blocks = bundle.dynamicSections.map(sectionToBlock).sort((a, b) => a.priority - b.priority);
-    const companionDecisionFrame = assembleTaskCompanionDecisionFrame(input.task, cwd, bundle);
     const userPrompt = [
       `Task: ${input.task.work_description}`,
       `Approach: ${input.task.approach}`,
@@ -165,116 +156,8 @@ export class AgentLoopContextAssembler {
       systemPrompt: renderPromptSections(bundle.staticSections, { preserveOrder: true }),
       userPrompt,
       contextBlocks: blocks,
-      companionDecisionFrame,
     };
   }
-}
-
-function assembleTaskCompanionDecisionFrame(
-  task: Task,
-  cwd: string,
-  bundle: GroundingBundle,
-): CompanionDecisionFrame {
-  const assembledAt = taskDateTime(task.started_at ?? task.created_at);
-  const taskRef = taskFrameRef(task.id, "unknown-task");
-  const goalRef = taskFrameRef(task.goal_id, "unknown-goal");
-  const taskFreshness = taskRef === task.id?.trim() ? "current" : "unknown";
-  const goalFreshness = goalRef === task.goal_id?.trim() ? "current" : "unknown";
-  const groundingBundleRef = `grounding:bundle:${bundle.profile}:${goalRef}:${taskRef}`;
-  return assembleCompanionDecisionFrame({
-    frameId: `companion-frame:task:${taskRef}`,
-    assembledAt,
-    source: {
-      kind: "task_execution",
-      source_ref: `task:${taskRef}`,
-      received_at: assembledAt,
-      caller_path: "task_agent_loop",
-      goal_ref: goalRef,
-      task_ref: taskRef,
-    },
-    trigger: {
-      kind: "task",
-      ref: taskRef,
-      role: "trigger",
-      freshness: taskFreshness,
-      ...(taskFreshness === "unknown" ? { reason: "Task id was empty in the task record." } : {}),
-    },
-    inputRefs: [
-      {
-        kind: "goal",
-        ref: goalRef,
-        role: "context",
-        freshness: goalFreshness,
-        ...(goalFreshness === "unknown" ? { reason: "Goal id was empty in the task record." } : {}),
-      },
-      {
-        kind: "grounding_bundle",
-        ref: groundingBundleRef,
-        role: "context",
-        freshness: "current",
-      },
-      ...taskGroundingInputRefs(bundle),
-    ],
-    evidenceRefs: taskGroundingEvidenceRefs(bundle),
-    policyRefs: taskPolicyRefs(task, taskRef),
-    activeTargetRef: {
-      kind: "task",
-      id: taskRef,
-    },
-    groundingBundleRef,
-  });
-}
-
-function taskFrameRef(value: string | undefined, fallback: string): string {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : fallback;
-}
-
-function taskDateTime(value: string | null | undefined): string {
-  if (value) {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
-  }
-  return new Date().toISOString();
-}
-
-function taskGroundingInputRefs(bundle: GroundingBundle): CompanionDecisionInputRef[] {
-  return bundle.dynamicSections.map((section) => ({
-    kind: "grounding_section",
-    ref: `grounding:section:${bundle.profile}:${section.key}`,
-    role: "context",
-    freshness: "current",
-    reason: section.title || section.key,
-  }));
-}
-
-function taskGroundingEvidenceRefs(bundle: GroundingBundle): CompanionDecisionEvidenceRef[] {
-  return bundle.traces.source.map((source, index) => ({
-    evidence_ref: source.retrievalId
-      ? `grounding:retrieval:${source.retrievalId}`
-      : source.path
-        ? `grounding:source:${source.path}`
-        : `grounding:source:${source.sectionKey}:${index}`,
-    source: "grounding",
-    visibility: source.trusted === false || source.accepted === false ? "operator_only" : "audit_only",
-    summary: source.label || source.sectionKey,
-  }));
-}
-
-function taskPolicyRefs(task: Task, taskRef: string): CompanionDecisionPolicyRef[] {
-  const externalAction = task.risk_profile?.external_action;
-  return [
-    {
-      kind: "approval_gate",
-      ref: `task-approval:${taskRef}`,
-      result: externalAction?.approval_required ? "approval_required" : "not_required",
-    },
-    {
-      kind: "safety_boundary",
-      ref: `task-reversibility:${taskRef}`,
-      result: task.reversibility ?? "unknown",
-    },
-  ];
 }
 
 export async function loadProjectInstructionBlocks(

@@ -52,35 +52,6 @@ function makeArtifactTask(): Task {
   } as unknown as Task;
 }
 
-function makeSuccessfulBoundedRunner(): BoundedAgentLoopRunner {
-  return {
-    run: vi.fn().mockResolvedValue({
-      success: true,
-      output: {
-        status: "done",
-        finalAnswer: "finished",
-        summary: "summary",
-        filesChanged: [],
-        testsRun: [],
-        completionEvidence: ["bounded runner reached"],
-        verificationHints: [],
-        blockers: [],
-      },
-      finalText: "finished",
-      stopReason: "completed",
-      elapsedMs: 1,
-      modelTurns: 1,
-      toolCalls: 0,
-      compactions: 0,
-      changedFiles: [],
-      commandResults: [],
-      traceId: "trace-1",
-      sessionId: "session-1",
-      turnId: "turn-1",
-    }),
-  } as unknown as BoundedAgentLoopRunner;
-}
-
 describe("TaskAgentLoopRunner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -201,68 +172,6 @@ describe("TaskAgentLoopRunner", () => {
     expect(userMessage).toContain("OpenAI embedding request failed: 401 Unauthorized");
   });
 
-  it("keeps legacy empty task identifiers from aborting cognition assembly", async () => {
-    const cwd = process.cwd();
-    finalize.mockResolvedValue({
-      requestedCwd: cwd,
-      executionCwd: cwd,
-      isolated: false,
-      cleanupStatus: "not_requested",
-    });
-    prepareTaskAgentLoopWorkspace.mockResolvedValue({
-      requestedCwd: cwd,
-      executionCwd: cwd,
-      isolated: false,
-      finalize,
-    });
-    const boundedRunner = makeSuccessfulBoundedRunner();
-    const modelInfo = {
-      ref: { providerId: "test", modelId: "model" },
-      displayName: "test/model",
-      capabilities: {},
-    };
-    const runner = new TaskAgentLoopRunner({
-      boundedRunner,
-      modelClient: {
-        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
-      } as unknown as AgentLoopModelClient,
-      modelRegistry: {
-        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
-      } as unknown as AgentLoopModelRegistry,
-      contextAssembler: new AgentLoopContextAssembler(),
-    });
-
-    const result = await runner.runTask({
-      task: {
-        ...makeTask(),
-        id: "",
-        goal_id: "",
-      } as unknown as Task,
-      cwd,
-    });
-
-    expect(result.success).toBe(true);
-    expect(boundedRunner.run).toHaveBeenCalledTimes(1);
-    const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const frame = turn.decisionContext?.companion;
-    expect(frame).toMatchObject({
-      source: {
-        kind: "task_execution",
-        caller_path: "task_agent_loop",
-        task_ref: "unknown-task",
-        goal_ref: "unknown-goal",
-      },
-      active_target_ref: {
-        kind: "task",
-        id: "unknown-task",
-      },
-    });
-    expect(frame?.input_refs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "task", ref: "unknown-task", freshness: "unknown" }),
-      expect.objectContaining({ kind: "goal", ref: "unknown-goal", freshness: "unknown" }),
-    ]));
-  });
-
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {
     const cwd = process.cwd();
     finalize.mockResolvedValue({
@@ -323,7 +232,6 @@ describe("TaskAgentLoopRunner", () => {
 
     const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
-    const frame = turn.decisionContext?.companion;
     expect(userMessage).toContain("Artifact contract:");
     expect(userMessage).toContain("\"mean_roc_auc\"");
     expect(userMessage).toContain("\"sequence_hazard_features\"");
@@ -331,28 +239,5 @@ describe("TaskAgentLoopRunner", () => {
     expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
     expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
     expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
-    expect(frame).toMatchObject({
-      source: {
-        kind: "task_execution",
-        caller_path: "task_agent_loop",
-        task_ref: "task-1",
-        goal_ref: "goal-1",
-      },
-      active_target_ref: {
-        kind: "task",
-        id: "task-1",
-      },
-    });
-    expect(frame?.input_refs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "grounding_bundle", freshness: "current" }),
-      expect.objectContaining({ kind: "grounding_section", freshness: "current" }),
-    ]));
-    expect(frame?.evidence_refs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: "grounding" }),
-    ]));
-    expect(frame?.policy_refs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "approval_gate" }),
-      expect.objectContaining({ kind: "safety_boundary" }),
-    ]));
   });
 });

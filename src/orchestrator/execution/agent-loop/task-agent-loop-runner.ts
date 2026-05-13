@@ -101,7 +101,6 @@ export class TaskAgentLoopRunner {
         cwd: assembled.cwd,
         systemPrompt: assembled.systemPrompt,
         userPrompt: assembled.userPrompt,
-        companionDecisionFrame: assembled.companionDecisionFrame,
         budget: { ...this.deps.defaultBudget, ...input.budget },
         toolPolicy: { ...this.deps.defaultToolPolicy, ...input.toolPolicy },
         toolCallContext: this.deps.defaultToolCallContext,

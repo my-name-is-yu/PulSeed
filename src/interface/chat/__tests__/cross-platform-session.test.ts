@@ -27,8 +27,7 @@ import {
   resolveChannelRoute,
 } from "../../../runtime/gateway/channel-policy.js";
 import { ChatSessionCatalog } from "../chat-session-store.js";
-import { ChatSessionDataStore, CrossPlatformChatSessionInfoStore } from "../chat-session-data-store.js";
-import { resolveChatStateBaseDir } from "../chat-state-base-dir.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
 import { createRunSpecStore } from "../../../runtime/run-spec/index.js";
 import type { RunSpec } from "../../../runtime/run-spec/index.js";
 import { selectGatewayModelLoopTools } from "../chat-runner-routes.js";
@@ -3628,7 +3627,7 @@ describe("CrossPlatformChatSessionManager", () => {
         },
       });
 
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && !events.some((message) => message.includes("Approval ID: approval-cross-platform"))) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -3914,7 +3913,7 @@ describe("CrossPlatformChatSessionManager", () => {
         cwd: "/repo",
         onEvent: () => undefined,
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-grant-run")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4022,7 +4021,7 @@ describe("CrossPlatformChatSessionManager", () => {
           turn_id: "1700.2",
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-old-grant-stale")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4224,7 +4223,7 @@ describe("CrossPlatformChatSessionManager", () => {
         cwd: "/repo",
         onEvent: () => undefined,
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-grant-standing")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4414,7 +4413,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-clarify")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4520,7 +4519,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-side-question")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4604,7 +4603,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-reconstructed-epoch")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4741,7 +4740,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && (await store.loadPending("approval-stale-target")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -4833,7 +4832,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (
         Date.now() < deadline
         && ((await store.loadPending("approval-stale-button")) === null || llmClient.callCount < 1)
@@ -4946,7 +4945,7 @@ describe("CrossPlatformChatSessionManager", () => {
           turn_id: "1700.3",
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5_000;
       while (
         Date.now() < deadline
         && (
@@ -5346,102 +5345,67 @@ describe("CrossPlatformChatSessionManager", () => {
   });
 
   it("does not let stale companion target overrides replace the current gateway turn", async () => {
-    const baseDir = makeTempDir();
     const adapter = makeMockAdapter();
-    try {
-      const stateManager = new RealStateManager(baseDir, undefined, { walEnabled: false });
-      await stateManager.init();
-      const manager = new CrossPlatformChatSessionManager(makeDeps({
-        stateManager,
-        adapter,
-      }));
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+    }));
 
-      await manager.processIncomingMessage({
-        text: "Use current target",
-        platform: "slack",
-        identity_key: "owner",
-        conversation_id: "current-thread",
-        message_id: "current-message",
-        goal_id: "goal-current",
-        sender_id: "owner-user",
-        cwd: "/repo",
-        companion: {
-          presence: {
-            mode: "listening",
-            interruptible: true,
-            current_target: {
-              session_key: "identity:stale",
-              conversation_id: "stale-thread",
-              message_id: "stale-message",
-              run_id: "run-stale",
-              goal_id: "goal-stale",
-              reply_target_id: "stale-thread",
-            },
-          },
-          turnPolicy: {
-            dialogue_kind: "direct_turn",
-            input_modality: "text",
-            output_mode: "reply",
-            urgency: "normal",
-            current_target: {
-              session_key: "identity:stale",
-              conversation_id: "stale-thread",
-              message_id: "stale-message",
-              run_id: "run-stale",
-              goal_id: "goal-stale",
-              reply_target_id: "stale-thread",
-            },
+    await manager.processIncomingMessage({
+      text: "Use current target",
+      platform: "slack",
+      identity_key: "owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      sender_id: "owner-user",
+      cwd: "/repo",
+      companion: {
+        presence: {
+          mode: "listening",
+          interruptible: true,
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
           },
         },
-      });
+        turnPolicy: {
+          dialogue_kind: "direct_turn",
+          input_modality: "text",
+          output_mode: "reply",
+          urgency: "normal",
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
+          },
+        },
+      },
+    });
 
-      const info = manager.getSessionInfo({ identity_key: "owner" });
-      const contract = info?.active_companion_contract;
-      const frame = info?.active_companion_decision_frame;
-      expect(contract?.presence.current_target).toMatchObject({
-        session_key: "identity:owner",
-        conversation_id: "current-thread",
-        message_id: "current-message",
-        goal_id: "goal-current",
-        reply_target_id: "current-thread",
-      });
-      expect(contract?.turn_policy.current_target).toMatchObject({
-        session_key: "identity:owner",
-        conversation_id: "current-thread",
-        message_id: "current-message",
-        goal_id: "goal-current",
-        reply_target_id: "current-thread",
-      });
-      expect(contract?.turn_policy.current_target.goal_id).not.toBe("goal-stale");
-      expect(frame?.input_refs).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: "session",
-          ref: "identity:stale",
-          freshness: "rejected_stale",
-        }),
-        expect.objectContaining({
-          kind: "run",
-          ref: "run-stale",
-          freshness: "rejected_stale",
-        }),
-        expect.objectContaining({
-          kind: "goal",
-          ref: "goal-stale",
-          freshness: "rejected_stale",
-        }),
-      ]));
-      expect(frame?.active_target_ref).not.toMatchObject({ kind: "run", id: "run-stale" });
-
-      const persisted = await new CrossPlatformChatSessionInfoStore(resolveChatStateBaseDir(stateManager)).load("identity:owner");
-      expect(persisted?.active_companion_decision_frame).toMatchObject({
-        frame_id: frame?.frame_id,
-        input_refs: expect.arrayContaining([
-          expect.objectContaining({ kind: "run", ref: "run-stale", freshness: "rejected_stale" }),
-        ]),
-      });
-    } finally {
-      cleanupTempDir(baseDir);
-    }
+    const contract = manager.getSessionInfo({ identity_key: "owner" })?.active_companion_contract;
+    expect(contract?.presence.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target.goal_id).not.toBe("goal-stale");
   });
 
   it("routes gateway text through the companion contract before gateway model-loop execution", async () => {

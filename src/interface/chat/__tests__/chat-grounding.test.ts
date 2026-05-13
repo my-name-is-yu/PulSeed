@@ -44,7 +44,6 @@ import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { spawnWithTimeout } from "../../../adapters/spawn-helper.js";
 import { clearIdentityCache } from "../../../base/config/identity-loader.js";
 import { writeSeedMd } from "../../cli/commands/setup/steps-runtime.js";
-import { SqliteSoilRepository } from "../../../platform/soil/sqlite-repository.js";
 
 // ─── Shared helpers ───
 
@@ -90,14 +89,11 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
 describe("buildSystemPrompt (grounding.ts)", () => {
   let tmpDir: string;
   let originalPulseedHome: string | undefined;
-  let originalOpenAiApiKey: string | undefined;
 
   beforeEach(async () => {
     tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-grounding-test-"));
     originalPulseedHome = process.env["PULSEED_HOME"];
-    originalOpenAiApiKey = process.env["OPENAI_API_KEY"];
     process.env["PULSEED_HOME"] = tmpDir;
-    process.env["OPENAI_API_KEY"] = "";
     clearIdentityCache();
   });
 
@@ -107,11 +103,6 @@ describe("buildSystemPrompt (grounding.ts)", () => {
       delete process.env["PULSEED_HOME"];
     } else {
       process.env["PULSEED_HOME"] = originalPulseedHome;
-    }
-    if (originalOpenAiApiKey === undefined) {
-      delete process.env["OPENAI_API_KEY"];
-    } else {
-      process.env["OPENAI_API_KEY"] = originalOpenAiApiKey;
     }
     clearIdentityCache();
   });
@@ -317,66 +308,6 @@ describe("buildSystemPrompt (grounding.ts)", () => {
     expect(prompt).toContain("Working directory: /repo");
     expect(prompt).toContain("## Provider");
     expect(prompt).toContain("## Installed Plugins");
-  });
-
-  it("treats chat-started agent-loop grounding as a non-user-visible runtime sink", async () => {
-    const homeDir = path.join(tmpDir, "home");
-    const rootDir = path.join(homeDir, "soil");
-    const repository = await SqliteSoilRepository.create({ rootDir });
-    try {
-      await repository.applyMutation({
-        records: [{
-          record_id: "rec-chat-agent-loop",
-          record_key: "fact.chat_agent_loop",
-          version: 1,
-          record_type: "fact",
-          soil_id: "knowledge/chat-agent-loop",
-          title: "Chat agent-loop runtime memory",
-          summary: "Agent loop runtime memory should remain available to task execution.",
-          canonical_text: "Agent loop runtime memory should remain available to task execution.",
-          goal_id: null,
-          task_id: null,
-          status: "active",
-          confidence: 0.9,
-          importance: 0.7,
-          source_reliability: 0.8,
-          valid_from: null,
-          valid_to: null,
-          supersedes_record_id: null,
-          is_active: true,
-          source_type: "test",
-          source_id: "chat-agent-loop-source",
-          metadata_json: {},
-          created_at: "2026-05-13T00:00:00.000Z",
-          updated_at: "2026-05-13T00:00:00.000Z",
-        }],
-        chunks: [{
-          chunk_id: "chunk-chat-agent-loop",
-          record_id: "rec-chat-agent-loop",
-          soil_id: "knowledge/chat-agent-loop",
-          chunk_index: 0,
-          chunk_kind: "paragraph",
-          heading_path_json: ["Knowledge"],
-          chunk_text: "Agent loop runtime memory should remain available to task execution.",
-          token_count: 9,
-          checksum: "chat-agent-loop-chunk",
-          created_at: "2026-05-13T00:00:00.000Z",
-        }],
-      });
-    } finally {
-      repository.close();
-    }
-
-    const prompt = await buildChatAgentLoopSystemPrompt({
-      stateManager: makeMockStateManager(),
-      homeDir,
-      workspaceRoot: "/repo",
-      userMessage: "Agent loop runtime memory",
-      workspaceContext: "Working directory: /repo",
-    });
-
-    expect(prompt).toContain("## Soil Knowledge");
-    expect(prompt).toContain("Chat agent-loop runtime memory");
   });
 
   it("keeps nested workspace instructions when chat grounding runs below the git root", async () => {
