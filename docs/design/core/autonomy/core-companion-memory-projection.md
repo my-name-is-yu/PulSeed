@@ -51,7 +51,8 @@ plane.
 The projection carries:
 
 - `source_refs`: Surface, grounding profile, grounding bundle, relationship
-  profile, KnowledgeManager, Soil, and correction ledger refs.
+  profile, profile proposal, runtime session, KnowledgeManager, Soil, Dream
+  seed, and correction ledger refs.
 - `included_entries`: Surface-admitted memory entries with available excerpts.
 - `restricted_entries`: remembered-but-withheld refs for stale, superseded,
   corrected, sensitive, out-of-scope, redacted, permission-blocked, or forbidden
@@ -86,7 +87,8 @@ autonomy, approval, runtime control, and the relevant caller path.
 ## Exclusion Rules
 
 Surface remains the first gate. The core projection refuses to include entries
-whose source ref is sensitive, redacted, corrected, superseded, or replaced.
+whose source ref is sensitive, redacted, stale, inactive, corrected,
+superseded, or replaced.
 
 Restricted entries retain only typed refs and restriction reasons. They can
 inhibit overreach or explain audit state, but they do not expose content to

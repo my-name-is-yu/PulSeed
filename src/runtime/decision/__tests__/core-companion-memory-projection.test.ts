@@ -8,7 +8,9 @@ import {
 
 const NOW = "2026-05-13T01:00:00.000Z";
 
-function ownerRef(kind: "relationship_profile" | "knowledge" | "soil" = "relationship_profile") {
+function ownerRef(
+  kind: "relationship_profile" | "profile_proposal" | "runtime_session" | "knowledge" | "soil" | "dream_seed" = "relationship_profile"
+) {
   return {
     kind,
     store_ref: `${kind}:store`,
@@ -271,6 +273,41 @@ describe("CoreCompanionMemoryProjection", () => {
     });
   });
 
+  it("preserves non-Surface owner provenance instead of collapsing memory stores into surface refs", () => {
+    const runtimeSource = sourceRef({
+      memory_id: "runtime-memory-1",
+      owning_store_ref: ownerRef("runtime_session"),
+      role: "work_memory",
+      record_kind: "episodic_event",
+    });
+    const restrictedDreamSeed = sourceRef({
+      memory_id: "dream-seed-1",
+      owning_store_ref: ownerRef("dream_seed"),
+      role: "seed",
+      record_kind: "seed_candidate",
+      lifecycle: "planted",
+      allowed_uses: ["never_use_directly"],
+    });
+    const runtimeProjection = createCoreCompanionMemoryProjectionFromSurface({
+      surfaceProjection: includedSurface("runtime_grounding", { source: runtimeSource }),
+      callerPath: "task_agent_loop",
+      createdAt: NOW,
+    });
+    const restrictedProjection = createCoreCompanionMemoryProjectionFromSurface({
+      surfaceProjection: restrictedSurface([{ source: restrictedDreamSeed, blockedGate: "lifecycle" }]),
+      callerPath: "resident_attention_cycle",
+      createdAt: NOW,
+    });
+
+    expect(runtimeProjection.source_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "runtime_session", owner_kind: "runtime_session" }),
+    ]));
+    expect(restrictedProjection.source_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "dream_seed", owner_kind: "dream_seed" }),
+    ]));
+    expect(runtimeProjection.source_refs.filter((ref) => ref.kind === "surface_projection")).toHaveLength(1);
+  });
+
   it("separates remembered, usable, speakable, actionable, inhibition-only, and planning-only memory use", () => {
     const speakable = createCoreCompanionMemoryProjectionFromSurface({
       surfaceProjection: includedSurface("user_facing_reference", {
@@ -429,6 +466,10 @@ describe("CoreCompanionMemoryProjection", () => {
     expect(CoreCompanionMemoryEntrySchema.safeParse({
       ...baseEntry,
       source_ref: sourceRef({ correction_state: "corrected" }),
+    }).success).toBe(false);
+    expect(CoreCompanionMemoryEntrySchema.safeParse({
+      ...baseEntry,
+      source_ref: sourceRef({ lifecycle: "decayed" }),
     }).success).toBe(false);
   });
 });

@@ -35,9 +35,12 @@ export type CoreCompanionMemoryGroundingProfileId = z.infer<typeof CoreCompanion
 
 export const CoreCompanionMemorySourceKindSchema = z.enum([
   "relationship_profile",
+  "profile_proposal",
+  "runtime_session",
   "surface_projection",
   "knowledge_manager",
   "soil",
+  "dream_seed",
   "correction_ledger",
   "grounding_profile",
   "grounding_bundle",
@@ -156,6 +159,13 @@ export const CoreCompanionMemoryEntrySchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["source_ref", "content_state"],
       message: "redacted memory cannot be included in core companion memory entries",
+    });
+  }
+  if (!isIncludedCoreMemoryLifecycle(entry.source_ref.lifecycle)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["source_ref", "lifecycle"],
+      message: "stale or inactive memory lifecycle cannot be included in core companion memory entries",
     });
   }
   if (entry.source_ref.correction_state !== "current" || entry.source_ref.superseded_by_memory_id !== null) {
@@ -523,8 +533,14 @@ function addProjectionSourceRef(
 }
 
 function projectionSourceKindForOwner(ownerKind: SurfaceMemorySourceRef["owning_store_ref"]["kind"]): CoreCompanionMemorySourceKind {
-  if (ownerKind === "relationship_profile" || ownerKind === "profile_proposal") {
+  if (ownerKind === "relationship_profile") {
     return "relationship_profile";
+  }
+  if (ownerKind === "profile_proposal") {
+    return "profile_proposal";
+  }
+  if (ownerKind === "runtime_session") {
+    return "runtime_session";
   }
   if (ownerKind === "knowledge") {
     return "knowledge_manager";
@@ -532,5 +548,9 @@ function projectionSourceKindForOwner(ownerKind: SurfaceMemorySourceRef["owning_
   if (ownerKind === "soil") {
     return "soil";
   }
-  return "surface_projection";
+  return "dream_seed";
+}
+
+function isIncludedCoreMemoryLifecycle(lifecycle: SurfaceMemorySourceRef["lifecycle"]): boolean {
+  return lifecycle === "active" || lifecycle === "matured";
 }
