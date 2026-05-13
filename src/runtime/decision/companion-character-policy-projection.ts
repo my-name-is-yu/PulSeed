@@ -8,10 +8,10 @@ import {
   getCharacterStallThresholdMultiplierHint,
 } from "../../platform/traits/character-policy.js";
 import {
-  CompanionDecisionInputRefSchema,
-  CompanionDecisionPolicyRefSchema,
-  type CompanionDecisionInputRef,
-  type CompanionDecisionPolicyRef,
+  CognitionContextRefSchema,
+  CognitionPolicyRefSchema,
+  type CognitionContextRef,
+  type CognitionPolicyRef,
 } from "./companion-decision-contract.js";
 
 export {
@@ -194,12 +194,12 @@ export function createCompanionCharacterPolicyProjection(
   });
 }
 
-export function createCompanionCharacterPolicyDecisionInputRef(
+export function createCompanionCharacterPolicyCognitionRef(
   projection: CompanionCharacterPolicyProjection,
-  options: { freshness?: CompanionDecisionInputRef["freshness"] } = {}
-): CompanionDecisionInputRef {
+  options: { freshness?: CognitionContextRef["freshness"] } = {}
+): CognitionContextRef {
   const parsed = CompanionCharacterPolicyProjectionSchema.parse(projection);
-  return CompanionDecisionInputRefSchema.parse({
+  return CognitionContextRefSchema.parse({
     kind: "character_config_policy",
     ref: parsed.projection_id,
     role: "policy",
@@ -208,11 +208,11 @@ export function createCompanionCharacterPolicyDecisionInputRef(
   });
 }
 
-export function createCompanionCharacterPolicyDecisionPolicyRef(
+export function createCompanionCharacterPolicyCognitionPolicyRef(
   projection: CompanionCharacterPolicyProjection
-): CompanionDecisionPolicyRef {
+): CognitionPolicyRef {
   const parsed = CompanionCharacterPolicyProjectionSchema.parse(projection);
-  return CompanionDecisionPolicyRefSchema.parse({
+  return CognitionPolicyRefSchema.parse({
     kind: "character_config_policy",
     ref: parsed.projection_id,
     result: "policy_hint_only",

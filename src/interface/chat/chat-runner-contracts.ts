@@ -34,6 +34,7 @@ import type {
 import type { ChatHistory } from "./chat-history.js";
 import type { EventSubscriber } from "./event-subscriber.js";
 import type { UserInput } from "./user-input.js";
+import type { CompanionCognitionService } from "../../runtime/cognition/companion-cognition-service.js";
 
 export type ChatRunnerTelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -108,6 +109,7 @@ export interface ChatRunnerDeps {
   runtimeReplyTarget?: RuntimeControlReplyTarget;
   runtimeControlActor?: RuntimeControlActor;
   gatewaySetupStatusProvider?: ChatRunnerGatewaySetupStatusProvider;
+  companionCognitionService?: Pick<CompanionCognitionService, "evaluateTurn">;
 }
 
 export interface ChatRunResult {

@@ -3,7 +3,7 @@ import type { SurfaceGateKind } from "../../../grounding/surface-contracts.js";
 import {
   CoreCompanionMemoryEntrySchema,
   createCoreCompanionMemoryProjectionFromSurface,
-  createCoreCompanionMemoryProjectionInputRef,
+  createCoreCompanionMemoryProjectionCognitionRef,
 } from "../index.js";
 
 const NOW = "2026-05-13T01:00:00.000Z";
@@ -230,7 +230,7 @@ function restrictedSurface(sources: Array<{ source: ReturnType<typeof sourceRef>
 }
 
 describe("CoreCompanionMemoryProjection", () => {
-  it("turns a governed Surface into a decision-frame input without prompt dumping or new memory ownership", () => {
+  it("turns a governed Surface into a cognition context ref without prompt dumping or new memory ownership", () => {
     const soilSource = sourceRef({
       memory_id: "soil-memory-1",
       owning_store_ref: ownerRef("soil"),
@@ -243,11 +243,11 @@ describe("CoreCompanionMemoryProjection", () => {
       projectionId: "core-memory:chat:1",
       groundingProfileId: "chat/general_turn",
       groundingBundleRef: "grounding:bundle:1",
-      decisionFrameRef: "frame:1",
+      cognitionRef: "cognition:1",
       correctionEventRefs: ["correction:ledger:1"],
       createdAt: NOW,
     });
-    const inputRef = createCoreCompanionMemoryProjectionInputRef(projection);
+    const inputRef = createCoreCompanionMemoryProjectionCognitionRef(projection);
 
     expect(projection.source_refs.map((ref) => ref.kind)).toEqual(expect.arrayContaining([
       "surface_projection",

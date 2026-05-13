@@ -4,6 +4,10 @@ import type { KnowledgeManager } from "../platform/knowledge/knowledge-manager.j
 import type { ConsolidationReport } from "./types.js";
 import { ConsolidationReportSchema } from "./types.js";
 import { saveReflectionReport } from "./reflection-utils.js";
+import {
+  createReflectionInputFromCognitionReplay,
+  type CognitionReplayRecord,
+} from "../runtime/cognition/index.js";
 
 // ─── Helpers ───
 
@@ -17,9 +21,10 @@ export async function runDreamConsolidation(deps: {
   stateManager: StateManager;
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
+  cognitionReplayRecords?: CognitionReplayRecord[];
   baseDir: string;
 }): Promise<ConsolidationReport> {
-  const { stateManager, memoryLifecycle, knowledgeManager, baseDir } = deps;
+  const { stateManager, memoryLifecycle, knowledgeManager, cognitionReplayRecords = [], baseDir } = deps;
   const date = todayISO();
   const now = new Date().toISOString();
 
@@ -57,6 +62,16 @@ export async function runDreamConsolidation(deps: {
       // Non-fatal — continue
     }
   }
+  const cognitionReflectionInputs = cognitionReplayRecords.flatMap((record) => {
+    try {
+      return [createReflectionInputFromCognitionReplay({
+        inputId: `reflection-input:${record.cognition_id}`,
+        record,
+      })];
+    } catch {
+      return [];
+    }
+  });
 
   const report = ConsolidationReportSchema.parse({
     date,
@@ -65,6 +80,8 @@ export async function runDreamConsolidation(deps: {
     entries_compressed: entriesCompressed,
     stale_entries_found: staleEntriesFound,
     revalidation_tasks_created: revalidationTasksCreated,
+    cognition_writeback_inputs_read: cognitionReflectionInputs.length,
+    cognition_runtime_authority_granted: false,
   });
 
   await saveReflectionReport(baseDir, "dream", date, report);

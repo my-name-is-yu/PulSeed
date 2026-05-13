@@ -170,6 +170,17 @@ describe("TaskAgentLoopRunner", () => {
     const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
     expect(userMessage).toContain("Soil prefetch failed; continuing without Soil context");
     expect(userMessage).toContain("OpenAI embedding request failed: 401 Unauthorized");
+    expect(result.cognitionOutput).toMatchObject({
+      caller_path: "long_running_task_turn",
+      selected_intention: {
+        goal_ref: {
+          goal_id: "goal-1",
+        },
+      },
+      response_plan: {
+        guidance_kind: "continue_route",
+      },
+    });
   });
 
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {

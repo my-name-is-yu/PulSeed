@@ -29,7 +29,7 @@ import {
   type CapabilityOperationPlanCandidate,
   type CapabilityOperationPlanCandidateInput,
 } from "../types/capability-operation-plan.js";
-import { CompanionDecisionInputRefSchema } from "./companion-decision-contract.js";
+import { CognitionContextRefSchema } from "./companion-decision-contract.js";
 
 export const CompanionGadgetAssetKindSchema = z.enum([
   "capability",
@@ -42,7 +42,7 @@ export const CompanionGadgetAssetKindSchema = z.enum([
 export type CompanionGadgetAssetKind = z.infer<typeof CompanionGadgetAssetKindSchema>;
 
 export const CompanionGadgetPlanningRefKindSchema = z.enum([
-  "companion_decision_frame",
+  "companion_cognition_output",
   "core_memory_projection",
   "capability_graph",
   "operation_plan_assembly",
@@ -233,7 +233,7 @@ export const CompanionGadgetPlanSchema = z.object({
   plan_id: z.string().min(1),
   generated_at: z.string().min(1),
   situation_refs: z.array(CompanionGadgetPlanningSourceRefSchema).default([]),
-  decision_input_refs: z.array(CompanionDecisionInputRefSchema).default([]),
+  cognition_context_refs: z.array(CognitionContextRefSchema).default([]),
   candidate: CompanionGadgetCandidateSchema,
   operation_plan_candidate: CapabilityOperationPlanCandidateSchema,
   admission_evaluation: AdmissionPolicyEvaluationSchema,
@@ -294,7 +294,7 @@ export interface CreateCompanionGadgetPlanInput {
   autonomyDecision: AutonomyDecision;
   actionProjection: CompanionActionProjection;
   situationRefs?: CompanionGadgetPlanningSourceRef[];
-  decisionInputRefs?: Array<z.input<typeof CompanionDecisionInputRefSchema>>;
+  cognitionContextRefs?: Array<z.input<typeof CognitionContextRefSchema>>;
 }
 
 export function createCompanionGadgetPlan(input: CreateCompanionGadgetPlanInput): CompanionGadgetPlan {
@@ -392,7 +392,7 @@ export function createCompanionGadgetPlan(input: CreateCompanionGadgetPlanInput)
     plan_id: input.planId ?? `${operationCandidate.plan_id}:gadget-plan`,
     generated_at: generatedAt,
     situation_refs: (input.situationRefs ?? []).map((ref) => CompanionGadgetPlanningSourceRefSchema.parse(ref)),
-    decision_input_refs: (input.decisionInputRefs ?? []).map((ref) => CompanionDecisionInputRefSchema.parse(ref)),
+    cognition_context_refs: (input.cognitionContextRefs ?? []).map((ref) => CognitionContextRefSchema.parse(ref)),
     candidate,
     operation_plan_candidate: operationCandidate,
     admission_evaluation: admission,

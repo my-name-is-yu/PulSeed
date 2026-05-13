@@ -1,0 +1,181 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatRunner } from "../chat-runner.js";
+import { ChatSessionCatalog } from "../chat-session-store.js";
+import { ChatSessionDataStore } from "../chat-session-data-store.js";
+import { resolveChatStateBaseDir } from "../chat-state-base-dir.js";
+import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
+import type { SelectedChatRoute } from "../ingress-router.js";
+import type { AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
+import type { StateManager } from "../../../base/state/state-manager.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { CompanionCognitionService, type CompanionCognitionInput } from "../../../runtime/cognition/index.js";
+
+vi.mock("../../../platform/observation/context-provider.js", () => ({
+  resolveGitRoot: (cwd: string) => cwd,
+  buildChatContext: (_task: string, cwd: string) => Promise.resolve(`Working directory: ${cwd}`),
+}));
+
+const originalPulseedHome = process.env["PULSEED_HOME"];
+let testHome: string | null = null;
+
+beforeEach(() => {
+  testHome = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-cognition-chat-"));
+  process.env["PULSEED_HOME"] = testHome;
+});
+
+afterEach(() => {
+  if (originalPulseedHome === undefined) {
+    delete process.env["PULSEED_HOME"];
+  } else {
+    process.env["PULSEED_HOME"] = originalPulseedHome;
+  }
+  if (testHome) {
+    fs.rmSync(testHome, { recursive: true, force: true });
+    testHome = null;
+  }
+});
+
+describe("chat caller path cognition integration", () => {
+  it("records shadow cognition for production ChatRunner agent-loop turns", async () => {
+    const stateManager = makeStateManager();
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      chatAgentLoopRunner: {
+        execute: vi.fn().mockResolvedValue(agentResult()),
+      } as unknown as ChatRunnerDeps["chatAgentLoopRunner"],
+    });
+
+    const result = await runner.execute("普通の相談です", testHome!, 10_000, {
+      selectedRoute: agentLoopRoute(),
+    });
+
+    expect(result.success).toBe(true);
+    const session = await latestSession(stateManager);
+    const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
+    expect(cognitionRecords).toHaveLength(1);
+    expect(cognitionRecords[0]?.payload).toMatchObject({
+      schema_version: "cognition-replay-record/v1",
+      caller_path: "chat_user_turn",
+      stable_output: {
+        response_plan: {
+          guidance_kind: "continue_route",
+        },
+      },
+    });
+  });
+
+  it("uses the same cognition contract for gateway model-loop turns", async () => {
+    const stateManager = makeStateManager();
+    const service = new CompanionCognitionService();
+    const evaluateTurn = vi.fn((input: CompanionCognitionInput) => service.evaluateTurn(input));
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      llmClient: makeLlmClient("gateway reply"),
+      companionCognitionService: { evaluateTurn },
+    });
+
+    const result = await runner.execute("普通の相談です", testHome!, 10_000, {
+      selectedRoute: gatewayModelLoopRoute(),
+    });
+
+    expect(result.success).toBe(true);
+    expect(evaluateTurn).toHaveBeenCalledOnce();
+    expect(evaluateTurn.mock.calls[0]?.[0]).toMatchObject({
+      caller_path: "chat_user_turn",
+      session_context: {
+        route_kind: "gateway_model_loop",
+      },
+      memory_context_request: {
+        caller_path: "chat_user_turn",
+        side_effect_authorization_allowed: false,
+        include_sensitive_content: false,
+      },
+    });
+    const session = await latestSession(stateManager);
+    const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
+    expect(cognitionRecords).toHaveLength(1);
+  });
+
+  it("keeps slash command early returns pre-cognition", async () => {
+    const evaluateTurn = vi.fn();
+    const runner = new ChatRunner({
+      stateManager: makeStateManager(),
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      companionCognitionService: { evaluateTurn },
+    });
+
+    const result = await runner.execute("/help", testHome!, 10_000);
+
+    expect(result.success).toBe(true);
+    expect(evaluateTurn).not.toHaveBeenCalled();
+  });
+});
+
+function makeStateManager(): StateManager {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-cognition-state-"));
+  return {
+    getBaseDir: vi.fn().mockReturnValue(baseDir),
+    writeRaw: vi.fn().mockResolvedValue(undefined),
+    readRaw: vi.fn().mockResolvedValue(null),
+    listTasks: vi.fn().mockResolvedValue([]),
+  } as unknown as StateManager;
+}
+
+async function latestSession(stateManager: StateManager) {
+  const catalog = new ChatSessionCatalog(stateManager);
+  const sessions = await catalog.listSessions();
+  const first = sessions[0];
+  if (!first) return null;
+  return new ChatSessionDataStore(resolveChatStateBaseDir(stateManager)).load(first.id);
+}
+
+function agentLoopRoute(): SelectedChatRoute {
+  return {
+    kind: "agent_loop",
+    reason: "agent_loop_available",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+}
+
+function gatewayModelLoopRoute(): SelectedChatRoute {
+  return {
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+}
+
+function agentResult(): AgentResult {
+  return {
+    success: true,
+    output: "了解しました。",
+    error: null,
+    exit_code: 0,
+    elapsed_ms: 10,
+    stopped_reason: "completed",
+  };
+}
+
+function makeLlmClient(content: string): ILLMClient {
+  return {
+    sendMessage: vi.fn().mockResolvedValue({
+      content,
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1,
+      },
+      stop_reason: "end_turn",
+    }),
+    parseJSON: vi.fn((raw: string) => JSON.parse(raw)),
+    supportsToolCalling: () => true,
+  } as unknown as ILLMClient;
+}

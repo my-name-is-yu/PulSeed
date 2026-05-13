@@ -28,6 +28,10 @@ import {
 } from "./task-agent-loop-worktree.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
+import {
+  CompanionCognitionService,
+  type CompanionCognitionOutput,
+} from "../../../runtime/cognition/index.js";
 
 export interface TaskAgentLoopRunnerDeps {
   boundedRunner: BoundedAgentLoopRunner;
@@ -79,6 +83,7 @@ export class TaskAgentLoopRunner {
     let finalizationInput = { success: false, changedFiles: [] as string[] };
     let finalResult: AgentLoopResult<TaskAgentLoopOutput> | null = null;
     let runError: unknown = null;
+    let cognitionOutput: CompanionCognitionOutput | undefined;
     try {
       const executionPolicy = this.deps.defaultToolCallContext?.executionPolicy
         ?? this.deps.defaultExecutionPolicy;
@@ -90,6 +95,11 @@ export class TaskAgentLoopRunner {
         soilPrefetch: this.deps.soilPrefetch,
         trustProjectInstructions: executionPolicy?.trustProjectInstructions,
       });
+      cognitionOutput = await evaluateTaskAgentLoopCognition({
+        task: input.task,
+        cwd: assembled.cwd,
+        phaseRef: "task-agent-loop:assemble",
+      }).catch(() => undefined);
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
         artifactGoal: input.artifactGoal,
@@ -137,6 +147,7 @@ export class TaskAgentLoopRunner {
         commandResults,
         activeBudgetMs: turn.budget.maxWallClockMs,
         requiresPostVerificationBeforeSuccessLedger,
+        ...(cognitionOutput ? { cognitionOutput } : {}),
       };
     } catch (error) {
       runError = error;
@@ -161,4 +172,72 @@ export class TaskAgentLoopRunner {
   async runTaskAsAgentResult(input: TaskAgentLoopRunInput): Promise<AgentResult> {
     return taskAgentLoopResultToAgentResult(await this.runTask(input));
   }
+}
+
+async function evaluateTaskAgentLoopCognition(input: {
+  task: Task;
+  cwd: string;
+  phaseRef: string;
+}): Promise<CompanionCognitionOutput> {
+  const cognitionId = `cognition:task:${input.task.id}`;
+  const eventRef = {
+    ref: input.task.id,
+    source_store: "runtime_operation" as const,
+    source_event_type: "task_agent_loop_context",
+    schema_version: 1,
+    source_epoch: input.task.started_at ?? input.task.created_at ?? input.task.id,
+    redaction_policy: "metadata_only" as const,
+  };
+  return new CompanionCognitionService().evaluateTaskContext({
+    cognition_id: cognitionId,
+    caller_path: "long_running_task_turn",
+    event_refs: [eventRef],
+    working_context: {
+      input_ref: eventRef,
+      route_ref: {
+        kind: "agent_loop",
+        ref: "task_agent_loop",
+      },
+      session_ref: {
+        kind: "workspace",
+        ref: input.cwd,
+      },
+      hidden_prompt_content_materialized: false,
+    },
+    runtime_context: {
+      runtime_item_refs: [{
+        kind: "task",
+        ref: input.task.id,
+      }],
+      approval_refs: [],
+      last_tool_trace_refs: [],
+      phase_ref: {
+        kind: "task_phase",
+        ref: input.phaseRef,
+      },
+    },
+    goal_context: {
+      active_goals: [{
+        goal_id: input.task.goal_id,
+        goal_ref: {
+          kind: "goal",
+          ref: input.task.goal_id,
+        },
+        lifecycle: input.task.status === "completed" ? "completed" : "active",
+        priority: "unknown",
+      }],
+      active_intention_refs: [],
+      stale_target_refs: [],
+    },
+    memory_context_request: {
+      request_id: `${cognitionId}:memory-request`,
+      requested_uses: ["runtime_grounding", "goal_planning"],
+      caller_path: "long_running_task_turn",
+      query_ref: eventRef,
+      surface_projection_required: true,
+      side_effect_authorization_allowed: false,
+      include_sensitive_content: false,
+    },
+    surface_target: "internal_audit",
+  });
 }

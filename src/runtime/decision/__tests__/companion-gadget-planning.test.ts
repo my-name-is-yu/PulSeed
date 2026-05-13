@@ -18,6 +18,10 @@ import {
   CompanionGadgetPlanSchema,
   createCompanionGadgetPlan,
 } from "../companion-gadget-planning.js";
+import {
+  CognitionEventRefSchema,
+  toolCandidateFromGadgetPlan,
+} from "../../cognition/index.js";
 
 const NOW = "2026-05-09T00:00:00.000Z";
 
@@ -422,5 +426,46 @@ describe("CompanionGadgetPlanning", () => {
       actionProjection: projection(decision),
       generatedAt: NOW,
     })).toThrow(/provider_ref/);
+  });
+
+  it("projects gadget plans into cognition tool candidates without granting execution authority", () => {
+    const op = operation();
+    const snapshot = readiness(op);
+    const admission = approvalRequiredAdmission(op);
+    const decision = autonomy(op, snapshot, admission);
+    const actionProjection = projection(decision);
+    const plan = createCompanionGadgetPlan({
+      assetKind: "tool",
+      operationCandidate: operationCandidate(op, snapshot),
+      readinessSnapshots: [snapshot],
+      admissionEvaluation: admission,
+      autonomyDecision: decision,
+      actionProjection,
+      generatedAt: NOW,
+    });
+    const originRef = CognitionEventRefSchema.parse({
+      ref: "cognition:chat:tool-test",
+      source_store: "cognition_audit",
+      source_event_type: "companion_cognition_output",
+      schema_version: 1,
+      replay_key: "cognition:chat:tool-test",
+      redaction_policy: "metadata_only",
+    });
+
+    const candidate = toolCandidateFromGadgetPlan({
+      candidateId: "tool-candidate:workspace-search",
+      plan,
+      originRef,
+      authorizationRefs: [{ kind: "approval", ref: "approval:workspace-search" }],
+    });
+
+    expect(candidate).toMatchObject({
+      authority_stage: "suggest",
+      can_execute: true,
+      may_execute: false,
+      required_authorization_refs: [{ kind: "approval", ref: "approval:workspace-search" }],
+      memory_is_authority: false,
+      model_text_is_authority: false,
+    });
   });
 });

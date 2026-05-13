@@ -36,8 +36,8 @@ and ordinary-surface policy.
   capability catalogs, debug state, and raw character knob disclosure.
 - `source_refs`: typed refs back to stored config or runtime setup.
 
-The projection can create `character_config_policy` input and policy refs for a
-`CompanionDecisionFrame`. The frame receives typed refs, not raw personality
+The projection can create `character_config_policy` context and policy refs for
+the Companion Cognition Layer. Cognition receives typed refs, not raw personality
 text, and model text is never authority for bypassing readiness, admission,
 autonomy, approval, guardrails, or runtime control.
 
@@ -68,6 +68,6 @@ exposes them as decision hints rather than using them to grant autonomy.
 ## Follow-Up Boundary
 
 A larger future slice can wire this projection into the first-class gateway chat
-decision assembler once the chat decision frame is production-wired. That work
-should reuse the same `character_config_policy` input and policy refs instead
+cognition adapter once the chat cognition output is production-wired. That work
+should reuse the same `character_config_policy` context and policy refs instead
 of adding another personality or surface-policy path.

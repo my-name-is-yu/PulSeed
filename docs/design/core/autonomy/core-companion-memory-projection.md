@@ -7,8 +7,8 @@
 
 ## Purpose
 
-`CoreCompanionMemoryProjection` is the turn-level memory view that a
-`CompanionDecisionFrame` can cite when chat turns, task execution, or resident
+`CoreCompanionMemoryProjection` is the governed memory view that
+`CompanionCognitionOutput` can cite when chat turns, task execution, or resident
 attention need governed continuity.
 
 It answers:
@@ -41,7 +41,7 @@ plane.
 | Soil retrieval | `src/platform/soil/`, `src/grounding/providers/soil-provider.ts` | Knowledge/projection retrieval owner; not a universal write owner for relationship memory. |
 | Corrections and quarantine | `src/platform/corrections/` | Keeps corrected, retracted, forgotten, suspicious, and quarantined memory from being treated as current. |
 | Grounding profiles | `src/grounding/profiles.ts` | Selects the caller profile that produced the Surface and grounding bundle evidence. |
-| Companion decision | `src/runtime/decision/companion-decision-contract.ts` | Reads the memory projection as a typed `memory_projection` input ref, not prompt text. |
+| Companion cognition | `src/runtime/cognition/contracts.ts` | Reads the memory projection as a typed `memory_projection` context ref, not prompt text. |
 
 ## Contract Boundary
 
@@ -113,14 +113,13 @@ stale_or_missing_surface
 ## Caller Path
 
 `createCoreCompanionMemoryProjectionFromSurface` builds the projection from an
-existing `SurfaceProjection`. `createCoreCompanionMemoryProjectionInputRef`
-returns the typed `memory_projection` input ref for a
-`CompanionDecisionFrame`.
+existing `SurfaceProjection`. `createCoreCompanionMemoryProjectionCognitionRef`
+returns the typed `memory_projection` context ref for Companion Cognition.
 
 This keeps caller adoption incremental:
 
 1. Existing grounding and Surface builders stay canonical.
-2. Companion decision frames cite the projection ref.
+2. Companion Cognition outputs cite the projection ref.
 3. Future chat/task/resident caller paths can persist or inspect the projection
    without reimplementing memory selection.
 4. Gadget planning can use the same use policy without letting memory authorize
@@ -135,7 +134,7 @@ The tests prove:
 
 - Soil/Knowledge/profile source refs remain owner-specific while Surface stays
   the projection gate.
-- The projection can become a `memory_projection` decision input ref.
+- The projection can become a `memory_projection` cognition context ref.
 - remembered, usable, speakable, actionable, inhibition-only, planning-only,
   and forbidden states are distinct.
 - stale, superseded, corrected, sensitive, out-of-scope, and deleted memory is
