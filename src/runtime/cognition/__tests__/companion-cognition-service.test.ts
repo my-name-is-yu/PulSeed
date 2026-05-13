@@ -151,6 +151,47 @@ describe("CompanionCognitionService", () => {
     expect(output.uncertainty.map((entry) => entry.kind)).toContain("stale_target");
   });
 
+  it("assembles situation refs, missing memory, and unavailable policy without changing the route owner", async () => {
+    const withheldMemory = {
+      memory_ref: eventRef("profile:memory:withheld"),
+      source_kind: "semantic" as const,
+      allowed_uses: [],
+      forbidden_uses: ["runtime_grounding" as const],
+      sensitivity: "private" as const,
+      lifecycle: "active" as const,
+      correction_state: "current" as const,
+      withheld_reason: "missing_surface_projection" as const,
+    };
+    const output = await new CompanionCognitionService().evaluateTurn(chatInput({
+      session_context: {
+        session_ref: { kind: "chat_session", ref: "session:1" },
+        turn_ref: { kind: "chat_turn", ref: "turn:1" },
+        run_ref: { kind: "chat_run", ref: "run:1" },
+        route_kind: "agent_loop",
+        runtime_control_allowed: false,
+        approval_mode: "interactive",
+        quieting_active: false,
+        stale_reply_target_refs: [],
+      },
+      memory_result: {
+        request_id: "memory-request:chat:1",
+        included: [],
+        withheld: [withheldMemory],
+        audit_refs: [],
+        model_visible_without_cloud_gate: false,
+      },
+    }));
+
+    expect(output.situation_model).toMatchObject({
+      route_ref: { kind: "chat_route", ref: "agent_loop" },
+      session_ref: { kind: "chat_session", ref: "session:1" },
+      policy_available: false,
+      missing_memory_refs: [{ kind: "memory", ref: "profile:memory:withheld" }],
+      missing_policy_refs: [{ kind: "runtime_control_policy", ref: "runtime_control:unavailable" }],
+    });
+    expect(output.response_plan.guidance_kind).toBe("continue_route");
+  });
+
   it("turns cognition replay records into reflection input without runtime authority", async () => {
     const sink = new InMemoryCognitionAuditSink();
     await new CompanionCognitionService({

@@ -5,7 +5,6 @@ import {
   CompanionCognitionInputSchema,
   CompanionCognitionOutputSchema,
   ResponsePlanSchema,
-  SituationModelSchema,
   RelationshipStateProjectionSchema,
   IntentionSelectionSchema,
   deliveryKindRank,
@@ -15,10 +14,10 @@ import {
   type IntentionSelection,
   type ParsedCompanionCognitionInput,
   type ResponsePlan,
-  type SituationModel,
 } from "./contracts.js";
 import type { CognitionAuditSink, CognitionMemoryPort } from "./ports.js";
 import { createEmptyCognitionMemoryResult } from "./memory-context.js";
+import { assembleSituationModel } from "./situation.js";
 import {
   createReflectionHintForWriteback,
   createTurnEpisodeWritebackProposal,
@@ -70,7 +69,7 @@ export class CompanionCognitionService {
     const input: ParsedCompanionCognitionInput = CompanionCognitionInputSchema.parse(rawInput);
     const memoryResult = await this.resolveMemory(input);
     const firstEventRef = input.event_refs[0]!;
-    const situationModel = situationModelFor(input);
+    const situationModel = assembleSituationModel({ cognitionInput: input, memoryResult });
     const relationshipState = RelationshipStateProjectionSchema.parse({
       projection_id: `${input.cognition_id}:relationship`,
       relationship_refs: memoryResult.included.filter((source) => source.source_kind === "semantic"),
@@ -142,25 +141,6 @@ export class CompanionCognitionService {
       output,
     }));
   }
-}
-
-function situationModelFor(input: ParsedCompanionCognitionInput): SituationModel {
-  return SituationModelSchema.parse({
-    situation_id: `${input.cognition_id}:situation`,
-    summary_ref: input.working_context.input_ref,
-    caller_path: input.caller_path,
-    current_target_refs: [
-      ...(input.session_context?.session_ref ? [input.session_context.session_ref] : []),
-      ...(input.goal_context?.active_goals.map((goal) => goal.goal_ref) ?? []),
-      ...(input.runtime_context?.runtime_item_refs ?? []),
-    ],
-    stale_target_refs: [
-      ...(input.session_context?.stale_reply_target_refs ?? []),
-      ...(input.goal_context?.stale_target_refs ?? []),
-    ],
-    protocol_bypass: false,
-    confidence: input.proposed_tool_candidates.length > 0 ? 0.72 : 0.62,
-  });
 }
 
 function responsePlanFor(input: ParsedCompanionCognitionInput): ResponsePlan {
