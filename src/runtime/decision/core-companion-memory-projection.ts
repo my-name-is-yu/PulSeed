@@ -459,6 +459,7 @@ function restrictionReasonsForExcludedContext(
     if (gate.gate === "allowed_use") reasons.add("not_allowed_for_requested_use");
     if (gate.gate === "staleness") reasons.add("stale");
     if (gate.gate === "lifecycle") reasons.add("lifecycle_ineligible");
+    if (gate.gate === "projection" || gate.gate === "audit") reasons.add("stale_or_missing_surface");
   }
   if (context.source_ref.lifecycle === "decayed" || context.source_ref.lifecycle === "retired" || context.source_ref.lifecycle === "archived") {
     reasons.add("stale");

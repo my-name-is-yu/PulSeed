@@ -308,6 +308,22 @@ describe("CoreCompanionMemoryProjection", () => {
     expect(runtimeProjection.source_refs.filter((ref) => ref.kind === "surface_projection")).toHaveLength(1);
   });
 
+  it("classifies projection and audit gate exclusions as stale or missing Surface restrictions", () => {
+    const projection = createCoreCompanionMemoryProjectionFromSurface({
+      surfaceProjection: restrictedSurface([
+        { source: sourceRef({ memory_id: "projection-blocked-memory" }), blockedGate: "projection" },
+        { source: sourceRef({ memory_id: "audit-blocked-memory" }), blockedGate: "audit" },
+      ]),
+      callerPath: "projection_only",
+      createdAt: NOW,
+    });
+
+    expect(projection.restricted_entries.map((entry) => entry.restriction_reasons)).toEqual([
+      ["stale_or_missing_surface"],
+      ["stale_or_missing_surface"],
+    ]);
+  });
+
   it("separates remembered, usable, speakable, actionable, inhibition-only, and planning-only memory use", () => {
     const speakable = createCoreCompanionMemoryProjectionFromSurface({
       surfaceProjection: includedSurface("user_facing_reference", {
