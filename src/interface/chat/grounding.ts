@@ -61,6 +61,7 @@ function buildChatGroundingRequest(
   return {
     surface: overrides.surface ?? "chat",
     purpose: overrides.purpose ?? "general_turn",
+    userVisibleSink: overrides.userVisibleSink ?? ((overrides.surface ?? "chat") === "chat"),
     homeDir: options.homeDir,
     workspaceRoot: options.workspaceRoot,
     goalId: options.goalId,
@@ -109,6 +110,7 @@ export async function buildChatAgentLoopSystemPrompt(options: GroundingOptions):
   const bundle = await buildChatGroundingBundle(options, {
     surface: "agent_loop",
     purpose: "task_execution",
+    userVisibleSink: false,
     include: {
       progress_history: false,
       session_history: false,
