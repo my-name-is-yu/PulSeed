@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:15:05.782Z
+Generated: 2026-05-13T03:20:09.807Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -496,6 +496,45 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Production entrypoint exercised: golden: runtime startup/replay -> attention state store -> control DB; replay: runtime startup/replay -> attention state store -> control DB
     - Deletion allowed: yes
     - Evidence: Golden and replay traces now seed the real control DB path and assert fail_closed=true plus message_contains_newer_schema=true for fresh and restarted states.
+  - Block: loads representative old agenda rows as regrounding-only state before admission
+    - Old line range: 925-999
+    - Classification: move_or_rewrite_unit
+    - Replacement contract: tests/regression/companion-autonomy-contracts.test.ts: defaults legacy agenda-shaped records to regrounding-only state before admission
+    - Exported state artifact/assertion: contract: missing agenda scope/policy/regrounding fields default to unknown + needsRegrounding=true, decomposition status=needs_regrounding, and admission candidates=[]
+    - Production entrypoint exercised: AgentAgendaItemSchema.parse -> decomposeAgenda -> buildAttentionAdmissionCandidates
+    - Deletion allowed: yes
+    - Evidence: Removed raw legacy DB-row insertion from the store test and kept the meaningful schema/admission contract as a focused autonomy regression.
+- Retained or rewritten old-test blocks:
+  - Block: control DB attention-table migration inventory
+    - Old line range: 184-232
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts: migrates the control DB to durable attention state tables
+    - Evidence: Kept because it is the durable DB schema inventory for attention state; the schema-ahead P0 trace proves fail-closed startup but not the table set.
+  - Block: full attention cycle restart rehydration
+    - Old line range: 234-309
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts: persists the full attention cycle and rehydrates inspectable agenda after restart
+    - Evidence: Kept as mock-free store contract for attention inputs, signal contexts, urge candidates, agenda, inhibition/gate/outcome/expression decisions, and runtime item projection after reopening the control DB.
+  - Block: legacy/current projection merge during partial rollout
+    - Old line range: 311-393
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts: merges legacy agenda rows for scopes that do not have current projections
+    - Evidence: Kept because normal attention reads still merge saveCycle-backed agenda with current projection state; it guards against duplicate or lost agenda items across the current/legacy DB table boundary.
+  - Block: attention input replay dedupe and duplicate-derived cycle suppression
+    - Old line range: 395-633
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts replay-key dedupe tests
+    - Evidence: Kept because it protects replay safety: duplicate schedule/resident/gateway inputs must not create duplicate derived agenda/outcome/expression rows, while mixed batches still persist accepted fresh inputs.
+  - Block: malformed durable rows fail closed
+    - Old line range: 635-708
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts corrupt row and strict current-agenda tests
+    - Evidence: Kept because the default reader drops corrupt legacy rows and the strict reader raises an explicit current-agenda row path; this is state-artifact fail-closed behavior not covered by observation traces.
+  - Block: stale, suppressed, current projection, and admitted-history mutations
+    - Old line range: 710-923
+    - Classification: keep_unit
+    - Current contract: src/runtime/store/__tests__/attention-state-store.test.ts control and invalidation mutation tests
+    - Evidence: Kept because it covers operator-visible attention controls over durable store state: stale refs disappear from default agenda, suppression remains inspectable, current projections are updated, and admitted history is not retroactively suppressed.
 - Replacement evidence:
   - Replacement trace name: state_attention_schema_ahead_fail_closed
     - Real production entrypoint used: golden: runtime startup/replay -> attention state store -> control DB; replay: runtime startup/replay -> attention state store -> control DB
@@ -515,7 +554,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope post-rewrite: `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts tests/regression/companion-autonomy-contracts.test.ts --config vitest.unit.config.ts` passed 2 files / 23 tests. Pre-rewrite attention store unit passed 1 file / 13 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/__tests__/daemon-runner.test.ts

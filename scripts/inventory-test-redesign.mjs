@@ -346,6 +346,59 @@ const p0TraceMappings = [
         replacementTrace: "state_attention_schema_ahead_fail_closed",
         evidence: "Golden and replay traces now seed the real control DB path and assert fail_closed=true plus message_contains_newer_schema=true for fresh and restarted states.",
       },
+      {
+        block: "loads representative old agenda rows as regrounding-only state before admission",
+        oldLineRange: "925-999",
+        classification: "move_or_rewrite_unit",
+        replacementContract: "tests/regression/companion-autonomy-contracts.test.ts: defaults legacy agenda-shaped records to regrounding-only state before admission",
+        artifactAssertion: "contract: missing agenda scope/policy/regrounding fields default to unknown + needsRegrounding=true, decomposition status=needs_regrounding, and admission candidates=[]",
+        productionEntrypoint: "AgentAgendaItemSchema.parse -> decomposeAgenda -> buildAttentionAdmissionCandidates",
+        evidence: "Removed raw legacy DB-row insertion from the store test and kept the meaningful schema/admission contract as a focused autonomy regression.",
+      },
+    ],
+    rewrittenBlocks: [
+      {
+        block: "control DB attention-table migration inventory",
+        oldLineRange: "184-232",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: migrates the control DB to durable attention state tables",
+        evidence: "Kept because it is the durable DB schema inventory for attention state; the schema-ahead P0 trace proves fail-closed startup but not the table set.",
+      },
+      {
+        block: "full attention cycle restart rehydration",
+        oldLineRange: "234-309",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: persists the full attention cycle and rehydrates inspectable agenda after restart",
+        evidence: "Kept as mock-free store contract for attention inputs, signal contexts, urge candidates, agenda, inhibition/gate/outcome/expression decisions, and runtime item projection after reopening the control DB.",
+      },
+      {
+        block: "legacy/current projection merge during partial rollout",
+        oldLineRange: "311-393",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: merges legacy agenda rows for scopes that do not have current projections",
+        evidence: "Kept because normal attention reads still merge saveCycle-backed agenda with current projection state; it guards against duplicate or lost agenda items across the current/legacy DB table boundary.",
+      },
+      {
+        block: "attention input replay dedupe and duplicate-derived cycle suppression",
+        oldLineRange: "395-633",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts replay-key dedupe tests",
+        evidence: "Kept because it protects replay safety: duplicate schedule/resident/gateway inputs must not create duplicate derived agenda/outcome/expression rows, while mixed batches still persist accepted fresh inputs.",
+      },
+      {
+        block: "malformed durable rows fail closed",
+        oldLineRange: "635-708",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts corrupt row and strict current-agenda tests",
+        evidence: "Kept because the default reader drops corrupt legacy rows and the strict reader raises an explicit current-agenda row path; this is state-artifact fail-closed behavior not covered by observation traces.",
+      },
+      {
+        block: "stale, suppressed, current projection, and admitted-history mutations",
+        oldLineRange: "710-923",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts control and invalidation mutation tests",
+        evidence: "Kept because it covers operator-visible attention controls over durable store state: stale refs disappear from default agenda, suppression remains inspectable, current projections are updated, and admitted history is not retroactively suppressed.",
+      },
     ],
   },
   {
@@ -562,7 +615,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/store/__tests__/attention-state-store.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.",
+    "2026-05-13 final-scope post-rewrite: `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts tests/regression/companion-autonomy-contracts.test.ts --config vitest.unit.config.ts` passed 2 files / 23 tests. Pre-rewrite attention store unit passed 1 file / 13 tests.",
   ],
   [
     "src/runtime/__tests__/daemon-runner.test.ts",

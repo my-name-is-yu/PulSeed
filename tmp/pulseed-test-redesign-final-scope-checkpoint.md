@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-FileWrite unsafe-path and approval-order blockers recovered; next is attention-state-store inventory.
+Attention-state-store old raw legacy row block moved to focused autonomy contract; next is runtime-control/approval P0 blockers.
 
 ## Current Evidence Read
 
@@ -85,6 +85,8 @@ Deletion is allowed only per block when replacement map records:
 - `src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts`
   - Recovered already-deleted FileWrite blocks with a contract that executes real `ToolExecutor.execute("file_write")` calls through `PermissionWaitPlanStore` and `FileWriteTool.call`.
   - Covered unsafe path traversal, `.env`, credentials, and `node_modules` writes under `preApproved=true`; all fail without approval prompts, artifacts, or filesystem mutation.
+- `src/runtime/store/__tests__/attention-state-store.test.ts`
+  - Removed raw legacy DB row insertion block for old agenda shapes; moved the meaningful default/regrounding/admission assertion to `tests/regression/companion-autonomy-contracts.test.ts`.
 
 ## Blocks Kept And Reason
 
@@ -96,6 +98,8 @@ Deletion is allowed only per block when replacement map records:
   - Kept durable accept/claim/renew/ack, pending dedupe, dedupe after completion, deadletter/requeue, and filtered claim units because these are mock-free queue primitives used by EventDispatcher/LoopSupervisor and not fully replaced by the existing P0 eventserver/queue traces.
   - Kept finite fractional lease persistence because LoopSupervisor retry backoff can call `JournalBackedQueue.renew` with fractional duration.
   - Rewrote the multi-instance read refresh assertion into the lock/reload test so the file no longer has a separate convenience-API block for the same durability behavior.
+- `src/runtime/store/__tests__/attention-state-store.test.ts`
+  - Kept migration table inventory, full-cycle restart rehydration, legacy/current projection merge, replay-key dedupe, malformed-row fail-closed behavior, and durable suppress/invalidate/admitted-history controls as mock-free store contracts.
 
 ## Added Runner / Trace / Replay
 
@@ -103,6 +107,7 @@ Deletion is allowed only per block when replacement map records:
 - Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
 - Added a migration contract test for legacy `runtime/queue.json` mixed safe/unsafe import through `importLegacyQueueDaemonScheduleState` and the control DB queue store.
 - Added `tests/contracts/tool-file-write-boundary.test.ts` as production-boundary contract evidence for ordered approval-before-mutation and unsafe FileWrite path denial.
+- Added focused autonomy regression coverage for legacy agenda-shaped records defaulting to regrounding-only state before admission.
 
 ## Replacement Map Updates
 
@@ -113,6 +118,7 @@ Deletion is allowed only per block when replacement map records:
   - Added queue final-scope retained/reworked block classifications and updated queue same-checkout evidence.
   - Reclassified the already-deleted unsafe legacy queue scalar blocks as `delete_now` covered by the new queue migration contract instead of unresolved obsolete rationale.
   - Replaced FileWrite post-hoc deletion evidence with explicit contract evidence for ordered approval/wait-plan/tool-call events and unsafe path denial.
+  - Added attention-state-store assertion inventory, including retained high-value store contracts and the moved old agenda-shape block.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -147,6 +153,12 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:replay` -> after FileWrite contract passed 1 file / 9 tests
 - `npm run test:golden-traces` -> after one transient mismatch retry passed 1 file / 43 tests
 - `npm run typecheck` -> passed after FileWrite contract addition
+- `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` -> pre-rewrite passed 1 file / 13 tests
+- `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts tests/regression/companion-autonomy-contracts.test.ts --config vitest.unit.config.ts` -> post-rewrite passed 2 files / 23 tests
+- `node scripts/inventory-test-redesign.mjs` -> after attention-state-store rewrite regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:replay` -> after attention rewrite passed 1 file / 9 tests
+- `npm run test:golden-traces` -> after attention rewrite passed 1 file / 43 tests
+- `npm run typecheck` -> passed after attention rewrite
 
 ## Reviewer Findings Applied
 
@@ -192,4 +204,4 @@ Final required gates:
 
 ## Next
 
-Continue to `attention-state-store`: inspect remaining assertions against existing state/replay evidence, then delete/rewrite only block-level items with explicit map coverage.
+Recover the remaining Safety Reviewer blockers before deleting corresponding old blocks: runtime-control `resume_companion` readmission, approval stale-origin/no-delivery, and schedule goal-trigger public tick artifacts.
