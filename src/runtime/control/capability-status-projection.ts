@@ -275,6 +275,7 @@ export function projectCapabilityNormalCompanionStatusAction(
       schema_version: "capability-normal-companion-status-projection/v1",
       evaluated_at: evaluatedAt,
       user_visible_action_kind: actionKind,
+      ordinary_action_policy: "suggest",
       next_best_safe_action: actionKind === "prepare_draft"
         ? "Prepare an inspectable draft without executing the operation."
         : "Suggest a safe next step without executing.",
@@ -299,6 +300,7 @@ export function projectCapabilityNormalCompanionStatusAction(
     schema_version: "capability-normal-companion-status-projection/v1",
     evaluated_at: projection.evaluated_at,
     user_visible_action_kind: projection.user_visible_action_kind,
+    ordinary_action_policy: projection.ordinary_action_policy,
     next_best_safe_action: projection.next_best_safe_action,
     ...(projection.brief_reason ? { brief_reason: projection.brief_reason } : {}),
     executes_operation: projection.executes_operation,

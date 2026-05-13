@@ -117,6 +117,17 @@ function companionProjection(input: {
     decision_id: decisionId,
     evaluated_at: NOW,
     user_visible_action_kind: input.kind,
+    ordinary_action_policy_projection: {
+      schema_version: "companion-ordinary-action-policy-projection/v1",
+      ordinary_action_policy: ordinaryPolicyForKind(input.kind),
+      source_refs: {
+        projection_ref: `companion-action:${input.kind}`,
+        operation_ref: operationId,
+        autonomy_decision_ref: decisionId,
+        readiness_refs: [],
+        audit_refs: [],
+      },
+    },
     next_best_safe_action: `next ${input.kind}`,
     surface_expression_policy: {
       surface_kind: "normal_companion",
@@ -136,6 +147,26 @@ function companionProjection(input: {
       raw_policy_state_suppressed: true,
     },
   };
+}
+
+function ordinaryPolicyForKind(
+  kind: CompanionActionProjection["user_visible_action_kind"]
+): CompanionActionProjection["ordinary_action_policy_projection"]["ordinary_action_policy"] {
+  switch (kind) {
+    case "execute_now":
+      return "allow";
+    case "ask_for_approval":
+      return "ask";
+    case "challenge":
+      throw new Error("Challenge action kinds are not produced by current test fixtures.");
+    case "refuse_with_alternative":
+      return "deny";
+    case "digest_later":
+    case "prepare_draft":
+    case "stay_silent":
+    case "suggest":
+      return "suggest";
+  }
 }
 
 describe("surface delivery projection", () => {

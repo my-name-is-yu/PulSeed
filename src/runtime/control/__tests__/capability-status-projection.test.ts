@@ -110,6 +110,51 @@ function autonomy(level: AutonomyDecisionLevel, overrides: Partial<AutonomyDecis
   };
 }
 
+const FORBIDDEN_NORMAL_PAYLOAD_PATHS = [
+  "surface_expression_policy",
+  "hidden_reason_refs",
+  "audit_refs",
+  "metadata",
+  "autonomy_level",
+  "readiness_label",
+  "admission_label",
+  "execution.label",
+  "capability_catalog_visible",
+  "raw_policy_state_visible",
+  "ordinary_action_policy_projection",
+  "source_refs",
+  "rationale",
+];
+
+function expectNoRawControlPlaneFields(payload: unknown) {
+  const paths = collectKeyPaths(payload);
+  expect(FORBIDDEN_NORMAL_PAYLOAD_PATHS.filter((path) => paths.includes(path))).toEqual([]);
+  expect(collectStringValues(payload).filter((value) => [
+    "RAW_POLICY_STATE",
+    "readiness=executable_verified",
+    "admission=allowed",
+    "capability:notify",
+  ].some((rawValue) => value.includes(rawValue)))).toEqual([]);
+}
+
+function collectKeyPaths(value: unknown, prefix = ""): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectKeyPaths(item, prefix));
+  }
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([key, child]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    return [path, ...collectKeyPaths(child, path)];
+  });
+}
+
+function collectStringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(collectStringValues);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.values(value).flatMap(collectStringValues);
+}
+
 describe("capability status projection", () => {
   it("keeps executable readiness separate from user-directed and autonomous authority", () => {
     const projection = projectCapabilityOperatorStatus({
@@ -266,12 +311,11 @@ describe("capability status projection", () => {
     });
 
     expect(projection.user_visible_action_kind).toBe("prepare_draft");
+    expect(projection.ordinary_action_policy).toBe("suggest");
     expect(projection.executes_operation).toBe(false);
     expect(projection.next_best_safe_action).toBe("Prepare an inspectable draft without executing the operation.");
     expect(projection.brief_reason).toBe("The previous safety decision is no longer current.");
-    expect(projection).not.toHaveProperty("capability_catalog_visible");
-    expect(projection).not.toHaveProperty("raw_policy_state_visible");
-    expect(JSON.stringify(projection)).not.toContain("autonomy");
+    expectNoRawControlPlaneFields(projection);
   });
 
   it("keeps degraded and blocked readiness visible to operator surfaces", () => {
@@ -322,13 +366,8 @@ describe("capability status projection", () => {
     });
 
     expect(projection.user_visible_action_kind).toBe("ask_for_approval");
+    expect(projection.ordinary_action_policy).toBe("ask");
     expect(projection.next_best_safe_action).toBe("Ask for explicit approval before executing the prepared operation.");
-    expect(projection).not.toHaveProperty("capability_catalog_visible");
-    expect(projection).not.toHaveProperty("raw_policy_state_visible");
-    expect(JSON.stringify(projection)).not.toContain("RAW_POLICY_STATE");
-    expect(JSON.stringify(projection)).not.toContain("catalog");
-    expect(JSON.stringify(projection)).not.toContain("readiness=executable_verified");
-    expect(JSON.stringify(projection)).not.toContain("admission=allowed");
-    expect(JSON.stringify(projection)).not.toContain("autonomy");
+    expectNoRawControlPlaneFields(projection);
   });
 });

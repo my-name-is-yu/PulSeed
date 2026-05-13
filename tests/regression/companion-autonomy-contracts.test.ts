@@ -541,6 +541,7 @@ describe("companion autonomy audit and visibility contracts", () => {
       schema_version: "companion-user-facing-policy-projection/v1",
       evaluated_at: NOW,
       user_visible_action_kind: "ask_for_approval",
+      ordinary_action_policy: "ask",
       next_best_safe_action: "Ask for explicit approval before executing the prepared operation.",
       brief_reason: "Approval is needed before this can run.",
       executes_operation: false,
