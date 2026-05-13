@@ -267,6 +267,41 @@ describe("CompanionDecisionFrame", () => {
     expect(frame.active_target_ref).toMatchObject({ kind: "run", id: "run:active" });
     expect(output.route.target_ref).toMatchObject({ kind: "run", id: "run:active" });
   });
+
+  it("uses the canonical agent agenda item ref kind for resident attention inputs", () => {
+    const frame = CompanionDecisionFrameSchema.parse(baseFrame({
+      frame_id: "frame:agenda",
+      source: {
+        kind: "resident_attention_cycle",
+        source_ref: "attention-cycle:agenda",
+        received_at: NOW,
+        caller_path: "resident_attention_cycle",
+        attention_cycle_ref: "attention-cycle:agenda",
+      },
+      input_refs: [
+        {
+          kind: "attention_cycle",
+          ref: "attention-cycle:agenda",
+          role: "trigger",
+        },
+        {
+          kind: "agent_agenda_item",
+          ref: "agenda:goal:1",
+          role: "candidate",
+        },
+      ],
+    }));
+
+    expect(frame.input_refs[1]).toMatchObject({ kind: "agent_agenda_item" });
+    expect(() => CompanionDecisionFrameSchema.parse(baseFrame({
+      frame_id: "frame:invalid-agenda-kind",
+      input_refs: [{
+        kind: "attention_agenda_item",
+        ref: "agenda:goal:1",
+        role: "candidate",
+      }],
+    }))).toThrow();
+  });
 });
 
 describe("CompanionDecisionOutput", () => {

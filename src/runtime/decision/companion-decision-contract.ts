@@ -45,7 +45,7 @@ export const CompanionDecisionInputRefKindSchema = z.enum([
   "grounding_section",
   "companion_state",
   "attention_signal",
-  "attention_agenda_item",
+  "agent_agenda_item",
   "initiative_gate_decision",
   "outcome_decision",
   "admission_policy_evaluation",
