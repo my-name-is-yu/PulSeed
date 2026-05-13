@@ -1,7 +1,18 @@
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import Database from "better-sqlite3";
+import { StateManager } from "../../src/base/state/state-manager.js";
+import { buildStandaloneIngressMessageFromContext } from "../../src/interface/chat/chat-runner-runtime.js";
+import { ChatSessionCatalog } from "../../src/interface/chat/chat-session-store.js";
+import { ChatSessionDataStore } from "../../src/interface/chat/chat-session-data-store.js";
+import { ApprovalBroker } from "../../src/runtime/approval-broker.js";
+import { createPendingPermissionTask, type PendingPermissionTask } from "../../src/runtime/permission-dialogue.js";
 import { JournalBackedQueue, type JournalBackedQueueSnapshot } from "../../src/runtime/queue/journal-backed-queue.js";
+import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
+import { RuntimeSessionRegistry } from "../../src/runtime/session-registry/index.js";
+import { ApprovalStore, AttentionStateStore, BackgroundRunLedger } from "../../src/runtime/store/index.js";
+import type { RuntimeControlReplyTarget } from "../../src/runtime/store/runtime-operation-schemas.js";
 import type { Envelope } from "../../src/runtime/types/envelope.js";
 import { createIsolatedStateRoot, type IsolatedStateRoot } from "./isolated-state-root.js";
 import { normalizeJson } from "./normalizers.js";
@@ -26,7 +37,12 @@ export async function runReplayFixture(fixture: ReplayFixture): Promise<ReplayRu
   const stateRoot = await createIsolatedStateRoot(fixture.contract_name, fixture.initial_state);
   try {
     const result = await runProductionReplayFixture(fixture, stateRoot);
-    return normalizeJson(result as unknown as JsonObject, fixture.normalizers) as unknown as ReplayRunResult;
+    return normalizeJson({
+      fresh_state: result.fresh_state,
+      restarted_state: result.restarted_state,
+      audit: result.audit,
+      artifact_tree: result.artifact_tree,
+    }, fixture.normalizers) as unknown as ReplayRunResult;
   } finally {
     guard.restore();
     await stateRoot.cleanup();
@@ -48,11 +64,95 @@ async function runProductionReplayFixture(
   stateRoot: IsolatedStateRoot,
 ): Promise<ReplayRunResult> {
   switch (fixture.contract_name) {
+    case "state_attention_schema_ahead_fail_closed":
+      return runStateAttentionSchemaReplay(fixture, stateRoot);
+    case "approval_pending_restored_after_daemon_restart":
+      return runApprovalRestoreReplay(fixture, stateRoot);
+    case "schedule_side_effect_crash_replay_no_duplicate_execution":
+      return runScheduleCrashReplay(fixture, stateRoot);
     case "queue_expired_claim_rejects_late_ack_and_reclaims":
       return runQueueExpiredClaimReplay(fixture, stateRoot);
+    case "attention_observation_requires_visible_indicator_before_event":
+      return runAttentionObservationReplay(fixture, stateRoot);
+    case "session_registry_dead_process_not_running":
+      return runSessionRegistryReplay(fixture, stateRoot);
+    case "gateway_routed_ingress_preserves_reply_target_after_restart":
+      return runGatewayReplyTargetReplay(fixture, stateRoot);
     default:
       return runPendingReplayFixture(fixture, stateRoot);
   }
+}
+
+async function runStateAttentionSchemaReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runAttentionSchemaAheadSequence(fixture, path.join(stateRoot.runtimeRoot, "fresh"), path.join(stateRoot.controlDbBase, "fresh"));
+  const restarted = await runAttentionSchemaAheadSequence(fixture, path.join(stateRoot.runtimeRoot, "restarted"), path.join(stateRoot.controlDbBase, "restarted"));
+  return buildRealReplayResult(fixture, stateRoot, "schema_ahead", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "AttentionStateStore.ensureReady() control DB migration guard",
+  });
+}
+
+async function runApprovalRestoreReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runApprovalRestoreSequence(fixture, path.join(stateRoot.runtimeRoot, "fresh"), path.join(stateRoot.controlDbBase, "fresh"));
+  const restarted = await runApprovalRestoreSequence(fixture, path.join(stateRoot.runtimeRoot, "restarted"), path.join(stateRoot.controlDbBase, "restarted"));
+  return buildRealReplayResult(fixture, stateRoot, "approval_restore", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "ApprovalBroker.start() restores pending approval rows from ApprovalStore",
+  });
+}
+
+async function runScheduleCrashReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runScheduleCrashSequence(fixture, path.join(stateRoot.controlDbBase, "fresh"));
+  const restarted = await runScheduleCrashSequence(fixture, path.join(stateRoot.controlDbBase, "restarted"));
+  return buildRealReplayResult(fixture, stateRoot, "schedule_crash_replay", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "ScheduleEngine.loadEntries() then tick() across persisted schedule history",
+  });
+}
+
+async function runAttentionObservationReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runAttentionObservationSequence(fixture, path.join(stateRoot.runtimeRoot, "fresh"), path.join(stateRoot.controlDbBase, "fresh"));
+  const restarted = await runAttentionObservationSequence(fixture, path.join(stateRoot.runtimeRoot, "restarted"), path.join(stateRoot.controlDbBase, "restarted"));
+  return buildRealReplayResult(fixture, stateRoot, "attention_observation_gate", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "AttentionStateStore pending block persisted and reloaded before observation event",
+  });
+}
+
+async function runSessionRegistryReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runSessionRegistrySequence(fixture, path.join(stateRoot.root, "session-registry-fresh"), stateRoot.workspaceRoot);
+  const restarted = await runSessionRegistrySequence(fixture, path.join(stateRoot.root, "session-registry-restarted"), stateRoot.workspaceRoot);
+  return buildRealReplayResult(fixture, stateRoot, "session_registry_liveness", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "RuntimeSessionRegistry.snapshot() joins process snapshot and ledger after restart",
+  });
+}
+
+async function runGatewayReplyTargetReplay(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+): Promise<ReplayRunResult> {
+  const fresh = await runGatewayReplyTargetSequence(fixture, path.join(stateRoot.root, "gateway-fresh"), stateRoot.workspaceRoot);
+  const restarted = await runGatewayReplyTargetSequence(fixture, path.join(stateRoot.root, "gateway-restarted"), stateRoot.workspaceRoot);
+  return buildRealReplayResult(fixture, stateRoot, "gateway_reply_target_restore", fresh, restarted, {
+    fresh_restarted_equal: JSON.stringify(fresh.assertions) === JSON.stringify(restarted.assertions),
+    startup_replay_path: "chat session state reload plus buildStandaloneIngressMessageFromContext reply target projection",
+  });
 }
 
 async function runQueueExpiredClaimReplay(
@@ -175,6 +275,294 @@ function runQueueExpiredClaimSequence(
   };
 }
 
+async function runAttentionSchemaAheadSequence(
+  fixture: ReplayFixture,
+  runtimeRoot: string,
+  controlBaseDir: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const dbPath = path.join(controlBaseDir, "pulseed-control.sqlite");
+  await fsp.mkdir(path.dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
+  db.pragma("user_version = 999");
+  db.close();
+  const store = new AttentionStateStore(runtimeRoot, { controlBaseDir });
+  let blocked = false;
+  let message = "";
+  try {
+    await store.ensureReady();
+  } catch (error) {
+    blocked = true;
+    message = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    status: blocked ? "blocked" : "not_blocked",
+    assertions: {
+      fail_closed: blocked,
+      message_contains_newer_schema: message.includes("newer than supported version"),
+    },
+  };
+}
+
+async function runApprovalRestoreSequence(
+  fixture: ReplayFixture,
+  runtimeRoot: string,
+  controlBaseDir: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const store = new ApprovalStore(runtimeRoot, { controlBaseDir });
+  const origin = {
+    channel: "telegram",
+    conversation_id: "approval-chat",
+    user_id: "operator",
+    session_id: "session:approval",
+    turn_id: "turn:approval",
+  };
+  const events: JsonObject[] = [];
+  const broker = new ApprovalBroker({
+    store,
+    now: () => Date.parse(fixture.input.fake_now),
+    broadcast: (eventType, data) => events.push({ event_type: eventType, data: sanitizeUnknown(data) }),
+    deliverConversationalApproval: () => ({ delivered: true }),
+  });
+  const pending = broker.requestConversationalApproval("goal-approval", approvalTaskFor(fixture.contract_name), {
+    approvalId: `approval-${fixture.contract_name}`,
+    origin,
+  });
+  void pending.catch(() => undefined);
+  await waitForPendingApproval(store, `approval-${fixture.contract_name}`);
+  await broker.stop();
+
+  const restoredEvents: JsonObject[] = [];
+  const restarted = new ApprovalBroker({
+    store,
+    now: () => Date.parse(fixture.input.fake_now) + 1_000,
+    broadcast: (eventType, data) => restoredEvents.push({ event_type: eventType, data: sanitizeUnknown(data) }),
+    deliverConversationalApproval: () => ({ delivered: true }),
+  });
+  await restarted.start();
+  const resolved = await restarted.resolveConversationalApproval(`approval-${fixture.contract_name}`, true, origin);
+  await restarted.stop();
+  return {
+    status: resolved ? "restored" : "not_restored",
+    assertions: {
+      pending_restored_event_count: restoredEvents.filter((event) => event.event_type === "approval_required").length,
+      resolved,
+      resolved_state: (await store.loadResolved(`approval-${fixture.contract_name}`))?.state ?? null,
+    },
+  };
+}
+
+async function runScheduleCrashSequence(
+  fixture: ReplayFixture,
+  controlBaseDir: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const engine = new ScheduleEngine({ baseDir: controlBaseDir });
+  const entry = await engine.addEntry(makeWaitResumeScheduleInput(fixture.contract_name));
+  const dueAt = "2026-05-12T00:00:00.000Z";
+  engine.getEntries()[0]!.next_fire_at = dueAt;
+  await engine.saveEntries();
+  await engine.loadEntries();
+  const firstResults = await engine.tick();
+  await engine.loadEntries();
+  const secondResults = await engine.tick();
+  const history = await engine.getRecentHistory(10, entry.id);
+  return {
+    status: "idempotent",
+    assertions: {
+      first_result_count: firstResults.length,
+      history_count: history.length,
+      no_duplicate_execution: firstResults.length === 1 && secondResults.length === 0 && history.length === 1,
+      second_result_count: secondResults.length,
+    },
+  };
+}
+
+async function runAttentionObservationSequence(
+  fixture: ReplayFixture,
+  runtimeRoot: string,
+  controlBaseDir: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const store = new AttentionStateStore(runtimeRoot, { controlBaseDir });
+  await store.ensureReady();
+  await store.addPendingBlock({
+    scope: attentionScopeFor(fixture.contract_name),
+    triggerKind: "observation",
+    reason: "visible indicator required before non-terminal observation event",
+    createdAt: fixture.input.fake_now,
+  });
+  const restarted = new AttentionStateStore(runtimeRoot, { controlBaseDir });
+  const pendingBlocks = await restarted.listPendingBlocks(attentionScopeFor(fixture.contract_name));
+  return {
+    status: pendingBlocks.length > 0 ? "blocked" : "not_blocked",
+    assertions: {
+      pending_block_count: pendingBlocks.length,
+      visible_indicator_required: pendingBlocks.some((block) => block.trigger_kind === "observation"),
+    },
+  };
+}
+
+async function runSessionRegistrySequence(
+  fixture: ReplayFixture,
+  baseDir: string,
+  workspaceRoot: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+  await stateManager.writeRaw("runtime/process-sessions/proc-stale-ledger.json", {
+    session_id: "proc-stale-ledger",
+    label: "stale ledger process",
+    command: "node",
+    args: ["worker.js"],
+    cwd: workspaceRoot,
+    pid: 999_999,
+    running: true,
+    exitCode: null,
+    signal: null,
+    startedAt: fixture.input.fake_now,
+    bufferedChars: 0,
+    metadataRef: "control-db://process-sessions/proc-stale-ledger",
+    artifactRefs: [],
+  });
+  const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+  await ledger.ensureReady();
+  await ledger.create({
+    id: "run:process:proc-stale-ledger",
+    kind: "process_run",
+    notify_policy: "silent",
+    reply_target_source: "none",
+    process_session_id: "proc-stale-ledger",
+    title: "durable running process",
+    workspace: workspaceRoot,
+    created_at: fixture.input.fake_now,
+    started_at: fixture.input.fake_now,
+    status: "running",
+  });
+  const snapshot = await new RuntimeSessionRegistry({ stateManager, isPidAlive: () => false }).snapshot();
+  const run = snapshot.background_runs.find((candidate) => candidate.id === "run:process:proc-stale-ledger");
+  return {
+    status: run?.status === "lost" ? "blocked" : run?.status ?? "missing",
+    assertions: {
+      dead_process_warning: snapshot.warnings.some((warning) => warning.code === "dead_process_sidecar"),
+      projected_status: run?.status ?? null,
+      running_reported: run?.status === "running",
+    },
+  };
+}
+
+async function runGatewayReplyTargetSequence(
+  fixture: ReplayFixture,
+  baseDir: string,
+  workspaceRoot: string,
+): Promise<{ assertions: JsonObject; status: string }> {
+  const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+  const persistedReplyTarget: RuntimeControlReplyTarget = {
+    surface: "gateway" as const,
+    channel: "plugin_gateway" as const,
+    platform: "telegram",
+    conversation_id: "conversation:gateway-restart",
+    message_id: "msg-gateway-restart",
+    identity_key: "operator",
+    user_id: "operator",
+  };
+  const staleFallbackReplyTarget: RuntimeControlReplyTarget = {
+    ...persistedReplyTarget,
+    conversation_id: "conversation:stale-fallback",
+    message_id: "msg-stale-fallback",
+  };
+  await new ChatSessionDataStore(baseDir).save({
+    id: "gateway-restart",
+    cwd: workspaceRoot,
+    createdAt: fixture.input.fake_now,
+    updatedAt: fixture.input.fake_now,
+    title: "Gateway restart",
+    messages: [],
+    notificationReplyTarget: {
+      channel: "plugin_gateway",
+      target_id: "conversation:gateway-restart",
+      thread_id: "msg-gateway-restart",
+      metadata: persistedReplyTarget,
+    },
+  });
+  const restored = await new ChatSessionCatalog(stateManager).loadSession("gateway-restart");
+  const restoredReplyTarget = runtimeReplyTargetFromMetadata(restored?.notificationReplyTarget?.metadata);
+  const ingress = buildStandaloneIngressMessageFromContext("continue", {
+    ...(restoredReplyTarget ? { replyTarget: restoredReplyTarget } : {}),
+    actor: {
+      surface: "gateway",
+      platform: "telegram",
+      identity_key: "operator",
+      user_id: "operator",
+    },
+    allowed: true,
+    approvalMode: "interactive",
+    explicit: false,
+  }, {
+    stateManager,
+    runtimeReplyTarget: staleFallbackReplyTarget,
+  });
+  return {
+    status: ingress.replyTarget.conversation_id === "conversation:gateway-restart" ? "restored" : "missing",
+    assertions: {
+      ingress_conversation_id: ingress.replyTarget.conversation_id,
+      reply_target_preserved: ingress.replyTarget.conversation_id === "conversation:gateway-restart",
+      restored_reply_target_loaded: restoredReplyTarget?.conversation_id === "conversation:gateway-restart",
+      session_reloaded: restored?.id === "gateway-restart",
+      stale_fallback_rejected: ingress.replyTarget.conversation_id !== "conversation:stale-fallback",
+    },
+  };
+}
+
+function runtimeReplyTargetFromMetadata(value: unknown): RuntimeControlReplyTarget | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record["surface"] !== "gateway") return null;
+  if (typeof record["conversation_id"] !== "string") return null;
+  return record as RuntimeControlReplyTarget;
+}
+
+async function buildRealReplayResult(
+  fixture: ReplayFixture,
+  stateRoot: IsolatedStateRoot,
+  reason: string,
+  fresh: { assertions: JsonObject; status: string },
+  restarted: { assertions: JsonObject; status: string },
+  auditAssertions: JsonObject,
+): Promise<ReplayRunResult> {
+  const replayState: JsonObject = {
+    assertions: fresh.assertions,
+    contract_name: fixture.contract_name,
+    initial_state_paths: Object.keys(fixture.initial_state).sort(),
+    reason,
+    runner: runnerExport(fixture, "real_production_path", artifactPathFor(fixture)),
+    status: fresh.status,
+  };
+  const restartedState: JsonObject = {
+    ...replayState,
+    assertions: restarted.assertions,
+    status: restarted.status,
+  };
+  const artifact = await writeEvidenceArtifact(stateRoot, artifactPathFor(fixture), {
+    contract_name: fixture.contract_name,
+    domain: fixture.domain,
+    fresh_state: replayState,
+    initial_state_paths: Object.keys(fixture.initial_state).sort(),
+    p0_failure_mode: fixture.p0_failure_mode,
+    restarted_state: restartedState,
+  });
+  return {
+    audit: [
+      {
+        assertions: auditAssertions,
+        disposition: fresh.status,
+        production_boundary: fixture.production_boundary,
+        reason,
+        runner_status: "real_production_path",
+      },
+    ],
+    artifact_tree: [artifact],
+    fresh_state: replayState,
+    restarted_state: restartedState,
+  };
+}
+
 function runnerExport(
   fixture: ReplayFixture,
   status: "real_production_path" | "pending_real_runner",
@@ -242,6 +630,76 @@ function stabilizeQueueSnapshot(snapshot: JournalBackedQueueSnapshot): JsonObjec
       normal: [...snapshot.pending.normal],
     },
   };
+}
+
+function approvalTaskFor(contractName: string): PendingPermissionTask {
+  return createPendingPermissionTask({
+    id: `task-${contractName}`,
+    description: `Approval contract ${contractName}`,
+    action: "continue",
+    target: {
+      tool_id: "file_write",
+      tool_call_id: `call-${contractName}`,
+    },
+    stateEpoch: "1700.2",
+    waitPlanId: `wait-${contractName}`,
+    permissionLevel: "read_only",
+    isDestructive: false,
+    reversibility: "reversible",
+  });
+}
+
+async function waitForPendingApproval(store: ApprovalStore, approvalId: string): Promise<void> {
+  const deadline = Date.now() + 500;
+  while (Date.now() < deadline) {
+    if (await store.loadPending(approvalId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${approvalId}`);
+}
+
+function makeWaitResumeScheduleInput(suffix: string): Parameters<ScheduleEngine["addEntry"]>[0] {
+  return {
+    name: `wait-resume-${suffix}`,
+    layer: "goal_trigger",
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+    enabled: true,
+    metadata: {
+      internal: true,
+      activation_kind: "wait_resume",
+      goal_id: "goal-wait-resume",
+      strategy_id: `strategy:${suffix}`,
+      wait_strategy_id: `strategy:${suffix}`,
+    },
+    goal_trigger: {
+      goal_id: "goal-wait-resume",
+      max_iterations: 5,
+      skip_if_active: false,
+    },
+  };
+}
+
+function attentionScopeFor(id: string) {
+  return {
+    userId: "user:trace",
+    identityId: "identity:trace",
+    workspaceId: "workspace:trace",
+    conversationId: `conversation:${id}`,
+    sessionId: `session:${id}`,
+    surfaceClass: "daemon" as const,
+    surfaceRef: `surface:${id}`,
+    permissionScope: "local_only" as const,
+    sensitivity: "medium" as const,
+    memoryOwner: null,
+    policyEpoch: "policy:trace",
+  };
+}
+
+function sanitizeUnknown(value: unknown): JsonObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { value: value === undefined ? null : String(value) };
+  }
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
 function pendingRunnerReason(fixture: ReplayFixture): string {
