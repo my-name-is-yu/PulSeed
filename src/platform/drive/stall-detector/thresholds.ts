@@ -1,4 +1,5 @@
 import type { CharacterConfig } from "../../../base/types/character.js";
+import { getCharacterStallThresholdMultiplierHint } from "../../traits/character-policy.js";
 
 const BASE_FEEDBACK_CATEGORY_N: Record<string, number> = {
   immediate: 6,
@@ -19,7 +20,7 @@ const ZERO_PROGRESS_GAP_FLOOR = 0.9;
 const ZERO_PROGRESS_MAX_VARIANCE = 0.01;
 
 export function getAdjustedN(characterConfig: CharacterConfig, category?: string): number {
-  const multiplier = 0.75 + characterConfig.stall_flexibility * 0.25;
+  const multiplier = getCharacterStallThresholdMultiplierHint(characterConfig);
   const base = category
     ? (BASE_FEEDBACK_CATEGORY_N[category] ?? BASE_DEFAULT_N)
     : BASE_DEFAULT_N;
@@ -68,4 +69,3 @@ function durationToHours(duration: { value: number; unit: string }): number {
       return duration.value;
   }
 }
-

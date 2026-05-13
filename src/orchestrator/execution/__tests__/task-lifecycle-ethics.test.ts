@@ -196,7 +196,7 @@ describe("TaskLifecycle", async () => {
       logger?: import("../../../runtime/logger.js").Logger;
       adapterRegistry?: import("../task/task-lifecycle.js").AdapterRegistry;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
-      ethicsGate?: import("../../ethics-gate.js").EthicsGate;
+      ethicsGate?: EthicsGate;
       capabilityDetector?: import("../../observation/capability-detector.js").CapabilityDetector;
     }
   ): TaskLifecycle {
@@ -218,7 +218,7 @@ describe("TaskLifecycle", async () => {
 
   describe("runTaskCycle — ethics means check", async () => {
     // Shared helper: a mock EthicsGate with controllable checkMeans
-    function makeMockEthicsGate(checkMeansImpl: () => Promise<import("../../../base/types/ethics.js").EthicsVerdict>) {
+    function makeMockEthicsGate(checkMeansImpl: () => Promise<import("../../../base/types/ethics.js").EthicsVerdict>): EthicsGate {
       return {
         check: vi.fn().mockResolvedValue({
           verdict: "pass",
@@ -228,7 +228,7 @@ describe("TaskLifecycle", async () => {
           confidence: 0.9,
         }),
         checkMeans: vi.fn().mockImplementation(checkMeansImpl),
-      };
+      } as unknown as EthicsGate;
     }
 
     it("ethicsGate not provided: runTaskCycle proceeds normally and task executes successfully", async () => {
@@ -267,7 +267,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -299,7 +299,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -330,7 +330,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -385,7 +385,7 @@ describe("TaskLifecycle", async () => {
           approvalCalled = true;
           return true;
         },
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -417,7 +417,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => false,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -448,7 +448,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => false,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -465,11 +465,11 @@ describe("TaskLifecycle", async () => {
       const ethicsGate = {
         check: vi.fn().mockResolvedValue(PASS_VERDICT),
         checkMeans,
-      };
+      } as unknown as EthicsGate;
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -489,11 +489,11 @@ describe("TaskLifecycle", async () => {
       const ethicsGate = {
         check: vi.fn(),
         checkMeans: vi.fn().mockRejectedValue(new Error("ethics check service unavailable")),
-      };
+      } as unknown as EthicsGate;
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "coverage", gap: 0.5 }]);
       const context = makeDriveContext(["coverage"]);
@@ -516,7 +516,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.6 }]);
       const context = makeDriveContext(["dim"]);
@@ -533,7 +533,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -549,7 +549,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => false,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -565,7 +565,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -584,11 +584,11 @@ describe("TaskLifecycle", async () => {
           callOrder.push("checkMeans");
           return PASS_VERDICT;
         }),
-      };
+      } as unknown as EthicsGate;
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -618,7 +618,7 @@ describe("TaskLifecycle", async () => {
       const approvalFn = vi.fn().mockResolvedValue(true);
       const lifecycle = createLifecycle(llm, {
         approvalFn,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -636,7 +636,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -653,7 +653,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-xyz", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -669,11 +669,11 @@ describe("TaskLifecycle", async () => {
       const ethicsGate = {
         check: vi.fn(),
         checkMeans,
-      };
+      } as unknown as EthicsGate;
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -696,7 +696,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => false,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -712,7 +712,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -728,14 +728,14 @@ describe("TaskLifecycle", async () => {
       const ethicsGate = {
         check: vi.fn(),
         checkMeans,
-      };
+      } as unknown as EthicsGate;
       const llm = createMockLLMClient([
         VALID_TASK_RESPONSE, LLM_REVIEW_PASS,
         SECOND_VALID_TASK_RESPONSE, LLM_REVIEW_PASS,
       ]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -752,7 +752,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, LLM_REVIEW_PASS]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -768,7 +768,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => true,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);
@@ -784,7 +784,7 @@ describe("TaskLifecycle", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm, {
         approvalFn: async () => false,
-        ethicsGate: ethicsGate as unknown as import("../../ethics-gate.js").EthicsGate,
+        ethicsGate,
       });
       const gapVector = makeGapVector("goal-1", [{ name: "dim", gap: 0.5 }]);
       const context = makeDriveContext(["dim"]);

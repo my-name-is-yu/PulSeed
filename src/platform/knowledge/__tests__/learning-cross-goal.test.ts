@@ -422,7 +422,7 @@ describe("KnowledgeTransfer — storePattern / retrievePatterns", () => {
 
     const mockEthicsGate = {
       check: async () => ({ verdict: "allow" as const, reasoning: "" }),
-    } as unknown as import("../../ethics-gate.js").EthicsGate;
+    } as unknown as import("../../traits/ethics-gate.js").EthicsGate;
 
     knowledgeTransfer = new KnowledgeTransfer({
       llmClient: llm,

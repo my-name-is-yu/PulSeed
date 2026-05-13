@@ -3,6 +3,7 @@ import type { IPromptGateway } from "../../prompt/gateway.js";
 import { FeasibilityResultSchema } from "../../base/types/negotiation.js";
 import type { FeasibilityResult } from "../../base/types/negotiation.js";
 import type { CharacterConfig } from "../../base/types/character.js";
+import { getCharacterFeasibilityThresholdHint } from "../../platform/traits/character-policy.js";
 import {
   buildFeasibilityPrompt,
   QualitativeFeasibilitySchema,
@@ -13,7 +14,7 @@ export const REALISTIC_TARGET_ACCELERATION_FACTOR = 1.3;
 export const DEFAULT_TIME_HORIZON_DAYS = 90;
 
 export function getFeasibilityThreshold(characterConfig: CharacterConfig): number {
-  return 1.5 + characterConfig.caution_level * 0.5;
+  return getCharacterFeasibilityThresholdHint(characterConfig);
 }
 
 export async function evaluateQualitatively(
