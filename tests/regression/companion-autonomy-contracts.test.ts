@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAttentionAdmissionCandidates,
+  decomposeAgenda,
+  ref as autonomyRef,
+} from "../../src/runtime/attention/index.js";
+import {
   AgentAgendaItemSchema,
   AttentionMaturationTransitionSchema,
   AuditTraceSchema,
@@ -196,6 +201,34 @@ describe("companion autonomy attention contracts", () => {
     expect(() => AgentAgendaItemSchema.parse(agendaItem({
       action_ref: ref("action_candidate", "action:direct-from-agenda"),
     }))).toThrow();
+  });
+
+  it("defaults legacy agenda-shaped records to regrounding-only state before admission", () => {
+    const parsed = AgentAgendaItemSchema.parse(agendaItem({
+      agenda_item_id: "agenda:legacy-shape",
+      related_goal_refs: [autonomyRef("goal", "goal:legacy-shape")],
+      source_urge_refs: [autonomyRef("urge_candidate", "urge:legacy-shape")],
+      policyEpoch: undefined,
+      scope: undefined,
+      needsRegrounding: undefined,
+      commitmentLifecycle: undefined,
+      carePosture: undefined,
+    }));
+
+    expect(parsed).toMatchObject({
+      agenda_item_id: "agenda:legacy-shape",
+      needsRegrounding: true,
+      commitmentLifecycle: "held",
+      carePosture: "watch",
+      policyEpoch: "unknown",
+      scope: expect.objectContaining({
+        permissionScope: "unknown",
+        policyEpoch: "unknown",
+      }),
+    });
+    const decompositions = decomposeAgenda({ agendaItems: [parsed], now: NOW });
+    expect(decompositions[0]).toMatchObject({ status: "needs_regrounding" });
+    expect(buildAttentionAdmissionCandidates({ decompositions, now: NOW })).toEqual([]);
   });
 
   it("models maturation, decay, stale rejection, and deduplication without duplicate expression pressure", () => {

@@ -135,34 +135,12 @@ afterEach(() => {
 
 // ─── Tests ───
 
-describe("ChatRunner — tool status callbacks", () => {
+describe("ChatRunner — production tool caller path", () => {
   const toolName = "read";
   const toolArgs = {};
 
-  describe("onToolStart callback", () => {
-    it("is called with correct toolName before tool execution", async () => {
-      const onToolStart = vi.fn();
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "done",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolStart,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      expect(onToolStart).toHaveBeenCalledOnce();
-      expect(onToolStart).toHaveBeenCalledWith(toolName, toolArgs);
-    });
-
+  describe("tool executor integration", () => {
     it("routes tool calls through ToolExecutor when available", async () => {
-      const onToolStart = vi.fn();
-      const onToolEnd = vi.fn();
       const tool = makeMockTool(toolName, async () => {
         throw new Error("raw tool.call should not run");
       });
@@ -188,8 +166,6 @@ describe("ChatRunner — tool status callbacks", () => {
       const deps = makeDeps({
         llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
         registry: makeMockRegistry(tool),
-        onToolStart,
-        onToolEnd,
         toolExecutor: executor,
       });
       const runner = new ChatRunner(deps);
@@ -198,8 +174,6 @@ describe("ChatRunner — tool status callbacks", () => {
 
       expect((executor.execute as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
       expect(tool.call).not.toHaveBeenCalled();
-      expect(onToolStart).toHaveBeenCalledOnce();
-      expect(onToolEnd).toHaveBeenCalledOnce();
       expect(result.output).toBe("Tool executed, here is the result.");
     });
 
@@ -305,90 +279,6 @@ describe("ChatRunner — tool status callbacks", () => {
         }),
       ]);
     });
-
-    it("is called before tool.call() executes", async () => {
-      const callOrder: string[] = [];
-      const onToolStart = vi.fn().mockImplementation(() => callOrder.push("onToolStart"));
-      const tool = makeMockTool(toolName, async () => {
-        callOrder.push("tool.call");
-        return { success: true, data: null, summary: "done", durationMs: 5 };
-      });
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolStart,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      expect(callOrder).toEqual(["onToolStart", "tool.call"]);
-    });
-  });
-
-  describe("onToolEnd callback — success path", () => {
-    it("is called with success=true and correct summary after successful execution", async () => {
-      const onToolEnd = vi.fn();
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "operation completed",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      expect(onToolEnd).toHaveBeenCalledOnce();
-      const [calledName, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(calledName).toBe(toolName);
-      expect(result.success).toBe(true);
-      expect(result.summary).toBe("operation completed");
-    });
-
-    it("passes durationMs as a positive number", async () => {
-      const onToolEnd = vi.fn();
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "ok",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      const [, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(typeof result.durationMs).toBe("number");
-      expect(result.durationMs).toBeGreaterThanOrEqual(0);
-    });
-
-    it("uses '...' as fallback summary when tool returns empty summary", async () => {
-      const onToolEnd = vi.fn();
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: { key: "value" },
-        summary: "",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      const [, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(result.summary).toBe("...");
-    });
   });
 
   it("emits typed activity categories through the production tool-loop event path", async () => {
@@ -416,120 +306,6 @@ describe("ChatRunner — tool status callbacks", () => {
       expect.objectContaining({ type: "tool_update", toolName: "grep", activityCategory: "search" }),
       expect.objectContaining({ type: "tool_end", toolName: "grep", activityCategory: "search" }),
     ]));
-  });
-
-  describe("onToolEnd callback — failure path", () => {
-    it("is called with success=false when tool.call() throws", async () => {
-      const onToolEnd = vi.fn();
-      const tool = makeMockTool(toolName, async () => {
-        throw new Error("tool exploded");
-      });
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      expect(onToolEnd).toHaveBeenCalledOnce();
-      const [calledName, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(calledName).toBe(toolName);
-      expect(result.success).toBe(false);
-      expect(result.summary).toBe("tool exploded");
-    });
-
-    it("includes durationMs even when tool throws", async () => {
-      const onToolEnd = vi.fn();
-      const tool = makeMockTool(toolName, async () => {
-        throw new Error("boom");
-      });
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      const [, result] = (onToolEnd as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(typeof result.durationMs).toBe("number");
-      expect(result.durationMs).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  describe("optional callbacks", () => {
-    it("does not throw when onToolStart is not provided", async () => {
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "ok",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        // onToolStart intentionally omitted
-      });
-      const runner = new ChatRunner(deps);
-      await expect(runner.execute("test", "/repo")).resolves.toBeDefined();
-    });
-
-    it("does not throw when onToolEnd is not provided", async () => {
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "ok",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-        // onToolEnd intentionally omitted
-      });
-      const runner = new ChatRunner(deps);
-      await expect(runner.execute("test", "/repo")).resolves.toBeDefined();
-    });
-
-    it("does not throw when neither callback is provided", async () => {
-      const tool = makeMockTool(toolName, async () => ({
-        success: true,
-        data: null,
-        summary: "ok",
-        durationMs: 5,
-      }));
-      const deps = makeDeps({
-        llmClient: makeLLMClientWithToolCall(toolName, toolArgs),
-        registry: makeMockRegistry(tool),
-      });
-      const runner = new ChatRunner(deps);
-      await expect(runner.execute("test", "/repo")).resolves.toBeDefined();
-    });
-
-    it("does not call callbacks when no tool calls are made (text-only response)", async () => {
-      const onToolStart = vi.fn();
-      const onToolEnd = vi.fn();
-      const llmClient: ILLMClient = {
-        supportsToolCalling: () => true,
-        sendMessage: vi.fn().mockResolvedValue({
-          content: "Just a text response, no tools needed.",
-          usage: { input_tokens: 1, output_tokens: 1 },
-          stop_reason: "completed",
-          tool_calls: [],
-        } satisfies LLMResponse),
-      } as unknown as ILLMClient;
-      const deps = makeDeps({
-        llmClient,
-        registry: makeMockRegistry(makeMockTool(toolName, async () => ({ success: true, data: null, summary: "ok", durationMs: 5 }))),
-        onToolStart,
-        onToolEnd,
-      });
-      const runner = new ChatRunner(deps);
-      await runner.execute("test", "/repo");
-
-      expect(onToolStart).not.toHaveBeenCalled();
-      expect(onToolEnd).not.toHaveBeenCalled();
-    });
   });
 });
 

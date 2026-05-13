@@ -1,0 +1,300 @@
+# PulSeed Test Redesign Final Scope Checkpoint
+
+Started: 2026-05-13T11:58:59+0900
+Branch: `codex/test-redesign-final-scope`
+Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
+
+## Phase
+
+Local final verification is green. Next is marking PR #1949 ready and waiting for CI/review gates.
+
+## Current Evidence Read
+
+- `tmp/pulseed-test-redesign-replacement-map.md`
+- `tmp/pulseed-test-redesign-inventory.jsonl`
+- `tmp/pulseed-test-redesign-inventory-summary.json`
+- `tests/harness/golden-trace-runner.ts`
+- `tests/harness/replay-runner.ts`
+- `tests/golden-traces/p0/fixtures.json`
+- `tests/replay/p0/fixtures.json`
+
+Inventory summary currently reports:
+
+- `test_like_files`: 785
+- `classification_counts.replace`: 12
+- `p0_trace_count`: 42
+- `p0_mapped_trace_count`: 42
+- `current_coverage_gap_count`: 0
+
+Runner and fixture scan confirms the P0 fixture set records `runner_status: real_production_path`; `pending_real_runner` support still exists in harness code, but current replacement fixtures must not use it as deletion evidence.
+
+## Remaining Scope
+
+Primary old-test targets still present:
+
+- `src/tools/fs/ReadTool/__tests__/ReadTool.test.ts`
+- `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
+- `src/runtime/store/__tests__/attention-state-store.test.ts`
+- `src/runtime/control/__tests__/runtime-control-service.test.ts`
+- `src/runtime/__tests__/schedule-engine.test.ts`
+- `src/runtime/__tests__/approval-broker.test.ts`
+- `src/runtime/__tests__/daemon-runner.test.ts`
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+- `src/interface/chat/__tests__/chat-runner.test.ts`
+- `src/interface/chat/__tests__/chat-runner-tools.test.ts`
+- `src/interface/chat/__tests__/setup-secret-intake.test.ts`
+- `src/interface/chat/__tests__/cross-platform-session.test.ts`
+
+Already absent:
+
+- `src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts`; replacement map marks file-level deletion allowed. Need keep checking for stale inventory/map remnants and ensure no tests still import or expect the removed file.
+
+## Deletion Candidates
+
+Initial priority order from the goal:
+
+1. `ReadTool`
+2. `queue`
+3. `attention-state-store`
+4. `runtime-control-service`
+5. `schedule-engine`
+6. `approval-broker`
+7. `daemon/session-registry`
+8. `chat-runner`
+9. `cross-platform-session`
+
+Deletion is allowed only per block when replacement map records:
+
+- old file
+- old block / old line range
+- classification
+- replacement trace/replay/contract or obsolete rationale
+- production entrypoint exercised
+- exported artifact/assertion
+- pre-delete command
+- post-delete command
+- deletion allowed
+
+## Deleted Blocks
+
+- `src/tools/fs/ReadTool/__tests__/ReadTool.test.ts`
+  - Deleted direct relative-path `ReadTool.call` assertion; replacement is `tool_readonly_fs_no_write_approval_under_workspace`, which executes `ToolExecutor.execute("read", { file_path: "notes.txt" })` with a real workspace `cwd`.
+  - Deleted direct normal-file `checkPermissions` allowed assertion; replacement is the same production tool-catalog trace with `approval_request_count=0` and `read_success=true`.
+- `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
+  - Removed the standalone `read APIs reflect writes from another queue instance` block after moving its value into the stronger multi-instance lock/reload test.
+- `src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts`
+  - Recovered already-deleted FileWrite blocks with a contract that executes real `ToolExecutor.execute("file_write")` calls through `PermissionWaitPlanStore` and `FileWriteTool.call`.
+  - Covered unsafe path traversal, `.env`, credentials, and `node_modules` writes under `preApproved=true`; all fail without approval prompts, artifacts, or filesystem mutation.
+- `src/runtime/store/__tests__/attention-state-store.test.ts`
+  - Removed raw legacy DB row insertion block for old agenda shapes; moved the meaningful default/regrounding/admission assertion to `tests/regression/companion-autonomy-contracts.test.ts`.
+- `src/runtime/control/__tests__/runtime-control-service.test.ts`
+  - Recovered the resume-after-companion-lift readmission block by upgrading the golden runner to execute `suspend_companion -> resume_companion -> resume_run` through `RuntimeControlService`; the final resume is blocked with `resume_rejected_safety` and executor count stays zero.
+- `src/runtime/__tests__/approval-broker.test.ts`
+  - Recovered stale conversational origin evidence by trying channel, conversation, user, session, and turn mismatches; the approval remains pending and no mutation is recorded.
+  - Recovered no-delivery evidence with an `ApprovalBroker` that has no `deliverConversationalApproval` callback; request resolves false, record is denied, and the reason is `approval_channel_unreachable`.
+- `src/runtime/__tests__/schedule-engine.test.ts`
+  - Deleted direct `(eng as any).executeGoalTrigger` private-method token/call-argument blocks.
+  - Replaced them with public `ScheduleEngine.tick()` traces for bounded CoreLoop dispatch and active-goal skip; artifacts include core loop calls, schedule history, persisted execution counters, and skipped-result state.
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+  - Deleted the direct dead-pid sidecar block and stale running ledger/dead process block after upgrading `session_registry_dead_process_not_running` to assert lost status, warning, durable title/process_session_id, and no duplicate run id.
+- `src/runtime/__tests__/daemon-runner.test.ts`
+  - Removed the `DaemonRunner.generateCronEntry` static delegation assertion from the broad daemon integration file.
+- `src/interface/chat/__tests__/chat-runner-tools.test.ts`
+  - Deleted mock-heavy `onToolStart`/`onToolEnd` callback call-count, duration, fallback-summary, and optional-callback minutiae.
+  - Kept production `ToolExecutor`, capability-verification, typed activity event stream, and model-visible tool-schema tests.
+- `src/interface/chat/__tests__/chat-runner.test.ts`
+  - Deleted the private `routeHost()` key-list inventory that froze current class wiring instead of exercising public ChatRunner behavior.
+
+## Blocks Kept And Reason
+
+- `src/tools/fs/ReadTool/__tests__/ReadTool.test.ts`
+  - Kept and collapsed line-number/limit/offset/summary checks into `reads bounded line windows with stable line numbers and summaries`; this is focused user-visible unit behavior not covered by the readonly golden trace.
+  - Kept EOF-offset summary check because it guards against negative line-range output.
+  - Kept protected read approval checks as a parameterized unit because the golden trace only proves normal workspace reads do not request approval.
+- `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
+  - Kept durable accept/claim/renew/ack, pending dedupe, dedupe after completion, deadletter/requeue, and filtered claim units because these are mock-free queue primitives used by EventDispatcher/LoopSupervisor and not fully replaced by the existing P0 eventserver/queue traces.
+  - Kept finite fractional lease persistence because LoopSupervisor retry backoff can call `JournalBackedQueue.renew` with fractional duration.
+  - Rewrote the multi-instance read refresh assertion into the lock/reload test so the file no longer has a separate convenience-API block for the same durability behavior.
+- `src/runtime/store/__tests__/attention-state-store.test.ts`
+  - Kept migration table inventory, full-cycle restart rehydration, legacy/current projection merge, replay-key dedupe, malformed-row fail-closed behavior, and durable suppress/invalidate/admitted-history controls as mock-free store contracts.
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+  - Kept EPERM/ESRCH/unsafe PID, supervisor worker projection, durable reply target, handoff graph, and schema-valid snapshot blocks because they are focused registry projection contracts not covered by the single dead-process P0 trace.
+- `src/runtime/__tests__/daemon-runner.test.ts`
+  - Kept startup/shutdown/leader lock/queue reclaim/resident attention/backpressure blocks because they exercise daemon runner lifecycle or durable stores through the real `DaemonRunner` rather than a helper-only mock.
+- `src/interface/chat/__tests__/setup-secret-intake.test.ts`
+  - Kept URL-query secret redaction as focused parser coverage.
+- `src/interface/chat/__tests__/chat-runner.test.ts`
+  - Classified remaining command grammar, setup redaction, direct model-loop, session persistence, native AgentLoop routing, structured interrupt intent, and RunSpec handoff blocks as retained because they exercise public ChatRunner entrypoints and typed routing contracts.
+- `src/interface/chat/__tests__/cross-platform-session.test.ts`
+  - Classified remaining gateway model-loop, ordinary multilingual chat, scoped approval/runtime-control, RunSpec/reply-target, permission grant, stale target, companion target, presence, and concurrency blocks as retained production caller-path coverage. No bulk deletion was made because these are the gateway/chat P0 boundary tests.
+
+## Added Runner / Trace / Replay
+
+- Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
+- Added a migration contract test for legacy `runtime/queue.json` mixed safe/unsafe import through `importLegacyQueueDaemonScheduleState` and the control DB queue store.
+- Added `tests/contracts/tool-file-write-boundary.test.ts` as production-boundary contract evidence for ordered approval-before-mutation and unsafe FileWrite path denial.
+- Added focused autonomy regression coverage for legacy agenda-shaped records defaulting to regrounding-only state before admission.
+- Upgraded the existing `runtime_control_resume_after_companion_revival_requires_readmission` golden trace to exercise the real companion-control sequence before the blocked `resume_run`.
+- Upgraded approval golden traces for origin-bound mismatch variants and missing delivery callback fail-closed behavior.
+- Added `schedule_goal_trigger_due_dispatches_coreloop_artifact` and `schedule_goal_trigger_active_goal_skips_coreloop_artifact` to the P0 golden lane.
+- Upgraded `session_registry_dead_process_not_running` to expose durable run title, process session id, and duplicate-count assertions.
+- Added `src/runtime/daemon/__tests__/signals.test.ts` as a focused pure protocol test for daemon cron entry generation.
+- Reused the surviving ChatRunner tool caller-path tests as replacement evidence for deleted callback minutiae: ToolExecutor routing, capability verification/auditing, typed tool activity events, and stable typed schemas across English/Japanese paraphrases.
+- Reused public ChatRunner/gateway caller-path evidence for the removed private route-host inventory.
+
+## Replacement Map Updates
+
+- `scripts/inventory-test-redesign.mjs`
+  - Added ReadTool final-scope deleted block evidence for direct relative-path resolution and normal-file permission.
+  - Added `rewrittenBlocks` rendering so retained/reworked old blocks and their classification are preserved in `tmp/pulseed-test-redesign-replacement-map.md`.
+  - Updated the deletion gate text to state that P0 golden/replay tests must fail on `pending_real_runner`.
+  - Added queue final-scope retained/reworked block classifications and updated queue same-checkout evidence.
+  - Reclassified the already-deleted unsafe legacy queue scalar blocks as `delete_now` covered by the new queue migration contract instead of unresolved obsolete rationale.
+  - Replaced FileWrite post-hoc deletion evidence with explicit contract evidence for ordered approval/wait-plan/tool-call events and unsafe path denial.
+  - Added attention-state-store assertion inventory, including retained high-value store contracts and the moved old agenda-shape block.
+- Regenerated the runtime-control replacement evidence after the readmission fixture gained `companion_suspend_recorded`, `companion_resume_recorded`, `resume_outcome`, and `resume_requires_readmission` assertions.
+- Regenerated the approval replacement evidence after the origin fixture gained mismatch field assertions and the delivery fixture switched from delivered=false callback to no delivery callback.
+- Added schedule goal-trigger public tick traces to the replacement map and reclassified the direct `executeGoalTrigger` private-method blocks as deleted with replacement evidence.
+- Added daemon/session deleted-block evidence for dead process projection and moved cron-entry helper coverage.
+- Added chat-runner-tools deleted-block evidence for callback minutiae removed in favor of typed event stream and production tool caller path coverage.
+- Added chat-runner deleted-block evidence for the private `routeHost()` key-list test.
+- Added retained-block classifications for the remaining high-value ChatRunner and cross-platform-session gateway/chat blocks.
+- Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
+
+## Commands Passed
+
+- `git fetch origin main --prune`
+- `git switch -c codex/test-redesign-final-scope origin/main`
+- `node -v` -> `v24.15.0`
+- `npm -v` -> `11.12.1`
+- `npm ci` -> installed dependencies; audit reports 1 moderate advisory and suggests breaking `npm audit fix --force`
+- `npx vitest run src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/__tests__/read-only-fs-tool-input-schema-contract.test.ts src/tools/fs/FileValidationTool/__tests__/FileValidationTool.test.ts --config vitest.unit.config.ts` -> pre-delete passed 3 files / 34 tests
+- `npm run test:golden-traces` -> pre-delete passed 1 file / 42 tests
+- `npx vitest run src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/__tests__/read-only-fs-tool-input-schema-contract.test.ts src/tools/fs/FileValidationTool/__tests__/FileValidationTool.test.ts --config vitest.unit.config.ts` -> post-delete passed 3 files / 29 tests
+- `npm run test:golden-traces` -> post-delete passed 1 file / 42 tests
+- `npm run test:replay` -> post-delete passed 1 file / 9 tests
+- `node scripts/inventory-test-redesign.mjs` -> regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:golden-traces` -> after pending-runner gate passed 1 file / 43 tests
+- `npm run test:replay` -> after pending-runner gate passed 1 file / 9 tests
+- `node scripts/inventory-test-redesign.mjs` -> after pending-runner gate regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` -> pre-rewrite passed 1 file / 9 tests
+- `npm run test:golden-traces` -> queue pre-rewrite passed 1 file / 43 tests
+- `npm run test:replay` -> queue pre-rewrite passed 1 file / 9 tests
+- `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` -> post-rewrite passed 1 file / 8 tests
+- `npm run test:golden-traces` -> queue post-rewrite passed 1 file / 43 tests
+- `npm run test:replay` -> queue post-rewrite passed 1 file / 9 tests
+- `node scripts/inventory-test-redesign.mjs` -> after queue rewrite regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> first attempt failed because the test assumed a fixed legacy-import ordering
+- `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> after assertion fix passed 1 file / 4 tests
+- `node scripts/inventory-test-redesign.mjs` -> after queue migration safety recovery regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run tests/contracts/tool-file-write-boundary.test.ts --config vitest.contracts.config.ts` -> passed 1 file / 2 tests
+- `node scripts/inventory-test-redesign.mjs` -> after FileWrite contract evidence regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:contracts` -> passed 2 files / 9 tests
+- `npm run test:replay` -> after FileWrite contract passed 1 file / 9 tests
+- `npm run test:golden-traces` -> after one transient mismatch retry passed 1 file / 43 tests
+- `npm run typecheck` -> passed after FileWrite contract addition
+- `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` -> pre-rewrite passed 1 file / 13 tests
+- `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts tests/regression/companion-autonomy-contracts.test.ts --config vitest.unit.config.ts` -> post-rewrite passed 2 files / 23 tests
+- `node scripts/inventory-test-redesign.mjs` -> after attention-state-store rewrite regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:replay` -> after attention rewrite passed 1 file / 9 tests
+- `npm run test:golden-traces` -> after attention rewrite passed 1 file / 43 tests
+- `npm run typecheck` -> passed after attention rewrite
+- `npm run test:golden-traces` -> first runtime-control readmission runner upgrade attempt failed expectedly because the fixture still described the old single failed-run resume path
+- `npm run test:golden-traces` -> after fixture update passed 1 file / 43 tests
+- `node scripts/inventory-test-redesign.mjs` -> after runtime-control readmission recovery regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run typecheck` -> passed after runtime-control readmission runner update
+- `npm run test:replay` -> passed after runtime-control readmission runner update
+- `npm run test:golden-traces` -> first approval runner upgrade attempt failed expectedly because the fixtures still described the older weaker approval outputs
+- `npm run test:golden-traces` -> after approval fixture update passed 1 file / 43 tests
+- `npm run typecheck` -> passed after approval runner update
+- `npm run test:replay` -> passed after approval runner update
+- `node scripts/inventory-test-redesign.mjs` -> after approval runner update regenerated 784 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:golden-traces` -> after schedule goal-trigger runner addition and private-method deletion passed 1 file / 45 tests
+- `npx vitest run src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` -> after schedule private-method deletion passed 1 file / 92 tests
+- `npm run typecheck` -> passed after schedule runner/deletion update
+- `npm run test:replay` -> passed after schedule runner/deletion update
+- `node scripts/inventory-test-redesign.mjs` -> after schedule runner/deletion update regenerated 784 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` -> after daemon/session cleanup passed 2 files / 66 tests
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` -> expected no files because `src/runtime/daemon/**/*.test.ts` is excluded from unit lane
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` -> passed 1 file / 2 tests
+- `npm run test:golden-traces` -> after session dead-process assertion upgrade passed 1 file / 45 tests
+- `npm run test:replay` -> after daemon/session cleanup passed 1 file / 9 tests
+- `npm run typecheck` -> passed after daemon/session cleanup
+- `node scripts/inventory-test-redesign.mjs` -> after daemon/session cleanup regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/interface/chat/__tests__/chat-runner-tools.test.ts --config vitest.unit.config.ts` -> after chat tools cleanup passed 1 file / 4 tests
+- `npm run test:golden-traces` -> after chat tools cleanup passed 1 file / 45 tests
+- `npm run test:replay` -> after chat tools cleanup passed 1 file / 9 tests
+- `npm run typecheck` -> passed after chat tools cleanup
+- `node scripts/inventory-test-redesign.mjs` -> after chat tools cleanup regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts --config vitest.unit.config.ts` -> after private route-host deletion passed 1 file / 139 tests
+- `npm run test:golden-traces` -> after private route-host deletion passed 1 file / 45 tests
+- `npm run test:replay` -> after private route-host deletion passed 1 file / 9 tests
+- `npm run typecheck` -> passed after private route-host deletion
+- `node scripts/inventory-test-redesign.mjs` -> after private route-host deletion regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` -> after gateway/chat retained-block classification passed 1 file / 89 tests
+- `npm run test:golden-traces` -> after gateway/chat retained-block classification passed 1 file / 45 tests
+- `npm run test:replay` -> after gateway/chat retained-block classification passed 1 file / 9 tests
+- `npm run typecheck` -> passed after gateway/chat retained-block classification
+- `node scripts/inventory-test-redesign.mjs` -> after gateway/chat retained-block classification regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts` -> after typed approval stale-target synchronization fix passed 1 file / 89 tests
+- `npm run test:unit` -> after clearing test-generated `$TMPDIR` artifacts and tightening typed approval stale-target synchronization passed 681 files / 9592 tests, 3 skipped
+- `npm run check:docs` -> final gate passed, scanned 140 Markdown files
+- `npm run typecheck` -> final gate passed
+- `npm run lint:boundaries` -> final gate passed with 0 errors and existing warnings
+- `npm run test:contracts` -> final gate passed 2 files / 9 tests
+- `npm run test:golden-traces` -> final gate passed 1 file / 45 tests
+- `npm run test:replay` -> final gate passed 1 file / 9 tests
+- `npm run test:integration` -> final gate passed 91 files / 1201 tests, 3 files / 7 tests skipped
+- `npm run test:smoke` -> final gate passed 4 files / 30 tests
+- `npm run test:changed` -> final gate detected no changed files, ran fast unit lane, passed 681 files / 9592 tests, 3 skipped
+- `npm run verify:release` -> final gate passed; includes docs, typecheck, lint, `test:all`, high-threshold audit, and packaged artifact verification for `pulseed-0.6.5.tgz`
+
+## Reviewer Findings Applied
+
+- Contract / Runner Reviewer found that P0 lane tests accepted `pending_real_runner` even though current fixtures do not contain it. Applied a fail-closed test gate before using further traces as deletion evidence.
+- Same reviewer warned that several existing traces overstate their production entrypoints. Queue traces used for the current queue slice are still runner-computed queue/eventserver state; for later approval/resident/observation/daemon/chat deletions, do not cite the flagged weak traces for broader caller-path claims unless upgraded.
+- Deletion Reviewer recommendations are available for queue, attention-store, runtime-control, schedule, approval, daemon/session-registry, chat-runner, and cross-platform-session. Use them as candidates, but verify with real file contents and safety reviewer before deleting.
+- Runtime Safety Reviewer found blocker coverage gaps that must be recovered before final completion:
+  - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks needed a queue migration contract through `runtime/queue.json` -> control DB import. Recovered by `src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts`.
+  - Unsafe FileWrite path denial from already-deleted FileWrite blocks needed production tool-boundary evidence. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
+  - FileWrite approval-before-mutation evidence needed ordered event/state evidence, not a post-hoc boolean. Recovered by `tests/contracts/tool-file-write-boundary.test.ts`.
+  - Approval stale-origin mismatch and no-delivery branches needed stronger coverage before deleting related approval-broker blocks. Recovered by upgrading `approval_origin_bound_stale_reply_rejected` and `approval_delivery_unavailable_denies_not_executes`.
+  - `resume_companion` -> `resume_run` readmission gate needed a real RuntimeControlService trace before deleting that runtime-control block. Recovered by upgrading `runtime_control_resume_after_companion_revival_requires_readmission`.
+  - Schedule goal-trigger dispatch and active-goal skip needed public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks. Recovered by `schedule_goal_trigger_due_dispatches_coreloop_artifact` and `schedule_goal_trigger_active_goal_skips_coreloop_artifact`.
+
+## Commands Failing
+
+- Initial pre-`npm ci` `npx vitest ... --config vitest.unit.config.ts` failed because `vitest` was not installed in this worktree.
+- Initial pre-`npm ci` `npm run test:golden-traces` failed because `vitest` was not installed in this worktree.
+- One parallel `npm run test:golden-traces` attempt reported a mismatch in `approval_delivery_unavailable_denies_not_executes`; direct expected-vs-actual comparison for that fixture matched byte-for-byte, and the immediate rerun passed 43/43. No active failing command remains from this attempt.
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` reported no files because daemon tests are intentionally excluded from the unit lane; the same test passed under `vitest.integration.config.ts`.
+- First final `npm run test:unit` failed with cascading `ENOSPC` / SQLite disk-full errors after `$TMPDIR` contained 67,585 PulSeed test-generated directories. Removed only matching test temp prefixes from `$TMPDIR`, restoring about 97GB free.
+- Second final `npm run test:unit` failed only `cross-platform-session.test.ts` typed stale-target approval because the test waited for the pending approval but not for the initial runtime-control classifier mock response to be consumed. Tightened the test to wait for both the pending approval and the classifier call before advancing the side-question turn.
+- `npm run verify:release` reported one moderate `@anthropic-ai/sdk` advisory after the high-threshold audit passed. The suggested fix requires `npm audit fix --force` and a breaking upgrade to `@anthropic-ai/sdk@0.95.2`, so it remains recorded and out of scope for this test redesign PR.
+
+## Verification Commands To Run
+
+Targeted by phase:
+
+- `npx vitest run <target files> --config vitest.unit.config.ts`
+- `npx vitest run <target files> --config vitest.integration.config.ts`
+- `npm run test:golden-traces`
+- `npm run test:replay`
+
+Final required gates:
+
+- `npm run check:docs`
+- `npm run typecheck`
+- `npm run lint:boundaries`
+- `npm run test:contracts`
+- `npm run test:golden-traces`
+- `npm run test:replay`
+- `npm run test:unit`
+- `npm run test:integration`
+- `npm run test:smoke`
+- `npm run test:changed`
+- `npm run verify:release`
+
+## Next
+
+Mark PR #1949 ready, monitor CI and GitHub review gates, and do not merge without explicit user approval.

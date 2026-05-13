@@ -528,6 +528,13 @@ async function runRuntimeControlTrace(
     create: async (input: Record<string, unknown>) => input,
   };
   const executorCalls: JsonObject[] = [];
+  let runtimeControlNowTick = 0;
+  const runtimeControlNow = () => {
+    if (fixture.contract_name !== "runtime_control_resume_after_companion_revival_requires_readmission") {
+      return new Date(fixture.input.fake_now);
+    }
+    return new Date(Date.parse(fixture.input.fake_now) + runtimeControlNowTick++ * 1000);
+  };
   const service = new RuntimeControlService({
     operationStore,
     operatorHandoffStore: handoffStore as never,
@@ -540,7 +547,7 @@ async function runRuntimeControlTrace(
       });
       return { ok: true, state: "verified", message: `${operation.kind} accepted by typed executor` };
     },
-    now: () => new Date(fixture.input.fake_now),
+    now: runtimeControlNow,
   });
   const replyTarget = {
     surface: "gateway" as const,
@@ -551,6 +558,41 @@ async function runRuntimeControlTrace(
     identity_key: "operator",
     user_id: "operator",
   };
+  const scenarioResults: JsonObject[] = [];
+  if (fixture.contract_name === "runtime_control_resume_after_companion_revival_requires_readmission") {
+    const suspend = await service.setCompanionControl({
+      control: "suspend_companion",
+      cwd: stateRoot.workspaceRoot,
+      reason: "suspend companion before validating readmission",
+      requestedBy: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: replyTarget.conversation_id,
+        identity_key: "operator",
+        user_id: "operator",
+      },
+      replyTarget,
+      approvalFn: async () => true,
+    });
+    const resume = await service.setCompanionControl({
+      control: "resume_companion",
+      cwd: stateRoot.workspaceRoot,
+      reason: "lift companion suspend without auto-resume",
+      requestedBy: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: replyTarget.conversation_id,
+        identity_key: "operator",
+        user_id: "operator",
+      },
+      replyTarget,
+      approvalFn: async () => true,
+    });
+    scenarioResults.push(
+      { control: "suspend_companion", result: runtimeControlResultSummary(suspend) },
+      { control: "resume_companion", result: runtimeControlResultSummary(resume) },
+    );
+  }
   const intent = runtimeControlIntentFor(fixture.contract_name);
   const result = await service.request({
     cwd: stateRoot.workspaceRoot,
@@ -570,6 +612,8 @@ async function runRuntimeControlTrace(
     ...await operationStore.listCompleted(),
   ].sort((left, right) => left.requested_at.localeCompare(right.requested_at));
   const latest = operations[operations.length - 1] ?? null;
+  const companionSuspend = operations.find((operation) => operation.kind === "suspend_companion");
+  const companionResume = operations.find((operation) => operation.kind === "resume_companion");
   const assertions: JsonObject = {
     blocked_reason: result.success ? null : result.message,
     executor_call_count: executorCalls.length,
@@ -579,6 +623,16 @@ async function runRuntimeControlTrace(
     result_success: result.success,
     target_run_id: latest?.target?.run_id ?? null,
   };
+  if (fixture.contract_name === "runtime_control_resume_after_companion_revival_requires_readmission") {
+    const resumeOutcome = typeof result.resumeOutcome === "string" ? result.resumeOutcome : null;
+    assertions["companion_resume_recorded"] = companionResume?.state === "verified";
+    assertions["companion_suspend_recorded"] = companionSuspend?.state === "verified";
+    assertions["resume_outcome"] = resumeOutcome;
+    assertions["resume_requires_readmission"] =
+      resumeOutcome === "resume_rejected_safety"
+      && result.success === false
+      && executorCalls.length === 0;
+  }
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "runtime_control_service_target_resolution",
     exportedState: {
@@ -586,6 +640,7 @@ async function runRuntimeControlTrace(
       executor_calls: executorCalls,
       operations: operations.map(runtimeOperationSummary),
       result: runtimeControlResultSummary(result),
+      ...(scenarioResults.length > 0 ? { scenario_results: scenarioResults } : {}),
     },
     assertions,
   });
@@ -610,7 +665,7 @@ async function runApprovalTrace(
     createId: () => `approval-${fixture.contract_name}`,
     now: () => Date.parse(fixture.input.fake_now),
     broadcast: (eventType, data) => events.push({ event_type: eventType, data: sanitizeUnknown(data) }),
-    deliverConversationalApproval: delivery,
+    ...(delivery ? { deliverConversationalApproval: delivery } : {}),
   });
 
   let requestResult: boolean | null = null;
@@ -701,23 +756,41 @@ async function runApprovalTrace(
   if (fixture.contract_name !== "approval_delivery_unavailable_denies_not_executes") {
     await waitForPendingApproval(store, `approval-${fixture.contract_name}`);
   }
-  const resolved = fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
-    ? false
-    : await broker.resolveConversationalApproval(
+  const staleOriginAttempts: JsonObject[] = [];
+  let resolved: boolean;
+  if (fixture.contract_name === "approval_delivery_unavailable_denies_not_executes") {
+    requestResult = await pending;
+    resolved = false;
+  } else if (fixture.contract_name === "approval_origin_bound_stale_reply_rejected") {
+    const attempts: Array<{ field: string; origin: typeof origin }> = [
+      { field: "channel", origin: { ...origin, channel: "slack" } },
+      { field: "conversation_id", origin: { ...origin, conversation_id: "approval-chat-stale" } },
+      { field: "user_id", origin: { ...origin, user_id: "operator-stale" } },
+      { field: "session_id", origin: { ...origin, session_id: "session:approval:stale" } },
+      { field: "turn_id", origin: { ...origin, turn_id: "turn:stale" } },
+    ];
+    for (const attempt of attempts) {
+      const accepted = await broker.resolveConversationalApproval(
+        `approval-${fixture.contract_name}`,
+        true,
+        attempt.origin,
+      );
+      staleOriginAttempts.push({ accepted, field: attempt.field });
+    }
+    resolved = staleOriginAttempts.some((attempt) => attempt["accepted"] === true);
+    requestResult = null;
+  } else {
+    resolved = await broker.resolveConversationalApproval(
       `approval-${fixture.contract_name}`,
       !fixture.contract_name.includes("denial"),
-      fixture.contract_name === "approval_origin_bound_stale_reply_rejected"
-        ? { ...origin, turn_id: "turn:stale" }
-        : origin,
+      origin,
     );
-  requestResult = fixture.contract_name.includes("denial") ||
-    fixture.contract_name === "approval_origin_bound_stale_reply_rejected" ||
-    fixture.contract_name === "approval_delivery_unavailable_denies_not_executes"
-    ? null
-    : resolved;
+    requestResult = fixture.contract_name.includes("denial") ? null : resolved;
+  }
   await broker.stop();
   const pendingRecord = await store.loadPending(`approval-${fixture.contract_name}`);
   const resolvedRecord = await store.loadResolved(`approval-${fixture.contract_name}`);
+  const resolvedEvent = events.find((event) => event["event_type"] === "approval_resolved");
   const assertions: JsonObject = {
     mutation_executed: false,
     pending_after_resolution: pendingRecord !== null,
@@ -726,6 +799,19 @@ async function runApprovalTrace(
     resolved_state: resolvedRecord?.state ?? null,
     stale_reply_rejected: fixture.contract_name === "approval_origin_bound_stale_reply_rejected" ? resolved === false : null,
   };
+  if (fixture.contract_name === "approval_origin_bound_stale_reply_rejected") {
+    assertions["all_origin_mismatches_rejected"] = staleOriginAttempts.every((attempt) => attempt["accepted"] === false);
+    assertions["origin_mismatch_fields"] = staleOriginAttempts.map((attempt) => attempt["field"]);
+  }
+  if (fixture.contract_name === "approval_delivery_unavailable_denies_not_executes") {
+    assertions["delivery_callback_configured"] = delivery !== undefined;
+    assertions["delivery_unavailable_denied"] = pendingRecord === null
+      && resolvedRecord?.state === "denied"
+      && requestResult === false;
+    assertions["resolution_reason"] = typeof resolvedEvent?.["data"] === "object" && resolvedEvent["data"] !== null
+      ? ((resolvedEvent["data"] as Record<string, unknown>)["reason"] ?? null)
+      : null;
+  }
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "approval_broker_scope_gate",
     exportedState: {
@@ -733,6 +819,7 @@ async function runApprovalTrace(
       events,
       pending_record: pendingRecord ? approvalRecordSummary(pendingRecord) : null,
       resolved_record: resolvedRecord ? approvalRecordSummary(resolvedRecord) : null,
+      ...(staleOriginAttempts.length > 0 ? { stale_origin_attempts: staleOriginAttempts } : {}),
     },
     assertions,
   });
@@ -742,6 +829,93 @@ async function runScheduleTrace(
   fixture: GoldenTraceFixture,
   stateRoot: IsolatedStateRoot,
 ): Promise<GoldenTraceRunResult> {
+  if (
+    fixture.contract_name === "schedule_goal_trigger_due_dispatches_coreloop_artifact" ||
+    fixture.contract_name === "schedule_goal_trigger_active_goal_skips_coreloop_artifact"
+  ) {
+    const activeSkip = fixture.contract_name === "schedule_goal_trigger_active_goal_skips_coreloop_artifact";
+    const dueAt = "2026-05-12T00:00:00.000Z";
+    const coreLoopCalls: JsonObject[] = [];
+    const stateGoalLoads: JsonObject[] = [];
+    const coreLoop = {
+      run: async (goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident" }) => {
+        coreLoopCalls.push({
+          goal_id: goalId,
+          max_iterations: options?.maxIterations ?? null,
+          run_policy: options?.runPolicy ?? null,
+        });
+        return { finalStatus: "completed", goalId, tokensUsed: 321, totalIterations: 2 };
+      },
+    };
+    const stateManager = activeSkip
+      ? {
+        loadGoal: async (goalId: string) => {
+          stateGoalLoads.push({ goal_id: goalId });
+          return { id: goalId, status: "active" };
+        },
+      } as unknown as StateManager
+      : undefined;
+    const engine = new ScheduleEngine({
+      baseDir: stateRoot.controlDbBase,
+      coreLoop,
+      ...(stateManager ? { stateManager } : {}),
+    });
+    const entry = await engine.addEntry(makeGoalTriggerScheduleInput({
+      goalId: activeSkip ? "goal-schedule-active" : "goal-schedule-dispatch",
+      maxIterations: 4,
+      skipIfActive: activeSkip,
+      suffix: activeSkip ? "active-skip" : "dispatch",
+    }));
+    engine.getEntries()[0]!.next_fire_at = dueAt;
+    await engine.saveEntries();
+    await engine.loadEntries();
+
+    const results = await engine.tick();
+    const history = await engine.getRecentHistory(10, entry.id);
+    const updatedEntry = engine.getEntries().find((candidate) => candidate.id === entry.id)!;
+    const firstResult = results[0] ?? null;
+    const assertions: JsonObject = {
+      core_loop_run_count: coreLoopCalls.length,
+      entry_total_executions: updatedEntry.total_executions,
+      first_history_goal_id: history[0]?.goal_id ?? null,
+      first_history_status: history[0]?.status ?? null,
+      first_result_goal_id: firstResult?.goal_id ?? null,
+      first_result_status: firstResult?.status ?? null,
+      history_count: history.length,
+      result_count: results.length,
+      state_load_goal_count: stateGoalLoads.length,
+      tokens_used_today: updatedEntry.tokens_used_today,
+    };
+    if (activeSkip) {
+      assertions["active_goal_skip"] = coreLoopCalls.length === 0
+        && firstResult?.status === "skipped"
+        && firstResult?.error_message === "goal goal-schedule-active is already active";
+      assertions["result_error_message"] = firstResult?.error_message ?? null;
+    } else {
+      assertions["bounded_goal_dispatch"] = coreLoopCalls[0]?.["goal_id"] === "goal-schedule-dispatch"
+        && coreLoopCalls[0]?.["max_iterations"] === 4
+        && coreLoopCalls[0]?.["run_policy"] === "bounded";
+      assertions["result_tokens_used"] = firstResult?.tokens_used ?? null;
+    }
+
+    return buildRealGoldenResult(fixture, stateRoot, {
+      kind: activeSkip ? "schedule_goal_trigger_active_skip" : "schedule_goal_trigger_dispatch",
+      exportedState: {
+        assertions,
+        core_loop_calls: coreLoopCalls,
+        history: history.map((record) => ({
+          goal_id: record.goal_id ?? null,
+          reason: record.reason,
+          scheduled_for: record.scheduled_for,
+          status: record.status,
+          tokens_used: record.tokens_used ?? null,
+        })),
+        state_goal_loads: stateGoalLoads,
+      },
+      assertions,
+    });
+  }
+
   if (fixture.contract_name === "schedule_wait_resume_before_due_no_attention_or_notification") {
     const notifications: JsonObject[] = [];
     const engine = new ScheduleEngine({
@@ -913,8 +1087,11 @@ async function runStateDaemonTrace(
     const snapshot = await new RuntimeSessionRegistry({ stateManager, isPidAlive: () => false }).snapshot();
     const run = snapshot.background_runs.find((candidate) => candidate.id === "run:process:proc-stale-ledger");
     const assertions: JsonObject = {
+      background_run_count_for_id: snapshot.background_runs.filter((candidate) => candidate.id === "run:process:proc-stale-ledger").length,
       dead_process_warning: snapshot.warnings.some((warning) => warning.code === "dead_process_sidecar"),
+      process_session_id: run?.process_session_id ?? null,
       projected_status: run?.status ?? null,
+      projected_title: run?.title ?? null,
       running_reported: run?.status === "running",
     };
     return buildRealGoldenResult(fixture, stateRoot, {
@@ -1612,8 +1789,8 @@ function runtimeControlIntentFor(contractName: string): Parameters<RuntimeContro
     case "runtime_control_resume_after_companion_revival_requires_readmission":
       return {
         kind: "resume_run",
-        reason: "resume revived run",
-        target: { runId: "run:coreloop:revived" },
+        reason: "resume current run after companion suspend was lifted",
+        target: { runId: "run:coreloop:current" },
       };
     case "runtime_control_cancel_after_revival_blocks_stale_run":
       return {
@@ -1650,10 +1827,11 @@ function runtimeOperationSummary(operation: Awaited<ReturnType<RuntimeOperationS
   };
 }
 
-function runtimeControlResultSummary(result: { success: boolean; message: string; operationId?: string; state?: string }): JsonObject {
+function runtimeControlResultSummary(result: { success: boolean; message: string; operationId?: string; state?: string; resumeOutcome?: string }): JsonObject {
   return {
     message: result.message,
     operation_id: result.operationId ? "<runtime-operation-id>" : null,
+    ...(result.resumeOutcome ? { resume_outcome: result.resumeOutcome } : {}),
     state: result.state ?? null,
     success: result.success,
   };
@@ -1690,9 +1868,9 @@ function backgroundRun(overrides: Partial<BackgroundRun>): BackgroundRun {
   };
 }
 
-function deliveryForApprovalTrace(contractName: string): () => ConversationalApprovalDelivery {
+function deliveryForApprovalTrace(contractName: string): (() => ConversationalApprovalDelivery) | undefined {
   if (contractName === "approval_delivery_unavailable_denies_not_executes") {
-    return () => ({ delivered: false, reason: "channel_unavailable" });
+    return undefined;
   }
   return () => ({ delivered: true });
 }
@@ -1754,6 +1932,26 @@ function makeWaitResumeScheduleInput(suffix: string): Parameters<ScheduleEngine[
       goal_id: "goal-wait-resume",
       max_iterations: 5,
       skip_if_active: false,
+    },
+  };
+}
+
+function makeGoalTriggerScheduleInput(input: {
+  goalId: string;
+  maxIterations: number;
+  skipIfActive: boolean;
+  suffix: string;
+}): Parameters<ScheduleEngine["addEntry"]>[0] {
+  return {
+    name: `goal-trigger-${input.suffix}`,
+    layer: "goal_trigger",
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+    enabled: true,
+    goal_trigger: {
+      goal_id: input.goalId,
+      max_iterations: input.maxIterations,
+      run_policy: "bounded",
+      skip_if_active: input.skipIfActive,
     },
   };
 }

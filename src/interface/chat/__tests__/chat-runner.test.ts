@@ -493,34 +493,6 @@ function makeTask(id: string, goalId: string, overrides: Partial<Task> = {}): Ta
 
 describe("ChatRunner", () => {
   describe("normal execution", () => {
-    it("keeps route-host dependencies limited to the default model/tool loop contracts", () => {
-      const runner = new ChatRunner(makeDeps({
-        llmClient: createSingleMockLLMClient("ok"),
-      }));
-      const routeHost = (runner as unknown as {
-        routeHost(): Record<string, unknown>;
-      }).routeHost();
-
-      expect(Object.keys(routeHost).sort()).toEqual([
-        "activatedTools",
-        "deps",
-        "eventBridge",
-        "getConversationSessionId",
-        "getNativeAgentLoopSessionId",
-        "getNativeAgentLoopStatePath",
-        "getPendingRunSpecConfirmation",
-        "getPendingSetupDialogue",
-        "getProviderConfigBaseDir",
-        "getSessionCwd",
-        "getSessionExecutionPolicy",
-        "getSetupSecretIntake",
-        "getTurnLanguageHint",
-        "setPendingRunSpecConfirmation",
-        "setPendingSetupDialogue",
-        "setSessionExecutionPolicy",
-      ]);
-    });
-
     it("redacts setup secrets through the production ingress entrypoint before persistence, events, and adapter prompts", async () => {
       const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
       const stateManager = makeMockStateManagerWithBaseDir();

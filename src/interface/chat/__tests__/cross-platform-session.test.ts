@@ -4798,20 +4798,21 @@ describe("CrossPlatformChatSessionManager", () => {
         ...CANNED_RESULT,
         output: "The daemon restart target is the resident daemon.",
       });
+      const llmClient = createMockLLMClient([
+        JSON.stringify({
+          intent: "restart_daemon",
+          reason: "PulSeed を再起動して",
+        }),
+        JSON.stringify({
+          decision: "side_question",
+          confidence: 0.93,
+          clarification: "Route the side question through normal chat.",
+        }),
+        "The daemon restart target is the resident daemon.",
+      ]);
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         adapter,
-        llmClient: createMockLLMClient([
-          JSON.stringify({
-            intent: "restart_daemon",
-            reason: "PulSeed を再起動して",
-          }),
-          JSON.stringify({
-            decision: "side_question",
-            confidence: 0.93,
-            clarification: "Route the side question through normal chat.",
-          }),
-          "The daemon restart target is the resident daemon.",
-        ]),
+        llmClient,
         runtimeControlService,
         approvalBroker,
       }));
@@ -4832,9 +4833,16 @@ describe("CrossPlatformChatSessionManager", () => {
         },
       });
       const deadline = Date.now() + 1000;
-      while (Date.now() < deadline && (await store.loadPending("approval-stale-button")) === null) {
+      while (
+        Date.now() < deadline
+        && ((await store.loadPending("approval-stale-button")) === null || llmClient.callCount < 1)
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      await expect(store.loadPending("approval-stale-button")).resolves.toMatchObject({
+        state: "pending",
+      });
+      expect(llmClient.callCount).toBeGreaterThanOrEqual(1);
 
       await expect(manager.processIncomingMessage({
         text: "Before deciding, which daemon will restart?",

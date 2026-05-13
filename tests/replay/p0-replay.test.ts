@@ -26,7 +26,10 @@ describe("P0 replay fixture catalog", () => {
       expect(fixture.input.allow_network).not.toBe(true);
       expect(fixture.input.allow_real_llm).not.toBe(true);
       expect(fixture.expected.audit.length).toBeGreaterThan(0);
-      expect(JSON.stringify(fixture.expected.audit)).toMatch(/blocked|restored|idempotent|reclaimed|pending_real_runner/);
+      expect(JSON.stringify(fixture.expected.audit)).toMatch(/blocked|restored|idempotent|reclaimed/);
+      expect(JSON.stringify(fixture)).not.toContain("pending_real_runner");
+      expect(fixture.expected.fresh_state.runner).toMatchObject({ status: "real_production_path" });
+      expect(fixture.expected.restarted_state.runner).toMatchObject({ status: "real_production_path" });
     }
   });
 });
@@ -36,7 +39,7 @@ describe.each(fixtures)("P0 replay fixture: $contract_name", (fixture) => {
     const result = await runReplayFixture(fixture);
     assertReplayResult(fixture, result);
     const runner = result.fresh_state.runner as { status?: string } | undefined;
-    expect(["real_production_path", "pending_real_runner"]).toContain(runner?.status);
+    expect(runner?.status).toBe("real_production_path");
     expect(result.fresh_state).toEqual(result.restarted_state);
   });
 });

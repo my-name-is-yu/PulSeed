@@ -159,28 +159,6 @@ describe("RuntimeSessionRegistry", () => {
     });
   });
 
-  it("does not report a running process sidecar with a dead pid as running", async () => {
-    await stateManager.writeRaw("runtime/process-sessions/proc-dead.json", makeProcessSnapshot({
-      session_id: "proc-dead",
-      pid: 999_999,
-      running: true,
-    }));
-
-    const snapshot = await new RuntimeSessionRegistry({
-      stateManager,
-      isPidAlive: () => false,
-    }).snapshot();
-
-    expect(snapshot.background_runs).toContainEqual(expect.objectContaining({
-      id: "run:process:proc-dead",
-      status: "lost",
-      process_session_id: "proc-dead",
-    }));
-    expect(snapshot.warnings).toContainEqual(expect.objectContaining({
-      code: "dead_process_sidecar",
-    }));
-  });
-
   it("keeps a running process sidecar active when the default pid probe reports EPERM", async () => {
     await stateManager.writeRaw("runtime/process-sessions/proc-eperm.json", makeProcessSnapshot({
       session_id: "proc-eperm",
@@ -422,46 +400,6 @@ describe("RuntimeSessionRegistry", () => {
       reply_target_source: "none",
     });
     expect(snapshot.background_runs.filter((candidate) => candidate.id === "run:process:proc-ledger")).toHaveLength(1);
-  });
-
-  it("does not let a stale running ledger record hide a dead process sidecar", async () => {
-    await stateManager.writeRaw("runtime/process-sessions/proc-stale-ledger.json", makeProcessSnapshot({
-      session_id: "proc-stale-ledger",
-      running: true,
-      pid: 999_999,
-      label: "stale ledger process",
-    }));
-
-    const ledger = new BackgroundRunLedger(path.join(tmpDir, "runtime"));
-    await ledger.ensureReady();
-    await ledger.create({
-      id: "run:process:proc-stale-ledger",
-      kind: "process_run",
-      notify_policy: "silent",
-      reply_target_source: "none",
-      process_session_id: "proc-stale-ledger",
-      title: "durable running process",
-      workspace: "/repo",
-      created_at: "2026-04-25T00:00:00.000Z",
-      started_at: "2026-04-25T00:00:00.000Z",
-      status: "running",
-    });
-
-    const snapshot = await new RuntimeSessionRegistry({
-      stateManager,
-      isPidAlive: () => false,
-    }).snapshot();
-    const run = snapshot.background_runs.find((candidate) => candidate.id === "run:process:proc-stale-ledger");
-
-    expect(run).toMatchObject({
-      id: "run:process:proc-stale-ledger",
-      status: "lost",
-      title: "durable running process",
-      process_session_id: "proc-stale-ledger",
-    });
-    expect(snapshot.warnings).toContainEqual(expect.objectContaining({
-      code: "dead_process_sidecar",
-    }));
   });
 
   it("projects active supervisor workers from the control database", async () => {

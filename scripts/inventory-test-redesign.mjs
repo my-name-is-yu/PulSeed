@@ -40,6 +40,40 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway ingress -> ChatRunner -> ChatEvent stream",
     stateArtifact: "chat session transcript, visible surface events",
+    deletedBlocks: [
+      {
+        block: "routeHost private key inventory",
+        oldLineRange: "496-522",
+        classification: "delete_obsolete",
+        replacementContract: "P0 gateway traces and surviving ChatRunner caller-path tests exercise the route host through public ChatRunner entrypoints",
+        productionEntrypoint: "ChatRunner.execute()/executeIngressMessage() -> gateway/default model loop",
+        artifactAssertion: "golden: ordinary gateway chat, runtime status, final/progress ordering, and unavailable-tool traces; unit: setup redaction and direct model-loop results use public ChatRunner entrypoints instead of routeHost()",
+        evidence: "Deleted a private method key-list test that froze current class wiring rather than a user-visible ChatRunner contract.",
+      },
+    ],
+    rewrittenBlocks: [
+      {
+        block: "slash command grammar, usage/status/task/config/session surfaces",
+        oldLineRange: "1092-3478",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner command entrypoint tests",
+        evidence: "Kept as exact protocol/parser and durable state projection coverage; these commands are user-visible and intentionally deterministic.",
+      },
+      {
+        block: "setup secret intake, direct model-loop, event ordering, and chat session persistence",
+        oldLineRange: "524-1088, 3499-3740",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner execute/ingress tests",
+        evidence: "Kept because the tests exercise public ChatRunner entrypoints, redaction before persistence, model-loop lifecycle events, and durable session writes.",
+      },
+      {
+        block: "native agent-loop routing, structured interrupt intent, gateway/direct-loop boundaries, and RunSpec tool handoff",
+        oldLineRange: "3755-5595",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: AgentLoop and routed ingress caller-path tests",
+        evidence: "Kept because these blocks protect typed routing/interrupt contracts without keyword fallback and preserve ChatRunner as the turn execution engine.",
+      },
+    ],
   },
   {
     oldPath: "src/interface/chat/__tests__/chat-runner-tools.test.ts",
@@ -48,6 +82,17 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway ingress -> ChatRunner -> readonly workspace tool boundary",
     stateArtifact: "tool request/result envelope, chat event stream",
+    deletedBlocks: [
+      {
+        block: "onToolStart/onToolEnd callback call-count, duration, fallback-summary, and optional-callback minutiae",
+        oldLineRange: "143-161, 309-390, 422-526",
+        classification: "delete_now",
+        replacementContract: "src/interface/chat/__tests__/chat-runner-tools.test.ts: production tool caller path keeps ToolExecutor routing, capability verification, typed activity events, and model-visible tool schema",
+        productionEntrypoint: "ChatRunner.execute() -> model tool loop -> ToolExecutor/ChatEvent stream",
+        artifactAssertion: "unit: ToolExecutor path is used instead of raw tool.call, capability verification/audit stores are passed through, typed tool_start/tool_update/tool_end events include activityCategory, and paraphrased English/Japanese requests see the same typed tool schema",
+        evidence: "Removed mock-heavy callback minutiae in favor of the surviving event-stream and ToolExecutor caller-path contracts.",
+      },
+    ],
   },
   {
     oldPath: "src/interface/chat/__tests__/setup-secret-intake.test.ts",
@@ -76,6 +121,29 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
     stateArtifact: "reply target state, run spec draft state, approval origin state",
+    rewrittenBlocks: [
+      {
+        block: "default gateway model-loop, multilingual ordinary chat, tool schema, and no-preamble latency behavior",
+        oldLineRange: "214-1031, 1543-1805, 2129-2321",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: public processIncomingMessage gateway caller-path tests",
+        evidence: "Kept because these tests exercise the real gateway caller path, preserve first-visible/final ordering, and guard against keyword/simple-lane regressions for ordinary multilingual chat.",
+      },
+      {
+        block: "gateway approval, scoped write tools, runtime-control denial/admission, and stale target rejection",
+        oldLineRange: "1032-1491, 2749-3578, 3672-5039",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: approval/runtime-control gateway caller-path tests",
+        evidence: "Kept because these are P0 safety caller-path tests for approval bypass, stale target reuse, tool mutation ordering, and runtime-control admission over typed origins.",
+      },
+      {
+        block: "RunSpec draft/epoch, reply target persistence, routed goal metadata, and companion target override behavior",
+        oldLineRange: "1806-2128, 2322-2748, 5043-5518",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: durable gateway session/reply-target contracts",
+        evidence: "Kept because these tests cover durable reply target state, same-turn RunSpec start rejection, stale confirmation rejection, current gateway turn selection, and companion routing through production ingress.",
+      },
+    ],
   },
   {
     oldPath: "src/runtime/control/__tests__/runtime-control-service.test.ts",
@@ -109,7 +177,7 @@ const p0TraceMappings = [
         oldLineRange: "2133-2177",
         classification: "delete_now",
         replacementTrace: "runtime_control_resume_after_companion_revival_requires_readmission",
-        evidence: "Trace asserts the post-revival run remains blocked until readmission and records the blocked operation without executor dispatch.",
+        evidence: "Trace now executes suspend_companion -> resume_companion -> resume_run through RuntimeControlService, asserts resume_rejected_safety/readmission, and records the blocked operation without executor dispatch.",
       },
       {
         block: "records approval-gated finalize proposals without executing external actions",
@@ -123,6 +191,8 @@ const p0TraceMappings = [
   {
     oldPath: "src/runtime/__tests__/schedule-engine.test.ts",
     traces: [
+      "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+      "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
       "schedule_wait_resume_before_due_no_attention_or_notification",
       "schedule_wait_resume_due_creates_held_attention_artifact",
       "schedule_wait_resume_retry_same_due_idempotent",
@@ -154,10 +224,17 @@ const p0TraceMappings = [
       },
       {
         block: "Direct executeGoalTrigger private-method assertions",
-        oldLineRange: "2480-2607",
-        classification: "obsolete",
-        replacementTrace: null,
-        evidence: "Deleted direct `(eng as any).executeGoalTrigger` tests that followed CoreLoop call arguments and budget internals rather than a production goal-trigger schedule artifact.",
+        oldLineRange: "2467-2497, 2813-2840",
+        classification: "delete_now",
+        replacementTrace: "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+        evidence: "Deleted direct `(eng as any).executeGoalTrigger` tests after the public tick runner began asserting bounded goal dispatch, persisted history, execution counters, and tokens through `ScheduleEngine.tick()`.",
+      },
+      {
+        block: "Goal-trigger active-goal skip branch",
+        oldLineRange: "historical direct goal-trigger skip assertions",
+        classification: "delete_now",
+        replacementTrace: "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+        evidence: "Recovered the active-goal skip branch through a public `ScheduleEngine.tick()` trace that loads the goal state, records skipped history, and proves coreLoop was not invoked.",
       },
       {
         block: "routes wait-resume schedule wakes through attention re-evaluation without notification",
@@ -245,16 +322,22 @@ const p0TraceMappings = [
       {
         block: "rejects unsafe envelope timestamps before writing the journal",
         oldLineRange: "47-57",
-        classification: "obsolete",
+        classification: "delete_now",
         replacementTrace: null,
-        evidence: "Deleted as legacy journal JSON import/file-shape behavior outside the normal Control DB queue path; no supported public migration boundary depends on this direct journal file mutation.",
+        replacementContract: "src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars",
+        productionEntrypoint: "importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records",
+        artifactAssertion: "control DB `runtime_queue_records` contains only the safe message id; unsafe timestamp record is absent; legacy import records `imported_records=1`",
+        evidence: "2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects an unsafe envelope timestamp while importing the valid queued command.",
       },
       {
         block: "skips persisted queue records with unsafe envelope scalars",
         oldLineRange: "58-87",
-        classification: "obsolete",
+        classification: "delete_now",
         replacementTrace: null,
-        evidence: "Deleted as legacy persisted journal scalar-shape coverage; normal queue safety is now enforced through typed queue/control DB boundaries rather than direct JSON salvage tests.",
+        replacementContract: "src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars",
+        productionEntrypoint: "importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records",
+        artifactAssertion: "control DB `runtime_queue_records` contains only the safe message id; unsafe inflight lease scalar is absent; imported queue has no inflight records",
+        evidence: "2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects unsafe persisted lease scalars without dropping the valid pending command.",
       },
       {
         block: "rejects duplicate dedupe_key while the original item is inflight",
@@ -278,6 +361,50 @@ const p0TraceMappings = [
         evidence: "Deleted as obsolete legacy `.lock` compatibility behavior; current queue ownership is Control DB-backed and this lock-directory salvage path is not a supported public contract.",
       },
     ],
+    rewrittenBlocks: [
+      {
+        block: "accepts, claims, renews, and acks with durable state",
+        oldLineRange: "21-45",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: accepts, claims, renews, and acks with durable state",
+        evidence: "Kept as the small queue primitive contract for durable accepted-to-completed state; eventserver traces cover enqueue/claim but not the direct ack/completed queue primitive.",
+      },
+      {
+        block: "finite fractional lease deadline persistence",
+        oldLineRange: "47-60",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: persists finite fractional lease deadlines used by retry backoff",
+        evidence: "Kept because LoopSupervisor retry backoff computes fractional durations and calls `JournalBackedQueue.renew`; this is typed finite-number queue contract, not a mock scalar fixture.",
+      },
+      {
+        block: "pending dedupe replacement and dedupe reuse after completion",
+        oldLineRange: "62-132",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: replaces older pending entries that share the same dedupe_key; allows a dedupe_key to be accepted again after completion",
+        evidence: "Kept as queue-level dedupe semantics not covered by the inflight duplicate golden trace, which only covers rejecting a replacement while the original item is inflight.",
+      },
+      {
+        block: "nack/deadletter/requeue primitives",
+        oldLineRange: "134-162",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: nacks back to pending and deadletters after max attempts; requeues deadlettered items back to pending",
+        evidence: "Kept as direct queue primitive state transitions used by dispatchers and supervisors; current replay coverage covers expired-claim reclaim, not explicit deadletter requeue.",
+      },
+      {
+        block: "read APIs reflect writes from another queue instance",
+        oldLineRange: "187-200",
+        classification: "move_or_rewrite_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: reloads under lock so two instances sharing a journal path do not clobber each other",
+        evidence: "Collapsed into the stronger multi-instance lock/reload test, which now asserts a second queue instance write is visible through the first instance before both claims are completed.",
+      },
+      {
+        block: "filtered claim leaves unmatched pending entries",
+        oldLineRange: "202-218",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/queue/__tests__/journal-backed-queue.test.ts: claims the first dispatcher-matching item without disturbing earlier unmatched entries",
+        evidence: "Kept because EventDispatcher and LoopSupervisor use production claim filters to separate normal events from `goal_activated`; deleting it would thin queue duplicate/lost-command safety.",
+      },
+    ],
   },
   {
     oldPath: "src/runtime/store/__tests__/attention-state-store.test.ts",
@@ -296,6 +423,59 @@ const p0TraceMappings = [
         replacementTrace: "state_attention_schema_ahead_fail_closed",
         evidence: "Golden and replay traces now seed the real control DB path and assert fail_closed=true plus message_contains_newer_schema=true for fresh and restarted states.",
       },
+      {
+        block: "loads representative old agenda rows as regrounding-only state before admission",
+        oldLineRange: "925-999",
+        classification: "move_or_rewrite_unit",
+        replacementContract: "tests/regression/companion-autonomy-contracts.test.ts: defaults legacy agenda-shaped records to regrounding-only state before admission",
+        artifactAssertion: "contract: missing agenda scope/policy/regrounding fields default to unknown + needsRegrounding=true, decomposition status=needs_regrounding, and admission candidates=[]",
+        productionEntrypoint: "AgentAgendaItemSchema.parse -> decomposeAgenda -> buildAttentionAdmissionCandidates",
+        evidence: "Removed raw legacy DB-row insertion from the store test and kept the meaningful schema/admission contract as a focused autonomy regression.",
+      },
+    ],
+    rewrittenBlocks: [
+      {
+        block: "control DB attention-table migration inventory",
+        oldLineRange: "184-232",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: migrates the control DB to durable attention state tables",
+        evidence: "Kept because it is the durable DB schema inventory for attention state; the schema-ahead P0 trace proves fail-closed startup but not the table set.",
+      },
+      {
+        block: "full attention cycle restart rehydration",
+        oldLineRange: "234-309",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: persists the full attention cycle and rehydrates inspectable agenda after restart",
+        evidence: "Kept as mock-free store contract for attention inputs, signal contexts, urge candidates, agenda, inhibition/gate/outcome/expression decisions, and runtime item projection after reopening the control DB.",
+      },
+      {
+        block: "legacy/current projection merge during partial rollout",
+        oldLineRange: "311-393",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts: merges legacy agenda rows for scopes that do not have current projections",
+        evidence: "Kept because normal attention reads still merge saveCycle-backed agenda with current projection state; it guards against duplicate or lost agenda items across the current/legacy DB table boundary.",
+      },
+      {
+        block: "attention input replay dedupe and duplicate-derived cycle suppression",
+        oldLineRange: "395-633",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts replay-key dedupe tests",
+        evidence: "Kept because it protects replay safety: duplicate schedule/resident/gateway inputs must not create duplicate derived agenda/outcome/expression rows, while mixed batches still persist accepted fresh inputs.",
+      },
+      {
+        block: "malformed durable rows fail closed",
+        oldLineRange: "635-708",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts corrupt row and strict current-agenda tests",
+        evidence: "Kept because the default reader drops corrupt legacy rows and the strict reader raises an explicit current-agenda row path; this is state-artifact fail-closed behavior not covered by observation traces.",
+      },
+      {
+        block: "stale, suppressed, current projection, and admitted-history mutations",
+        oldLineRange: "710-923",
+        classification: "keep_unit",
+        replacementUnit: "src/runtime/store/__tests__/attention-state-store.test.ts control and invalidation mutation tests",
+        evidence: "Kept because it covers operator-visible attention controls over durable store state: stale refs disappear from default agenda, suppression remains inspectable, current projections are updated, and admitted history is not retroactively suppressed.",
+      },
     ],
   },
   {
@@ -307,6 +487,17 @@ const p0TraceMappings = [
     ],
     boundary: "daemon startup/snapshot -> runtime root/session registry -> visible progress surface",
     stateArtifact: "daemon snapshot, session registry snapshot, progress/final events",
+    deletedBlocks: [
+      {
+        block: "DaemonRunner.generateCronEntry static delegation assertion",
+        oldLineRange: "2867-2870",
+        classification: "move_or_rewrite_unit",
+        replacementContract: "src/runtime/daemon/__tests__/signals.test.ts: generateCronEntry pure cadence and goal-id contract",
+        productionEntrypoint: "generateCronEntry() pure daemon scheduling protocol",
+        artifactAssertion: "unit: minute/hour/day cadence strings, <=0 defaulting, and unsafe goal-id rejection",
+        evidence: "Moved the pure cron formatting contract out of the broad DaemonRunner integration file and into the daemon signals unit where the helper lives.",
+      },
+    ],
   },
   {
     oldPath: "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
@@ -316,6 +507,22 @@ const p0TraceMappings = [
     ],
     boundary: "resident runtime discovery -> session registry snapshot",
     stateArtifact: "session registry snapshot, capability snapshot",
+    deletedBlocks: [
+      {
+        block: "does not report a running process sidecar with a dead pid as running",
+        oldLineRange: "162-182",
+        classification: "delete_now",
+        replacementTrace: "session_registry_dead_process_not_running",
+        evidence: "Trace asserts a dead process sidecar is projected as lost, `running_reported=false`, and emits the dead_process_sidecar warning through RuntimeSessionRegistry.snapshot().",
+      },
+      {
+        block: "does not let a stale running ledger record hide a dead process sidecar",
+        oldLineRange: "427-465",
+        classification: "delete_now",
+        replacementTrace: "session_registry_dead_process_not_running",
+        evidence: "Trace now asserts the stale ledger run is not duplicated, keeps the durable title/process_session_id, is projected lost, and emits the dead_process_sidecar warning.",
+      },
+    ],
   },
   {
     oldPath: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
@@ -340,11 +547,48 @@ const p0TraceMappings = [
         evidence: "Trace asserts approval_request_count=0 and read_success=true for a readonly workspace path under protected self-protection.",
       },
       {
+        block: "direct ReadTool.call relative path resolution",
+        oldLineRange: "73-77",
+        classification: "delete_now",
+        replacementTrace: "tool_readonly_fs_no_write_approval_under_workspace",
+        evidence: "2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace executes `ToolExecutor.execute(\"read\", { file_path: \"notes.txt\" })` with `cwd=stateRoot.workspaceRoot` and asserts read_success=true through the production tool catalog path.",
+      },
+      {
+        block: "direct checkPermissions allows normal files",
+        oldLineRange: "138-141",
+        classification: "delete_now",
+        replacementTrace: "tool_readonly_fs_no_write_approval_under_workspace",
+        evidence: "2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace asserts approval_request_count=0 and read_success=true for a normal workspace file through ToolExecutor and ToolPermissionManager.",
+      },
+      {
         block: "isConcurrencySafe returns true",
         oldLineRange: "175-177",
         classification: "obsolete",
         replacementTrace: null,
         evidence: "Deleted static metadata assertion; no scheduler/tool-registry concurrency contract is being asserted here.",
+      },
+    ],
+    rewrittenBlocks: [
+      {
+        block: "line-number, limit, offset, and summary assertions",
+        oldLineRange: "35-61, 88-92",
+        classification: "move_or_rewrite_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: reads bounded line windows with stable line numbers and summaries",
+        evidence: "Collapsed overlapping implementation-following examples into one focused unit that preserves the public line-window contract: exact selected rows, stable line numbers, filename, and line range summary.",
+      },
+      {
+        block: "empty EOF window assertion",
+        oldLineRange: "63-71",
+        classification: "keep_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: returns an empty window when offset is beyond EOF",
+        evidence: "Kept as a focused regression for the zero-line summary contract because it guards against negative range output and is not covered by the readonly golden trace.",
+      },
+      {
+        block: "sensitive and outside-cwd read approval assertions",
+        oldLineRange: "128-136, 143-149",
+        classification: "keep_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: checkPermissions requires approval for protected read %o",
+        evidence: "Collapsed into a parameterized permission-boundary unit because the golden trace only proves normal workspace reads do not request approval; it does not prove protected read denial.",
       },
     ],
   },
@@ -353,37 +597,45 @@ const p0TraceMappings = [
     traces: [
       "tool_write_local_records_approval_artifact_before_mutation",
     ],
-    boundary: "tool approval gate -> local write mutation",
-    stateArtifact: "approval artifact, mutation artifact",
+    boundary: "ToolExecutor.execute(file_write) -> permission wait-plan -> FileWriteTool.call",
+    stateArtifact: "permission wait-plan state, ordered approval/tool-call events, mutation artifact",
     fileDeletionAllowed: true,
     deletedBlocks: [
       {
         block: "mocked writes, directory creation, path resolution, byte count, and write-error handling",
         oldLineRange: "32-64, 95-112",
         classification: "delete_now",
-        replacementTrace: "tool_write_local_records_approval_artifact_before_mutation",
-        evidence: "Trace asserts approved_write_success=true, mutation_artifact_count=1, and approval_before_mutation=true through the production tool approval/mutation path.",
+        replacementContract: "tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation",
+        artifactAssertion: "contract: approval_requested < approval_callback < tool_call_started < write_artifact_recorded; approved file content exists; wait-plan states are resumed and denied",
+        productionEntrypoint: "ToolExecutor.execute(\"file_write\") -> PermissionWaitPlanStore -> real FileWriteTool.call",
+        evidence: "Contract asserts ordered approval/wait-plan events before the real FileWriteTool call and verifies the approved file content plus mutation artifact.",
       },
       {
         block: "path traversal, sensitive file, and node_modules denial duplicates",
         oldLineRange: "65-93",
-        classification: "obsolete",
-        replacementTrace: null,
-        evidence: "Deleted duplicated FileWrite-level validation tests; validation remains owned by shared file-validation/tool-boundary coverage rather than a mocked write-file unit.",
+        classification: "delete_now",
+        replacementContract: "tests/contracts/tool-file-write-boundary.test.ts: blocks unsafe file_write paths at the ToolExecutor/FileWriteTool boundary even when pre-approved",
+        artifactAssertion: "contract: traversal, .env, credentials, and node_modules writes return success=false, artifact_count=0, approval_request_count=0, and no target file exists",
+        productionEntrypoint: "ToolExecutor.execute(\"file_write\") with preApproved=true -> real FileWriteTool.call -> validateFilePath",
+        evidence: "Contract executes real file_write calls under the production ToolExecutor and proves validation blocks unsafe paths without artifacts or filesystem mutation even when approval is already granted.",
       },
       {
         block: "checkPermissions denies without preApproved and allows with preApproved",
         oldLineRange: "115-128",
         classification: "delete_now",
-        replacementTrace: "tool_write_local_records_approval_artifact_before_mutation",
-        evidence: "Trace asserts denied_execution_status=not_executed, denied_mutation_exists=false, approved_write_success=true, and wait_plan_count=0 at the approval gate.",
+        replacementContract: "tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation",
+        artifactAssertion: "contract: denied approval returns not_executed/approval_denied with no tool_call_started and no denied file; pre-approved unsafe calls do not invoke approvalFn",
+        productionEntrypoint: "ToolExecutor.execute(\"file_write\") -> FileWriteTool.checkPermissions -> PermissionWaitPlanStore -> real FileWriteTool.call",
+        evidence: "Contract proves the public approval boundary: unapproved writes require approval before the tool call, denied approval does not mutate, and pre-approved unsafe calls still fail closed at validation.",
       },
       {
         block: "isConcurrencySafe and metadata permissionLevel/name",
         oldLineRange: "131-138",
-        classification: "obsolete",
-        replacementTrace: null,
-        evidence: "Deleted static implementation metadata assertions; no public registry contract requires this mocked file.",
+        classification: "delete_obsolete",
+        replacementContract: "tests/contracts/tool-file-write-boundary.test.ts: records approval wait-plan ordering before file mutation and blocks denied mutation",
+        artifactAssertion: "contract: ToolRegistry resolves the real file_write name, ToolExecutor treats the real tool as write_local approval-gated, and static metadata literals are not a separate public contract",
+        productionEntrypoint: "ToolRegistry.register(real FileWriteTool) -> ToolExecutor.execute(\"file_write\")",
+        evidence: "Deleted static implementation metadata assertions because the public contract is the executable registry/tool boundary, not direct field mirroring.",
       },
     ],
   },
@@ -414,6 +666,8 @@ const allP0Traces = [
   "runtime_control_finalize_records_proposal_without_external_action",
   "eventserver_command_accept_durable_before_200",
   "eventserver_approval_unknown_request_rejected_before_accept",
+  "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+  "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
   "schedule_wait_resume_before_due_no_attention_or_notification",
   "schedule_wait_resume_due_creates_held_attention_artifact",
   "schedule_wait_resume_retry_same_due_idempotent",
@@ -435,11 +689,11 @@ const allP0Traces = [
 const sameCheckoutEvidenceByOldPath = new Map([
   [
     "src/interface/chat/__tests__/chat-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts src/interface/chat/__tests__/chat-runner-tools.test.ts src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts --config vitest.unit.config.ts` passed 5 files / 184 tests.",
+    "2026-05-13 final-scope chat-runner cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner.test.ts --config vitest.unit.config.ts` passed 1 file / 139 tests.",
   ],
   [
     "src/interface/chat/__tests__/chat-runner-tools.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the mapped unit batch passed 5 files / 184 tests.",
+    "2026-05-13 final-scope chat tools cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/chat-runner-tools.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests.",
   ],
   [
     "src/interface/chat/__tests__/setup-secret-intake.test.ts",
@@ -447,7 +701,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/interface/chat/__tests__/cross-platform-session.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
+    "2026-05-13 final-scope cross-platform classification: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
   ],
   [
     "src/runtime/control/__tests__/runtime-control-service.test.ts",
@@ -455,7 +709,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/__tests__/schedule-engine.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/approval-broker.test.ts src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 2 files / 105 tests.",
+    "2026-05-13 final-scope schedule recovery: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/schedule-engine.test.ts --config vitest.integration.config.ts` passed 1 file / 92 tests.",
   ],
   [
     "src/runtime/__tests__/approval-broker.test.ts",
@@ -463,27 +717,27 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/queue/__tests__/journal-backed-queue.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.",
+    "2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests, and `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. Pre-rewrite queue unit passed 1 file / 9 tests.",
   ],
   [
     "src/runtime/store/__tests__/attention-state-store.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.",
+    "2026-05-13 final-scope post-rewrite: `npx vitest run src/runtime/store/__tests__/attention-state-store.test.ts tests/regression/companion-autonomy-contracts.test.ts --config vitest.unit.config.ts` passed 2 files / 23 tests. Pre-rewrite attention store unit passed 1 file / 13 tests.",
   ],
   [
     "src/runtime/__tests__/daemon-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
+    "2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.",
   ],
   [
     "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
+    "2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.",
   ],
   [
     "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts --config vitest.unit.config.ts` passed 2 files / 14 tests.",
+    "2026-05-13 final-scope post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/__tests__/read-only-fs-tool-input-schema-contract.test.ts src/tools/fs/FileValidationTool/__tests__/FileValidationTool.test.ts --config vitest.unit.config.ts` passed 3 files / 29 tests.",
   ],
   [
     "src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the surviving tool/setup unit command passed 2 files / 14 tests after deleting this mocked file.",
+    "2026-05-13 final-scope evidence recovery: `npx vitest run tests/contracts/tool-file-write-boundary.test.ts --config vitest.contracts.config.ts` passed 1 file / 2 tests. Earlier post-delete evidence: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and the surviving tool/setup unit command passed 2 files / 14 tests after deleting this mocked file.",
   ],
 ]);
 
@@ -708,7 +962,7 @@ function renderReplacementMap(summary) {
     "",
     `Generated: ${summary.generated_at}`,
     "",
-    "Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.",
+    "Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.",
     "",
     "## P0 Trace Coverage",
     "",
@@ -733,14 +987,33 @@ function renderReplacementMap(summary) {
         lines.push(`  - Block: ${deletion.block}`);
         if (deletion.oldLineRange) lines.push(`    - Old line range: ${deletion.oldLineRange}`);
         if (deletion.classification) lines.push(`    - Classification: ${deletion.classification}`);
-        lines.push(`    - Replacement trace: ${deletion.replacementTrace ?? "none"}`);
         if (deletion.replacementTrace) {
+          lines.push(`    - Replacement trace: ${deletion.replacementTrace}`);
+        } else if (deletion.replacementContract) {
+          lines.push(`    - Replacement contract: ${deletion.replacementContract}`);
+        } else {
+          lines.push("    - Replacement trace: none");
+        }
+        if (deletion.replacementTrace) {
+          lines.push(`    - Exported state artifact/assertion: ${deletionGate.artifactAssertion}`);
+          lines.push(`    - Production entrypoint exercised: ${deletionGate.entrypoint}`);
+        } else if (deletion.replacementContract) {
           lines.push(`    - Exported state artifact/assertion: ${deletionGate.artifactAssertion}`);
           lines.push(`    - Production entrypoint exercised: ${deletionGate.entrypoint}`);
         }
         lines.push(`    - Deletion allowed: ${deletionGate.allowed ? "yes" : "no"}`);
         if (!deletionGate.allowed) lines.push(`    - No reason: ${deletionGate.reason}`);
         lines.push(`    - Evidence: ${deletion.evidence}`);
+      }
+    }
+    if (mapping.rewrittenBlocks?.length > 0) {
+      lines.push("- Retained or rewritten old-test blocks:");
+      for (const retained of mapping.rewrittenBlocks) {
+        lines.push(`  - Block: ${retained.block}`);
+        if (retained.oldLineRange) lines.push(`    - Old line range: ${retained.oldLineRange}`);
+        lines.push(`    - Classification: ${retained.classification}`);
+        lines.push(`    - Current contract: ${retained.replacementUnit}`);
+        lines.push(`    - Evidence: ${retained.evidence}`);
       }
     }
     lines.push("- Replacement evidence:");
@@ -795,6 +1068,14 @@ function deletionGateForBlock(mapping) {
 }
 
 function deletionGateForDeletedBlock(deletion) {
+  if (deletion.replacementContract) {
+    return {
+      allowed: true,
+      reason: "replacement contract exercises the production boundary",
+      artifactAssertion: deletion.artifactAssertion,
+      entrypoint: deletion.productionEntrypoint,
+    };
+  }
   if (!deletion.replacementTrace) {
     return {
       allowed: false,

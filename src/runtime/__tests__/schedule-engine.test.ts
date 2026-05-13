@@ -2464,38 +2464,6 @@ describe("Cron execution — output_format both and report (Phase 3)", () => {
   });
 });
 
-describe("GoalTrigger execution — token accumulation (Phase 3)", () => {
-  it("executeGoalTrigger accumulates tokens from coreLoop result — defaults to 0 (TODO Phase 4)", async () => {
-    // LoopResult does not currently expose token usage. tokensUsed defaults to 0.
-    // When CoreLoop adds a tokensUsed field this test should be updated.
-    const mockCoreLoop = {
-      run: vi.fn().mockResolvedValue({
-        finalStatus: "completed",
-        totalIterations: 3,
-        goalId: "test-goal-id",
-        iterations: [],
-        startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-      }),
-    };
-
-    const eng = new ScheduleEngine({
-      baseDir: tempDir,
-      coreLoop: mockCoreLoop,
-    });
-
-    const entry = await eng.addEntry(makeGoalTriggerEntry({
-      goal_trigger: { goal_id: "test-goal-id", max_iterations: 3, skip_if_active: false },
-    }));
-    const result = await (eng as any).executeGoalTrigger(entry);
-
-    expect(result.status).toBe("ok");
-    // tokens_used is 0 until LoopResult exposes token usage (Phase 4 TODO)
-    expect(result.tokens_used).toBe(0);
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("test-goal-id", { maxIterations: 3, runPolicy: "bounded" });
-  });
-});
-
 // ─── Phase 4: Rolling-window escalation tests ───
 
 describe("Rolling-window escalation (Phase 4)", () => {
@@ -2807,35 +2775,6 @@ describe("ReportingEngine integration (Phase 4)", () => {
     // Should not throw — graceful degradation
     expect(result.status).toBe("ok");
     expect(result.output_summary).toBe("output");
-  });
-});
-
-// ─── Phase 4: GoalTrigger token tracking ───
-
-describe("GoalTrigger token tracking (Phase 4)", () => {
-  it("executeGoalTrigger records tokensUsed from CoreLoop result when provided", async () => {
-    const mockCoreLoop = {
-      run: vi.fn().mockResolvedValue({
-        finalStatus: "completed",
-        totalIterations: 2,
-        goalId: "goal-abc",
-        tokensUsed: 1500,
-      }),
-    };
-
-    const eng = new ScheduleEngine({
-      baseDir: tempDir,
-      coreLoop: mockCoreLoop,
-    });
-
-    const entry = await eng.addEntry(makeGoalTriggerEntry({
-      goal_trigger: { goal_id: "goal-abc", max_iterations: 5, skip_if_active: false },
-    }));
-    const result = await (eng as any).executeGoalTrigger(entry);
-
-    expect(result.status).toBe("ok");
-    expect(result.tokens_used).toBe(1500);
-    expect(mockCoreLoop.run).toHaveBeenCalledWith("goal-abc", { maxIterations: 5, runPolicy: "bounded" });
   });
 });
 

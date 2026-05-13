@@ -3072,7 +3072,15 @@
               "request_result": null,
               "resolved": false,
               "resolved_state": null,
-              "stale_reply_rejected": true
+              "stale_reply_rejected": true,
+              "all_origin_mismatches_rejected": true,
+              "origin_mismatch_fields": [
+                "channel",
+                "conversation_id",
+                "user_id",
+                "session_id",
+                "turn_id"
+              ]
             },
             "disposition": "ok",
             "kind": "approval_broker_scope_gate",
@@ -3089,8 +3097,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_origin_bound_stale_reply_rejected.json",
-          "sha256": "5583744e2330861e5e1cf983e9bc00c76f61b36170c072e1b1b6f4935d95f26e",
-          "size": 2963,
+          "sha256": "2c58be2cc433de10739ae86a0a5463906cfb1fcbf6f608ab84a11da692cc346c",
+          "size": 3560,
           "type": "file"
         }
       ],
@@ -3513,10 +3521,13 @@
             "assertions": {
               "mutation_executed": false,
               "pending_after_resolution": false,
-              "request_result": null,
+              "request_result": false,
               "resolved": false,
               "resolved_state": "denied",
-              "stale_reply_rejected": null
+              "stale_reply_rejected": null,
+              "delivery_callback_configured": false,
+              "delivery_unavailable_denied": true,
+              "resolution_reason": "approval_channel_unreachable"
             },
             "disposition": "ok",
             "kind": "approval_broker_scope_gate",
@@ -3533,8 +3544,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_delivery_unavailable_denies_not_executes.json",
-          "sha256": "bde140949cf7fa6de4b2f9038f22a7cab3f8604fff83fd877ce006c7d660487c",
-          "size": 3398,
+          "sha256": "1922e890f983ee3c37bd0690d2acbffaded03acf9452f8359bab1342feaa7804",
+          "size": 3555,
           "type": "file"
         }
       ],
@@ -4406,13 +4417,17 @@
         "records": [
           {
             "assertions": {
-              "blocked_reason": "Runtime run run:coreloop:revived is failed; resume requires explicit re-grounding or inspect/summary first.",
+              "blocked_reason": "Runtime run run:coreloop:current cannot resume while companion suspend state requires explicit re-admission.",
               "executor_call_count": 0,
-              "operation_count": 1,
+              "operation_count": 3,
               "operation_state": "blocked",
               "reply_target_conversation": "runtime-chat",
               "result_success": false,
-              "target_run_id": "run:coreloop:revived"
+              "target_run_id": "run:coreloop:current",
+              "companion_resume_recorded": true,
+              "companion_suspend_recorded": true,
+              "resume_outcome": "resume_rejected_safety",
+              "resume_requires_readmission": true
             },
             "disposition": "ok",
             "kind": "runtime_control_service_target_resolution",
@@ -4429,8 +4444,8 @@
       "artifact_tree": [
         {
           "path": "state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json",
-          "sha256": "ce558e7a569f844900fadafb8a097ebcb46db29153eb1e4dfc93b3b74098205f",
-          "size": 2086,
+          "sha256": "4b83a90fc294f30e55acd1608dc19cc18b1dcbe3e837068b120c22f755082659",
+          "size": 5086,
           "type": "file"
         }
       ],
@@ -5325,6 +5340,312 @@
           "path": "state/queue/eventserver_approval_unknown_request_rejected_before_accept.json",
           "sha256": "2f14bacba292835ad5ec1c50ca4130b4e4f7cfc445ec7d94f9c544fcadee7839",
           "size": 954,
+          "type": "file"
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  {
+    "schema_version": "pulseed.golden-trace.v1",
+    "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+    "domain": "schedule",
+    "p0_failure_mode": "schedule goal trigger lost command",
+    "production_boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+      "steps": []
+    },
+    "expected": {
+      "events": [
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "lifecycle_start",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "artifact_ref": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+            "disposition": "production_exported",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "state_artifact",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "kind": "schedule_goal_trigger_dispatch",
+            "runner_status": "real_production_path",
+            "status": "checked"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "operation_progress",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+            "disposition": "ok",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "contract_observed",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "once": true,
+            "runner_status": "real_production_path",
+            "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "assistant_final",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "status": "ok"
+          },
+          "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+          "type": "lifecycle_end",
+          "visible": false
+        }
+      ],
+      "surface": {
+        "final": {
+          "once": true,
+          "runner_status": "real_production_path",
+          "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+        },
+        "visible_events": [
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+              "disposition": "ok",
+              "runner_status": "real_production_path"
+            },
+            "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "type": "contract_observed",
+            "visible": true
+          },
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "once": true,
+              "runner_status": "real_production_path",
+              "text": "schedule_goal_trigger_due_dispatches_coreloop_artifact satisfied by real production path"
+            },
+            "source": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+            "type": "assistant_final",
+            "visible": true
+          }
+        ]
+      },
+      "control_db_export": {
+        "contract_name": "schedule_goal_trigger_due_dispatches_coreloop_artifact",
+        "domain": "schedule",
+        "p0_failure_mode": "schedule goal trigger lost command",
+        "records": [
+          {
+            "assertions": {
+              "core_loop_run_count": 1,
+              "entry_total_executions": 1,
+              "first_history_goal_id": "goal-schedule-dispatch",
+              "first_history_status": "ok",
+              "first_result_goal_id": "goal-schedule-dispatch",
+              "first_result_status": "ok",
+              "history_count": 1,
+              "result_count": 1,
+              "state_load_goal_count": 0,
+              "tokens_used_today": 321,
+              "bounded_goal_dispatch": true,
+              "result_tokens_used": 321
+            },
+            "disposition": "ok",
+            "kind": "schedule_goal_trigger_dispatch",
+            "production_boundary": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact"
+          }
+        ],
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+          "production_entrypoint": "ScheduleEngine.tick() -> goal_trigger CoreLoop dispatch artifact",
+          "same_checkout_pass_command": "npm run test:golden-traces",
+          "status": "real_production_path"
+        }
+      },
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_goal_trigger_due_dispatches_coreloop_artifact.json",
+          "sha256": "356c4166d805529f3844b83f71d9360e35cde0054941e8518561aa1e13289f3b",
+          "size": 1379,
+          "type": "file"
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  {
+    "schema_version": "pulseed.golden-trace.v1",
+    "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+    "domain": "schedule",
+    "p0_failure_mode": "stale target reuse",
+    "production_boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+    "input": {
+      "entrypoint": "ScheduleEngine.tick() -> active goal state skip artifact",
+      "fake_now": "2026-05-13T00:00:00.000Z",
+      "seed": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+      "steps": []
+    },
+    "expected": {
+      "events": [
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "lifecycle_start",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "artifact_ref": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+            "disposition": "production_exported",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "state_artifact",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "kind": "schedule_goal_trigger_active_skip",
+            "runner_status": "real_production_path",
+            "status": "checked"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "operation_progress",
+          "visible": false
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+            "disposition": "ok",
+            "runner_status": "real_production_path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "contract_observed",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "once": true,
+            "runner_status": "real_production_path",
+            "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "assistant_final",
+          "visible": true
+        },
+        {
+          "at": "<TIMESTAMP>",
+          "payload": {
+            "status": "ok"
+          },
+          "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+          "type": "lifecycle_end",
+          "visible": false
+        }
+      ],
+      "surface": {
+        "final": {
+          "once": true,
+          "runner_status": "real_production_path",
+          "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+        },
+        "visible_events": [
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "boundary": "ScheduleEngine.tick() -> active goal state skip artifact",
+              "disposition": "ok",
+              "runner_status": "real_production_path"
+            },
+            "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "type": "contract_observed",
+            "visible": true
+          },
+          {
+            "at": "<TIMESTAMP>",
+            "payload": {
+              "once": true,
+              "runner_status": "real_production_path",
+              "text": "schedule_goal_trigger_active_goal_skips_coreloop_artifact satisfied by real production path"
+            },
+            "source": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+            "type": "assistant_final",
+            "visible": true
+          }
+        ]
+      },
+      "control_db_export": {
+        "contract_name": "schedule_goal_trigger_active_goal_skips_coreloop_artifact",
+        "domain": "schedule",
+        "p0_failure_mode": "stale target reuse",
+        "records": [
+          {
+            "assertions": {
+              "core_loop_run_count": 0,
+              "entry_total_executions": 1,
+              "first_history_goal_id": null,
+              "first_history_status": "skipped",
+              "first_result_goal_id": null,
+              "first_result_status": "skipped",
+              "history_count": 1,
+              "result_count": 1,
+              "state_load_goal_count": 1,
+              "tokens_used_today": 0,
+              "active_goal_skip": true,
+              "result_error_message": "goal goal-schedule-active is already active"
+            },
+            "disposition": "ok",
+            "kind": "schedule_goal_trigger_active_skip",
+            "production_boundary": "ScheduleEngine.tick() -> active goal state skip artifact"
+          }
+        ],
+        "runner": {
+          "exported_state_artifact": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+          "production_entrypoint": "ScheduleEngine.tick() -> active goal state skip artifact",
+          "same_checkout_pass_command": "npm run test:golden-traces",
+          "status": "real_production_path"
+        }
+      },
+      "artifact_tree": [
+        {
+          "path": "state/schedule/schedule_goal_trigger_active_goal_skips_coreloop_artifact.json",
+          "sha256": "b1e63d62d6356e25e601e97aff410dd0186884495ff6fa0b70367bba62736023",
+          "size": 1287,
           "type": "file"
         }
       ],
@@ -8063,8 +8384,11 @@
         "records": [
           {
             "assertions": {
+              "background_run_count_for_id": 1,
               "dead_process_warning": true,
+              "process_session_id": "proc-stale-ledger",
               "projected_status": "lost",
+              "projected_title": "durable running process",
               "running_reported": false
             },
             "disposition": "ok",
@@ -8082,8 +8406,8 @@
       "artifact_tree": [
         {
           "path": "state/daemon/session_registry_dead_process_not_running.json",
-          "sha256": "eb72f2c78ee49bac2d396c6bf7d22702b25c1d818e7ed5597afab1038a6b7f8a",
-          "size": 978,
+          "sha256": "e0bb1e2a0da21a737074d06700f5251a16fd67477bd15992f92cdc20bbb296e8",
+          "size": 1119,
           "type": "file"
         }
       ],
