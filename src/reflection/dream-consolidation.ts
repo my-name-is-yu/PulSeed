@@ -78,7 +78,7 @@ export async function runDreamConsolidation(deps: {
   const cognitionReflectionInputs = cognitionReplayRecords.flatMap((record) => {
     try {
       return [createReflectionInputFromCognitionReplay({
-        inputId: `reflection-input:${record.cognition_id}`,
+        inputId: `reflection-input:${record.record_id}`,
         record,
       })];
     } catch {
