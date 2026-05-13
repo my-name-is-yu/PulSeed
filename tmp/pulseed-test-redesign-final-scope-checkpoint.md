@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Harness pending-runner gate complete after Contract / Runner Reviewer findings; moving back to runtime queue block inventory.
+Queue slice complete; next is safety-blocker recovery for already-deleted queue/FileWrite coverage before continuing attention-state-store.
 
 ## Current Evidence Read
 
@@ -80,6 +80,8 @@ Deletion is allowed only per block when replacement map records:
 - `src/tools/fs/ReadTool/__tests__/ReadTool.test.ts`
   - Deleted direct relative-path `ReadTool.call` assertion; replacement is `tool_readonly_fs_no_write_approval_under_workspace`, which executes `ToolExecutor.execute("read", { file_path: "notes.txt" })` with a real workspace `cwd`.
   - Deleted direct normal-file `checkPermissions` allowed assertion; replacement is the same production tool-catalog trace with `approval_request_count=0` and `read_success=true`.
+- `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
+  - Removed the standalone `read APIs reflect writes from another queue instance` block after moving its value into the stronger multi-instance lock/reload test.
 
 ## Blocks Kept And Reason
 
@@ -87,6 +89,10 @@ Deletion is allowed only per block when replacement map records:
   - Kept and collapsed line-number/limit/offset/summary checks into `reads bounded line windows with stable line numbers and summaries`; this is focused user-visible unit behavior not covered by the readonly golden trace.
   - Kept EOF-offset summary check because it guards against negative line-range output.
   - Kept protected read approval checks as a parameterized unit because the golden trace only proves normal workspace reads do not request approval.
+- `src/runtime/queue/__tests__/journal-backed-queue.test.ts`
+  - Kept durable accept/claim/renew/ack, pending dedupe, dedupe after completion, deadletter/requeue, and filtered claim units because these are mock-free queue primitives used by EventDispatcher/LoopSupervisor and not fully replaced by the existing P0 eventserver/queue traces.
+  - Kept finite fractional lease persistence because LoopSupervisor retry backoff can call `JournalBackedQueue.renew` with fractional duration.
+  - Rewrote the multi-instance read refresh assertion into the lock/reload test so the file no longer has a separate convenience-API block for the same durability behavior.
 
 ## Added Runner / Trace / Replay
 
@@ -99,6 +105,7 @@ Deletion is allowed only per block when replacement map records:
   - Added ReadTool final-scope deleted block evidence for direct relative-path resolution and normal-file permission.
   - Added `rewrittenBlocks` rendering so retained/reworked old blocks and their classification are preserved in `tmp/pulseed-test-redesign-replacement-map.md`.
   - Updated the deletion gate text to state that P0 golden/replay tests must fail on `pending_real_runner`.
+  - Added queue final-scope retained/reworked block classifications and updated queue same-checkout evidence.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -117,12 +124,26 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:golden-traces` -> after pending-runner gate passed 1 file / 43 tests
 - `npm run test:replay` -> after pending-runner gate passed 1 file / 9 tests
 - `node scripts/inventory-test-redesign.mjs` -> after pending-runner gate regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` -> pre-rewrite passed 1 file / 9 tests
+- `npm run test:golden-traces` -> queue pre-rewrite passed 1 file / 43 tests
+- `npm run test:replay` -> queue pre-rewrite passed 1 file / 9 tests
+- `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` -> post-rewrite passed 1 file / 8 tests
+- `npm run test:golden-traces` -> queue post-rewrite passed 1 file / 43 tests
+- `npm run test:replay` -> queue post-rewrite passed 1 file / 9 tests
+- `node scripts/inventory-test-redesign.mjs` -> after queue rewrite regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
 
 ## Reviewer Findings Applied
 
 - Contract / Runner Reviewer found that P0 lane tests accepted `pending_real_runner` even though current fixtures do not contain it. Applied a fail-closed test gate before using further traces as deletion evidence.
 - Same reviewer warned that several existing traces overstate their production entrypoints. Queue traces used for the current queue slice are still runner-computed queue/eventserver state; for later approval/resident/observation/daemon/chat deletions, do not cite the flagged weak traces for broader caller-path claims unless upgraded.
 - Deletion Reviewer recommendations are available for queue, attention-store, runtime-control, schedule, approval, daemon/session-registry, chat-runner, and cross-platform-session. Use them as candidates, but verify with real file contents and safety reviewer before deleting.
+- Runtime Safety Reviewer found blocker coverage gaps that must be recovered before final completion:
+  - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks still needs a queue migration contract through `runtime/queue.json` -> control DB import.
+  - Unsafe FileWrite path denial from already-deleted FileWrite blocks still needs production tool-boundary evidence.
+  - FileWrite approval-before-mutation evidence needs ordered event/state evidence, not a post-hoc boolean.
+  - Approval stale-origin mismatch and no-delivery branches need stronger coverage before deleting related approval-broker blocks.
+  - `resume_companion` -> `resume_run` readmission gate needs a real RuntimeControlService trace before deleting that runtime-control block.
+  - Schedule goal-trigger dispatch and active-goal skip need public `ScheduleEngine.tick()` artifacts before relying on already-deleted private goal-trigger blocks.
 
 ## Commands Failing
 
@@ -154,4 +175,4 @@ Final required gates:
 
 ## Next
 
-Build assertion-level inventory for `src/runtime/queue/__tests__/journal-backed-queue.test.ts`, confirm which remaining queue invariants are already covered by eventserver/queue golden and replay traces, then delete or keep with explicit P0 duplicate/lost-command reasoning.
+Recover the two safety blockers closest to the completed queue/tool slices: add a queue legacy import contract for unsafe persisted queue records, then add FileWrite production-boundary denial/ordering evidence. After those pass, continue to `attention-state-store`.

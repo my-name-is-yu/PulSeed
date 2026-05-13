@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:04:44.955Z
+Generated: 2026-05-13T03:07:42.168Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -389,14 +389,14 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Replacement trace: none
     - Deletion allowed: no
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Deleted as legacy journal JSON import/file-shape behavior outside the normal Control DB queue path; no supported public migration boundary depends on this direct journal file mutation.
+    - Evidence: Runtime Safety Reviewer flagged this as insufficiently recovered because legacy `runtime/queue.json` import is still a real migration boundary; add a queue migration contract before final completion.
   - Block: skips persisted queue records with unsafe envelope scalars
     - Old line range: 58-87
     - Classification: obsolete
     - Replacement trace: none
     - Deletion allowed: no
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Deleted as legacy persisted journal scalar-shape coverage; normal queue safety is now enforced through typed queue/control DB boundaries rather than direct JSON salvage tests.
+    - Evidence: Runtime Safety Reviewer flagged this as insufficiently recovered because unsafe legacy persisted queue scalars must be rejected without losing valid records during migration; add a mixed safe/unsafe import contract before final completion.
   - Block: rejects duplicate dedupe_key while the original item is inflight
     - Old line range: 143-173
     - Classification: delete_now
@@ -420,6 +420,37 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Deletion allowed: no
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as obsolete legacy `.lock` compatibility behavior; current queue ownership is Control DB-backed and this lock-directory salvage path is not a supported public contract.
+- Retained or rewritten old-test blocks:
+  - Block: accepts, claims, renews, and acks with durable state
+    - Old line range: 21-45
+    - Classification: keep_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: accepts, claims, renews, and acks with durable state
+    - Evidence: Kept as the small queue primitive contract for durable accepted-to-completed state; eventserver traces cover enqueue/claim but not the direct ack/completed queue primitive.
+  - Block: finite fractional lease deadline persistence
+    - Old line range: 47-60
+    - Classification: keep_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: persists finite fractional lease deadlines used by retry backoff
+    - Evidence: Kept because LoopSupervisor retry backoff computes fractional durations and calls `JournalBackedQueue.renew`; this is typed finite-number queue contract, not a mock scalar fixture.
+  - Block: pending dedupe replacement and dedupe reuse after completion
+    - Old line range: 62-132
+    - Classification: keep_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: replaces older pending entries that share the same dedupe_key; allows a dedupe_key to be accepted again after completion
+    - Evidence: Kept as queue-level dedupe semantics not covered by the inflight duplicate golden trace, which only covers rejecting a replacement while the original item is inflight.
+  - Block: nack/deadletter/requeue primitives
+    - Old line range: 134-162
+    - Classification: keep_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: nacks back to pending and deadletters after max attempts; requeues deadlettered items back to pending
+    - Evidence: Kept as direct queue primitive state transitions used by dispatchers and supervisors; current replay coverage covers expired-claim reclaim, not explicit deadletter requeue.
+  - Block: read APIs reflect writes from another queue instance
+    - Old line range: 187-200
+    - Classification: move_or_rewrite_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: reloads under lock so two instances sharing a journal path do not clobber each other
+    - Evidence: Collapsed into the stronger multi-instance lock/reload test, which now asserts a second queue instance write is visible through the first instance before both claims are completed.
+  - Block: filtered claim leaves unmatched pending entries
+    - Old line range: 202-218
+    - Classification: keep_unit
+    - Current contract: src/runtime/queue/__tests__/journal-backed-queue.test.ts: claims the first dispatcher-matching item without disturbing earlier unmatched entries
+    - Evidence: Kept because EventDispatcher and LoopSupervisor use production claim filters to separate normal events from `goal_activated`; deleting it would thin queue duplicate/lost-command safety.
 - Replacement evidence:
   - Replacement trace name: eventserver_command_accept_durable_before_200
     - Real production entrypoint used: golden: EventServer HTTP -> durable queue/journal -> 200 response
@@ -445,7 +476,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts src/runtime/store/__tests__/attention-state-store.test.ts --config vitest.unit.config.ts` passed 2 files / 22 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests. Pre-rewrite queue unit passed 1 file / 9 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/store/__tests__/attention-state-store.test.ts

@@ -44,7 +44,7 @@ describe('JournalBackedQueue', () => {
     expect(reloaded.snapshot().completed).toContain(envelope.id);
   });
 
-  it('persists fractional safe lease deadlines from retry backoff', () => {
+  it('persists finite fractional lease deadlines used by retry backoff', () => {
     const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
     const envelope = createEnvelope({ type: 'event', name: 'job', source: 'test', payload: {}, priority: 'high' });
     queue.accept(envelope);
@@ -169,6 +169,8 @@ describe('JournalBackedQueue', () => {
 
     expect(queueA.accept(first).accepted).toBe(true);
     expect(queueB.accept(second).accepted).toBe(true);
+    expect(queueA.size()).toBe(2);
+    expect(queueA.get(second.id)?.status).toBe('pending');
 
     const reloaded = new JournalBackedQueue({ journalPath, now: () => 1_000 });
     expect(reloaded.size()).toBe(2);
@@ -184,22 +186,7 @@ describe('JournalBackedQueue', () => {
     expect(final.snapshot().completed).toEqual(expect.arrayContaining([first.id, second.id]));
   });
 
-  it('read APIs reflect writes from another queue instance', () => {
-    const writer = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const reader = new JournalBackedQueue({ journalPath, now: () => 1_000 });
-    const envelope = createEnvelope({ type: 'event', name: 'observed', source: 'test', payload: {}, priority: 'critical' });
-
-    writer.accept(envelope);
-
-    expect(reader.size()).toBe(1);
-    expect(reader.get(envelope.id)?.status).toBe('pending');
-
-    const claim = writer.claim('worker-a', 5_000)!;
-    expect(reader.inflightSize()).toBe(1);
-    expect(reader.snapshot().inflight[claim.claimToken]?.messageId).toBe(envelope.id);
-  });
-
-  it('claims the first pending item that matches a filter without disturbing earlier unmatched entries', () => {
+  it('claims the first dispatcher-matching item without disturbing earlier unmatched entries', () => {
     const queue = new JournalBackedQueue({ journalPath, now: () => 1_000 });
     const first = createEnvelope({ type: 'event', name: 'schedule_activated', source: 'test', payload: {}, priority: 'normal' });
     const second = createEnvelope({ type: 'event', name: 'goal_activated', source: 'test', goal_id: 'g-1', payload: {}, priority: 'normal' });
