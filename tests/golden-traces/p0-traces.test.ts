@@ -66,6 +66,15 @@ describe("P0 golden trace catalog", () => {
       expect(fixture.expected.artifact_tree.length).toBeGreaterThan(0);
     }
   });
+
+  it("requires every P0 fixture to carry real production-path runner evidence", () => {
+    for (const fixture of fixtures) {
+      expect(fixture.expected.control_db_export.runner).toMatchObject({
+        status: "real_production_path",
+      });
+      expect(JSON.stringify(fixture)).not.toContain("pending_real_runner");
+    }
+  });
 });
 
 describe.each(fixtures)("P0 golden trace: $contract_name", (fixture) => {
@@ -73,12 +82,9 @@ describe.each(fixtures)("P0 golden trace: $contract_name", (fixture) => {
     const result = await runGoldenTrace(fixture);
     assertGoldenTraceResult(fixture, result);
     const runner = result.control_db_export.runner as { status?: string } | undefined;
-    expect(["real_production_path", "pending_real_runner"]).toContain(runner?.status);
+    expect(runner?.status).toBe("real_production_path");
     expect(result.events).not.toEqual(fixture.input.steps);
-    if (runner?.status === "pending_real_runner") {
-      expect(result.events.map((event) => event.type)).toContain("pending_real_runner");
-    } else {
-      expect(result.events.map((event) => event.type)).toContain("assistant_final");
-    }
+    expect(result.events.map((event) => event.type)).toContain("assistant_final");
+    expect(result.events.map((event) => event.type)).not.toContain("pending_real_runner");
   });
 });

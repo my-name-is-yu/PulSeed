@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-ReadTool slice complete; moving to runtime queue block inventory.
+Harness pending-runner gate complete after Contract / Runner Reviewer findings; moving back to runtime queue block inventory.
 
 ## Current Evidence Read
 
@@ -90,13 +90,15 @@ Deletion is allowed only per block when replacement map records:
 
 ## Added Runner / Trace / Replay
 
-- None in this branch yet.
+- No new runner/trace/replay added yet.
+- Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
 
 ## Replacement Map Updates
 
 - `scripts/inventory-test-redesign.mjs`
   - Added ReadTool final-scope deleted block evidence for direct relative-path resolution and normal-file permission.
   - Added `rewrittenBlocks` rendering so retained/reworked old blocks and their classification are preserved in `tmp/pulseed-test-redesign-replacement-map.md`.
+  - Updated the deletion gate text to state that P0 golden/replay tests must fail on `pending_real_runner`.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -112,6 +114,15 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:golden-traces` -> post-delete passed 1 file / 42 tests
 - `npm run test:replay` -> post-delete passed 1 file / 9 tests
 - `node scripts/inventory-test-redesign.mjs` -> regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npm run test:golden-traces` -> after pending-runner gate passed 1 file / 43 tests
+- `npm run test:replay` -> after pending-runner gate passed 1 file / 9 tests
+- `node scripts/inventory-test-redesign.mjs` -> after pending-runner gate regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+
+## Reviewer Findings Applied
+
+- Contract / Runner Reviewer found that P0 lane tests accepted `pending_real_runner` even though current fixtures do not contain it. Applied a fail-closed test gate before using further traces as deletion evidence.
+- Same reviewer warned that several existing traces overstate their production entrypoints. Queue traces used for the current queue slice are still runner-computed queue/eventserver state; for later approval/resident/observation/daemon/chat deletions, do not cite the flagged weak traces for broader caller-path claims unless upgraded.
+- Deletion Reviewer recommendations are available for queue, attention-store, runtime-control, schedule, approval, daemon/session-registry, chat-runner, and cross-platform-session. Use them as candidates, but verify with real file contents and safety reviewer before deleting.
 
 ## Commands Failing
 
