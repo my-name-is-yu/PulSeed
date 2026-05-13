@@ -528,6 +528,13 @@ async function runRuntimeControlTrace(
     create: async (input: Record<string, unknown>) => input,
   };
   const executorCalls: JsonObject[] = [];
+  let runtimeControlNowTick = 0;
+  const runtimeControlNow = () => {
+    if (fixture.contract_name !== "runtime_control_resume_after_companion_revival_requires_readmission") {
+      return new Date(fixture.input.fake_now);
+    }
+    return new Date(Date.parse(fixture.input.fake_now) + runtimeControlNowTick++ * 1000);
+  };
   const service = new RuntimeControlService({
     operationStore,
     operatorHandoffStore: handoffStore as never,
@@ -540,7 +547,7 @@ async function runRuntimeControlTrace(
       });
       return { ok: true, state: "verified", message: `${operation.kind} accepted by typed executor` };
     },
-    now: () => new Date(fixture.input.fake_now),
+    now: runtimeControlNow,
   });
   const replyTarget = {
     surface: "gateway" as const,
@@ -551,6 +558,41 @@ async function runRuntimeControlTrace(
     identity_key: "operator",
     user_id: "operator",
   };
+  const scenarioResults: JsonObject[] = [];
+  if (fixture.contract_name === "runtime_control_resume_after_companion_revival_requires_readmission") {
+    const suspend = await service.setCompanionControl({
+      control: "suspend_companion",
+      cwd: stateRoot.workspaceRoot,
+      reason: "suspend companion before validating readmission",
+      requestedBy: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: replyTarget.conversation_id,
+        identity_key: "operator",
+        user_id: "operator",
+      },
+      replyTarget,
+      approvalFn: async () => true,
+    });
+    const resume = await service.setCompanionControl({
+      control: "resume_companion",
+      cwd: stateRoot.workspaceRoot,
+      reason: "lift companion suspend without auto-resume",
+      requestedBy: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: replyTarget.conversation_id,
+        identity_key: "operator",
+        user_id: "operator",
+      },
+      replyTarget,
+      approvalFn: async () => true,
+    });
+    scenarioResults.push(
+      { control: "suspend_companion", result: runtimeControlResultSummary(suspend) },
+      { control: "resume_companion", result: runtimeControlResultSummary(resume) },
+    );
+  }
   const intent = runtimeControlIntentFor(fixture.contract_name);
   const result = await service.request({
     cwd: stateRoot.workspaceRoot,
@@ -570,6 +612,8 @@ async function runRuntimeControlTrace(
     ...await operationStore.listCompleted(),
   ].sort((left, right) => left.requested_at.localeCompare(right.requested_at));
   const latest = operations[operations.length - 1] ?? null;
+  const companionSuspend = operations.find((operation) => operation.kind === "suspend_companion");
+  const companionResume = operations.find((operation) => operation.kind === "resume_companion");
   const assertions: JsonObject = {
     blocked_reason: result.success ? null : result.message,
     executor_call_count: executorCalls.length,
@@ -579,6 +623,16 @@ async function runRuntimeControlTrace(
     result_success: result.success,
     target_run_id: latest?.target?.run_id ?? null,
   };
+  if (fixture.contract_name === "runtime_control_resume_after_companion_revival_requires_readmission") {
+    const resumeOutcome = typeof result.resumeOutcome === "string" ? result.resumeOutcome : null;
+    assertions["companion_resume_recorded"] = companionResume?.state === "verified";
+    assertions["companion_suspend_recorded"] = companionSuspend?.state === "verified";
+    assertions["resume_outcome"] = resumeOutcome;
+    assertions["resume_requires_readmission"] =
+      resumeOutcome === "resume_rejected_safety"
+      && result.success === false
+      && executorCalls.length === 0;
+  }
   return buildRealGoldenResult(fixture, stateRoot, {
     kind: "runtime_control_service_target_resolution",
     exportedState: {
@@ -586,6 +640,7 @@ async function runRuntimeControlTrace(
       executor_calls: executorCalls,
       operations: operations.map(runtimeOperationSummary),
       result: runtimeControlResultSummary(result),
+      ...(scenarioResults.length > 0 ? { scenario_results: scenarioResults } : {}),
     },
     assertions,
   });
@@ -1612,8 +1667,8 @@ function runtimeControlIntentFor(contractName: string): Parameters<RuntimeContro
     case "runtime_control_resume_after_companion_revival_requires_readmission":
       return {
         kind: "resume_run",
-        reason: "resume revived run",
-        target: { runId: "run:coreloop:revived" },
+        reason: "resume current run after companion suspend was lifted",
+        target: { runId: "run:coreloop:current" },
       };
     case "runtime_control_cancel_after_revival_blocks_stale_run":
       return {
@@ -1650,10 +1705,11 @@ function runtimeOperationSummary(operation: Awaited<ReturnType<RuntimeOperationS
   };
 }
 
-function runtimeControlResultSummary(result: { success: boolean; message: string; operationId?: string; state?: string }): JsonObject {
+function runtimeControlResultSummary(result: { success: boolean; message: string; operationId?: string; state?: string; resumeOutcome?: string }): JsonObject {
   return {
     message: result.message,
     operation_id: result.operationId ? "<runtime-operation-id>" : null,
+    ...(result.resumeOutcome ? { resume_outcome: result.resumeOutcome } : {}),
     state: result.state ?? null,
     success: result.success,
   };

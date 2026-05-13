@@ -109,7 +109,7 @@ const p0TraceMappings = [
         oldLineRange: "2133-2177",
         classification: "delete_now",
         replacementTrace: "runtime_control_resume_after_companion_revival_requires_readmission",
-        evidence: "Trace asserts the post-revival run remains blocked until readmission and records the blocked operation without executor dispatch.",
+        evidence: "Trace now executes suspend_companion -> resume_companion -> resume_run through RuntimeControlService, asserts resume_rejected_safety/readmission, and records the blocked operation without executor dispatch.",
       },
       {
         block: "records approval-gated finalize proposals without executing external actions",

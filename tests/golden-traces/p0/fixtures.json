@@ -4406,13 +4406,17 @@
         "records": [
           {
             "assertions": {
-              "blocked_reason": "Runtime run run:coreloop:revived is failed; resume requires explicit re-grounding or inspect/summary first.",
+              "blocked_reason": "Runtime run run:coreloop:current cannot resume while companion suspend state requires explicit re-admission.",
               "executor_call_count": 0,
-              "operation_count": 1,
+              "operation_count": 3,
               "operation_state": "blocked",
               "reply_target_conversation": "runtime-chat",
               "result_success": false,
-              "target_run_id": "run:coreloop:revived"
+              "target_run_id": "run:coreloop:current",
+              "companion_resume_recorded": true,
+              "companion_suspend_recorded": true,
+              "resume_outcome": "resume_rejected_safety",
+              "resume_requires_readmission": true
             },
             "disposition": "ok",
             "kind": "runtime_control_service_target_resolution",
@@ -4429,8 +4433,8 @@
       "artifact_tree": [
         {
           "path": "state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json",
-          "sha256": "ce558e7a569f844900fadafb8a097ebcb46db29153eb1e4dfc93b3b74098205f",
-          "size": 2086,
+          "sha256": "4b83a90fc294f30e55acd1608dc19cc18b1dcbe3e837068b120c22f755082659",
+          "size": 5086,
           "type": "file"
         }
       ],

@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:20:09.807Z
+Generated: 2026-05-13T03:24:20.405Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -157,10 +157,10 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Old line range: 2133-2177
     - Classification: delete_now
     - Replacement trace: runtime_control_resume_after_companion_revival_requires_readmission
-    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json; assertions blocked_reason, companion_resume_recorded, companion_suspend_recorded, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, resume_outcome, resume_requires_readmission, target_run_id
     - Production entrypoint exercised: golden: Companion resume -> runtime-control readmission gate
     - Deletion allowed: yes
-    - Evidence: Trace asserts the post-revival run remains blocked until readmission and records the blocked operation without executor dispatch.
+    - Evidence: Trace now executes suspend_companion -> resume_companion -> resume_run through RuntimeControlService, asserts resume_rejected_safety/readmission, and records the blocked operation without executor dispatch.
   - Block: records approval-gated finalize proposals without executing external actions
     - Old line range: 2267-2304
     - Classification: delete_now
@@ -190,7 +190,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: runtime_control_resume_after_companion_revival_requires_readmission
     - Real production entrypoint used: golden: Companion resume -> runtime-control readmission gate
-    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json; assertions blocked_reason, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, target_run_id
+    - Exported state artifact/assertion: golden: state/runtime-control/runtime_control_resume_after_companion_revival_requires_readmission.json; assertions blocked_reason, companion_resume_recorded, companion_suspend_recorded, executor_call_count, operation_count, operation_state, reply_target_conversation, result_success, resume_outcome, resume_requires_readmission, target_run_id
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
