@@ -1,5 +1,6 @@
 export {
   COGNITION_AUDIT_STORAGE_PLAN,
+  FileCognitionAuditSink,
   InMemoryCognitionAuditSink,
   cognitionAuditEventRef,
   createCognitionReplayRecord,

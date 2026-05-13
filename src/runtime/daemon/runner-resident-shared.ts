@@ -179,6 +179,8 @@ export type ResidentCognitionActivityMetadata = Partial<Pick<
   | "cognition_response_plan_id"
   | "cognition_delivery_kind"
   | "cognition_writeback_proposal_count"
+  | "cognition_replay_record_id"
+  | "cognition_replay_index_entry_id"
 >>;
 
 export type ResidentActivityMetadata =

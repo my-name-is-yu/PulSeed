@@ -31,9 +31,17 @@ import type { ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import {
   CompanionCognitionService,
+  FileCognitionAuditSink,
+  InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
+  type CognitionReplayRecord,
   type CompanionCognitionOutput,
 } from "../../../runtime/cognition/index.js";
+import {
+  FileCognitiveReplayIndexStore,
+  createCognitiveReplayIndexEntry,
+  type CognitiveReplayIndexEntry,
+} from "../../../runtime/visibility/index.js";
 
 export interface TaskAgentLoopRunnerDeps {
   boundedRunner: BoundedAgentLoopRunner;
@@ -92,7 +100,7 @@ export class TaskAgentLoopRunner {
     let finalizationInput = { success: false, changedFiles: [] as string[] };
     let finalResult: AgentLoopResult<TaskAgentLoopOutput> | null = null;
     let runError: unknown = null;
-    let cognitionOutput: CompanionCognitionOutput | undefined;
+    let cognitionAudit: TaskAgentLoopCognitionAudit | undefined;
     try {
       const executionPolicy = this.deps.defaultToolCallContext?.executionPolicy
         ?? this.deps.defaultExecutionPolicy;
@@ -104,12 +112,13 @@ export class TaskAgentLoopRunner {
         soilPrefetch: this.deps.soilPrefetch,
         trustProjectInstructions: executionPolicy?.trustProjectInstructions,
       });
-      cognitionOutput = await evaluateTaskAgentLoopCognition({
+      cognitionAudit = await evaluateTaskAgentLoopCognition({
         task: input.task,
         cwd: assembled.cwd,
         phaseRef: "task-agent-loop:assemble",
         baseDir: this.cognitionMemoryBaseDir(),
       }).catch(() => undefined);
+      const cognitionOutput = cognitionAudit?.output;
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
         artifactGoal: input.artifactGoal,
@@ -158,6 +167,8 @@ export class TaskAgentLoopRunner {
         activeBudgetMs: turn.budget.maxWallClockMs,
         requiresPostVerificationBeforeSuccessLedger,
         ...(cognitionOutput ? { cognitionOutput } : {}),
+        ...(cognitionAudit?.replayRecord ? { cognitionReplayRecord: cognitionAudit.replayRecord } : {}),
+        ...(cognitionAudit?.replayIndexEntry ? { cognitionReplayIndexEntry: cognitionAudit.replayIndexEntry } : {}),
       };
     } catch (error) {
       runError = error;
@@ -184,12 +195,18 @@ export class TaskAgentLoopRunner {
   }
 }
 
+interface TaskAgentLoopCognitionAudit {
+  output: CompanionCognitionOutput;
+  replayRecord?: CognitionReplayRecord;
+  replayIndexEntry?: CognitiveReplayIndexEntry;
+}
+
 async function evaluateTaskAgentLoopCognition(input: {
   task: Task;
   cwd: string;
   phaseRef: string;
   baseDir: string;
-}): Promise<CompanionCognitionOutput> {
+}): Promise<TaskAgentLoopCognitionAudit> {
   const cognitionId = `cognition:task:${input.task.id}`;
   const eventRef = {
     ref: input.task.id,
@@ -199,7 +216,9 @@ async function evaluateTaskAgentLoopCognition(input: {
     source_epoch: input.task.started_at ?? input.task.created_at ?? input.task.id,
     redaction_policy: "metadata_only" as const,
   };
-  return new CompanionCognitionService({
+  const auditSink = new InMemoryCognitionAuditSink();
+  const output = await new CompanionCognitionService({
+    auditSink,
     memoryPort: createRelationshipProfileCognitionMemoryPort({
       baseDir: input.baseDir,
     }),
@@ -255,4 +274,22 @@ async function evaluateTaskAgentLoopCognition(input: {
     },
     surface_target: "internal_audit",
   });
+  const replayRecord = auditSink.list()[0];
+  if (!replayRecord) return { output };
+  let replayIndexEntry: CognitiveReplayIndexEntry | undefined;
+  try {
+    await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+    replayIndexEntry = createCognitiveReplayIndexEntry({
+      indexEntryId: `${cognitionId}:replay-index`,
+      record: replayRecord,
+    });
+    await new FileCognitiveReplayIndexStore(input.baseDir).upsert(replayIndexEntry);
+  } catch {
+    replayIndexEntry = undefined;
+  }
+  return {
+    output,
+    replayRecord,
+    ...(replayIndexEntry ? { replayIndexEntry } : {}),
+  };
 }

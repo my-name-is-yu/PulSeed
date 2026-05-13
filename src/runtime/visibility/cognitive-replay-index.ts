@@ -1,3 +1,5 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   CognitionEventRefSchema,
@@ -84,6 +86,11 @@ export const CognitiveReplayIndexEntrySchema = z.object({
 });
 export type CognitiveReplayIndexEntry = z.infer<typeof CognitiveReplayIndexEntrySchema>;
 
+export interface CognitiveReplayIndexStore {
+  upsert(entry: CognitiveReplayIndexEntry): Promise<CognitiveReplayIndexEntry>;
+  list(): Promise<CognitiveReplayIndexEntry[]>;
+}
+
 const OWNER_STORES_BY_CALLER_PATH: Record<CompanionCognitionCallerPath, readonly CognitionSourceStore[]> = {
   chat_user_turn: ["chat_history", "chat_events"],
   resident_proactive_check: ["attention_ledger", "proactive_intervention"],
@@ -153,4 +160,31 @@ function defaultOwnerRefForRecord(record: CognitionReplayRecord): CognitionEvent
     replay_key: record.record_id,
     redaction_policy: "metadata_only",
   });
+}
+
+export class FileCognitiveReplayIndexStore implements CognitiveReplayIndexStore {
+  constructor(private readonly baseDir: string, private readonly relativePath = "runtime/cognitive-replay-index.json") {}
+
+  async upsert(entry: CognitiveReplayIndexEntry): Promise<CognitiveReplayIndexEntry> {
+    const parsed = CognitiveReplayIndexEntrySchema.parse(entry);
+    const entries = await this.list();
+    const next = [...entries.filter((existing) => existing.index_entry_id !== parsed.index_entry_id), parsed];
+    await mkdir(dirname(this.path()), { recursive: true });
+    await writeFile(this.path(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    return parsed;
+  }
+
+  async list(): Promise<CognitiveReplayIndexEntry[]> {
+    try {
+      const text = await readFile(this.path(), "utf8");
+      return z.array(CognitiveReplayIndexEntrySchema).parse(JSON.parse(text));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private path(): string {
+    return join(this.baseDir, this.relativePath);
+  }
 }

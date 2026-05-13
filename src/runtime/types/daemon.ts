@@ -122,6 +122,8 @@ export const ResidentActivitySchema = z.object({
   cognition_response_plan_id: z.string().optional(),
   cognition_delivery_kind: z.enum(["hold", "digest", "suggest", "notify", "speak", "prepare", "execute"]).optional(),
   cognition_writeback_proposal_count: DaemonNonnegativeSafeIntSchema.optional(),
+  cognition_replay_record_id: z.string().optional(),
+  cognition_replay_index_entry_id: z.string().optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 

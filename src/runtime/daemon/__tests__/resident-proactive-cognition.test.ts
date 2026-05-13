@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
+import { FileCognitionAuditSink } from "../../cognition/index.js";
+import { FileCognitiveReplayIndexStore } from "../../visibility/index.js";
 import { evaluateResidentProactiveCognition } from "../runner-resident-proactive.js";
 
 describe("resident proactive cognition", () => {
@@ -53,7 +55,23 @@ describe("resident proactive cognition", () => {
       cognition_id: "cognition:resident:gate:1",
       cognition_delivery_kind: "hold",
       cognition_writeback_proposal_count: 1,
+      cognition_replay_record_id: "cognition:resident:gate:1:replay",
+      cognition_replay_index_entry_id: "cognition:resident:gate:1:replay-index",
     });
+    expect(await new FileCognitionAuditSink(baseDir).list()).toMatchObject([{
+      record_id: "cognition:resident:gate:1:replay",
+      retention_policy: {
+        materialized_content: false,
+        refs_only: true,
+        invalidates_on_source_tombstone: true,
+      },
+    }]);
+    expect(await new FileCognitiveReplayIndexStore(baseDir).list()).toMatchObject([{
+      caller_path: "resident_proactive_check",
+      owner_store: "attention_ledger",
+      normal_surface_visible: false,
+      cognition_service_is_owner: false,
+    }]);
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 });

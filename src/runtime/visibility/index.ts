@@ -2,6 +2,7 @@ export {
   CognitiveReplayIndexEntrySchema,
   CognitiveReplayIndexInvalidationStateSchema,
   CognitiveReplayIndexSourceStateSchema,
+  FileCognitiveReplayIndexStore,
   createCognitiveReplayIndexEntry,
   defaultCognitiveReplayOwnerStore,
   ownerStoreAllowedForCallerPath,
@@ -33,5 +34,6 @@ export type {
 export type {
   CognitiveReplayIndexEntry,
   CognitiveReplayIndexInvalidationState,
+  CognitiveReplayIndexStore,
   CognitiveReplayIndexSourceState,
 } from "./cognitive-replay-index.js";

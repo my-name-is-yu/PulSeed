@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
 import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
+import { FileCognitionAuditSink } from "../../../../runtime/cognition/index.js";
+import { FileCognitiveReplayIndexStore } from "../../../../runtime/visibility/index.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import type { AgentLoopModelClient, AgentLoopModelRegistry } from "../agent-loop-model.js";
 import { TaskAgentLoopRunner } from "../task-agent-loop-runner.js";
@@ -197,6 +199,23 @@ describe("TaskAgentLoopRunner", () => {
       },
     });
     expect(result.cognitionOutput?.relationship_state.relationship_refs).toHaveLength(1);
+    expect(result.cognitionReplayRecord).toMatchObject({
+      record_id: "cognition:task:task-1:replay",
+      caller_path: "long_running_task_turn",
+      retention_policy: {
+        materialized_content: false,
+        refs_only: true,
+        invalidates_on_source_tombstone: true,
+      },
+    });
+    expect(result.cognitionReplayIndexEntry).toMatchObject({
+      index_entry_id: "cognition:task:task-1:replay-index",
+      owner_store: "runtime_operation",
+      normal_surface_visible: false,
+      cognition_service_is_owner: false,
+    });
+    expect(await new FileCognitionAuditSink(cognitionMemoryBaseDir).list()).toHaveLength(1);
+    expect(await new FileCognitiveReplayIndexStore(cognitionMemoryBaseDir).list()).toHaveLength(1);
     fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
   });
 

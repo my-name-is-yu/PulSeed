@@ -5,9 +5,15 @@ import {
 } from "../capability-operation-planner.js";
 import {
   CompanionCognitionService,
+  FileCognitionAuditSink,
+  InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
 } from "../cognition/index.js";
+import {
+  FileCognitiveReplayIndexStore,
+  createCognitiveReplayIndexEntry,
+} from "../visibility/index.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
 import {
   evaluateResidentAttentionAdmission,
@@ -364,7 +370,9 @@ export async function evaluateResidentProactiveCognition(input: {
   };
 
   try {
+    const auditSink = new InMemoryCognitionAuditSink();
     const output = await new CompanionCognitionService({
+      auditSink,
       ...(input.baseDir
         ? {
             memoryPort: createRelationshipProfileCognitionMemoryPort({
@@ -373,11 +381,31 @@ export async function evaluateResidentProactiveCognition(input: {
           }
         : {}),
     }).evaluateIntervention(cognitionInput);
+    const replayRecord = auditSink.list()[0];
+    let replayIndexEntryId: string | undefined;
+    if (input.baseDir && replayRecord) {
+      try {
+        await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+        const replayIndexEntry = createCognitiveReplayIndexEntry({
+          indexEntryId: `${cognitionId}:replay-index`,
+          record: replayRecord,
+        });
+        await new FileCognitiveReplayIndexStore(input.baseDir).upsert(replayIndexEntry);
+        replayIndexEntryId = replayIndexEntry.index_entry_id;
+      } catch (err) {
+        input.logger.warn("Resident proactive cognition replay persistence failed; continuing with resident gates", {
+          error: err instanceof Error ? err.message : String(err),
+          cognition_id: cognitionId,
+        });
+      }
+    }
     return {
       cognition_id: output.cognition_id,
       cognition_response_plan_id: output.response_plan.plan_id,
       cognition_delivery_kind: output.response_plan.delivery_kind,
       cognition_writeback_proposal_count: output.memory_writeback.length,
+      ...(replayRecord ? { cognition_replay_record_id: replayRecord.record_id } : {}),
+      ...(replayIndexEntryId ? { cognition_replay_index_entry_id: replayIndexEntryId } : {}),
     };
   } catch (err) {
     input.logger.warn("Resident proactive cognition failed; continuing with resident gates", {

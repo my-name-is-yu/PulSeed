@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { z } from "zod";
 import {
   RelationshipStateProjectionSchema,
   CognitionReplayStableOutputSchema,
@@ -93,5 +96,31 @@ export class InMemoryCognitionAuditSink implements CognitionAuditSink {
 
   list(): CognitionReplayRecord[] {
     return [...this.records];
+  }
+}
+
+export class FileCognitionAuditSink implements CognitionAuditSink {
+  constructor(private readonly baseDir: string, private readonly relativePath = "runtime/cognition-audit-records.json") {}
+
+  async recordCognition(record: CognitionReplayRecord): Promise<void> {
+    const parsed = CognitionReplayRecordSchema.parse(record);
+    const records = await this.list();
+    const next = [...records.filter((existing) => existing.record_id !== parsed.record_id), parsed];
+    await mkdir(dirname(this.path()), { recursive: true });
+    await writeFile(this.path(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  }
+
+  async list(): Promise<CognitionReplayRecord[]> {
+    try {
+      const text = await readFile(this.path(), "utf8");
+      return z.array(CognitionReplayRecordSchema).parse(JSON.parse(text));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private path(): string {
+    return join(this.baseDir, this.relativePath);
   }
 }
