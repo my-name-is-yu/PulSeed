@@ -62,6 +62,9 @@ export {
   createCoreCompanionMemoryProjectionInputRef,
 } from "./core-companion-memory-projection.js";
 export {
+  assembleCompanionDecisionFrame,
+} from "./companion-cognition-assembly.js";
+export {
   CompanionDecisionCallerPathKindSchema,
   CompanionDecisionDispositionSchema,
   CompanionDecisionEvidenceRefSchema,
@@ -142,6 +145,9 @@ export type {
   CoreCompanionMemoryUsePolicy,
   CreateCoreCompanionMemoryProjectionFromSurfaceInput,
 } from "./core-companion-memory-projection.js";
+export type {
+  CompanionCognitionAssemblyInput,
+} from "./companion-cognition-assembly.js";
 export type {
   CompanionDecisionCallerPathKind,
   CompanionDecisionDisposition,
