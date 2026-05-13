@@ -1,4 +1,21 @@
 export {
+  CoreCompanionMemoryAvailableContentSchema,
+  CoreCompanionMemoryContentSchema,
+  CoreCompanionMemoryEntrySchema,
+  CoreCompanionMemoryGroundingProfileIdSchema,
+  CoreCompanionMemoryOrdinarySurfacePolicySchema,
+  CoreCompanionMemoryProjectionSchema,
+  CoreCompanionMemoryProjectionSourceRefSchema,
+  CoreCompanionMemoryProjectionSummarySchema,
+  CoreCompanionMemoryRestrictedEntrySchema,
+  CoreCompanionMemoryRestrictionReasonSchema,
+  CoreCompanionMemorySourceKindSchema,
+  CoreCompanionMemoryUsePolicySchema,
+  CoreCompanionMemoryWithheldContentSchema,
+  createCoreCompanionMemoryProjectionFromSurface,
+  createCoreCompanionMemoryProjectionInputRef,
+} from "./core-companion-memory-projection.js";
+export {
   CompanionDecisionCallerPathKindSchema,
   CompanionDecisionDispositionSchema,
   CompanionDecisionEvidenceRefSchema,
@@ -24,6 +41,20 @@ export {
   CompanionDecisionTraceSchema,
   createCompanionDecisionProjectionBridge,
 } from "./companion-decision-contract.js";
+export type {
+  CoreCompanionMemoryContent,
+  CoreCompanionMemoryEntry,
+  CoreCompanionMemoryGroundingProfileId,
+  CoreCompanionMemoryOrdinarySurfacePolicy,
+  CoreCompanionMemoryProjection,
+  CoreCompanionMemoryProjectionSourceRef,
+  CoreCompanionMemoryProjectionSummary,
+  CoreCompanionMemoryRestrictedEntry,
+  CoreCompanionMemoryRestrictionReason,
+  CoreCompanionMemorySourceKind,
+  CoreCompanionMemoryUsePolicy,
+  CreateCoreCompanionMemoryProjectionFromSurfaceInput,
+} from "./core-companion-memory-projection.js";
 export type {
   CompanionDecisionCallerPathKind,
   CompanionDecisionDisposition,
