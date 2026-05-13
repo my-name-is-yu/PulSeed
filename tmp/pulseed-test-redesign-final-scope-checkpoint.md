@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Final verification in progress. Local `test:unit` is now green after tightening the typed approval stale-target test synchronization.
+Local final verification is green. Next is marking PR #1949 ready and waiting for CI/review gates.
 
 ## Current Evidence Read
 
@@ -238,6 +238,16 @@ Deletion is allowed only per block when replacement map records:
 - `node scripts/inventory-test-redesign.mjs` -> after gateway/chat retained-block classification regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
 - `npx vitest run --config vitest.unit.config.ts src/interface/chat/__tests__/cross-platform-session.test.ts` -> after typed approval stale-target synchronization fix passed 1 file / 89 tests
 - `npm run test:unit` -> after clearing test-generated `$TMPDIR` artifacts and tightening typed approval stale-target synchronization passed 681 files / 9592 tests, 3 skipped
+- `npm run check:docs` -> final gate passed, scanned 140 Markdown files
+- `npm run typecheck` -> final gate passed
+- `npm run lint:boundaries` -> final gate passed with 0 errors and existing warnings
+- `npm run test:contracts` -> final gate passed 2 files / 9 tests
+- `npm run test:golden-traces` -> final gate passed 1 file / 45 tests
+- `npm run test:replay` -> final gate passed 1 file / 9 tests
+- `npm run test:integration` -> final gate passed 91 files / 1201 tests, 3 files / 7 tests skipped
+- `npm run test:smoke` -> final gate passed 4 files / 30 tests
+- `npm run test:changed` -> final gate detected no changed files, ran fast unit lane, passed 681 files / 9592 tests, 3 skipped
+- `npm run verify:release` -> final gate passed; includes docs, typecheck, lint, `test:all`, high-threshold audit, and packaged artifact verification for `pulseed-0.6.5.tgz`
 
 ## Reviewer Findings Applied
 
@@ -260,6 +270,7 @@ Deletion is allowed only per block when replacement map records:
 - `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` reported no files because daemon tests are intentionally excluded from the unit lane; the same test passed under `vitest.integration.config.ts`.
 - First final `npm run test:unit` failed with cascading `ENOSPC` / SQLite disk-full errors after `$TMPDIR` contained 67,585 PulSeed test-generated directories. Removed only matching test temp prefixes from `$TMPDIR`, restoring about 97GB free.
 - Second final `npm run test:unit` failed only `cross-platform-session.test.ts` typed stale-target approval because the test waited for the pending approval but not for the initial runtime-control classifier mock response to be consumed. Tightened the test to wait for both the pending approval and the classifier call before advancing the side-question turn.
+- `npm run verify:release` reported one moderate `@anthropic-ai/sdk` advisory after the high-threshold audit passed. The suggested fix requires `npm audit fix --force` and a breaking upgrade to `@anthropic-ai/sdk@0.95.2`, so it remains recorded and out of scope for this test redesign PR.
 
 ## Verification Commands To Run
 
@@ -286,4 +297,4 @@ Final required gates:
 
 ## Next
 
-Run final required verification gates, update PR from draft to ready only after green local gates, then monitor CI/review.
+Mark PR #1949 ready, monitor CI and GitHub review gates, and do not merge without explicit user approval.
