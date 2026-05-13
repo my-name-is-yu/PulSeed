@@ -4,12 +4,16 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
 import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
-import { FileCognitionAuditSink } from "../../../../runtime/cognition/index.js";
+import {
+  FileCognitionAuditSink,
+  createReflectionInputFromCognitionReplay,
+} from "../../../../runtime/cognition/index.js";
 import { FileCognitiveReplayIndexStore } from "../../../../runtime/visibility/index.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import type { AgentLoopModelClient, AgentLoopModelRegistry } from "../agent-loop-model.js";
 import { TaskAgentLoopRunner } from "../task-agent-loop-runner.js";
 import { AgentLoopContextAssembler } from "../agent-loop-context-assembler.js";
+import { createAgentLoopSession } from "../agent-loop-session.js";
 
 const { finalize, prepareTaskAgentLoopWorkspace } = vi.hoisted(() => ({
   finalize: vi.fn(),
@@ -200,7 +204,7 @@ describe("TaskAgentLoopRunner", () => {
     });
     expect(result.cognitionOutput?.relationship_state.relationship_refs).toHaveLength(1);
     expect(result.cognitionReplayRecord).toMatchObject({
-      record_id: "cognition:task:task-1:replay",
+      record_id: expect.stringMatching(/^cognition:task:task-1:attempt:.+:replay$/),
       caller_path: "long_running_task_turn",
       retention_policy: {
         materialized_content: false,
@@ -209,13 +213,188 @@ describe("TaskAgentLoopRunner", () => {
       },
     });
     expect(result.cognitionReplayIndexEntry).toMatchObject({
-      index_entry_id: "cognition:task:task-1:replay-index",
+      index_entry_id: expect.stringMatching(/^cognition:task:task-1:attempt:.+:replay-index$/),
       owner_store: "runtime_operation",
       normal_surface_visible: false,
       cognition_service_is_owner: false,
     });
     expect(await new FileCognitionAuditSink(cognitionMemoryBaseDir).list()).toHaveLength(1);
     expect(await new FileCognitiveReplayIndexStore(cognitionMemoryBaseDir).list()).toHaveLength(1);
+    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
+  });
+
+  it("keeps task cognition replay records distinct across retry attempts", async () => {
+    const cwd = process.cwd();
+    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-retry-"));
+    finalize.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      cleanupStatus: "not_requested",
+    });
+    prepareTaskAgentLoopWorkspace.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      finalize,
+    });
+    const boundedRunner = {
+      run: vi.fn(async (turn) => ({
+        success: true,
+        output: {
+          status: "done",
+          finalAnswer: "finished",
+          summary: "summary",
+          filesChanged: [],
+          testsRun: [],
+          completionEvidence: ["bounded runner reached"],
+          verificationHints: [],
+          blockers: [],
+        },
+        finalText: "finished",
+        stopReason: "completed",
+        elapsedMs: 1,
+        modelTurns: 1,
+        toolCalls: 0,
+        compactions: 0,
+        changedFiles: [],
+        commandResults: [],
+        traceId: turn.session.traceId,
+        sessionId: turn.session.sessionId,
+        turnId: turn.turnId,
+      })),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelInfo = {
+      ref: { providerId: "test", modelId: "model" },
+      displayName: "test/model",
+      capabilities: {},
+    };
+    const sessions = [
+      createAgentLoopSession({ sessionId: "session-a", traceId: "trace-a" }),
+      createAgentLoopSession({ sessionId: "session-b", traceId: "trace-b" }),
+    ];
+    const runner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient: {
+        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+      } as unknown as AgentLoopModelClient,
+      modelRegistry: {
+        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+      } as unknown as AgentLoopModelRegistry,
+      contextAssembler: new AgentLoopContextAssembler(),
+      cognitionMemoryBaseDir,
+      createSession: () => sessions.shift()!,
+    });
+
+    await runner.runTask({ task: makeTask(), cwd });
+    await runner.runTask({ task: makeTask(), cwd });
+
+    const records = await new FileCognitionAuditSink(cognitionMemoryBaseDir).list();
+    const index = await new FileCognitiveReplayIndexStore(cognitionMemoryBaseDir).list();
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.record_id)).toEqual([
+      expect.stringContaining("cognition:task:task-1:attempt:trace-a:"),
+      expect.stringContaining("cognition:task:task-1:attempt:trace-b:"),
+    ]);
+    expect(index).toHaveLength(2);
+    expect(new Set(index.map((entry) => entry.index_entry_id)).size).toBe(2);
+    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
+  });
+
+  it("updates task cognition replay with post-run command trace refs", async () => {
+    const cwd = process.cwd();
+    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-trace-"));
+    finalize.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      cleanupStatus: "not_requested",
+    });
+    prepareTaskAgentLoopWorkspace.mockResolvedValue({
+      requestedCwd: cwd,
+      executionCwd: cwd,
+      isolated: false,
+      finalize,
+    });
+    const boundedRunner = {
+      run: vi.fn(async (turn) => ({
+        success: false,
+        output: {
+          status: "failed",
+          finalAnswer: "verification failed",
+          summary: "summary",
+          filesChanged: [],
+          testsRun: ["npm test"],
+          completionEvidence: [],
+          verificationHints: [],
+          blockers: ["verification failed"],
+        },
+        finalText: "verification failed",
+        stopReason: "completed",
+        elapsedMs: 1,
+        modelTurns: 1,
+        toolCalls: 1,
+        compactions: 0,
+        changedFiles: [],
+        commandResults: [{
+          sequence: 1,
+          toolName: "shell_command",
+          command: "npm test",
+          cwd,
+          success: false,
+          category: "verification",
+          evidenceEligible: true,
+          evidenceSource: "verification_plan",
+          outputSummary: "test failed",
+          durationMs: 25,
+        }],
+        traceId: turn.session.traceId,
+        sessionId: turn.session.sessionId,
+        turnId: turn.turnId,
+      })),
+    } as unknown as BoundedAgentLoopRunner;
+    const modelInfo = {
+      ref: { providerId: "test", modelId: "model" },
+      displayName: "test/model",
+      capabilities: {},
+    };
+    const runner = new TaskAgentLoopRunner({
+      boundedRunner,
+      modelClient: {
+        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+      } as unknown as AgentLoopModelClient,
+      modelRegistry: {
+        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+      } as unknown as AgentLoopModelRegistry,
+      contextAssembler: new AgentLoopContextAssembler(),
+      cognitionMemoryBaseDir,
+      createSession: () => createAgentLoopSession({ sessionId: "session-post", traceId: "trace-post" }),
+    });
+
+    const result = await runner.runTask({ task: makeTask(), cwd });
+    const traceEventRefs = result.cognitionReplayRecord?.event_refs.filter((ref) =>
+      ref.source_event_type === "agent_loop_command_result"
+    ) ?? [];
+
+    expect(traceEventRefs).toHaveLength(1);
+    expect(result.cognitionOutput?.situation_model).toMatchObject({
+      runtime_phase_ref: { kind: "task_phase", ref: "task-agent-loop:post-run" },
+      tool_trace_refs: [{ kind: "agent_loop_command_result", ref: traceEventRefs[0]!.ref }],
+    });
+    expect(result.cognitionReplayIndexEntry?.source_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: traceEventRefs[0]!.ref,
+        source_event_type: "agent_loop_command_result",
+      }),
+    ]));
+    const reflectionInput = createReflectionInputFromCognitionReplay({
+      inputId: "reflection:task:post-run",
+      record: result.cognitionReplayRecord!,
+    });
+    expect(reflectionInput.tool_trace_refs).toMatchObject([{
+      ref: traceEventRefs[0]!.ref,
+      source_event_type: "agent_loop_command_result",
+    }]);
     fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
   });
 

@@ -34,6 +34,8 @@ export function assembleSituationModel(input: {
       : undefined,
     operation_boundary_status: attention?.operation_boundary,
     policy_available: missingPolicyRefs.length === 0,
+    tool_trace_refs: runtime?.last_tool_trace_refs ?? [],
+    approval_refs: runtime?.approval_refs ?? [],
     current_target_refs: [
       ...(session?.session_ref ? [session.session_ref] : []),
       ...(session?.turn_ref ? [session.turn_ref] : []),

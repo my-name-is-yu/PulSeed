@@ -392,6 +392,8 @@ export const SituationModelSchema = z.object({
   operation_boundary_ref: CognitionRefSchema.optional(),
   operation_boundary_status: z.enum(["allowed", "blocked", "held", "unavailable"]).optional(),
   policy_available: z.boolean().optional(),
+  tool_trace_refs: z.array(CognitionRefSchema).default([]),
+  approval_refs: z.array(CognitionRefSchema).default([]),
   current_target_refs: z.array(CognitionRefSchema).default([]),
   stale_target_refs: z.array(CognitionRefSchema).default([]),
   missing_memory_refs: z.array(CognitionRefSchema).optional(),

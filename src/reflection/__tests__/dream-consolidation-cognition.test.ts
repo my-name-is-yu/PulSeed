@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCognitionReplayRecord, type CompanionCognitionOutput } from "../../runtime/cognition/index.js";
 import { runDreamConsolidation } from "../dream-consolidation.js";
-import { FileCognitionWritebackQueueStore } from "../index.js";
+import {
+  FileCognitionWritebackQueueStore,
+  decideCognitionWritebackQueueEntry,
+} from "../index.js";
 
 let tempDir: string | null = null;
 
@@ -33,6 +36,8 @@ describe("dream consolidation cognition input", () => {
         situation_id: "situation:1",
         summary_ref: eventRef,
         caller_path: "chat_user_turn",
+        tool_trace_refs: [],
+        approval_refs: [],
         current_target_refs: [],
         stale_target_refs: [],
         protocol_bypass: false,
@@ -99,6 +104,32 @@ describe("dream consolidation cognition input", () => {
     expect(await queue.list()).toMatchObject([{
       owner: "dream",
       state: "ready_for_owner_review",
+      owner_write_performed: false,
+    }]);
+    const [queued] = await queue.list();
+    await queue.update(decideCognitionWritebackQueueEntry({
+      entry: queued!,
+      decidedAt: "2026-05-14T00:01:00.000Z",
+      decision: {
+        kind: "accepted_by_owner",
+        reason: "dream owner accepted the replay writeback",
+        ownerDecisionRef: { kind: "dream_decision", ref: "dream:accepted:1" },
+      },
+    }));
+
+    await runDreamConsolidation({
+      stateManager: {
+        listGoalIds: vi.fn().mockResolvedValue([]),
+      } as never,
+      baseDir: tempDir,
+      cognitionReplayRecords: [record],
+      cognitionWritebackQueue: queue,
+    });
+
+    expect(await queue.list()).toMatchObject([{
+      owner: "dream",
+      state: "accepted_by_owner",
+      owner_decision_ref: { kind: "dream_decision", ref: "dream:accepted:1" },
       owner_write_performed: false,
     }]);
   });

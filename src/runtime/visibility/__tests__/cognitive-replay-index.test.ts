@@ -134,6 +134,8 @@ describe("cognitive replay index", () => {
           situation_id: "situation:inspect",
           summary_ref: event,
           caller_path: "chat_user_turn",
+          tool_trace_refs: [],
+          approval_refs: [],
           current_target_refs: [],
           stale_target_refs: [],
           protocol_bypass: false,

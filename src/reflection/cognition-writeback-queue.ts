@@ -197,13 +197,18 @@ export class FileCognitionWritebackQueueStore implements CognitionWritebackQueue
   async enqueue(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry> {
     const parsed = CognitionWritebackQueueEntrySchema.parse(entry);
     const entries = await this.list();
-    const next = [...entries.filter((existing) => existing.queue_entry_id !== parsed.queue_entry_id), parsed];
-    await this.write(next);
+    const existing = entries.find((candidate) => candidate.queue_entry_id === parsed.queue_entry_id);
+    if (existing) return existing;
+    await this.write([...entries, parsed]);
     return parsed;
   }
 
   async update(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry> {
-    return this.enqueue(entry);
+    const parsed = CognitionWritebackQueueEntrySchema.parse(entry);
+    const entries = await this.list();
+    const next = [...entries.filter((existing) => existing.queue_entry_id !== parsed.queue_entry_id), parsed];
+    await this.write(next);
+    return parsed;
   }
 
   async list(): Promise<CognitionWritebackQueueEntry[]> {

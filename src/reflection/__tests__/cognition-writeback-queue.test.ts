@@ -78,6 +78,62 @@ describe("cognition writeback queue", () => {
     }]);
   });
 
+  it("does not let replay reprocessing erase an owner decision", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-"));
+    const store = new FileCognitionWritebackQueueStore(tempDir);
+    const ready = decideCognitionWritebackQueueEntry({
+      entry: createCognitionWritebackQueueEntry({
+        queueEntryId: "queue:writeback:stable",
+        proposal: proposal(),
+        createdAt: NOW,
+      }),
+      decidedAt: "2026-05-14T00:01:00.000Z",
+      decision: {
+        kind: "ready_for_owner_review",
+        reason: "source refs are current",
+      },
+    });
+    await store.enqueue(ready);
+    const accepted = decideCognitionWritebackQueueEntry({
+      entry: ready,
+      decidedAt: "2026-05-14T00:02:00.000Z",
+      decision: {
+        kind: "accepted_by_owner",
+        reason: "dream owner accepted the writeback",
+        ownerDecisionRef: { kind: "dream_decision", ref: "dream:accepted:1" },
+      },
+    });
+    await store.update(accepted);
+
+    const replayedReady = decideCognitionWritebackQueueEntry({
+      entry: createCognitionWritebackQueueEntry({
+        queueEntryId: "queue:writeback:stable",
+        proposal: proposal(),
+        createdAt: "2026-05-14T00:03:00.000Z",
+      }),
+      decidedAt: "2026-05-14T00:03:00.000Z",
+      decision: {
+        kind: "ready_for_owner_review",
+        reason: "same replay record was consolidated again",
+      },
+    });
+    const returned = await store.enqueue(replayedReady);
+
+    expect(returned).toMatchObject({
+      state: "accepted_by_owner",
+      owner_decision_ref: { kind: "dream_decision", ref: "dream:accepted:1" },
+    });
+    expect(await store.list()).toMatchObject([{
+      state: "accepted_by_owner",
+      owner_decision_ref: { kind: "dream_decision", ref: "dream:accepted:1" },
+      audit_events: [
+        expect.objectContaining({ kind: "queued" }),
+        expect.objectContaining({ kind: "revalidated" }),
+        expect.objectContaining({ kind: "accepted_by_owner" }),
+      ],
+    }]);
+  });
+
   it("blocks deleted or missing sources before owner acceptance", () => {
     const blocked = createCognitionWritebackQueueEntry({
       queueEntryId: "queue:writeback:blocked",
@@ -111,6 +167,8 @@ describe("cognition writeback queue", () => {
           situation_id: "situation:1",
           summary_ref: eventRef(),
           caller_path: "chat_user_turn",
+          tool_trace_refs: [],
+          approval_refs: [],
           current_target_refs: [],
           stale_target_refs: [],
           protocol_bypass: false,
