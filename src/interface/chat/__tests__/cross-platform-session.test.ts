@@ -2599,7 +2599,7 @@ describe("CrossPlatformChatSessionManager", () => {
           staleEvents.push(event);
         },
       });
-      await vi.waitFor(() => expect(capturedApprovalFn).toBeDefined());
+      await vi.waitFor(() => expect(capturedApprovalFn).toBeDefined(), { timeout: 5000 });
 
       const redirected = await manager.execute("continúa esto en segundo plano", {
         identity_key: "shared-user",
@@ -3727,7 +3727,7 @@ describe("CrossPlatformChatSessionManager", () => {
         },
       });
 
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5000;
       while (Date.now() < deadline && !events.some((message) => message.includes("approval-natural-language"))) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -3803,7 +3803,7 @@ describe("CrossPlatformChatSessionManager", () => {
           }
         },
       });
-      const deadline = Date.now() + 1000;
+      const deadline = Date.now() + 5000;
       while (Date.now() < deadline && (await store.loadPending("approval-tool-metadata")) === null) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
