@@ -1,8 +1,8 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T01:40:20.470Z
+Generated: 2026-05-13T02:52:31.093Z
 
-Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.
+Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
 ## P0 Trace Coverage
 
@@ -220,25 +220,29 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 1300-1569
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as mocked adapter/LLM coverage of the internal probe execution route; the surviving ChangeDetector unit keeps the pure reducer contract and broader probe behavior needs a production schedule-source trace before being reintroduced.
   - Block: Probe execution edge cases for missing LLM, schedule_change notification, and missing probe config
     - Old line range: 1900-1975
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as private executeProbe plumbing and mock notification coverage; no stable public runner artifact depended on these implementation details.
   - Block: Direct executeCron private-method assertions
     - Old line range: 2111-2134, 2216-2334, 2399-2456
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted direct `(eng as any).executeCron` tests that asserted mocked context, prompt interpolation, notification, output summary, missing config, and reflection helper details instead of the public schedule tick contract.
   - Block: Direct executeGoalTrigger private-method assertions
     - Old line range: 2480-2607
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted direct `(eng as any).executeGoalTrigger` tests that followed CoreLoop call arguments and budget internals rather than a production goal-trigger schedule artifact.
   - Block: routes wait-resume schedule wakes through attention re-evaluation without notification
     - Old line range: 2608-2667
@@ -268,7 +272,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 3082-3138
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted implementation-routing assertions that verified private dispatch selection through mocks; visible cron and goal-trigger behavior remains in surviving public tick tests until dedicated runner traces exist.
 - Replacement evidence:
   - Replacement trace name: schedule_wait_resume_before_due_no_attention_or_notification
@@ -382,13 +387,15 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 47-57
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as legacy journal JSON import/file-shape behavior outside the normal Control DB queue path; no supported public migration boundary depends on this direct journal file mutation.
   - Block: skips persisted queue records with unsafe envelope scalars
     - Old line range: 58-87
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as legacy persisted journal scalar-shape coverage; normal queue safety is now enforced through typed queue/control DB boundaries rather than direct JSON salvage tests.
   - Block: rejects duplicate dedupe_key while the original item is inflight
     - Old line range: 143-173
@@ -410,7 +417,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 310-333
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted as obsolete legacy `.lock` compatibility behavior; current queue ownership is Control DB-backed and this lock-directory salvage path is not a supported public contract.
 - Replacement evidence:
   - Replacement trace name: eventserver_command_accept_durable_before_200
@@ -554,7 +562,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 175-177
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted static metadata assertion; no scheduler/tool-registry concurrency contract is being asserted here.
 - Replacement evidence:
   - Replacement trace name: tool_readonly_fs_no_write_approval_under_workspace
@@ -584,7 +593,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 65-93
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted duplicated FileWrite-level validation tests; validation remains owned by shared file-validation/tool-boundary coverage rather than a mocked write-file unit.
   - Block: checkPermissions denies without preApproved and allows with preApproved
     - Old line range: 115-128
@@ -598,7 +608,8 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Old line range: 131-138
     - Classification: obsolete
     - Replacement trace: none
-    - Deletion allowed: yes
+    - Deletion allowed: no
+    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted static implementation metadata assertions; no public registry contract requires this mocked file.
 - Replacement evidence:
   - Replacement trace name: tool_write_local_records_approval_artifact_before_mutation

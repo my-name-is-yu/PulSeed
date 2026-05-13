@@ -708,7 +708,7 @@ function renderReplacementMap(summary) {
     "",
     `Generated: ${summary.generated_at}`,
     "",
-    "Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place.",
+    "Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.",
     "",
     "## P0 Trace Coverage",
     "",
@@ -729,18 +729,17 @@ function renderReplacementMap(summary) {
     if (mapping.deletedBlocks?.length > 0) {
       lines.push("- Deleted old-test blocks:");
       for (const deletion of mapping.deletedBlocks) {
-        const deletionEvidence = deletion.replacementTrace
-          ? evidenceForTrace(deletion.replacementTrace)
-          : { allKnownRunnersReal: deletion.classification === "obsolete" };
+        const deletionGate = deletionGateForDeletedBlock(deletion);
         lines.push(`  - Block: ${deletion.block}`);
         if (deletion.oldLineRange) lines.push(`    - Old line range: ${deletion.oldLineRange}`);
         if (deletion.classification) lines.push(`    - Classification: ${deletion.classification}`);
         lines.push(`    - Replacement trace: ${deletion.replacementTrace ?? "none"}`);
         if (deletion.replacementTrace) {
-          lines.push(`    - Exported state artifact/assertion: ${deletionEvidence.artifactAssertion}`);
-          lines.push(`    - Production entrypoint exercised: ${deletionEvidence.entrypoint}`);
+          lines.push(`    - Exported state artifact/assertion: ${deletionGate.artifactAssertion}`);
+          lines.push(`    - Production entrypoint exercised: ${deletionGate.entrypoint}`);
         }
-        lines.push(`    - Deletion allowed: ${deletionEvidence.allKnownRunnersReal ? "yes" : "no"}`);
+        lines.push(`    - Deletion allowed: ${deletionGate.allowed ? "yes" : "no"}`);
+        if (!deletionGate.allowed) lines.push(`    - No reason: ${deletionGate.reason}`);
         lines.push(`    - Evidence: ${deletion.evidence}`);
       }
     }
@@ -792,6 +791,24 @@ function deletionGateForBlock(mapping) {
     allowed: false,
     reason: mapping.remainingUnitValue
       ?? "File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.",
+  };
+}
+
+function deletionGateForDeletedBlock(deletion) {
+  if (!deletion.replacementTrace) {
+    return {
+      allowed: false,
+      reason: "No replacement trace recorded; classification alone is not real-runner deletion evidence.",
+    };
+  }
+  const traceEvidence = evidenceForTrace(deletion.replacementTrace);
+  return {
+    allowed: traceEvidence.allKnownRunnersReal,
+    reason: traceEvidence.allKnownRunnersReal
+      ? "all mapped replacement trace runners are real_production_path"
+      : "replacement trace is not backed by real_production_path runner evidence",
+    artifactAssertion: traceEvidence.artifactAssertion,
+    entrypoint: traceEvidence.entrypoint,
   };
 }
 
