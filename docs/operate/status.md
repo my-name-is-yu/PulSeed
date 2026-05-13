@@ -72,9 +72,12 @@ admission/autonomy decisions when they match the same operation scope. A
 configured plugin, imported foreign plugin, or legacy capability record is
 discovery evidence, not proof that the operation is safe to execute or initiate.
 
-Normal user-facing surfaces should show the next safe action. Operator and debug
-surfaces may show raw readiness, admission, autonomy, warning, and evidence
-details.
+Normal user-facing surfaces should render the user-facing view derived from
+`CompanionActionProjection`: `user_visible_action_kind`,
+`next_best_safe_action`, and optional `brief_reason`. They should not render raw
+readiness, admission, autonomy, capability catalog, warning, rationale, or
+evidence details. Operator, debug, and status surfaces may show those raw
+policy details.
 
 ## Not Current Operating Behavior
 

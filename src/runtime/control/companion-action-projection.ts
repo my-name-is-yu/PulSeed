@@ -78,6 +78,16 @@ export const CompanionActionProjectionSchema = z.object({
 }).strict();
 export type CompanionActionProjection = z.infer<typeof CompanionActionProjectionSchema>;
 
+export const CompanionUserFacingPolicyProjectionSchema = z.object({
+  schema_version: z.literal("companion-user-facing-policy-projection/v1"),
+  evaluated_at: z.string().min(1),
+  user_visible_action_kind: CompanionUserVisibleActionKindSchema,
+  next_best_safe_action: z.string().min(1),
+  brief_reason: z.string().min(1).optional(),
+  executes_operation: z.boolean(),
+}).strict();
+export type CompanionUserFacingPolicyProjection = z.infer<typeof CompanionUserFacingPolicyProjectionSchema>;
+
 type ParsedProjectionInput = z.infer<typeof CompanionActionProjectionInputSchema>;
 
 export function projectCompanionAction(input: CompanionActionProjectionInput): CompanionActionProjection {
@@ -107,6 +117,39 @@ export function projectCompanionAction(input: CompanionActionProjectionInput): C
       normal_capability_catalog_suppressed: parsed.context.surface_kind === "normal_companion",
       raw_policy_state_suppressed: parsed.context.surface_kind === "normal_companion",
     },
+  });
+}
+
+export function projectCompanionUserFacingPolicy(
+  input: CompanionActionProjectionInput
+): CompanionUserFacingPolicyProjection {
+  return toCompanionUserFacingPolicyProjection(projectCompanionAction(input));
+}
+
+export function toCompanionUserFacingPolicyProjection(
+  input: CompanionActionProjection
+): CompanionUserFacingPolicyProjection {
+  const projection = CompanionActionProjectionSchema.parse(input);
+  const policy = projection.surface_expression_policy;
+  if (
+    policy.surface_kind !== "normal_companion"
+    || policy.user_visible_reason === "operator_detail"
+    || policy.hidden_reasons_visible
+    || policy.capability_catalog_visible
+    || policy.raw_policy_state_visible
+  ) {
+    throw new Error("CompanionActionProjection is not safe for a normal companion surface.");
+  }
+
+  return CompanionUserFacingPolicyProjectionSchema.parse({
+    schema_version: "companion-user-facing-policy-projection/v1",
+    evaluated_at: projection.evaluated_at,
+    user_visible_action_kind: projection.user_visible_action_kind,
+    next_best_safe_action: projection.next_best_safe_action,
+    ...(policy.user_visible_reason === "brief" && projection.brief_reason
+      ? { brief_reason: projection.brief_reason }
+      : {}),
+    executes_operation: projection.executes_operation,
   });
 }
 
@@ -146,8 +189,8 @@ function nextBestSafeActionFor(
       return "Ask for explicit approval before executing the prepared operation.";
     case "execute_now":
       return input.decision.level === "user_directed_execute"
-        ? "Execute the admitted user-directed operation."
-        : "Execute the already-admitted low-risk internal operation.";
+        ? "Run the requested operation now."
+        : "Run the safe background operation now.";
     case "challenge":
       return "Challenge the request and ask for clarification.";
     case "refuse_with_alternative":
@@ -179,8 +222,8 @@ function briefReasonPart(
     case "execute_now":
       return {
         brief_reason: input.decision.level === "user_directed_execute"
-          ? "This user-directed operation has already passed admission."
-          : "This is already admitted as low-risk internal work.",
+          ? "This requested action is safe to run now."
+          : "This background action is safe to run now.",
       };
     case "suggest":
       return { brief_reason: "A safe suggestion is available." };
@@ -190,7 +233,7 @@ function briefReasonPart(
 }
 
 function surfacePolicyFor(context: CompanionProjectionContext): CompanionSurfaceExpressionPolicy {
-  const hiddenVisible = context.surface_kind !== "normal_companion" || context.operator_inspectable;
+  const hiddenVisible = context.surface_kind !== "normal_companion";
   return CompanionSurfaceExpressionPolicySchema.parse({
     surface_kind: context.surface_kind,
     user_visible_reason: context.quieted

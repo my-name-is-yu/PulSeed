@@ -3,7 +3,10 @@ import type {
   AutonomyDecision,
   AutonomyDecisionLevel,
 } from "../autonomy-governor.js";
-import { projectCompanionAction } from "../companion-action-projection.js";
+import {
+  projectCompanionAction,
+  toCompanionUserFacingPolicyProjection,
+} from "../companion-action-projection.js";
 
 const NOW = "2026-05-09T00:00:00.000Z";
 
@@ -140,6 +143,73 @@ describe("CompanionActionProjection", () => {
     expect(projection.brief_reason).toBe("Projected from autonomy decision autonomy:operation:approval_required.");
   });
 
+  it("derives a normal user-facing policy view without policy refs or raw metadata", () => {
+    const projection = projectCompanionAction({
+      decision: decision("approval_required"),
+      context: normalContext(),
+      prepared_artifact_refs: ["draft:notify"],
+      approval_request_ref: "approval:notify",
+      evaluated_at: NOW,
+    });
+    const userFacing = toCompanionUserFacingPolicyProjection(projection);
+
+    expect(userFacing).toEqual({
+      schema_version: "companion-user-facing-policy-projection/v1",
+      evaluated_at: NOW,
+      user_visible_action_kind: "ask_for_approval",
+      next_best_safe_action: "Ask for explicit approval before executing the prepared operation.",
+      brief_reason: "Approval is needed before this can run.",
+      executes_operation: false,
+    });
+    expect(JSON.stringify(userFacing)).not.toContain("RAW_POLICY_STATE");
+    expect(JSON.stringify(userFacing)).not.toContain("readiness");
+    expect(JSON.stringify(userFacing)).not.toContain("admission");
+    expect(JSON.stringify(userFacing)).not.toContain("autonomy");
+    expect(JSON.stringify(userFacing)).not.toContain("capability:notify");
+    expect(JSON.stringify(userFacing)).not.toContain("hidden_reason_refs");
+    expect(JSON.stringify(userFacing)).not.toContain("audit_refs");
+  });
+
+  it("rejects operator-detail reasons before deriving a user-facing policy view", () => {
+    const projection = projectCompanionAction({
+      decision: decision("approval_required"),
+      context: normalContext(),
+      evaluated_at: NOW,
+    });
+
+    expect(() => toCompanionUserFacingPolicyProjection({
+      ...projection,
+      brief_reason: "Projected from autonomy decision autonomy:operation:approval_required.",
+      surface_expression_policy: {
+        ...projection.surface_expression_policy,
+        user_visible_reason: "operator_detail",
+      },
+    })).toThrow(/not safe for a normal companion surface/);
+  });
+
+  it("drops brief_reason when the normal surface policy says no reason is visible", () => {
+    const projection = projectCompanionAction({
+      decision: decision("prohibited", {
+        suppression_reason: "Quieting policy is active.",
+      }),
+      context: normalContext({ quieted: true }),
+      evaluated_at: NOW,
+    });
+
+    const userFacing = toCompanionUserFacingPolicyProjection({
+      ...projection,
+      brief_reason: "Operator-only quieting policy detail.",
+    });
+
+    expect(userFacing).toEqual({
+      schema_version: "companion-user-facing-policy-projection/v1",
+      evaluated_at: NOW,
+      user_visible_action_kind: "digest_later",
+      next_best_safe_action: "Hold this for a later digest.",
+      executes_operation: false,
+    });
+  });
+
   it("does not turn normal companion UX into a capability catalog", () => {
     const projection = projectCompanionAction({
       decision: decision("prepare_only"),
@@ -179,12 +249,15 @@ describe("CompanionActionProjection", () => {
     });
 
     expect(userDirected.user_visible_action_kind).toBe("execute_now");
-    expect(userDirected.next_best_safe_action).toBe("Execute the admitted user-directed operation.");
-    expect(userDirected.brief_reason).toBe("This user-directed operation has already passed admission.");
+    expect(userDirected.next_best_safe_action).toBe("Run the requested operation now.");
+    expect(userDirected.brief_reason).toBe("This requested action is safe to run now.");
+    expect(userDirected.brief_reason).not.toContain("admission");
     expect(userDirected.brief_reason).not.toContain("low-risk internal");
 
     expect(autonomousLowRisk.user_visible_action_kind).toBe("execute_now");
-    expect(autonomousLowRisk.next_best_safe_action).toBe("Execute the already-admitted low-risk internal operation.");
-    expect(autonomousLowRisk.brief_reason).toBe("This is already admitted as low-risk internal work.");
+    expect(autonomousLowRisk.next_best_safe_action).toBe("Run the safe background operation now.");
+    expect(autonomousLowRisk.brief_reason).toBe("This background action is safe to run now.");
+    expect(autonomousLowRisk.brief_reason).not.toContain("autonomous");
+    expect(autonomousLowRisk.brief_reason).not.toContain("admitted");
   });
 });
