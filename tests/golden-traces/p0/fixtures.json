@@ -7623,8 +7623,8 @@
         "records": [
           {
             "assertions": {
-              "fail_closed": false,
-              "message_contains_newer_schema": false
+              "fail_closed": true,
+              "message_contains_newer_schema": true
             },
             "disposition": "ok",
             "kind": "attention_schema_ahead_fail_closed",
@@ -7641,8 +7641,8 @@
       "artifact_tree": [
         {
           "path": "state/state/state_attention_schema_ahead_fail_closed.json",
-          "sha256": "7b6db299c59b1508c229079959d0a9b0f6de7faeaa442895b54676ae8e25ed53",
-          "size": 590,
+          "sha256": "5f43fab7e7051a10b0fc8b4d40029078d98a7eafc6d6f4bc44fe326936ba20a8",
+          "size": 653,
           "type": "file"
         }
       ],

@@ -11,7 +11,7 @@ import { createPendingPermissionTask, type PendingPermissionTask } from "../../s
 import { JournalBackedQueue, type JournalBackedQueueSnapshot } from "../../src/runtime/queue/journal-backed-queue.js";
 import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import { RuntimeSessionRegistry } from "../../src/runtime/session-registry/index.js";
-import { ApprovalStore, AttentionStateStore, BackgroundRunLedger } from "../../src/runtime/store/index.js";
+import { ApprovalStore, AttentionStateStore, BackgroundRunLedger, resolveControlDbPath } from "../../src/runtime/store/index.js";
 import type { RuntimeControlReplyTarget } from "../../src/runtime/store/runtime-operation-schemas.js";
 import type { Envelope } from "../../src/runtime/types/envelope.js";
 import { createIsolatedStateRoot, type IsolatedStateRoot } from "./isolated-state-root.js";
@@ -280,7 +280,7 @@ async function runAttentionSchemaAheadSequence(
   runtimeRoot: string,
   controlBaseDir: string,
 ): Promise<{ assertions: JsonObject; status: string }> {
-  const dbPath = path.join(controlBaseDir, "pulseed-control.sqlite");
+  const dbPath = resolveControlDbPath({ baseDir: controlBaseDir });
   await fsp.mkdir(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma("user_version = 999");

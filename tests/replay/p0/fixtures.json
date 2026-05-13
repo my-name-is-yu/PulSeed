@@ -19,8 +19,8 @@
     "expected": {
       "fresh_state": {
         "assertions": {
-          "fail_closed": false,
-          "message_contains_newer_schema": false
+          "fail_closed": true,
+          "message_contains_newer_schema": true
         },
         "contract_name": "state_attention_schema_ahead_fail_closed",
         "initial_state_paths": [
@@ -33,12 +33,12 @@
           "same_checkout_pass_command": "npm run test:replay",
           "status": "real_production_path"
         },
-        "status": "not_blocked"
+        "status": "blocked"
       },
       "restarted_state": {
         "assertions": {
-          "fail_closed": false,
-          "message_contains_newer_schema": false
+          "fail_closed": true,
+          "message_contains_newer_schema": true
         },
         "contract_name": "state_attention_schema_ahead_fail_closed",
         "initial_state_paths": [
@@ -51,7 +51,7 @@
           "same_checkout_pass_command": "npm run test:replay",
           "status": "real_production_path"
         },
-        "status": "not_blocked"
+        "status": "blocked"
       },
       "audit": [
         {
@@ -59,7 +59,7 @@
             "fresh_restarted_equal": true,
             "startup_replay_path": "AttentionStateStore.ensureReady() control DB migration guard"
           },
-          "disposition": "not_blocked",
+          "disposition": "blocked",
           "production_boundary": "runtime startup/replay -> attention state store -> control DB",
           "reason": "schema_ahead",
           "runner_status": "real_production_path"
@@ -68,8 +68,8 @@
       "artifact_tree": [
         {
           "path": "state/state/state_attention_schema_ahead_fail_closed.json",
-          "sha256": "15c07798eb535d5d48aacaed169231d94a0ff9780a8475116ec74e5334c34b55",
-          "size": 1553,
+          "sha256": "31209334df8b003c4be9ac0e75d5b6128bae35f12440eb90ded87af949213fcb",
+          "size": 1541,
           "type": "file"
         }
       ]
