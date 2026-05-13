@@ -99,8 +99,9 @@ contracts:
 - autonomy: PulSeed may initiate or execute after readiness and admission match
 
 This keeps `can execute` separate from `may initiate`. Normal surfaces should
-show the next safe action, while debug/operator surfaces can expose raw policy
-details.
+show only the user-facing `CompanionActionProjection` view: the action kind,
+next safe action, and optional brief reason. Debug, operator, and status
+surfaces can expose raw policy details.
 
 ## Why The Split Matters
 

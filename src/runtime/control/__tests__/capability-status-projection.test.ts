@@ -268,9 +268,10 @@ describe("capability status projection", () => {
     expect(projection.user_visible_action_kind).toBe("prepare_draft");
     expect(projection.executes_operation).toBe(false);
     expect(projection.next_best_safe_action).toBe("Prepare an inspectable draft without executing the operation.");
-    expect(projection.brief_reason).toBe("The previous autonomy decision is no longer current.");
-    expect(projection.capability_catalog_visible).toBe(false);
-    expect(projection.raw_policy_state_visible).toBe(false);
+    expect(projection.brief_reason).toBe("The previous safety decision is no longer current.");
+    expect(projection).not.toHaveProperty("capability_catalog_visible");
+    expect(projection).not.toHaveProperty("raw_policy_state_visible");
+    expect(JSON.stringify(projection)).not.toContain("autonomy");
   });
 
   it("keeps degraded and blocked readiness visible to operator surfaces", () => {
@@ -303,6 +304,14 @@ describe("capability status projection", () => {
     });
   });
 
+  it("does not allow raw operator status projection on normal companion surfaces", () => {
+    expect(() => projectCapabilityOperatorStatus({
+      readiness: readiness(),
+      surface_kind: "normal_companion",
+      evaluated_at: NOW,
+    } as never)).toThrow();
+  });
+
   it("projects normal companion UX as next-best safe action without raw capability state", () => {
     const projection = projectCapabilityNormalCompanionStatusAction({
       decision: autonomy("approval_required"),
@@ -314,10 +323,12 @@ describe("capability status projection", () => {
 
     expect(projection.user_visible_action_kind).toBe("ask_for_approval");
     expect(projection.next_best_safe_action).toBe("Ask for explicit approval before executing the prepared operation.");
-    expect(projection.capability_catalog_visible).toBe(false);
-    expect(projection.raw_policy_state_visible).toBe(false);
+    expect(projection).not.toHaveProperty("capability_catalog_visible");
+    expect(projection).not.toHaveProperty("raw_policy_state_visible");
     expect(JSON.stringify(projection)).not.toContain("RAW_POLICY_STATE");
+    expect(JSON.stringify(projection)).not.toContain("catalog");
     expect(JSON.stringify(projection)).not.toContain("readiness=executable_verified");
     expect(JSON.stringify(projection)).not.toContain("admission=allowed");
+    expect(JSON.stringify(projection)).not.toContain("autonomy");
   });
 });

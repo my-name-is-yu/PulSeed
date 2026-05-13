@@ -46,11 +46,14 @@ export {
 } from "./internal-autonomy-default.js";
 export {
   projectCompanionAction,
+  projectCompanionUserFacingPolicy,
+  toCompanionUserFacingPolicyProjection,
   CompanionActionProjectionInputSchema,
   CompanionActionProjectionSchema,
   CompanionProjectionContextSchema,
   CompanionProjectionSurfaceKindSchema,
   CompanionSurfaceExpressionPolicySchema,
+  CompanionUserFacingPolicyProjectionSchema,
   CompanionUserVisibleActionKindSchema,
 } from "./companion-action-projection.js";
 export {
@@ -60,6 +63,7 @@ export {
   CapabilityNormalCompanionStatusProjectionSchema,
   CapabilityOperatorStatusProjectionInputSchema,
   CapabilityOperatorStatusProjectionSchema,
+  CapabilityOperatorStatusSurfaceKindSchema,
   CapabilityProjectionAdmissionLabelSchema,
   CapabilityProjectionAutonomyLabelSchema,
   CapabilityProjectionExecutionLabelSchema,
@@ -117,6 +121,7 @@ export type {
   CompanionProjectionContextInput,
   CompanionProjectionSurfaceKind,
   CompanionSurfaceExpressionPolicy,
+  CompanionUserFacingPolicyProjection,
   CompanionUserVisibleActionKind,
 } from "./companion-action-projection.js";
 export type {
@@ -124,6 +129,7 @@ export type {
   CapabilityNormalCompanionStatusProjectionInput,
   CapabilityOperatorStatusProjection,
   CapabilityOperatorStatusProjectionInput,
+  CapabilityOperatorStatusSurfaceKind,
   CapabilityProjectionAdmissionLabel,
   CapabilityProjectionAutonomyLabel,
   CapabilityProjectionExecutionLabel,

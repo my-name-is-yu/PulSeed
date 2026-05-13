@@ -4,6 +4,7 @@ import {
   decomposeAgenda,
   ref as autonomyRef,
 } from "../../src/runtime/attention/index.js";
+import { projectCompanionUserFacingPolicy } from "../../src/runtime/control/companion-action-projection.js";
 import {
   AgentAgendaItemSchema,
   AttentionMaturationTransitionSchema,
@@ -495,6 +496,63 @@ describe("companion autonomy decision contracts", () => {
 });
 
 describe("companion autonomy audit and visibility contracts", () => {
+  it("keeps normal_companion policy projection on user-facing action fields without raw policy or catalog state", () => {
+    const projection = projectCompanionUserFacingPolicy({
+      decision: {
+        schema_version: "autonomy-decision/v1",
+        decision_id: "autonomy:decision:raw-policy",
+        operation_id: "notify.send",
+        capability_id: "capability:notify",
+        evaluated_at: NOW,
+        level: "approval_required",
+        rationale: [
+          "RAW_POLICY_STATE readiness=executable_verified admission=approval_required autonomy=approval_required capability:notify",
+        ],
+        allowed_steps: ["prepare", "request_user_approval"],
+        blocked_steps: ["execute_without_approval"],
+        required_user_approval: true,
+        audit_refs: ["audit:raw-policy"],
+        expires_at: "2026-05-08T00:05:00.000Z",
+        invalidation_bindings: [{
+          kind: "readiness",
+          ref: "readiness:notify",
+        }],
+        cache_key: "cache:raw-policy",
+        metadata: {
+          admission_evaluation_ref: "admission:notify",
+          readiness_refs: ["readiness:notify"],
+          user_directed: false,
+          external_side_effect: true,
+          blast_radius: "external",
+          privacy_sensitivity: "medium",
+          context_authority_evidence_refs: [],
+        },
+      },
+      context: {
+        surface_ref: "surface:normal-chat",
+        surface_kind: "normal_companion",
+      },
+      prepared_artifact_refs: ["draft:notify"],
+      approval_request_ref: "approval:notify",
+      evaluated_at: NOW,
+    });
+
+    expect(projection).toEqual({
+      schema_version: "companion-user-facing-policy-projection/v1",
+      evaluated_at: NOW,
+      user_visible_action_kind: "ask_for_approval",
+      next_best_safe_action: "Ask for explicit approval before executing the prepared operation.",
+      brief_reason: "Approval is needed before this can run.",
+      executes_operation: false,
+    });
+    expect(JSON.stringify(projection)).not.toContain("RAW_POLICY_STATE");
+    expect(JSON.stringify(projection)).not.toContain("readiness");
+    expect(JSON.stringify(projection)).not.toContain("admission");
+    expect(JSON.stringify(projection)).not.toContain("autonomy");
+    expect(JSON.stringify(projection)).not.toContain("capability:notify");
+    expect(JSON.stringify(projection)).not.toContain("catalog");
+  });
+
   it("defines inspectable, digest-only, audit-visible, and never-directly-show visibility policies", () => {
     const inspectable = VisibilityPolicySchema.parse({
       visibility_policy_id: "visibility:inspectable-hidden",

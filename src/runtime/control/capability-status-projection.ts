@@ -18,10 +18,16 @@ import {
   type AutonomyDecision,
 } from "./autonomy-governor.js";
 import {
-  CompanionProjectionSurfaceKindSchema,
-  CompanionUserVisibleActionKindSchema,
-  projectCompanionAction,
+  CompanionUserFacingPolicyProjectionSchema,
+  projectCompanionUserFacingPolicy,
 } from "./companion-action-projection.js";
+
+export const CapabilityOperatorStatusSurfaceKindSchema = z.enum([
+  "operator",
+  "debug",
+  "status",
+]);
+export type CapabilityOperatorStatusSurfaceKind = z.infer<typeof CapabilityOperatorStatusSurfaceKindSchema>;
 
 export const CapabilityProjectionReadinessLabelSchema = z.enum([
   "recorded_not_executable",
@@ -67,7 +73,7 @@ export const CapabilityOperatorStatusProjectionInputSchema = z.object({
   readiness: CapabilityReadinessSnapshotSchema,
   admission_evaluation: AdmissionPolicyEvaluationSchema.optional(),
   autonomy_decision: AutonomyDecisionSchema.optional(),
-  surface_kind: CompanionProjectionSurfaceKindSchema.default("status"),
+  surface_kind: CapabilityOperatorStatusSurfaceKindSchema.default("status"),
   surface_ref: z.string().min(1).optional(),
   registry_status: CapabilityStatusEnum.optional(),
   evaluated_at: z.string().min(1).optional(),
@@ -78,7 +84,7 @@ export type CapabilityOperatorStatusProjectionInput = z.input<typeof CapabilityO
 export const CapabilityOperatorStatusProjectionSchema = z.object({
   schema_version: z.literal("capability-operator-status-projection/v1"),
   projection_id: z.string().min(1),
-  surface_kind: CompanionProjectionSurfaceKindSchema,
+  surface_kind: CapabilityOperatorStatusSurfaceKindSchema,
   surface_ref: z.string().min(1),
   evaluated_at: z.string().min(1),
   capability_id: z.string().min(1),
@@ -140,19 +146,8 @@ export const CapabilityNormalCompanionStatusProjectionInputSchema = z.object({
 }).strict();
 export type CapabilityNormalCompanionStatusProjectionInput = z.input<typeof CapabilityNormalCompanionStatusProjectionInputSchema>;
 
-export const CapabilityNormalCompanionStatusProjectionSchema = z.object({
+export const CapabilityNormalCompanionStatusProjectionSchema = CompanionUserFacingPolicyProjectionSchema.extend({
   schema_version: z.literal("capability-normal-companion-status-projection/v1"),
-  projection_id: z.string().min(1),
-  evaluated_at: z.string().min(1),
-  capability_id: z.string().min(1).optional(),
-  operation_id: z.string().min(1),
-  decision_id: z.string().min(1),
-  user_visible_action_kind: CompanionUserVisibleActionKindSchema,
-  next_best_safe_action: z.string().min(1),
-  brief_reason: z.string().min(1).optional(),
-  executes_operation: z.boolean(),
-  capability_catalog_visible: z.literal(false),
-  raw_policy_state_visible: z.literal(false),
 }).strict();
 export type CapabilityNormalCompanionStatusProjection = z.infer<typeof CapabilityNormalCompanionStatusProjectionSchema>;
 
@@ -258,8 +253,8 @@ export function projectCapabilityOperatorStatus(
       may_initiate_autonomously: autonomyMayInitiate,
     },
     surface_expression: {
-      capability_catalog_visible: parsed.surface_kind !== "normal_companion",
-      raw_policy_state_visible: parsed.surface_kind !== "normal_companion",
+      capability_catalog_visible: true,
+      raw_policy_state_visible: true,
     },
     audit_refs: auditRefs,
     warnings,
@@ -278,22 +273,16 @@ export function projectCapabilityNormalCompanionStatusAction(
     const actionKind = parsed.prepared_artifact_refs.length > 0 ? "prepare_draft" : "suggest";
     return CapabilityNormalCompanionStatusProjectionSchema.parse({
       schema_version: "capability-normal-companion-status-projection/v1",
-      projection_id: parsed.projection_id ?? `capability-normal-companion:${parsed.decision.decision_id}:${parsed.surface_ref}:${evaluatedAt}`,
       evaluated_at: evaluatedAt,
-      ...(parsed.decision.capability_id ? { capability_id: parsed.decision.capability_id } : {}),
-      operation_id: parsed.decision.operation_id,
-      decision_id: parsed.decision.decision_id,
       user_visible_action_kind: actionKind,
       next_best_safe_action: actionKind === "prepare_draft"
         ? "Prepare an inspectable draft without executing the operation."
         : "Suggest a safe next step without executing.",
-      brief_reason: "The previous autonomy decision is no longer current.",
+      brief_reason: "The previous safety decision is no longer current.",
       executes_operation: false,
-      capability_catalog_visible: false,
-      raw_policy_state_visible: false,
     });
   }
-  const projection = projectCompanionAction({
+  const projection = projectCompanionUserFacingPolicy({
     decision: parsed.decision,
     context: {
       surface_ref: parsed.surface_ref,
@@ -308,17 +297,11 @@ export function projectCapabilityNormalCompanionStatusAction(
 
   return CapabilityNormalCompanionStatusProjectionSchema.parse({
     schema_version: "capability-normal-companion-status-projection/v1",
-    projection_id: projection.projection_id,
     evaluated_at: projection.evaluated_at,
-    ...(parsed.decision.capability_id ? { capability_id: parsed.decision.capability_id } : {}),
-    operation_id: projection.operation_id,
-    decision_id: projection.decision_id,
     user_visible_action_kind: projection.user_visible_action_kind,
     next_best_safe_action: projection.next_best_safe_action,
     ...(projection.brief_reason ? { brief_reason: projection.brief_reason } : {}),
     executes_operation: projection.executes_operation,
-    capability_catalog_visible: false,
-    raw_policy_state_visible: false,
   });
 }
 
