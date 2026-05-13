@@ -443,7 +443,12 @@ function residentToolCandidatesFromOperationBoundary(input: {
   eventRef: CognitionEventRef;
 }): ToolCandidate[] {
   const operationCandidate = input.boundary.assembly.candidate_plans[0];
-  if (!operationCandidate || !input.boundary.admission_evaluation || !input.boundary.autonomy_decision) {
+  if (
+    !input.boundary.preparation_allowed
+    || !operationCandidate
+    || !input.boundary.admission_evaluation
+    || !input.boundary.autonomy_decision
+  ) {
     return [];
   }
   const projection = projectCompanionAction({
