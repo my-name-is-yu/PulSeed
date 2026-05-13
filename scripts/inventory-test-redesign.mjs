@@ -51,6 +51,29 @@ const p0TraceMappings = [
         evidence: "Deleted a private method key-list test that froze current class wiring rather than a user-visible ChatRunner contract.",
       },
     ],
+    rewrittenBlocks: [
+      {
+        block: "slash command grammar, usage/status/task/config/session surfaces",
+        oldLineRange: "1092-3478",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner command entrypoint tests",
+        evidence: "Kept as exact protocol/parser and durable state projection coverage; these commands are user-visible and intentionally deterministic.",
+      },
+      {
+        block: "setup secret intake, direct model-loop, event ordering, and chat session persistence",
+        oldLineRange: "524-1088, 3499-3740",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner execute/ingress tests",
+        evidence: "Kept because the tests exercise public ChatRunner entrypoints, redaction before persistence, model-loop lifecycle events, and durable session writes.",
+      },
+      {
+        block: "native agent-loop routing, structured interrupt intent, gateway/direct-loop boundaries, and RunSpec tool handoff",
+        oldLineRange: "3755-5595",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/chat-runner.test.ts: AgentLoop and routed ingress caller-path tests",
+        evidence: "Kept because these blocks protect typed routing/interrupt contracts without keyword fallback and preserve ChatRunner as the turn execution engine.",
+      },
+    ],
   },
   {
     oldPath: "src/interface/chat/__tests__/chat-runner-tools.test.ts",
@@ -98,6 +121,29 @@ const p0TraceMappings = [
     ],
     boundary: "Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage",
     stateArtifact: "reply target state, run spec draft state, approval origin state",
+    rewrittenBlocks: [
+      {
+        block: "default gateway model-loop, multilingual ordinary chat, tool schema, and no-preamble latency behavior",
+        oldLineRange: "214-1031, 1543-1805, 2129-2321",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: public processIncomingMessage gateway caller-path tests",
+        evidence: "Kept because these tests exercise the real gateway caller path, preserve first-visible/final ordering, and guard against keyword/simple-lane regressions for ordinary multilingual chat.",
+      },
+      {
+        block: "gateway approval, scoped write tools, runtime-control denial/admission, and stale target rejection",
+        oldLineRange: "1032-1491, 2749-3578, 3672-5039",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: approval/runtime-control gateway caller-path tests",
+        evidence: "Kept because these are P0 safety caller-path tests for approval bypass, stale target reuse, tool mutation ordering, and runtime-control admission over typed origins.",
+      },
+      {
+        block: "RunSpec draft/epoch, reply target persistence, routed goal metadata, and companion target override behavior",
+        oldLineRange: "1806-2128, 2322-2748, 5043-5518",
+        classification: "keep_unit",
+        replacementUnit: "src/interface/chat/__tests__/cross-platform-session.test.ts: durable gateway session/reply-target contracts",
+        evidence: "Kept because these tests cover durable reply target state, same-turn RunSpec start rejection, stale confirmation rejection, current gateway turn selection, and companion routing through production ingress.",
+      },
+    ],
   },
   {
     oldPath: "src/runtime/control/__tests__/runtime-control-service.test.ts",
@@ -655,7 +701,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/interface/chat/__tests__/cross-platform-session.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
+    "2026-05-13 final-scope cross-platform classification: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.",
   ],
   [
     "src/runtime/control/__tests__/runtime-control-service.test.ts",

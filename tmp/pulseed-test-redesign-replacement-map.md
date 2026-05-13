@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:44:13.199Z
+Generated: 2026-05-13T03:45:42.425Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -26,6 +26,22 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Production entrypoint exercised: ChatRunner.execute()/executeIngressMessage() -> gateway/default model loop
     - Deletion allowed: yes
     - Evidence: Deleted a private method key-list test that froze current class wiring rather than a user-visible ChatRunner contract.
+- Retained or rewritten old-test blocks:
+  - Block: slash command grammar, usage/status/task/config/session surfaces
+    - Old line range: 1092-3478
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner command entrypoint tests
+    - Evidence: Kept as exact protocol/parser and durable state projection coverage; these commands are user-visible and intentionally deterministic.
+  - Block: setup secret intake, direct model-loop, event ordering, and chat session persistence
+    - Old line range: 524-1088, 3499-3740
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/chat-runner.test.ts: public ChatRunner execute/ingress tests
+    - Evidence: Kept because the tests exercise public ChatRunner entrypoints, redaction before persistence, model-loop lifecycle events, and durable session writes.
+  - Block: native agent-loop routing, structured interrupt intent, gateway/direct-loop boundaries, and RunSpec tool handoff
+    - Old line range: 3755-5595
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/chat-runner.test.ts: AgentLoop and routed ingress caller-path tests
+    - Evidence: Kept because these blocks protect typed routing/interrupt contracts without keyword fallback and preserve ChatRunner as the turn execution engine.
 - Replacement evidence:
   - Replacement trace name: gateway_ordinary_chat_first_visible_no_progress
     - Real production entrypoint used: golden: Gateway ingress -> ChatRunner -> ChatEvent stream
@@ -114,6 +130,22 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 - State artifact: reply target state, run spec draft state, approval origin state
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Retained or rewritten old-test blocks:
+  - Block: default gateway model-loop, multilingual ordinary chat, tool schema, and no-preamble latency behavior
+    - Old line range: 214-1031, 1543-1805, 2129-2321
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/cross-platform-session.test.ts: public processIncomingMessage gateway caller-path tests
+    - Evidence: Kept because these tests exercise the real gateway caller path, preserve first-visible/final ordering, and guard against keyword/simple-lane regressions for ordinary multilingual chat.
+  - Block: gateway approval, scoped write tools, runtime-control denial/admission, and stale target rejection
+    - Old line range: 1032-1491, 2749-3578, 3672-5039
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/cross-platform-session.test.ts: approval/runtime-control gateway caller-path tests
+    - Evidence: Kept because these are P0 safety caller-path tests for approval bypass, stale target reuse, tool mutation ordering, and runtime-control admission over typed origins.
+  - Block: RunSpec draft/epoch, reply target persistence, routed goal metadata, and companion target override behavior
+    - Old line range: 1806-2128, 2322-2748, 5043-5518
+    - Classification: keep_unit
+    - Current contract: src/interface/chat/__tests__/cross-platform-session.test.ts: durable gateway session/reply-target contracts
+    - Evidence: Kept because these tests cover durable reply target state, same-turn RunSpec start rejection, stale confirmation rejection, current gateway turn selection, and companion routing through production ingress.
 - Replacement evidence:
   - Replacement trace name: gateway_routed_ingress_preserves_reply_target_after_restart
     - Real production entrypoint used: golden: Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage; replay: Gateway adapter -> CrossPlatformChatSessionManager.processIncomingMessage
@@ -145,7 +177,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope cross-platform classification: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` passed 1 file / 89 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/control/__tests__/runtime-control-service.test.ts

@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-ChatRunner private route-host inventory removed; next is cross-platform-session block-scoped inventory.
+Gateway/chat block inventory completed; next is final verification.
 
 ## Current Evidence Read
 
@@ -123,6 +123,10 @@ Deletion is allowed only per block when replacement map records:
   - Kept startup/shutdown/leader lock/queue reclaim/resident attention/backpressure blocks because they exercise daemon runner lifecycle or durable stores through the real `DaemonRunner` rather than a helper-only mock.
 - `src/interface/chat/__tests__/setup-secret-intake.test.ts`
   - Kept URL-query secret redaction as focused parser coverage.
+- `src/interface/chat/__tests__/chat-runner.test.ts`
+  - Classified remaining command grammar, setup redaction, direct model-loop, session persistence, native AgentLoop routing, structured interrupt intent, and RunSpec handoff blocks as retained because they exercise public ChatRunner entrypoints and typed routing contracts.
+- `src/interface/chat/__tests__/cross-platform-session.test.ts`
+  - Classified remaining gateway model-loop, ordinary multilingual chat, scoped approval/runtime-control, RunSpec/reply-target, permission grant, stale target, companion target, presence, and concurrency blocks as retained production caller-path coverage. No bulk deletion was made because these are the gateway/chat P0 boundary tests.
 
 ## Added Runner / Trace / Replay
 
@@ -154,6 +158,7 @@ Deletion is allowed only per block when replacement map records:
 - Added daemon/session deleted-block evidence for dead process projection and moved cron-entry helper coverage.
 - Added chat-runner-tools deleted-block evidence for callback minutiae removed in favor of typed event stream and production tool caller path coverage.
 - Added chat-runner deleted-block evidence for the private `routeHost()` key-list test.
+- Added retained-block classifications for the remaining high-value ChatRunner and cross-platform-session gateway/chat blocks.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -226,6 +231,11 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:replay` -> after private route-host deletion passed 1 file / 9 tests
 - `npm run typecheck` -> passed after private route-host deletion
 - `node scripts/inventory-test-redesign.mjs` -> after private route-host deletion regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/interface/chat/__tests__/cross-platform-session.test.ts --config vitest.unit.config.ts` -> after gateway/chat retained-block classification passed 1 file / 89 tests
+- `npm run test:golden-traces` -> after gateway/chat retained-block classification passed 1 file / 45 tests
+- `npm run test:replay` -> after gateway/chat retained-block classification passed 1 file / 9 tests
+- `npm run typecheck` -> passed after gateway/chat retained-block classification
+- `node scripts/inventory-test-redesign.mjs` -> after gateway/chat retained-block classification regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -272,4 +282,4 @@ Final required gates:
 
 ## Next
 
-Continue with cross-platform-session old-block inventory. Keep gateway/chat deletions block-scoped.
+Run final required verification gates, update PR from draft to ready only after green local gates, then monitor CI/review.
