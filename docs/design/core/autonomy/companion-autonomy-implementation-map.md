@@ -15,6 +15,7 @@ The parent contracts are design lanes, not GitHub issue identifiers:
 | Contract | Primary source design |
 | --- | --- |
 | `SurfaceProjection` selection gates | [Relationship Memory And Surface](relationship-memory-surface.md) |
+| `CoreCompanionMemoryProjection` decision input | [Core Companion Memory Projection](core-companion-memory-projection.md) |
 | deterministic `CompanionState` reducer | [Attention Metabolism And Initiative](attention-metabolism-initiative.md) |
 | `GovernedMemory` record-kind ownership | [Relationship Memory And Surface](relationship-memory-surface.md) |
 | `SurfaceInvalidationPolicy` and invalidation events | [Relationship Memory And Surface](relationship-memory-surface.md), [Runtime Control Plane](../../infrastructure/runtime/runtime-control-plane.md) |
@@ -32,6 +33,7 @@ The core flow remains:
 evidence and traces
   -> GovernedMemory
   -> SurfaceProjection
+  -> CoreCompanionMemoryProjection
   -> CompanionStateSnapshot
   -> UrgeCandidate / AgentAgendaItem
   -> InitiativeGateDecision
