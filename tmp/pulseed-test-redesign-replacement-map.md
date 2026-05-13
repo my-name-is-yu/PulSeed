@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T02:52:31.093Z
+Generated: 2026-05-13T03:02:26.577Z
 
 Deletion gate: pending_real_runner is never deletion evidence. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -558,6 +558,22 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Production entrypoint exercised: golden: tool catalog -> readonly filesystem tool execution
     - Deletion allowed: yes
     - Evidence: Trace asserts approval_request_count=0 and read_success=true for a readonly workspace path under protected self-protection.
+  - Block: direct ReadTool.call relative path resolution
+    - Old line range: 73-77
+    - Classification: delete_now
+    - Replacement trace: tool_readonly_fs_no_write_approval_under_workspace
+    - Exported state artifact/assertion: golden: state/tool/tool_readonly_fs_no_write_approval_under_workspace.json; assertions approval_request_count, read_success, result_has_read_artifact, write_probe_exists
+    - Production entrypoint exercised: golden: tool catalog -> readonly filesystem tool execution
+    - Deletion allowed: yes
+    - Evidence: 2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace executes `ToolExecutor.execute("read", { file_path: "notes.txt" })` with `cwd=stateRoot.workspaceRoot` and asserts read_success=true through the production tool catalog path.
+  - Block: direct checkPermissions allows normal files
+    - Old line range: 138-141
+    - Classification: delete_now
+    - Replacement trace: tool_readonly_fs_no_write_approval_under_workspace
+    - Exported state artifact/assertion: golden: state/tool/tool_readonly_fs_no_write_approval_under_workspace.json; assertions approval_request_count, read_success, result_has_read_artifact, write_probe_exists
+    - Production entrypoint exercised: golden: tool catalog -> readonly filesystem tool execution
+    - Deletion allowed: yes
+    - Evidence: 2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace asserts approval_request_count=0 and read_success=true for a normal workspace file through ToolExecutor and ToolPermissionManager.
   - Block: isConcurrencySafe returns true
     - Old line range: 175-177
     - Classification: obsolete
@@ -565,6 +581,22 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Deletion allowed: no
     - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
     - Evidence: Deleted static metadata assertion; no scheduler/tool-registry concurrency contract is being asserted here.
+- Retained or rewritten old-test blocks:
+  - Block: line-number, limit, offset, and summary assertions
+    - Old line range: 35-61, 88-92
+    - Classification: move_or_rewrite_unit
+    - Current contract: src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: reads bounded line windows with stable line numbers and summaries
+    - Evidence: Collapsed overlapping implementation-following examples into one focused unit that preserves the public line-window contract: exact selected rows, stable line numbers, filename, and line range summary.
+  - Block: empty EOF window assertion
+    - Old line range: 63-71
+    - Classification: keep_unit
+    - Current contract: src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: returns an empty window when offset is beyond EOF
+    - Evidence: Kept as a focused regression for the zero-line summary contract because it guards against negative range output and is not covered by the readonly golden trace.
+  - Block: sensitive and outside-cwd read approval assertions
+    - Old line range: 128-136, 143-149
+    - Classification: keep_unit
+    - Current contract: src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: checkPermissions requires approval for protected read %o
+    - Evidence: Collapsed into a parameterized permission-boundary unit because the golden trace only proves normal workspace reads do not request approval; it does not prove protected read denial.
 - Replacement evidence:
   - Replacement trace name: tool_readonly_fs_no_write_approval_under_workspace
     - Real production entrypoint used: golden: tool catalog -> readonly filesystem tool execution
@@ -572,7 +604,7 @@ Deletion gate: pending_real_runner is never deletion evidence. Old test files ma
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts --config vitest.unit.config.ts` passed 2 files / 14 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/__tests__/read-only-fs-tool-input-schema-contract.test.ts src/tools/fs/FileValidationTool/__tests__/FileValidationTool.test.ts --config vitest.unit.config.ts` passed 3 files / 29 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts

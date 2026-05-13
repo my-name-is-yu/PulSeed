@@ -340,11 +340,48 @@ const p0TraceMappings = [
         evidence: "Trace asserts approval_request_count=0 and read_success=true for a readonly workspace path under protected self-protection.",
       },
       {
+        block: "direct ReadTool.call relative path resolution",
+        oldLineRange: "73-77",
+        classification: "delete_now",
+        replacementTrace: "tool_readonly_fs_no_write_approval_under_workspace",
+        evidence: "2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace executes `ToolExecutor.execute(\"read\", { file_path: \"notes.txt\" })` with `cwd=stateRoot.workspaceRoot` and asserts read_success=true through the production tool catalog path.",
+      },
+      {
+        block: "direct checkPermissions allows normal files",
+        oldLineRange: "138-141",
+        classification: "delete_now",
+        replacementTrace: "tool_readonly_fs_no_write_approval_under_workspace",
+        evidence: "2026-05-13 final-scope pass: pre-delete unit/schema/validation command passed 3 files / 34 tests; replacement `npm run test:golden-traces` passed 42 tests; post-delete unit/schema/validation command passed 3 files / 29 tests. The golden trace asserts approval_request_count=0 and read_success=true for a normal workspace file through ToolExecutor and ToolPermissionManager.",
+      },
+      {
         block: "isConcurrencySafe returns true",
         oldLineRange: "175-177",
         classification: "obsolete",
         replacementTrace: null,
         evidence: "Deleted static metadata assertion; no scheduler/tool-registry concurrency contract is being asserted here.",
+      },
+    ],
+    rewrittenBlocks: [
+      {
+        block: "line-number, limit, offset, and summary assertions",
+        oldLineRange: "35-61, 88-92",
+        classification: "move_or_rewrite_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: reads bounded line windows with stable line numbers and summaries",
+        evidence: "Collapsed overlapping implementation-following examples into one focused unit that preserves the public line-window contract: exact selected rows, stable line numbers, filename, and line range summary.",
+      },
+      {
+        block: "empty EOF window assertion",
+        oldLineRange: "63-71",
+        classification: "keep_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: returns an empty window when offset is beyond EOF",
+        evidence: "Kept as a focused regression for the zero-line summary contract because it guards against negative range output and is not covered by the readonly golden trace.",
+      },
+      {
+        block: "sensitive and outside-cwd read approval assertions",
+        oldLineRange: "128-136, 143-149",
+        classification: "keep_unit",
+        replacementUnit: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts: checkPermissions requires approval for protected read %o",
+        evidence: "Collapsed into a parameterized permission-boundary unit because the golden trace only proves normal workspace reads do not request approval; it does not prove protected read denial.",
       },
     ],
   },
@@ -479,7 +516,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
-    "2026-05-13 post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/interface/chat/__tests__/setup-secret-intake.test.ts src/tools/fs/ReadTool/__tests__/ReadTool.test.ts --config vitest.unit.config.ts` passed 2 files / 14 tests.",
+    "2026-05-13 final-scope post-delete: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/tools/fs/ReadTool/__tests__/ReadTool.test.ts src/tools/fs/__tests__/read-only-fs-tool-input-schema-contract.test.ts src/tools/fs/FileValidationTool/__tests__/FileValidationTool.test.ts --config vitest.unit.config.ts` passed 3 files / 29 tests.",
   ],
   [
     "src/tools/fs/FileWriteTool/__tests__/FileWriteTool.test.ts",
@@ -741,6 +778,16 @@ function renderReplacementMap(summary) {
         lines.push(`    - Deletion allowed: ${deletionGate.allowed ? "yes" : "no"}`);
         if (!deletionGate.allowed) lines.push(`    - No reason: ${deletionGate.reason}`);
         lines.push(`    - Evidence: ${deletion.evidence}`);
+      }
+    }
+    if (mapping.rewrittenBlocks?.length > 0) {
+      lines.push("- Retained or rewritten old-test blocks:");
+      for (const retained of mapping.rewrittenBlocks) {
+        lines.push(`  - Block: ${retained.block}`);
+        if (retained.oldLineRange) lines.push(`    - Old line range: ${retained.oldLineRange}`);
+        lines.push(`    - Classification: ${retained.classification}`);
+        lines.push(`    - Current contract: ${retained.replacementUnit}`);
+        lines.push(`    - Evidence: ${retained.evidence}`);
       }
     }
     lines.push("- Replacement evidence:");
