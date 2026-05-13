@@ -419,6 +419,121 @@ describe("importLegacyQueueDaemonScheduleState", () => {
     }
   });
 
+  it("imports only safe legacy queue records and rejects unsafe persisted queue scalars", async () => {
+    tmpDir = makeTempDir("pulseed-legacy-queue-unsafe-scalars-");
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const safeEnvelope = createEnvelope({
+      type: "event",
+      name: "safe-legacy-command",
+      source: "legacy",
+      payload: { goalId: "goal-safe" },
+      priority: "high",
+    });
+    const unsafeTimestampEnvelope = {
+      ...createEnvelope({
+        type: "event",
+        name: "unsafe-timestamp",
+        source: "legacy",
+        payload: { goalId: "goal-unsafe" },
+        priority: "normal",
+      }),
+      created_at: "not-a-number",
+    };
+    const unsafeLeaseEnvelope = createEnvelope({
+      type: "event",
+      name: "unsafe-lease",
+      source: "legacy",
+      payload: { goalId: "goal-unsafe-lease" },
+      priority: "low",
+    });
+
+    writeJson(tmpDir, "runtime/queue.json", {
+      version: 1,
+      records: {
+        [safeEnvelope.id]: {
+          envelope: safeEnvelope,
+          status: "pending",
+          attempt: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        [unsafeTimestampEnvelope.id]: {
+          envelope: unsafeTimestampEnvelope,
+          status: "pending",
+          attempt: 0,
+          createdAt: 2,
+          updatedAt: 2,
+        },
+        [unsafeLeaseEnvelope.id]: {
+          envelope: unsafeLeaseEnvelope,
+          status: "inflight",
+          attempt: 1,
+          createdAt: 3,
+          updatedAt: 3,
+          workerId: "worker-unsafe",
+          claimToken: "claim-unsafe",
+          leaseUntil: "not-a-number",
+        },
+      },
+      pending: {
+        critical: [],
+        high: [safeEnvelope.id],
+        normal: [unsafeTimestampEnvelope.id],
+        low: [],
+      },
+      inflight: {
+        "claim-unsafe": {
+          messageId: unsafeLeaseEnvelope.id,
+          workerId: "worker-unsafe",
+          leaseUntil: "not-a-number",
+          attempt: 1,
+          claimedAt: 3,
+        },
+      },
+    });
+
+    const result = await importLegacyQueueDaemonScheduleState({
+      baseDir: tmpDir,
+      importedAt: "2026-05-09T01:00:00.000Z",
+    });
+
+    expect(result.queueRecords).toBe(1);
+    const importedQueue = new JournalBackedQueue({
+      journalPath: path.join(runtimeRoot, "queue.json"),
+      controlBaseDir: tmpDir,
+    });
+    expect(importedQueue.get(safeEnvelope.id)?.status).toBe("pending");
+    expect(importedQueue.get(unsafeTimestampEnvelope.id)).toBeUndefined();
+    expect(importedQueue.get(unsafeLeaseEnvelope.id)).toBeUndefined();
+    expect(importedQueue.snapshot().pending.high).toEqual([safeEnvelope.id]);
+    expect(importedQueue.snapshot().pending.normal).toEqual([]);
+    expect(importedQueue.inflightSize()).toBe(0);
+
+    const database = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      const queueRows = database.read((sqlite) =>
+        sqlite.prepare("SELECT message_id FROM runtime_queue_records ORDER BY message_id").all() as Array<{ message_id: string }>
+      );
+      expect(queueRows).toEqual([{ message_id: safeEnvelope.id }]);
+      const imports = database.listLegacyImports();
+      expect(imports).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source_kind: "runtime-queue-json",
+          status: "imported",
+          details: expect.objectContaining({ imported_records: 1 }),
+        }),
+        expect.objectContaining({ source_kind: "daemon-state-json", status: "validated" }),
+        expect.objectContaining({ source_kind: "daemon-shutdown-json", status: "validated" }),
+        expect.objectContaining({ source_kind: "supervisor-state-json", status: "validated" }),
+        expect.objectContaining({ source_kind: "schedule-entries-json", status: "validated" }),
+        expect.objectContaining({ source_kind: "schedule-history-json", status: "validated" }),
+      ]));
+      expect(imports).toHaveLength(6);
+    } finally {
+      database.close();
+    }
+  });
+
   it("keeps invalid legacy sources retryable until they are corrected", async () => {
     tmpDir = makeTempDir("pulseed-legacy-queue-daemon-schedule-invalid-retry-");
     const runtimeRoot = path.join(tmpDir, "runtime");

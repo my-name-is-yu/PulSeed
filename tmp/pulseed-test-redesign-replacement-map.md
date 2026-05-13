@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:07:42.168Z
+Generated: 2026-05-13T03:09:41.847Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -385,18 +385,20 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 - Deleted old-test blocks:
   - Block: rejects unsafe envelope timestamps before writing the journal
     - Old line range: 47-57
-    - Classification: obsolete
-    - Replacement trace: none
-    - Deletion allowed: no
-    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Runtime Safety Reviewer flagged this as insufficiently recovered because legacy `runtime/queue.json` import is still a real migration boundary; add a queue migration contract before final completion.
+    - Classification: delete_now
+    - Replacement contract: src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars
+    - Exported state artifact/assertion: control DB `runtime_queue_records` contains only the safe message id; unsafe timestamp record is absent; legacy import records `imported_records=1`
+    - Production entrypoint exercised: importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records
+    - Deletion allowed: yes
+    - Evidence: 2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects an unsafe envelope timestamp while importing the valid queued command.
   - Block: skips persisted queue records with unsafe envelope scalars
     - Old line range: 58-87
-    - Classification: obsolete
-    - Replacement trace: none
-    - Deletion allowed: no
-    - No reason: No replacement trace recorded; classification alone is not real-runner deletion evidence.
-    - Evidence: Runtime Safety Reviewer flagged this as insufficiently recovered because unsafe legacy persisted queue scalars must be rejected without losing valid records during migration; add a mixed safe/unsafe import contract before final completion.
+    - Classification: delete_now
+    - Replacement contract: src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars
+    - Exported state artifact/assertion: control DB `runtime_queue_records` contains only the safe message id; unsafe inflight lease scalar is absent; imported queue has no inflight records
+    - Production entrypoint exercised: importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records
+    - Deletion allowed: yes
+    - Evidence: 2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects unsafe persisted lease scalars without dropping the valid pending command.
   - Block: rejects duplicate dedupe_key while the original item is inflight
     - Old line range: 143-173
     - Classification: delete_now
@@ -476,7 +478,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests. Pre-rewrite queue unit passed 1 file / 9 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests, and `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. Pre-rewrite queue unit passed 1 file / 9 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/store/__tests__/attention-state-store.test.ts

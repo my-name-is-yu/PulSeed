@@ -245,16 +245,22 @@ const p0TraceMappings = [
       {
         block: "rejects unsafe envelope timestamps before writing the journal",
         oldLineRange: "47-57",
-        classification: "obsolete",
+        classification: "delete_now",
         replacementTrace: null,
-        evidence: "Runtime Safety Reviewer flagged this as insufficiently recovered because legacy `runtime/queue.json` import is still a real migration boundary; add a queue migration contract before final completion.",
+        replacementContract: "src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars",
+        productionEntrypoint: "importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records",
+        artifactAssertion: "control DB `runtime_queue_records` contains only the safe message id; unsafe timestamp record is absent; legacy import records `imported_records=1`",
+        evidence: "2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects an unsafe envelope timestamp while importing the valid queued command.",
       },
       {
         block: "skips persisted queue records with unsafe envelope scalars",
         oldLineRange: "58-87",
-        classification: "obsolete",
+        classification: "delete_now",
         replacementTrace: null,
-        evidence: "Runtime Safety Reviewer flagged this as insufficiently recovered because unsafe legacy persisted queue scalars must be rejected without losing valid records during migration; add a mixed safe/unsafe import contract before final completion.",
+        replacementContract: "src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts: imports only safe legacy queue records and rejects unsafe persisted queue scalars",
+        productionEntrypoint: "importLegacyQueueDaemonScheduleState -> JournalBackedQueue.importLegacyState -> control DB runtime_queue_records",
+        artifactAssertion: "control DB `runtime_queue_records` contains only the safe message id; unsafe inflight lease scalar is absent; imported queue has no inflight records",
+        evidence: "2026-05-13 final-scope safety recovery: `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. The mixed legacy queue fixture rejects unsafe persisted lease scalars without dropping the valid pending command.",
       },
       {
         block: "rejects duplicate dedupe_key while the original item is inflight",
@@ -544,7 +550,7 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/queue/__tests__/journal-backed-queue.test.ts",
-    "2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests. Pre-rewrite queue unit passed 1 file / 9 tests.",
+    "2026-05-13 final-scope post-rewrite: `npm run test:golden-traces` passed 43 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/queue/__tests__/journal-backed-queue.test.ts --config vitest.unit.config.ts` passed 1 file / 8 tests, and `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` passed 1 file / 4 tests. Pre-rewrite queue unit passed 1 file / 9 tests.",
   ],
   [
     "src/runtime/store/__tests__/attention-state-store.test.ts",
@@ -814,8 +820,17 @@ function renderReplacementMap(summary) {
         lines.push(`  - Block: ${deletion.block}`);
         if (deletion.oldLineRange) lines.push(`    - Old line range: ${deletion.oldLineRange}`);
         if (deletion.classification) lines.push(`    - Classification: ${deletion.classification}`);
-        lines.push(`    - Replacement trace: ${deletion.replacementTrace ?? "none"}`);
         if (deletion.replacementTrace) {
+          lines.push(`    - Replacement trace: ${deletion.replacementTrace}`);
+        } else if (deletion.replacementContract) {
+          lines.push(`    - Replacement contract: ${deletion.replacementContract}`);
+        } else {
+          lines.push("    - Replacement trace: none");
+        }
+        if (deletion.replacementTrace) {
+          lines.push(`    - Exported state artifact/assertion: ${deletionGate.artifactAssertion}`);
+          lines.push(`    - Production entrypoint exercised: ${deletionGate.entrypoint}`);
+        } else if (deletion.replacementContract) {
           lines.push(`    - Exported state artifact/assertion: ${deletionGate.artifactAssertion}`);
           lines.push(`    - Production entrypoint exercised: ${deletionGate.entrypoint}`);
         }
@@ -886,6 +901,14 @@ function deletionGateForBlock(mapping) {
 }
 
 function deletionGateForDeletedBlock(deletion) {
+  if (deletion.replacementContract) {
+    return {
+      allowed: true,
+      reason: "replacement contract exercises the production boundary",
+      artifactAssertion: deletion.artifactAssertion,
+      entrypoint: deletion.productionEntrypoint,
+    };
+  }
   if (!deletion.replacementTrace) {
     return {
       allowed: false,

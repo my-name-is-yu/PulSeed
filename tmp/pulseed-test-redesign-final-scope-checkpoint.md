@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Queue slice complete; next is safety-blocker recovery for already-deleted queue/FileWrite coverage before continuing attention-state-store.
+Queue legacy import safety blocker recovered; next is FileWrite unsafe-path and approval-order recovery.
 
 ## Current Evidence Read
 
@@ -98,6 +98,7 @@ Deletion is allowed only per block when replacement map records:
 
 - No new runner/trace/replay added yet.
 - Hardened existing P0 golden/replay tests so current fixtures and runner results must be `real_production_path`; `pending_real_runner` now fails the P0 lanes instead of being accepted.
+- Added a migration contract test for legacy `runtime/queue.json` mixed safe/unsafe import through `importLegacyQueueDaemonScheduleState` and the control DB queue store.
 
 ## Replacement Map Updates
 
@@ -106,6 +107,7 @@ Deletion is allowed only per block when replacement map records:
   - Added `rewrittenBlocks` rendering so retained/reworked old blocks and their classification are preserved in `tmp/pulseed-test-redesign-replacement-map.md`.
   - Updated the deletion gate text to state that P0 golden/replay tests must fail on `pending_real_runner`.
   - Added queue final-scope retained/reworked block classifications and updated queue same-checkout evidence.
+  - Reclassified the already-deleted unsafe legacy queue scalar blocks as `delete_now` covered by the new queue migration contract instead of unresolved obsolete rationale.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -131,6 +133,9 @@ Deletion is allowed only per block when replacement map records:
 - `npm run test:golden-traces` -> queue post-rewrite passed 1 file / 43 tests
 - `npm run test:replay` -> queue post-rewrite passed 1 file / 9 tests
 - `node scripts/inventory-test-redesign.mjs` -> after queue rewrite regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
+- `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> first attempt failed because the test assumed a fixed legacy-import ordering
+- `npx vitest run src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts --config vitest.unit.config.ts` -> after assertion fix passed 1 file / 4 tests
+- `node scripts/inventory-test-redesign.mjs` -> after queue migration safety recovery regenerated 783 inventory records, 0 current include gaps, 40/40 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -138,7 +143,7 @@ Deletion is allowed only per block when replacement map records:
 - Same reviewer warned that several existing traces overstate their production entrypoints. Queue traces used for the current queue slice are still runner-computed queue/eventserver state; for later approval/resident/observation/daemon/chat deletions, do not cite the flagged weak traces for broader caller-path claims unless upgraded.
 - Deletion Reviewer recommendations are available for queue, attention-store, runtime-control, schedule, approval, daemon/session-registry, chat-runner, and cross-platform-session. Use them as candidates, but verify with real file contents and safety reviewer before deleting.
 - Runtime Safety Reviewer found blocker coverage gaps that must be recovered before final completion:
-  - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks still needs a queue migration contract through `runtime/queue.json` -> control DB import.
+  - Unsafe legacy queue import/scalar rejection from already-deleted queue blocks needed a queue migration contract through `runtime/queue.json` -> control DB import. Recovered by `src/runtime/store/__tests__/queue-daemon-schedule-state-migration.test.ts`.
   - Unsafe FileWrite path denial from already-deleted FileWrite blocks still needs production tool-boundary evidence.
   - FileWrite approval-before-mutation evidence needs ordered event/state evidence, not a post-hoc boolean.
   - Approval stale-origin mismatch and no-delivery branches need stronger coverage before deleting related approval-broker blocks.
@@ -175,4 +180,4 @@ Final required gates:
 
 ## Next
 
-Recover the two safety blockers closest to the completed queue/tool slices: add a queue legacy import contract for unsafe persisted queue records, then add FileWrite production-boundary denial/ordering evidence. After those pass, continue to `attention-state-store`.
+Add FileWrite production-boundary denial/ordering evidence, then continue to `attention-state-store`.
