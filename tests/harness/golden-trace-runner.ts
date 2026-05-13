@@ -1087,8 +1087,11 @@ async function runStateDaemonTrace(
     const snapshot = await new RuntimeSessionRegistry({ stateManager, isPidAlive: () => false }).snapshot();
     const run = snapshot.background_runs.find((candidate) => candidate.id === "run:process:proc-stale-ledger");
     const assertions: JsonObject = {
+      background_run_count_for_id: snapshot.background_runs.filter((candidate) => candidate.id === "run:process:proc-stale-ledger").length,
       dead_process_warning: snapshot.warnings.some((warning) => warning.code === "dead_process_sidecar"),
+      process_session_id: run?.process_session_id ?? null,
       projected_status: run?.status ?? null,
+      projected_title: run?.title ?? null,
       running_reported: run?.status === "running",
     };
     return buildRealGoldenResult(fixture, stateRoot, {

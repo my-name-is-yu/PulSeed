@@ -1,6 +1,6 @@
 # PulSeed Test Redesign Replacement Map
 
-Generated: 2026-05-13T03:35:09.785Z
+Generated: 2026-05-13T03:39:14.057Z
 
 Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/replay tests must fail if any current fixture or runner result is pending_real_runner. Old test files may only be deleted after every mapped replacement trace records runner.status=real_production_path, a production entrypoint, an exported state artifact source, and old/new tests passing in the same checkout. Individual old test blocks may be deleted when their specific high-value assertion is covered by a real_production_path trace and any remaining pure unit value stays in place. Obsolete classification documents deletion rationale only; it is not trace evidence and does not satisfy this gate by itself.
 
@@ -584,6 +584,15 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 - State artifact: daemon snapshot, session registry snapshot, progress/final events
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: DaemonRunner.generateCronEntry static delegation assertion
+    - Old line range: 2867-2870
+    - Classification: move_or_rewrite_unit
+    - Replacement contract: src/runtime/daemon/__tests__/signals.test.ts: generateCronEntry pure cadence and goal-id contract
+    - Exported state artifact/assertion: unit: minute/hour/day cadence strings, <=0 defaulting, and unsafe goal-id rejection
+    - Production entrypoint exercised: generateCronEntry() pure daemon scheduling protocol
+    - Deletion allowed: yes
+    - Evidence: Moved the pure cron formatting contract out of the broad DaemonRunner integration file and into the daemon signals unit where the helper lives.
 - Replacement evidence:
   - Replacement trace name: state_runtime_root_custom_shared_control_db
     - Real production entrypoint used: golden: daemon startup -> runtime root resolver -> shared control DB
@@ -593,7 +602,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
   - Replacement trace name: session_registry_dead_process_not_running
     - Real production entrypoint used: golden: session registry snapshot -> process liveness verifier; replay: session registry snapshot -> process liveness verifier
-    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions dead_process_warning, projected_status, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
+    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions background_run_count_for_id, dead_process_warning, process_session_id, projected_status, projected_title, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
@@ -603,7 +612,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/runtime/session-registry/__tests__/runtime-session-registry.test.ts
@@ -612,10 +621,27 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
 - State artifact: session registry snapshot, capability snapshot
 - Old test file deletion allowed: no
 - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
+- Deleted old-test blocks:
+  - Block: does not report a running process sidecar with a dead pid as running
+    - Old line range: 162-182
+    - Classification: delete_now
+    - Replacement trace: session_registry_dead_process_not_running
+    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions background_run_count_for_id, dead_process_warning, process_session_id, projected_status, projected_title, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
+    - Production entrypoint exercised: golden: session registry snapshot -> process liveness verifier; replay: session registry snapshot -> process liveness verifier
+    - Deletion allowed: yes
+    - Evidence: Trace asserts a dead process sidecar is projected as lost, `running_reported=false`, and emits the dead_process_sidecar warning through RuntimeSessionRegistry.snapshot().
+  - Block: does not let a stale running ledger record hide a dead process sidecar
+    - Old line range: 427-465
+    - Classification: delete_now
+    - Replacement trace: session_registry_dead_process_not_running
+    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions background_run_count_for_id, dead_process_warning, process_session_id, projected_status, projected_title, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
+    - Production entrypoint exercised: golden: session registry snapshot -> process liveness verifier; replay: session registry snapshot -> process liveness verifier
+    - Deletion allowed: yes
+    - Evidence: Trace now asserts the stale ledger run is not duplicated, keeps the durable title/process_session_id, is projected lost, and emits the dead_process_sidecar warning.
 - Replacement evidence:
   - Replacement trace name: session_registry_dead_process_not_running
     - Real production entrypoint used: golden: session registry snapshot -> process liveness verifier; replay: session registry snapshot -> process liveness verifier
-    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions dead_process_warning, projected_status, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
+    - Exported state artifact/assertion: golden: state/daemon/session_registry_dead_process_not_running.json; assertions background_run_count_for_id, dead_process_warning, process_session_id, projected_status, projected_title, running_reported; replay: state/daemon/session_registry_dead_process_not_running.json; assertions fresh_restarted_equal, startup_replay_path
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13; `npm run test:replay` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
@@ -625,7 +651,7 @@ Deletion gate: pending_real_runner is never deletion evidence. The P0 golden/rep
     - Same-checkout pass command: `npm run test:golden-traces` passed locally 2026-05-13
     - Deletion allowed: no
     - No reason: File-level deletion still requires an assertion inventory; delete only recorded old-test blocks whose specific assertion is covered by real_production_path evidence.
-- Simultaneous pass evidence: 2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.
+- Simultaneous pass evidence: 2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.
 - Delete condition: delete a whole file only when the old test file deletion gate above says yes; delete an individual block only when it is recorded under Deleted old-test blocks with real replacement evidence.
 
 ### src/tools/fs/ReadTool/__tests__/ReadTool.test.ts

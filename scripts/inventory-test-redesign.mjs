@@ -419,6 +419,17 @@ const p0TraceMappings = [
     ],
     boundary: "daemon startup/snapshot -> runtime root/session registry -> visible progress surface",
     stateArtifact: "daemon snapshot, session registry snapshot, progress/final events",
+    deletedBlocks: [
+      {
+        block: "DaemonRunner.generateCronEntry static delegation assertion",
+        oldLineRange: "2867-2870",
+        classification: "move_or_rewrite_unit",
+        replacementContract: "src/runtime/daemon/__tests__/signals.test.ts: generateCronEntry pure cadence and goal-id contract",
+        productionEntrypoint: "generateCronEntry() pure daemon scheduling protocol",
+        artifactAssertion: "unit: minute/hour/day cadence strings, <=0 defaulting, and unsafe goal-id rejection",
+        evidence: "Moved the pure cron formatting contract out of the broad DaemonRunner integration file and into the daemon signals unit where the helper lives.",
+      },
+    ],
   },
   {
     oldPath: "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
@@ -428,6 +439,22 @@ const p0TraceMappings = [
     ],
     boundary: "resident runtime discovery -> session registry snapshot",
     stateArtifact: "session registry snapshot, capability snapshot",
+    deletedBlocks: [
+      {
+        block: "does not report a running process sidecar with a dead pid as running",
+        oldLineRange: "162-182",
+        classification: "delete_now",
+        replacementTrace: "session_registry_dead_process_not_running",
+        evidence: "Trace asserts a dead process sidecar is projected as lost, `running_reported=false`, and emits the dead_process_sidecar warning through RuntimeSessionRegistry.snapshot().",
+      },
+      {
+        block: "does not let a stale running ledger record hide a dead process sidecar",
+        oldLineRange: "427-465",
+        classification: "delete_now",
+        replacementTrace: "session_registry_dead_process_not_running",
+        evidence: "Trace now asserts the stale ledger run is not duplicated, keeps the durable title/process_session_id, is projected lost, and emits the dead_process_sidecar warning.",
+      },
+    ],
   },
   {
     oldPath: "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",
@@ -630,11 +657,11 @@ const sameCheckoutEvidenceByOldPath = new Map([
   ],
   [
     "src/runtime/__tests__/daemon-runner.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
+    "2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.",
   ],
   [
     "src/runtime/session-registry/__tests__/runtime-session-registry.test.ts",
-    "2026-05-13: `npm run test:golden-traces` passed 42 tests (40 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), and `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 69 tests.",
+    "2026-05-13 final-scope daemon/session cleanup: `npm run test:golden-traces` passed 45 tests (42 fixtures), `npm run test:replay` passed 9 tests (7 fixtures), `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` passed 2 files / 66 tests, and `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` passed 1 file / 2 tests.",
   ],
   [
     "src/tools/fs/ReadTool/__tests__/ReadTool.test.ts",

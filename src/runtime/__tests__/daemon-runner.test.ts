@@ -2864,11 +2864,6 @@ describe("DaemonRunner durable runtime", () => {
     expect(fs.existsSync(path.join(tmpDir, "state", "pulseed-control.sqlite"))).toBe(true);
   });
 
-  it("generates cron entries for daemon scheduling", () => {
-    expect(DaemonRunner.generateCronEntry("goal-1", 15)).toContain("goal-1");
-    expect(DaemonRunner.generateCronEntry("goal-1", 15)).toContain("*/15");
-  });
-
   it("does not rewrite daemon-state.json during idle supervisor maintenance", async () => {
     const state: DaemonState = {
       pid: process.pid,

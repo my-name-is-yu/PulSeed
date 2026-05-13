@@ -6,7 +6,7 @@ Base: `origin/main` at `ecb89650a52a691d099be8bbbcce0433bb3442e5`
 
 ## Phase
 
-Schedule goal-trigger public tick evidence recovered; next is daemon/session-registry and chat old-block inventory.
+Daemon/session-registry old-block cleanup completed; next is chat-runner and cross-platform-session block-scoped inventory.
 
 ## Current Evidence Read
 
@@ -20,7 +20,7 @@ Schedule goal-trigger public tick evidence recovered; next is daemon/session-reg
 
 Inventory summary currently reports:
 
-- `test_like_files`: 784
+- `test_like_files`: 785
 - `classification_counts.replace`: 12
 - `p0_trace_count`: 42
 - `p0_mapped_trace_count`: 42
@@ -95,6 +95,10 @@ Deletion is allowed only per block when replacement map records:
 - `src/runtime/__tests__/schedule-engine.test.ts`
   - Deleted direct `(eng as any).executeGoalTrigger` private-method token/call-argument blocks.
   - Replaced them with public `ScheduleEngine.tick()` traces for bounded CoreLoop dispatch and active-goal skip; artifacts include core loop calls, schedule history, persisted execution counters, and skipped-result state.
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+  - Deleted the direct dead-pid sidecar block and stale running ledger/dead process block after upgrading `session_registry_dead_process_not_running` to assert lost status, warning, durable title/process_session_id, and no duplicate run id.
+- `src/runtime/__tests__/daemon-runner.test.ts`
+  - Removed the `DaemonRunner.generateCronEntry` static delegation assertion from the broad daemon integration file.
 
 ## Blocks Kept And Reason
 
@@ -108,6 +112,10 @@ Deletion is allowed only per block when replacement map records:
   - Rewrote the multi-instance read refresh assertion into the lock/reload test so the file no longer has a separate convenience-API block for the same durability behavior.
 - `src/runtime/store/__tests__/attention-state-store.test.ts`
   - Kept migration table inventory, full-cycle restart rehydration, legacy/current projection merge, replay-key dedupe, malformed-row fail-closed behavior, and durable suppress/invalidate/admitted-history controls as mock-free store contracts.
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+  - Kept EPERM/ESRCH/unsafe PID, supervisor worker projection, durable reply target, handoff graph, and schema-valid snapshot blocks because they are focused registry projection contracts not covered by the single dead-process P0 trace.
+- `src/runtime/__tests__/daemon-runner.test.ts`
+  - Kept startup/shutdown/leader lock/queue reclaim/resident attention/backpressure blocks because they exercise daemon runner lifecycle or durable stores through the real `DaemonRunner` rather than a helper-only mock.
 
 ## Added Runner / Trace / Replay
 
@@ -118,6 +126,8 @@ Deletion is allowed only per block when replacement map records:
 - Upgraded the existing `runtime_control_resume_after_companion_revival_requires_readmission` golden trace to exercise the real companion-control sequence before the blocked `resume_run`.
 - Upgraded approval golden traces for origin-bound mismatch variants and missing delivery callback fail-closed behavior.
 - Added `schedule_goal_trigger_due_dispatches_coreloop_artifact` and `schedule_goal_trigger_active_goal_skips_coreloop_artifact` to the P0 golden lane.
+- Upgraded `session_registry_dead_process_not_running` to expose durable run title, process session id, and duplicate-count assertions.
+- Added `src/runtime/daemon/__tests__/signals.test.ts` as a focused pure protocol test for daemon cron entry generation.
 
 ## Replacement Map Updates
 
@@ -132,6 +142,7 @@ Deletion is allowed only per block when replacement map records:
 - Regenerated the runtime-control replacement evidence after the readmission fixture gained `companion_suspend_recorded`, `companion_resume_recorded`, `resume_outcome`, and `resume_requires_readmission` assertions.
 - Regenerated the approval replacement evidence after the origin fixture gained mismatch field assertions and the delivery fixture switched from delivered=false callback to no delivery callback.
 - Added schedule goal-trigger public tick traces to the replacement map and reclassified the direct `executeGoalTrigger` private-method blocks as deleted with replacement evidence.
+- Added daemon/session deleted-block evidence for dead process projection and moved cron-entry helper coverage.
 - Regenerated `tmp/pulseed-test-redesign-replacement-map.md`, `tmp/pulseed-test-redesign-inventory.jsonl`, and `tmp/pulseed-test-redesign-inventory-summary.json`.
 
 ## Commands Passed
@@ -187,6 +198,13 @@ Deletion is allowed only per block when replacement map records:
 - `npm run typecheck` -> passed after schedule runner/deletion update
 - `npm run test:replay` -> passed after schedule runner/deletion update
 - `node scripts/inventory-test-redesign.mjs` -> after schedule runner/deletion update regenerated 784 inventory records, 0 current include gaps, 42/42 P0 mapped traces
+- `npx vitest run src/runtime/__tests__/daemon-runner.test.ts src/runtime/session-registry/__tests__/runtime-session-registry.test.ts --config vitest.integration.config.ts` -> after daemon/session cleanup passed 2 files / 66 tests
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` -> expected no files because `src/runtime/daemon/**/*.test.ts` is excluded from unit lane
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.integration.config.ts` -> passed 1 file / 2 tests
+- `npm run test:golden-traces` -> after session dead-process assertion upgrade passed 1 file / 45 tests
+- `npm run test:replay` -> after daemon/session cleanup passed 1 file / 9 tests
+- `npm run typecheck` -> passed after daemon/session cleanup
+- `node scripts/inventory-test-redesign.mjs` -> after daemon/session cleanup regenerated 785 inventory records, 0 current include gaps, 42/42 P0 mapped traces
 
 ## Reviewer Findings Applied
 
@@ -206,6 +224,7 @@ Deletion is allowed only per block when replacement map records:
 - Initial pre-`npm ci` `npx vitest ... --config vitest.unit.config.ts` failed because `vitest` was not installed in this worktree.
 - Initial pre-`npm ci` `npm run test:golden-traces` failed because `vitest` was not installed in this worktree.
 - One parallel `npm run test:golden-traces` attempt reported a mismatch in `approval_delivery_unavailable_denies_not_executes`; direct expected-vs-actual comparison for that fixture matched byte-for-byte, and the immediate rerun passed 43/43. No active failing command remains from this attempt.
+- `npx vitest run src/runtime/daemon/__tests__/signals.test.ts --config vitest.unit.config.ts` reported no files because daemon tests are intentionally excluded from the unit lane; the same test passed under `vitest.integration.config.ts`.
 
 ## Verification Commands To Run
 
@@ -232,4 +251,4 @@ Final required gates:
 
 ## Next
 
-Continue with daemon/session-registry, then chat-runner/cross-platform-session old-block inventory and deletion. Keep gateway/chat deletions block-scoped.
+Continue with chat-runner, chat-runner-tools, setup-secret-intake, and cross-platform-session old-block inventory. Keep gateway/chat deletions block-scoped.
