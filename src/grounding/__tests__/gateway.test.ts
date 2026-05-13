@@ -186,6 +186,88 @@ describe("GroundingGateway", () => {
     expect(knowledgeQuery).not.toHaveBeenCalled();
   });
 
+  it("passes the canonical Soil root to custom SQLite Soil queries before admission", async () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-grounding-soil-query-root-"));
+    const homeDir = path.join(tmpRoot, "home");
+    const rootDir = path.join(homeDir, "soil");
+    const repository = await SqliteSoilRepository.create({ rootDir });
+    try {
+      await repository.applyMutation({
+        records: [{
+          record_id: "rec-custom-root",
+          record_key: "fact.custom-root",
+          version: 1,
+          record_type: "fact",
+          soil_id: "knowledge/custom-root",
+          title: "Custom root",
+          summary: "Use the canonical Soil root for admission.",
+          canonical_text: "Use the canonical Soil root for admission.",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.9,
+          importance: 0.7,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "test",
+          source_id: "custom-root-source",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        }],
+        chunks: [{
+          chunk_id: "chunk-custom-root",
+          record_id: "rec-custom-root",
+          soil_id: "knowledge/custom-root",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: ["Knowledge"],
+          chunk_text: "Use the canonical Soil root for admission.",
+          token_count: 8,
+          checksum: "custom-root-chunk",
+          created_at: "2026-05-02T00:00:00.000Z",
+        }],
+      });
+    } finally {
+      repository.close();
+    }
+
+    const soilQuery = vi.fn().mockResolvedValue({
+      retrievalSource: "sqlite",
+      warnings: [],
+      hits: [{
+        recordId: "rec-custom-root",
+        soilId: "knowledge/custom-root",
+        title: "Custom root",
+        summary: "Use the canonical Soil root for admission.",
+      }],
+    });
+    const knowledgeQuery = vi.fn().mockResolvedValue({
+      retrievalId: "knowledge:fallback",
+      items: [{ id: "k1", content: "Fallback knowledge", source: "test" }],
+    });
+    const gateway = createGroundingGateway({ stateManager: makeStateManager() });
+    const bundle = await gateway.build({
+      surface: "agent_loop",
+      purpose: "task_execution",
+      homeDir,
+      workspaceRoot: "/repo",
+      userMessage: "Find custom root memory",
+      query: "Find custom root memory",
+      soilQuery,
+      knowledgeQuery,
+    });
+
+    expect(soilQuery).toHaveBeenCalledWith(expect.objectContaining({ rootDir }));
+    expect(String(bundle.render("prompt"))).toContain("Use the canonical Soil root for admission.");
+    expect(bundle.dynamicSections.some((section) => section.key === "knowledge_query")).toBe(false);
+    expect(knowledgeQuery).not.toHaveBeenCalled();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
   it("fails closed for user-visible chat memory grounding", async () => {
     const gateway = createGroundingGateway({ stateManager: makeStateManager() });
     const knowledgeQuery = vi.fn().mockResolvedValue({

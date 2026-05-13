@@ -867,9 +867,6 @@ export class CrossPlatformChatSessionManager {
   }
 
   private ensureCompanionContract(ingress: CrossPlatformIngressMessage): CrossPlatformIngressMessage & { companion: CompanionRuntimeContract } {
-    if (ingress.companion) {
-      return ingress as CrossPlatformIngressMessage & { companion: CompanionRuntimeContract };
-    }
     return {
       ...ingress,
       companion: this.buildCompanionContractForIngress({
@@ -880,6 +877,14 @@ export class CrossPlatformChatSessionManager {
         message_id: ingress.message_id,
         goal_id: ingress.goal_id,
         replyTarget: ingress.replyTarget,
+        companion: ingress.companion
+          ? {
+            presence: ingress.companion.presence,
+            turnPolicy: ingress.companion.turn_policy,
+            inputModality: ingress.companion.turn_policy.input_modality,
+            outputMode: ingress.companion.turn_policy.output_mode,
+          }
+          : undefined,
       }),
     };
   }

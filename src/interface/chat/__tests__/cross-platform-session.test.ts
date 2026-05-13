@@ -5408,6 +5408,114 @@ describe("CrossPlatformChatSessionManager", () => {
     expect(contract?.turn_policy.current_target.goal_id).not.toBe("goal-stale");
   });
 
+  it("renormalizes pre-populated ingress companion targets before execution", async () => {
+    const adapter = makeMockAdapter();
+    const llmClient = makeStreamingLLMClient([{ content: "Task completed successfully." }]);
+    const manager = new CrossPlatformChatSessionManager(makeDeps({
+      stateManager: makeMockStateManager(),
+      adapter,
+      llmClient: llmClient as never,
+      registry: makeRegistryWithTools([]),
+    }));
+
+    const result = await manager.executeIngress({
+      ingress_id: "ingress-current",
+      received_at: "2026-05-13T00:00:00.000Z",
+      channel: "plugin_gateway",
+      platform: "slack",
+      identity_key: "owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      user_id: "owner-user",
+      text: "Use current target",
+      userInput: {
+        schema_version: "user-input-v1",
+        rawText: "Use current target",
+        items: [{ kind: "text", text: "Use current target" }],
+      },
+      actor: {
+        surface: "chat",
+        platform: "slack",
+        conversation_id: "current-thread",
+        identity_key: "owner",
+        user_id: "owner-user",
+      },
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "interactive",
+        approval_mode: "interactive",
+      },
+      companion: {
+        schema_version: "companion-runtime-contract-v1",
+        presence: {
+          schema_version: "companion-presence-state-v1",
+          mode: "listening",
+          interruptible: true,
+          last_user_activity_at: "2026-05-13T00:00:00.000Z",
+          current_context: "work",
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
+          },
+        },
+        turn_policy: {
+          schema_version: "companion-turn-policy-v1",
+          dialogue_kind: "direct_turn",
+          input_modality: "text",
+          output_mode: "reply",
+          can_interrupt: true,
+          latency_budget_ms: 30_000,
+          urgency: "normal",
+          quieting: "allow",
+          requires_explicit_interruption: false,
+          current_target: {
+            session_key: "identity:stale",
+            conversation_id: "stale-thread",
+            message_id: "stale-message",
+            run_id: "run-stale",
+            goal_id: "goal-stale",
+            reply_target_id: "stale-thread",
+          },
+        },
+      },
+      replyTarget: {
+        surface: "chat",
+        channel: "plugin_gateway",
+        platform: "slack",
+        conversation_id: "current-thread",
+        message_id: "current-message",
+        identity_key: "owner",
+        user_id: "owner-user",
+        metadata: {},
+      },
+      metadata: {},
+    }, { cwd: "/repo" });
+
+    const contract = manager.getSessionInfo({ identity_key: "owner" })?.active_companion_contract;
+    expect(result.success).toBe(true);
+    expect(contract?.presence.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target).toMatchObject({
+      session_key: "identity:owner",
+      conversation_id: "current-thread",
+      message_id: "current-message",
+      goal_id: "goal-current",
+      reply_target_id: "current-thread",
+    });
+    expect(contract?.turn_policy.current_target.goal_id).not.toBe("goal-stale");
+    expect(contract?.turn_policy.current_target.run_id).toBeNull();
+  });
+
   it("routes gateway text through the companion contract before gateway model-loop execution", async () => {
     const adapter = makeMockAdapter();
     const llmClient = makeStreamingLLMClient([{ content: "Task completed successfully." }]);

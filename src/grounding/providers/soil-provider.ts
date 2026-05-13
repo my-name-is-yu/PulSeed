@@ -98,7 +98,8 @@ export const soilKnowledgeProvider: GroundingProvider = {
 
     let result: GroundingSoilResult | null = null;
     const userVisibleSink = context.request.userVisibleSink ?? context.request.surface === "chat";
-    let soilRootDir = context.request.workspaceRoot ?? process.cwd();
+    const homeDir = resolveHomeDir(context.request.homeDir ?? context.deps.stateManager?.getBaseDir?.());
+    const soilRootDir = soilRootFromHome(homeDir);
     if (context.request.soilQuery) {
       result = await context.request.soilQuery({
         query,
@@ -106,8 +107,6 @@ export const soilKnowledgeProvider: GroundingProvider = {
         limit: context.profile.budgets.maxKnowledgeHits,
       });
     } else {
-      const homeDir = resolveHomeDir(context.request.homeDir ?? context.deps.stateManager?.getBaseDir?.());
-      soilRootDir = soilRootFromHome(homeDir);
       const tool = new SoilQueryTool();
       const toolResult = await tool.call({
         query,
