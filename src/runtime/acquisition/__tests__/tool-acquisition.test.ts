@@ -122,6 +122,37 @@ describe("tool acquisition proposals", () => {
     });
   });
 
+  it("classifies schedule-source foreign plugin imports as read-only acquisition evidence", () => {
+    const report = analyzeForeignPluginManifest("openclaw", {
+      name: "calendar-schedule-source",
+      version: "1.0.0",
+      type: "schedule_source",
+      capabilities: ["schedule.read"],
+      description: "Read schedule entries from a foreign plugin.",
+      entry_point: "dist/index.js",
+      permissions: { network: false },
+    }, {
+      manifestPath: "quarantine/calendar-schedule-source/plugin.json",
+      sourceProvenance: {
+        imported_path: "quarantine/calendar-schedule-source",
+        directory_checksum: "sha256:schedule-source",
+      },
+    });
+    const proposal = candidateToolAcquisitionFromForeignPluginCompatibility({
+      candidateId: "acquisition:foreign-calendar-schedule-source",
+      report,
+      trustBoundaryRef: "trust-boundary:foreign-plugin",
+      rollbackPlanRef: "rollback:foreign-plugin",
+    });
+
+    expect(proposal.operation_scope).toMatchObject({
+      operation_kind: "read",
+      side_effect_profile: "read",
+      risk_profile: "low",
+      privacy_profile: "workspace_private",
+    });
+  });
+
   it("invalidates stale approval fingerprints when proposal fields change", () => {
     const proposal = baseAcquisition();
     const envelope = createToolAcquisitionApprovalEnvelope({
@@ -322,15 +353,33 @@ describe("tool acquisition proposals", () => {
       evidenceRef: "evidence:calendar-smoke",
       evaluatedAt: NOW,
     });
+    const costAckRef = { kind: "approval", ref: "approval:cost-calendar" };
+    const costAcknowledgedProposal = baseAcquisition({
+      cost_profile: {
+        billing_owner: "unknown",
+        cost_kind: "unknown",
+        requires_user_cost_ack: true,
+      },
+      cost_ack_ref: costAckRef,
+    });
+    const costAcknowledgmentEnvelope = createToolAcquisitionApprovalEnvelope({
+      proposal: costAcknowledgedProposal,
+      approvalRef: costAckRef,
+      approvalKind: "cost_acknowledgment",
+      approvedAt: NOW,
+      expiresAt: "2026-05-14T01:00:00.000Z",
+      approverRef: { kind: "user", ref: "user:yu" },
+    });
+    const placeholderOnly = adaptAcquisitionToRuntime({
+      acquisition: costAcknowledgedProposal,
+      verificationRef: "verification:calendar",
+      verificationResult: "pass",
+      evidenceRef: "evidence:calendar-smoke",
+      evaluatedAt: NOW,
+    });
     const acknowledged = adaptAcquisitionToRuntime({
-      acquisition: baseAcquisition({
-        cost_profile: {
-          billing_owner: "unknown",
-          cost_kind: "unknown",
-          requires_user_cost_ack: true,
-        },
-        cost_ack_ref: { kind: "approval", ref: "approval:cost-calendar" },
-      }),
+      acquisition: costAcknowledgedProposal,
+      costAcknowledgmentEnvelope,
       verificationRef: "verification:calendar",
       verificationResult: "pass",
       evidenceRef: "evidence:calendar-smoke",
@@ -346,6 +395,13 @@ describe("tool acquisition proposals", () => {
       proposal: unknownCost,
       surfaceTarget: "normal_user",
     }).cost_ack_required).toBe(true);
+    expect(placeholderOnly.readiness_snapshot).toMatchObject({
+      state: "blocked",
+      metadata: {
+        cost_ack_required: true,
+        cost_ack_validation_reason: "cost acknowledgment approval envelope is required before acquisition can proceed",
+      },
+    });
     expect(acknowledged.readiness_snapshot.state).toBe("executable_verified");
   });
 

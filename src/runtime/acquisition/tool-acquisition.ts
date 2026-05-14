@@ -274,7 +274,7 @@ export function candidateToolAcquisitionFromForeignPluginCompatibility(input: {
   const report = ForeignPluginCompatibilityReportSchema.parse(input.report);
   const manifest = report.manifest;
   const capabilityId = manifest?.name ?? `${report.source}:foreign-plugin`;
-  const sideEffect = manifest?.type === "notifier" ? "send" : manifest?.type === "data_source" ? "read" : "mutate";
+  const sideEffect = sideEffectForForeignPluginType(manifest?.type);
   const riskProfile = sideEffect === "read" ? "low" : "medium";
   return CandidateToolAcquisitionSchema.parse({
     candidate_id: input.candidateId,
@@ -437,6 +437,7 @@ export function renderToolAcquisitionSurfaceProjection(input: {
 
 export function adaptAcquisitionToRuntime(input: {
   acquisition: CandidateToolAcquisition;
+  costAcknowledgmentEnvelope?: ToolAcquisitionApprovalEnvelope;
   verificationRef: string;
   verificationResult: "pass" | "fail" | "escalate";
   evidenceRef: string;
@@ -476,7 +477,12 @@ export function adaptAcquisitionToRuntime(input: {
     result: input.verificationResult,
     evidence_ref: input.evidenceRef,
   });
-  const blockedByCost = acquisition.cost_profile.requires_user_cost_ack && !acquisition.cost_ack_ref;
+  const costAcknowledgmentValidation = validateRuntimeCostAcknowledgment({
+    acquisition,
+    envelope: input.costAcknowledgmentEnvelope,
+    evaluatedAt: input.evaluatedAt,
+  });
+  const blockedByCost = !costAcknowledgmentValidation.valid;
   const verified = input.verificationResult === "pass" && !blockedByCost;
   const readinessSnapshot = CapabilityReadinessSnapshotSchema.parse({
     schema_version: "capability-readiness-snapshot/v1",
@@ -503,6 +509,7 @@ export function adaptAcquisitionToRuntime(input: {
       acquisition_candidate_id: acquisition.candidate_id,
       approval_is_runtime_authority: false,
       cost_ack_required: blockedByCost,
+      cost_ack_validation_reason: costAcknowledgmentValidation.reason,
     },
   });
   const admissionOperationScope = AdmissionOperationScopeSchema.parse({
@@ -570,6 +577,42 @@ export function adaptAcquisitionToRuntime(input: {
     autonomy_operation_plan: autonomyOperationPlan,
     operation_plan_candidate: operationPlanCandidate,
   };
+}
+
+function sideEffectForForeignPluginType(type: string | undefined): "read" | "send" | "mutate" {
+  if (type === "data_source" || type === "schedule_source") return "read";
+  if (type === "notifier") return "send";
+  return "mutate";
+}
+
+function validateRuntimeCostAcknowledgment(input: {
+  acquisition: CandidateToolAcquisition;
+  envelope: ToolAcquisitionApprovalEnvelope | undefined;
+  evaluatedAt: string;
+}): ToolAcquisitionApprovalValidation {
+  if (!input.acquisition.cost_profile.requires_user_cost_ack) {
+    return approvalValidation(true, "cost acknowledgment is not required");
+  }
+  if (!input.acquisition.cost_ack_ref) {
+    return approvalValidation(false, "cost acknowledgment approval is required before acquisition can proceed");
+  }
+  if (!input.envelope) {
+    return approvalValidation(false, "cost acknowledgment approval envelope is required before acquisition can proceed");
+  }
+  const nowMs = instantMs(input.evaluatedAt);
+  if (nowMs === null) {
+    return approvalValidation(false, "cost acknowledgment validation time is invalid");
+  }
+  const envelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.envelope);
+  if (!sameRef(input.acquisition.cost_ack_ref, envelope.approval_ref)) {
+    return approvalValidation(false, "cost acknowledgment ref does not match cost acknowledgment approval");
+  }
+  return validateApprovalEnvelopeForProposal({
+    proposal: input.acquisition,
+    envelope,
+    approvalKind: "cost_acknowledgment",
+    nowMs,
+  });
 }
 
 function requiredRefsForAcquisition(
