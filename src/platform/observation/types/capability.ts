@@ -76,6 +76,23 @@ export type CapabilityDependency = z.infer<typeof CapabilityDependencySchema>;
 export const CapabilityVerificationResultEnum = z.enum(["pass", "fail", "escalate"]);
 export type CapabilityVerificationResult = z.infer<typeof CapabilityVerificationResultEnum>;
 
+export const CapabilityVerificationRefSchema = z.object({
+  schema_version: z.literal("capability-verification-ref/v1"),
+  verification_ref: z.string().min(1),
+  provider_ref: z.string().min(1),
+  asset_ref: z.string().min(1),
+  capability_id: z.string().min(1),
+  operation_id: z.string().min(1),
+  operation_kind: z.lazy(() => CapabilityOperationKindEnum),
+  tool_name: z.string().min(1),
+  payload_class: z.string().min(1),
+  risk_class: z.lazy(() => CapabilityRiskProfileEnum),
+  side_effect_profile: z.lazy(() => CapabilitySideEffectProfileEnum),
+  result: CapabilityVerificationResultEnum,
+  evidence_ref: z.string().min(1),
+}).strict();
+export type CapabilityVerificationRef = z.infer<typeof CapabilityVerificationRefSchema>;
+
 // --- Companion Capability Graph ---
 
 export const CapabilityGraphProviderKindEnum = z.enum([
