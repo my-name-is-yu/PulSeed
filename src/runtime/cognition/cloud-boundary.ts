@@ -311,10 +311,12 @@ function blockedContextRefsFor(input: {
 }): Array<{ ref: CognitionEventRef; reason: string }> {
   const requestedKeys = new Set(input.request.model_visible_context_refs.map(cognitionEventRefKey));
   const contextKeys = new Set(input.contextRefs.map(cognitionEventRefKey));
-  const memoryByKey = new Map(input.memorySources.map((source) => {
+  const memoryByKey = new Map<string, CognitionMemorySource[]>();
+  for (const source of input.memorySources) {
     const parsed = CognitionMemorySourceSchema.parse(source);
-    return [cognitionEventRefKey(parsed.memory_ref), parsed];
-  }));
+    const key = cognitionEventRefKey(parsed.memory_ref);
+    memoryByKey.set(key, [...(memoryByKey.get(key) ?? []), parsed]);
+  }
   const blocked: Array<{ ref: CognitionEventRef; reason: string }> = [];
   for (const requestedRef of input.request.model_visible_context_refs) {
     const key = cognitionEventRefKey(requestedRef);
@@ -322,9 +324,9 @@ function blockedContextRefsFor(input: {
       blocked.push({ ref: requestedRef, reason: "requested_context_ref_not_in_evaluated_context" });
       continue;
     }
-    const memorySource = memoryByKey.get(key);
-    if (memorySource) {
-      const memoryBlockedReason = blockedReasonForMemorySource(memorySource);
+    const memorySources = memoryByKey.get(key) ?? [];
+    if (memorySources.length > 0) {
+      const memoryBlockedReason = firstBlockedMemorySourceReason(memorySources);
       if (memoryBlockedReason) {
         blocked.push({ ref: requestedRef, reason: memoryBlockedReason });
         continue;
@@ -352,6 +354,14 @@ function blockedReasonForMemorySource(source: CognitionMemorySource): string | n
   if (source.lifecycle === "superseded") return "superseded_memory_blocked";
   if (source.lifecycle !== "active" && source.lifecycle !== "matured") return "inactive_memory_lifecycle_blocked";
   if (source.correction_state !== "current") return "corrected_memory_blocked";
+  return null;
+}
+
+function firstBlockedMemorySourceReason(sources: CognitionMemorySource[]): string | null {
+  for (const source of sources) {
+    const reason = blockedReasonForMemorySource(source);
+    if (reason) return reason;
+  }
   return null;
 }
 
@@ -401,7 +411,7 @@ function hasNewInvalidationRef(currentRefs: CognitionRef[], requestSnapshotRefs:
 }
 
 function isCloudRequestExpired(request: CloudComputeRequest, evaluatedAt: string): boolean {
-  return instantMs(evaluatedAt) > instantMs(request.expires_at);
+  return instantMs(evaluatedAt) >= instantMs(request.expires_at);
 }
 
 function blockedReasonFor(input: {

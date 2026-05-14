@@ -388,6 +388,49 @@ describe("Companion cognition contracts", () => {
     });
   });
 
+  it("fails closed when duplicate memory metadata disagrees", () => {
+    const context = memoryRef("memory:duplicate", "memory:duplicate:v1");
+    const cloud = cloudRequest({
+      requestId: "cloud:duplicate-memory-metadata",
+      contextRefs: [context],
+    });
+    const blocked = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:duplicate-memory-metadata",
+      mode: "gated_external_service",
+      contextRefs: [context],
+      memorySources: [
+        {
+          memory_ref: context,
+          source_kind: "episodic",
+          allowed_uses: ["user_facing_reference"],
+          forbidden_uses: [],
+          sensitivity: "private",
+          lifecycle: "active",
+          correction_state: "current",
+          surface_projection_ref: "surface:duplicate-memory-safe",
+          excerpt: "Private summary.",
+        },
+        {
+          memory_ref: context,
+          source_kind: "episodic",
+          allowed_uses: ["user_facing_reference"],
+          forbidden_uses: [],
+          sensitivity: "sensitive",
+          lifecycle: "active",
+          correction_state: "current",
+          surface_projection_ref: "surface:duplicate-memory-sensitive",
+          excerpt: "Sensitive summary.",
+        },
+      ],
+      cloudComputeRequest: cloud,
+    });
+
+    expect(blocked.external_service_context_allowed).toBe(false);
+    expect(blocked.blocked_context_refs).toEqual([
+      { ref: context, reason: "sensitive_memory_blocked" },
+    ]);
+  });
+
   it("rejects previously admitted cloud payloads after policy, target, payload, nonce, or invalidation drift", () => {
     const context = eventRef("memory:admitted", "turn:admitted");
     const cloud = cloudRequest({
@@ -426,7 +469,7 @@ describe("Companion cognition contracts", () => {
       },
       {
         name: "cloud_request_expired",
-        input: { evaluatedAt: "2099-01-01T00:00:00.001Z" },
+        input: { evaluatedAt: "2099-01-01T00:00:00.000Z" },
       },
     ];
 
