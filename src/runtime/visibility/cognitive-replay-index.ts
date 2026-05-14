@@ -1,6 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
+import {
+  withJsonFileMutationLock,
+  writeJsonFileAtomic,
+} from "../../base/utils/json-io.js";
 import {
   CognitionEventRefSchema,
   CognitionRefSchema,
@@ -252,10 +256,11 @@ export class FileCognitiveReplayIndexStore implements CognitiveReplayIndexStore 
 
   async upsert(entry: CognitiveReplayIndexEntry): Promise<CognitiveReplayIndexEntry> {
     const parsed = CognitiveReplayIndexEntrySchema.parse(entry);
-    const entries = await this.list();
-    const next = [...entries.filter((existing) => existing.index_entry_id !== parsed.index_entry_id), parsed];
-    await mkdir(dirname(this.path()), { recursive: true });
-    await writeFile(this.path(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await withJsonFileMutationLock(this.path(), async () => {
+      const entries = await this.list();
+      const next = [...entries.filter((existing) => existing.index_entry_id !== parsed.index_entry_id), parsed];
+      await writeJsonFileAtomic(this.path(), next);
+    });
     return parsed;
   }
 

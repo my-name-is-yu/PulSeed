@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createCognitionReplayRecord,
@@ -5,6 +8,7 @@ import {
 import {
   CognitiveReplayIndexEntrySchema,
   CognitiveReplayInspectionViewSchema,
+  FileCognitiveReplayIndexStore,
   createCognitiveReplayIndexEntry,
   createCognitiveReplayInspectionView,
   defaultCognitiveReplayOwnerStore,
@@ -218,5 +222,33 @@ describe("cognitive replay index", () => {
       ...normalView,
       items: [{ ...normalView.items[0], debug_refs_visible: true }],
     })).toThrow(/normal user replay inspection/);
+  });
+
+  it("serializes concurrent index upserts so replay entries are not lost", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-cognitive-replay-index-concurrent-"));
+    const store = new FileCognitiveReplayIndexStore(baseDir);
+    const entries = Array.from({ length: 16 }, (_, index) => {
+      const record = createCognitionReplayRecord({
+        recordId: `cognition:task:${index}:attempt:${index}:replay`,
+        createdAt: NOW,
+        input: {
+          cognition_id: `cognition:task:${index}:attempt:${index}`,
+          caller_path: "long_running_task_turn",
+          event_refs: [eventRef(`runtime:event:${index}`)],
+        },
+        failure: { message: "stable output intentionally absent in replay index concurrency test" },
+      });
+      return createCognitiveReplayIndexEntry({
+        indexEntryId: `${record.record_id}:index`,
+        record,
+      });
+    });
+
+    await Promise.all(entries.map((entry) => store.upsert(entry)));
+
+    expect((await store.list()).map((entry) => entry.index_entry_id).sort()).toEqual(
+      entries.map((entry) => entry.index_entry_id).sort(),
+    );
+    fs.rmSync(baseDir, { recursive: true, force: true });
   });
 });
