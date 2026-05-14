@@ -1,6 +1,6 @@
 {
   "name": "pulseed",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "PulSeed is a lifelong personal agent that remembers your goals, watches the world with you, and keeps helping move your life forward.",
   "type": "module",
   "main": "dist/index.js",
