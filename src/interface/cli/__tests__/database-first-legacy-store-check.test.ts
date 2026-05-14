@@ -124,6 +124,39 @@ describe("database-first legacy store check", () => {
     expect(result.stdout).toContain("database-first legacy store check passed");
   });
 
+  it("classifies product-completion non-debt source refs and inventory artifacts", () => {
+    writeFile(tmpDir, "src/interface/chat/chat-runner.ts", `
+      export const sourceRef = { kind: "character_config", ref: "character-config.json", role: "configuration" };
+    `);
+    writeFile(tmpDir, "src/runtime/decision/companion-character-policy-projection.ts", `
+      export const defaultSourceRef = { kind: "character_config", ref: "character-config.json", role: "configuration" };
+    `);
+    writeFile(tmpDir, "scripts/inventory-test-redesign.mjs", `
+      export const obsoleteLockEvidence = "legacy \`.lock\` salvage behavior was deleted";
+    `);
+
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      allowlistReport: Array<{ id: string; category: string; matchCount: number }>;
+      debtReport: Array<{ id: string }>;
+    };
+    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "character-config-source-ref-user-content",
+        category: "user-authored content",
+        matchCount: 2,
+      }),
+      expect.objectContaining({
+        id: "test-redesign-inventory-artifact",
+        category: "debug/export output",
+        matchCount: 1,
+      }),
+    ]));
+    expect(parsed.debtReport).toEqual([]);
+  });
+
   it("does not let config-looking files hide unrelated runtime state owners", () => {
     writeFile(tmpDir, "src/runtime/config-adjacent-runtime-state.ts", `
       export const gatewayConfig = "gateway/channels/telegram-bot/config.json";

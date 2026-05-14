@@ -248,6 +248,13 @@ debug/export artifact boundaries:
   migration inputs only
 - relationship profile content remains file-backed as user-authored profile
   content; character config remains file-backed as user-editable configuration
+- chat and companion character-policy source refs may name
+  `character-config.json` only as explicit user-authored configuration
+  provenance; those refs do not make the character file authoritative runtime
+  state
+- `scripts/inventory-test-redesign.mjs` may retain deletion evidence for old
+  lock-file behavior as a debug/export artifact; it is not runtime code and is
+  not a supported compatibility path
 - memory lifecycle short-term entries, long-term lessons, indexes,
   statistics, and close archives use control DB tables; the old
   `memory/short-term/**`, `memory/long-term/**`, and memory persistence file

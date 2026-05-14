@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 
 const requiredFiles = [
@@ -72,11 +74,38 @@ for (const filePath of requiredExecutableFiles) {
   }
 }
 
+const smokeHome = mkdtempSync(join(tmpdir(), "pulseed-packaged-smoke-"));
+try {
+  const smokeResult = spawnSync(process.execPath, ["dist/interface/cli/cli-runner.js", "--version"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      PULSEED_HOME: smokeHome,
+    },
+  });
+  if (smokeResult.error) {
+    fail(`Packaged CLI smoke failed: ${smokeResult.error.message}`);
+  }
+  if (smokeResult.status !== 0) {
+    fail(
+      `Packaged CLI smoke failed with status ${smokeResult.status}:\n${smokeResult.stderr.trim() || smokeResult.stdout.trim()}`
+    );
+  }
+  const smokeOutput = `${smokeResult.stdout}\n${smokeResult.stderr}`.trim();
+  if (!/\d+\.\d+\.\d+/.test(smokeOutput)) {
+    fail(`Packaged CLI smoke did not print a version: ${smokeOutput || "(empty output)"}`);
+  }
+} finally {
+  rmSync(smokeHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}
+
 console.log("Packaged artifact verification passed.");
 console.log(`Tarball: ${entry.filename ?? "(unknown)"}`);
 for (const filePath of requiredFiles) {
   console.log(`- ${filePath}`);
 }
+console.log("- packaged CLI --version smoke");
 
 function fail(message) {
   console.error(message);

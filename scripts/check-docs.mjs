@@ -109,6 +109,20 @@ const stagingTermPatterns = [
   /\bwave\s*[0-9]+\b/i,
   /\bstage\s*14[A-Z-]*\b/i,
 ];
+const productCompletionMatrixPath = 'docs/product/completion-matrix.md';
+const productCompletionMatrixRequiredTerms = [
+  'Current operating behavior',
+  'Operator/debug behavior',
+  'Design-only or future direction',
+  'Migration/debug/export/config/workspace boundary',
+  'Unsupported/overclaim',
+  'DB-first runtime-state ownership',
+  'normal-surface redaction',
+  'restart/replay equivalence',
+  'stale target rejection',
+  'duplicate queue/schedule prevention',
+  'first-run/package smoke',
+];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
 const issues = [];
@@ -217,6 +231,8 @@ for (const filePath of markdownFiles) {
     issues.push(formatIssue(relativePath, fenceState.openingLine, 'unbalanced triple-backtick fence'));
   }
 }
+
+checkProductCompletionMatrix(issues);
 
 if (issues.length > 0) {
   console.error('docs check failed:');
@@ -344,6 +360,21 @@ function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
   }
 
   return null;
+}
+
+function checkProductCompletionMatrix(issueList) {
+  const matrixFilePath = path.join(repoRoot, productCompletionMatrixPath);
+  if (!fileExists(matrixFilePath)) {
+    issueList.push(formatIssue(productCompletionMatrixPath, 1, 'product-completion scenario matrix is missing'));
+    return;
+  }
+
+  const content = fs.readFileSync(matrixFilePath, 'utf8');
+  for (const term of productCompletionMatrixRequiredTerms) {
+    if (!content.includes(term)) {
+      issueList.push(formatIssue(productCompletionMatrixPath, 1, `product-completion scenario matrix must include '${term}'`));
+    }
+  }
 }
 
 function fileExists(filePath) {

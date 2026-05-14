@@ -1,6 +1,6 @@
 # Status
 
-Current status snapshot: 2026-05-11.
+Current status snapshot: 2026-05-15.
 
 This page summarizes current behavior. For exact commands, use
 [CLI Reference](../reference/cli.md). For current package version and release
@@ -20,6 +20,8 @@ Use these first when you want the current, best-supported path:
 - CLI inspection through `pulseed status`, `pulseed report`, `pulseed runtime`,
   `pulseed logs`, and `pulseed doctor`
 - docs link checking through `npm run check:docs`
+- product-completion boundary checks through
+  [Product Completion Scenario Matrix](../product/completion-matrix.md)
 
 ## Advanced Or Operator-Facing
 
@@ -78,6 +80,15 @@ Normal user-facing surfaces should render the user-facing view derived from
 readiness, admission, autonomy, capability catalog, warning, rationale, or
 evidence details. Operator, debug, and status surfaces may show those raw
 policy details.
+
+## Product Completion Boundary
+
+The current package treats runtime-state ownership, normal-surface redaction,
+and documentation truth as one product boundary. The matrix in
+[Product Completion Scenario Matrix](../product/completion-matrix.md) is the
+repo-level contract for what is current behavior, what is operator/debug
+behavior, what is design-only or future direction, and what remains unsupported
+as a current user claim.
 
 ## Not Current Operating Behavior
 

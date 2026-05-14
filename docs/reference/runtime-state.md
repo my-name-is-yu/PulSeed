@@ -24,3 +24,17 @@ Common paths:
 
 Do not treat every file under the state root as a documented contract. Docs
 only promise the documented command surfaces and high-level storage boundaries.
+
+## State Truth Boundary
+
+Current durable runtime state is owned by typed SQLite/Soil/control DB stores.
+Legacy JSON, JSONL, lock, sidecar, and raw `StateManager` fallback paths are not
+authoritative normal runtime state unless they are explicitly categorized as
+configuration, user-authored content, workspace content, debug/export output,
+bounded IPC spool, Soil import/publish artifact, reproducibility artifact, or
+doctor/repair migration input.
+
+Run `npm run check:database-first-legacy-stores` to verify that boundary. The
+machine-readable `allowlistReport`, `debtReport`, `directFileOwnerReport`, and
+`directFileDebtReport` from the guard define the current non-debt file-backed
+surfaces.

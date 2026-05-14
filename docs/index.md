@@ -63,6 +63,7 @@ details.
 ### Product Design
 
 - [Product Design Index](./product/index.md)
+- [Product Completion Scenario Matrix](./product/completion-matrix.md)
 - [Positioning](./product/positioning.md)
 - [Vision](./product/vision.md)
 - [Use Cases](./product/use-cases.md)

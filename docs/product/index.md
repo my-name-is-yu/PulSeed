@@ -9,6 +9,7 @@ These pages are not the current operating guide. Use
 
 Current direction pages:
 
+- [Product Completion Scenario Matrix](completion-matrix.md)
 - [Positioning](positioning.md)
 - [Vision](vision.md)
 - [Use Cases](use-cases.md)
