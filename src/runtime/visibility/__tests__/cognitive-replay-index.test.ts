@@ -12,6 +12,7 @@ import {
   createCognitiveReplayIndexEntry,
   createCognitiveReplayInspectionView,
   defaultCognitiveReplayOwnerStore,
+  refreshCognitiveReplayIndexEntriesForSourceInvalidation,
 } from "../index.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
@@ -93,6 +94,98 @@ describe("cognitive replay index", () => {
       ...entry,
       invalidation_state: "valid",
     })).toThrow(/must invalidate or fail closed/);
+  });
+
+  it("refreshes affected replay index entries after source invalidation without materializing deleted content", () => {
+    const sourceRef = eventRef("chat:event:corrected");
+    const otherSourceRef = eventRef("chat:event:other");
+    const affectedRecord = createCognitionReplayRecord({
+      recordId: "cognition:chat:corrected:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:corrected",
+        caller_path: "chat_user_turn",
+        event_refs: [sourceRef],
+      },
+      failure: { message: "stable output intentionally absent in refresh test" },
+    });
+    const unaffectedRecord = createCognitionReplayRecord({
+      recordId: "cognition:chat:other:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:other",
+        caller_path: "chat_user_turn",
+        event_refs: [otherSourceRef],
+      },
+      failure: { message: "stable output intentionally absent in refresh test" },
+    });
+    const affectedEntry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:cognition:chat:corrected",
+      record: affectedRecord,
+    });
+    const unaffectedEntry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:cognition:chat:other",
+      record: unaffectedRecord,
+    });
+    const invalidationRef = {
+      ...eventRef("surface-invalidation:profile:corrected"),
+      source_store: "profile" as const,
+      source_event_type: "memory_correction",
+    };
+
+    const refreshed = refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [affectedEntry, unaffectedEntry],
+      invalidatedSourceRefs: [sourceRef],
+      invalidationRefs: [invalidationRef],
+      sourceState: "deleted_or_tombstoned",
+    });
+
+    expect(refreshed[0]).toMatchObject({
+      index_entry_id: "index:cognition:chat:corrected",
+      source_state: "deleted_or_tombstoned",
+      invalidation_state: "invalidated",
+      invalidation_refs: [invalidationRef],
+      redaction_policy: "redacted",
+      normal_surface_visible: false,
+      cognition_service_is_owner: false,
+    });
+    expect(refreshed[1]).toMatchObject({
+      index_entry_id: "index:cognition:chat:other",
+      source_state: "current",
+      invalidation_state: "valid",
+      redaction_policy: "metadata_only",
+    });
+  });
+
+  it("fails closed when replay refresh sees an invalid source without an invalidation dependency", () => {
+    const sourceRef = eventRef("chat:event:missing-invalidation");
+    const record = createCognitionReplayRecord({
+      recordId: "cognition:chat:missing-invalidation:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:missing-invalidation",
+        caller_path: "chat_user_turn",
+        event_refs: [sourceRef],
+      },
+      failure: { message: "stable output intentionally absent in fail-closed refresh test" },
+    });
+    const entry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:cognition:chat:missing-invalidation",
+      record,
+    });
+
+    const [refreshed] = refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [entry],
+      invalidatedSourceRefs: [sourceRef],
+    });
+
+    expect(refreshed).toMatchObject({
+      source_state: "missing_source",
+      invalidation_state: "failed_closed",
+      invalidation_refs: [],
+      fail_closed_reason: "source invalidation was observed without a complete invalidation dependency",
+      redaction_policy: "redacted",
+    });
   });
 
   it("rejects cognition audit as the owner store for caller-path replay entries", () => {

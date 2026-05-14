@@ -172,6 +172,28 @@ describe("runtime cognition-replay command", () => {
           owner_write_performed: false,
           runtime_authority: false,
         }],
+        memory_lifecycle_review_inbox: {
+          read_only: true,
+          mutation_performed: false,
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              item_kind: "cognition_replay_ref",
+              source_summary_refs: [],
+              raw_content_visible: false,
+              hidden_prompt_visible: false,
+              sensitive_content_visible: false,
+            }),
+            expect.objectContaining({
+              item_kind: "profile_candidate",
+              review_state: "pending_user_review",
+              source_summary_refs: [],
+              allowed_actions: ["accept", "edit", "reject", "suppress", "forget_source"],
+              raw_content_visible: false,
+              hidden_prompt_visible: false,
+              sensitive_content_visible: false,
+            }),
+          ]),
+        },
       });
     } finally {
       cleanupTempDir(tmpDir);
@@ -196,6 +218,8 @@ describe("runtime cognition-replay command", () => {
       expect(output).not.toContain(SENSITIVE_REVIEW_SECRET);
       expect(output).toContain("owner write: no");
       expect(output).toContain("authority:   no");
+      expect(output).toContain("Review inbox:   2");
+      expect(output).toContain("raw content: hidden");
     } finally {
       cleanupTempDir(tmpDir);
     }

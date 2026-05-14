@@ -239,6 +239,44 @@ export function createCognitiveReplayInspectionView(input: {
   });
 }
 
+export function refreshCognitiveReplayIndexEntriesForSourceInvalidation(input: {
+  indexEntries: readonly unknown[];
+  invalidatedSourceRefs: readonly CognitionEventRef[];
+  invalidationRefs?: readonly CognitionEventRef[];
+  sourceState?: CognitiveReplayIndexSourceState;
+  failClosedReason?: string;
+}): CognitiveReplayIndexEntry[] {
+  const invalidatedSourceRefs = z.array(CognitionEventRefSchema).min(1).parse(input.invalidatedSourceRefs);
+  const invalidationRefs = z.array(CognitionEventRefSchema).parse(input.invalidationRefs ?? []);
+  const sourceState = input.sourceState ?? (invalidationRefs.length > 0 ? "current" : "missing_source");
+  return input.indexEntries.map((entry) => {
+    const parsedEntry = CognitiveReplayIndexEntrySchema.parse(entry);
+    const affected = parsedEntry.source_refs.some((sourceRef) =>
+      invalidatedSourceRefs.some((invalidatedRef) => cognitionEventRefsEqual(sourceRef, invalidatedRef))
+    );
+    if (!affected) return parsedEntry;
+
+    const invalidationState: CognitiveReplayIndexInvalidationState =
+      sourceState !== "missing_source" && invalidationRefs.length > 0
+        ? "invalidated"
+        : "failed_closed";
+    const failClosedReason = invalidationState === "failed_closed"
+      ? input.failClosedReason ?? "source invalidation was observed without a complete invalidation dependency"
+      : undefined;
+
+    return CognitiveReplayIndexEntrySchema.parse({
+      ...parsedEntry,
+      source_state: sourceState,
+      invalidation_state: invalidationState,
+      invalidation_refs: uniqueCognitionEventRefs([...parsedEntry.invalidation_refs, ...invalidationRefs]),
+      ...(failClosedReason ? { fail_closed_reason: failClosedReason } : {}),
+      redaction_policy: sourceState === "current" ? "metadata_only" : "redacted",
+      normal_surface_visible: false,
+      cognition_service_is_owner: false,
+    });
+  });
+}
+
 function defaultOwnerRefForRecord(record: CognitionReplayRecord): CognitionEventRef {
   const sourceStore = defaultCognitiveReplayOwnerStore(record.caller_path);
   return CognitionEventRefSchema.parse({
@@ -249,6 +287,33 @@ function defaultOwnerRefForRecord(record: CognitionReplayRecord): CognitionEvent
     replay_key: record.record_id,
     redaction_policy: "metadata_only",
   });
+}
+
+function cognitionEventRefsEqual(left: CognitionEventRef, right: CognitionEventRef): boolean {
+  return left.source_store === right.source_store
+    && left.source_event_type === right.source_event_type
+    && left.schema_version === right.schema_version
+    && left.ref === right.ref;
+}
+
+function uniqueCognitionEventRefs(refs: readonly CognitionEventRef[]): CognitionEventRef[] {
+  const seen = new Set<string>();
+  const unique: CognitionEventRef[] = [];
+  for (const ref of refs) {
+    const key = [
+      ref.source_store,
+      ref.source_event_type,
+      ref.schema_version,
+      ref.ref,
+      ref.source_epoch ?? "",
+      ref.high_watermark ?? "",
+      ref.replay_key ?? "",
+    ].join("\u0000");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(ref);
+  }
+  return unique;
 }
 
 export class FileCognitiveReplayIndexStore implements CognitiveReplayIndexStore {
