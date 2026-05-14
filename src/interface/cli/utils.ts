@@ -158,7 +158,7 @@ Options (pulseed provider set):
   --adapter <type>                    Default adapter: agent_loop | claude_code_cli | claude_api | openai_codex_cli | openai_api | github_issue
 
 Environment:
-  ANTHROPIC_API_KEY                   Required for LLM-powered commands
+  OPENAI_API_KEY / ANTHROPIC_API_KEY  Optional cloud provider credentials when selected
   PULSEED_LLM_PROVIDER                 Override LLM provider (anthropic|openai|ollama|codex)
 
 Examples:

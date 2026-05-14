@@ -102,7 +102,7 @@ describe("database-first legacy store check", () => {
 
 
   it("allows explicit migration boundaries and file-backed config surfaces", () => {
-    writeFile(tmpDir, "src/runtime/store/sample-migration.ts", `
+    writeFile(tmpDir, "src/runtime/store/plugin-channel-runtime-state-migration.ts", `
       export const legacyPluginState = "state.json";
       export const legacyChannelHealth = "health.json";
     `);
@@ -122,6 +122,22 @@ describe("database-first legacy store check", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("database-first legacy store check passed");
+  });
+
+  it("does not let a generic migration filename hide unrelated runtime state owners", () => {
+    writeFile(tmpDir, "src/runtime/store/sample-migration.ts", `
+      export const looksLikeMigration = "state.json";
+      export const hiddenQueue = "queue.jsonl";
+      export const hiddenCache = "cache.json";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/store/sample-migration.ts");
+    expect(result.stderr).toContain("[plugin-channel-runtime-json] PluginChannelRuntimeStateStore or another typed runtime state store");
+    expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
   });
 
   it("classifies product-completion non-debt source refs and inventory artifacts", () => {

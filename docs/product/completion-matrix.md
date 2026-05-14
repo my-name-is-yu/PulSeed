@@ -7,7 +7,10 @@ internal machinery. Normal runtime behavior must be backed by typed contracts,
 SQLite/Soil/control DB stores, deterministic tests, isolated state roots, fake
 clocks, and production caller paths. Normal user-facing surfaces should show a
 small user-facing projection, not raw memory, autonomy, readiness, admission,
-capability catalog, policy rationale, or evidence refs.
+capability catalog, policy rationale, or evidence refs. The machine-checkable
+[Product Claim Ledger](claim-ledger.json) records the concrete docs claims that
+were audited into current, operator/debug, design-only, boundary, or unsupported
+classes.
 
 ## Boundary Classes
 
@@ -29,6 +32,7 @@ capability catalog, policy rationale, or evidence refs.
 | duplicate queue/schedule prevention | Current operating behavior | Golden/replay fixtures for schedule crash idempotence, wait-resume retry idempotence, queue dedupe while inflight, and expired-claim reclaim | Queue and schedule execution must be idempotent across persisted state and restart paths. |
 | normal-surface redaction | Current operating behavior | Contract tests for product-completion surfaces, companion user-facing projection tests, chat/status tests, TUI-adjacent report tests, and secret setup redaction traces | Normal chat, gateway, CLI, status, report, and TUI-adjacent surfaces expose user-facing projections only. Raw memory, autonomy, readiness, admission, capability catalog, policy rationale, and evidence refs stay internal or operator/debug-only. |
 | first-run/package smoke | Current operating behavior | `npm run test:smoke` and `npm run verify:packaged-artifacts` packaged CLI version smoke with temp `PULSEED_HOME` | The package can be verified without real network access or provider API keys. |
+| docs/current-claim truth audit | Current operating behavior | `npm run check:docs` validates the product claim ledger against README, start, operate, reference, product, and design docs | Concrete docs claims must be classified as current, operator/debug, design-only, boundary, or unsupported, and public current docs must not silently promote design-only claims into current behavior. |
 | Runtime diagnostics and evidence inspection | Operator/debug behavior | `pulseed runtime ...`, `pulseed doctor`, `pulseed logs`, `pulseed operator-binding-status` style projections, and `--json`/details surfaces | Raw IDs, evidence refs, readiness/admission/autonomy labels, policy details, and repair records are allowed only in explicit operator/debug surfaces. |
 | Configuration, credentials, plugin manifests, gateway channel files, user-authored profiles, workspace artifacts, reports, logs, PID files, and bounded event spools | Migration/debug/export/config/workspace boundary | DB-first guard allowlist and direct-file owner inventory | File-backed boundaries must remain explicit and must not become hidden authoritative runtime state. |
 | GUI/mobile/visual companion workflows | Design-only or future direction | Product and design docs only | Do not describe as current package behavior. |

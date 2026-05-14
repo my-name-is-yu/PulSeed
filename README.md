@@ -16,8 +16,9 @@ PulSeed is local-first companion software for goals that take time.
 </div>
 
 PulSeed pairs a local long-running goal runtime with a companion-software
-design: remember what matters, notice when the situation changes, and bring the
-right tool, agent, or workflow into the moment when help is needed.
+design direction: remembering what matters, noticing when the situation
+changes, and bringing the right tool, agent, or workflow into the moment when
+help is needed.
 
 The current implementation focuses on long-running goal orchestration. It stores
 local state, runs a DurableLoop over goals, delegates bounded work through

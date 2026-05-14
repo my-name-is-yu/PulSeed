@@ -29,9 +29,10 @@ decisions before your first real goal:
 - **Data flow**: prompts, goal text, file excerpts, and tool observations may be
   sent to the configured provider or adapter. Do not point PulSeed at private or
   regulated data until you understand the selected provider and adapter path.
-- **Local state**: PulSeed writes goals, tasks, reports, runtime records,
-  schedules, chat sessions, plugins, skills, memory, and related state under
-  `~/.pulseed/` by default.
+- **Local state**: PulSeed keeps provider config, control databases, report and
+  debug artifacts, schedules, chat data, plugins, skills, memory, and related
+  files under `~/.pulseed/` by default. Durable runtime truth is DB-first; do
+  not treat every feature directory as an authoritative JSON store.
 - **Local permissions**: approval and verification gates reduce risk, but they
   are not an OS sandbox. Shell commands, local backends, provider tools, and
   plugins may still act with your user's privileges.
@@ -156,9 +157,10 @@ pulseed daemon stop
 
 ## Where State Lives
 
-PulSeed writes local state under `~/.pulseed/`, including provider config,
-goals, tasks, runtime state, reports, schedules, chat sessions, skills, plugins,
-memory, and Soil projections.
+PulSeed uses `~/.pulseed/` as the local state root. Durable runtime truth is
+owned by typed SQLite/Soil/control DB stores; feature directories may contain
+configuration, user-authored content, reports, logs, projections, workspace
+artifacts, or legacy migration inputs.
 
 Common state paths:
 

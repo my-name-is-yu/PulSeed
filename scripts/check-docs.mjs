@@ -110,18 +110,28 @@ const stagingTermPatterns = [
   /\bstage\s*14[A-Z-]*\b/i,
 ];
 const productCompletionMatrixPath = 'docs/product/completion-matrix.md';
-const productCompletionMatrixRequiredTerms = [
-  'Current operating behavior',
-  'Operator/debug behavior',
-  'Design-only or future direction',
-  'Migration/debug/export/config/workspace boundary',
-  'Unsupported/overclaim',
-  'DB-first runtime-state ownership',
-  'normal-surface redaction',
-  'restart/replay equivalence',
-  'stale target rejection',
-  'duplicate queue/schedule prevention',
-  'first-run/package smoke',
+const productClaimLedgerPath = 'docs/product/claim-ledger.json';
+const productClaimLedgerSchemaVersion = 'pulseed-product-claim-ledger/v1';
+const productClaimClassifications = new Set([
+  'current_operating_behavior',
+  'operator_debug_behavior',
+  'design_only_or_future_direction',
+  'migration_debug_export_config_workspace_boundary',
+  'unsupported_overclaim',
+]);
+const productClaimKinds = new Set([
+  'current_behavior',
+  'operator_surface',
+  'boundary_or_direction',
+  'negative_boundary',
+]);
+const requiredClaimSourceRoots = [
+  { label: 'README', matches: (relativePath) => relativePath === 'README.md' },
+  { label: 'start docs', matches: (relativePath) => relativePath.startsWith('docs/start/') },
+  { label: 'operate docs', matches: (relativePath) => relativePath.startsWith('docs/operate/') },
+  { label: 'reference docs', matches: (relativePath) => relativePath.startsWith('docs/reference/') },
+  { label: 'product docs', matches: (relativePath) => relativePath.startsWith('docs/product/') },
+  { label: 'design docs', matches: (relativePath) => relativePath.startsWith('docs/design/') },
 ];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
@@ -233,6 +243,7 @@ for (const filePath of markdownFiles) {
 }
 
 checkProductCompletionMatrix(issues);
+checkProductClaimLedger(issues);
 
 if (issues.length > 0) {
   console.error('docs check failed:');
@@ -370,11 +381,162 @@ function checkProductCompletionMatrix(issueList) {
   }
 
   const content = fs.readFileSync(matrixFilePath, 'utf8');
-  for (const term of productCompletionMatrixRequiredTerms) {
-    if (!content.includes(term)) {
-      issueList.push(formatIssue(productCompletionMatrixPath, 1, `product-completion scenario matrix must include '${term}'`));
+  if (!content.includes('(claim-ledger.json)')) {
+    issueList.push(formatIssue(productCompletionMatrixPath, 1, 'product-completion scenario matrix must link the machine-checkable product claim ledger'));
+  }
+  if (!content.includes('| Scenario | Class | Current coverage | Product boundary |')) {
+    issueList.push(formatIssue(productCompletionMatrixPath, 1, 'product-completion scenario matrix must keep the scenario table contract'));
+  }
+}
+
+function checkProductClaimLedger(issueList) {
+  const ledgerFilePath = path.join(repoRoot, productClaimLedgerPath);
+  if (!fileExists(ledgerFilePath)) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger is missing'));
+    return;
+  }
+
+  let ledger;
+  try {
+    ledger = JSON.parse(fs.readFileSync(ledgerFilePath, 'utf8'));
+  } catch (error) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger is not valid JSON: ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
+
+  if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger must be a JSON object'));
+    return;
+  }
+  if (ledger.schema_version !== productClaimLedgerSchemaVersion) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger schema_version must be ${productClaimLedgerSchemaVersion}`));
+  }
+  if (!Array.isArray(ledger.audit_scope) || ledger.audit_scope.length === 0) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger audit_scope must list audited doc roots'));
+  }
+  for (const requiredRoot of ['README.md', 'docs/start', 'docs/operate', 'docs/reference', 'docs/product', 'docs/design']) {
+    if (!ledger.audit_scope?.some((entry) => typeof entry === 'string' && (entry === requiredRoot || entry.startsWith(`${requiredRoot}/`)))) {
+      issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger audit_scope must include ${requiredRoot}`));
     }
   }
+  if (!Array.isArray(ledger.claims) || ledger.claims.length === 0) {
+    issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger must include concrete claims'));
+    return;
+  }
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const seenIds = new Set();
+  const seenClassifications = new Set();
+  const seenRoots = new Set();
+
+  ledger.claims.forEach((claim, index) => {
+    const lineHint = index + 1;
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, 'claim entry must be an object'));
+      return;
+    }
+    if (typeof claim.id !== 'string' || claim.id.length === 0) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, 'claim entry is missing id'));
+    } else if (seenIds.has(claim.id)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `duplicate product claim id ${claim.id}`));
+    } else {
+      seenIds.add(claim.id);
+    }
+    if (!productClaimClassifications.has(claim.classification)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid classification ${String(claim.classification)}`));
+    } else {
+      seenClassifications.add(claim.classification);
+    }
+    if (!productClaimKinds.has(claim.claim_kind)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid claim_kind ${String(claim.claim_kind)}`));
+    }
+    if (typeof claim.claim !== 'string' || claim.claim.trim().length === 0) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} is missing claim text`));
+    }
+
+    const source = claim.source;
+    if (!source || typeof source !== 'object' || typeof source.path !== 'string' || typeof source.text !== 'string') {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} is missing source.path/source.text`));
+    } else {
+      const normalizedSource = toPosixPath(source.path);
+      const sourcePath = path.join(repoRoot, normalizedSource);
+      if (!fileExists(sourcePath)) {
+        issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} source file does not exist: ${normalizedSource}`));
+      } else {
+        const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+        if (!sourceContent.includes(source.text)) {
+          issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} source text was not found in ${normalizedSource}`));
+        }
+      }
+      for (const root of requiredClaimSourceRoots) {
+        if (root.matches(normalizedSource)) seenRoots.add(root.label);
+      }
+      if (
+        isPublicCurrentDoc(normalizedSource)
+        && claim.classification === 'design_only_or_future_direction'
+        && claim.claim_kind !== 'boundary_or_direction'
+      ) {
+        issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} puts a design-only claim in a current doc without boundary_or_direction kind`));
+      }
+    }
+
+    if (claim.classification === 'unsupported_overclaim' && claim.claim_kind !== 'negative_boundary') {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} unsupported/overclaim entries must be negative_boundary claims`));
+    }
+    if (claim.claim_kind === 'current_behavior' && claim.classification !== 'current_operating_behavior') {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} current_behavior entries must be classified as current_operating_behavior`));
+    }
+
+    const evidenceRefs = claim.evidence_refs;
+    if (
+      claim.classification === 'current_operating_behavior'
+      || claim.classification === 'operator_debug_behavior'
+      || claim.classification === 'migration_debug_export_config_workspace_boundary'
+    ) {
+      if (!Array.isArray(evidenceRefs) || evidenceRefs.length === 0) {
+        issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} needs machine-checkable evidence_refs`));
+      }
+    }
+    if (Array.isArray(evidenceRefs)) {
+      for (const ref of evidenceRefs) {
+        const issue = validateEvidenceRef(ref, packageJson);
+        if (issue) {
+          issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid evidence ref: ${issue}`));
+        }
+      }
+    }
+  });
+
+  for (const classification of productClaimClassifications) {
+    if (!seenClassifications.has(classification)) {
+      issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger must include classification ${classification}`));
+    }
+  }
+  for (const root of requiredClaimSourceRoots) {
+    if (!seenRoots.has(root.label)) {
+      issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger must include at least one claim from ${root.label}`));
+    }
+  }
+}
+
+function validateEvidenceRef(ref, packageJson) {
+  if (typeof ref !== 'string' || ref.trim().length === 0) {
+    return 'empty evidence ref';
+  }
+  if (ref.startsWith('package.json#scripts.')) {
+    const scriptName = ref.slice('package.json#scripts.'.length);
+    if (!packageJson.scripts || typeof packageJson.scripts[scriptName] !== 'string') {
+      return ref;
+    }
+    return null;
+  }
+
+  const [filePart] = ref.split('#', 1);
+  const normalized = toPosixPath(filePart);
+  if (!fileExists(path.join(repoRoot, normalized))) {
+    return ref;
+  }
+  return null;
 }
 
 function fileExists(filePath) {

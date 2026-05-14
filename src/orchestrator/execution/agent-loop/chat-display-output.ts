@@ -121,6 +121,7 @@ function displayTextFromValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const raw = value.trim();
   if (!raw) return null;
+  if (isInternalDiagnosticDisplayText(raw)) return null;
 
   const parsed = parseJsonObject(raw);
   if (!parsed) return raw;
@@ -167,6 +168,29 @@ function stringArray(value: unknown): string[] {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((item) => item.trim()).filter((item) => item.length > 0))];
+}
+
+function isInternalDiagnosticDisplayText(value: string): boolean {
+  if (value.includes("RAW_MEMORY_SLOT")) return true;
+  if (value.includes("autonomy=") || value.includes("readiness=") || value.includes("admission=")) {
+    return true;
+  }
+
+  const tokens = value.split(/\s+/g).map((token) => token.trim()).filter(Boolean);
+  return tokens.length > 0 && tokens.every(isInternalReferenceToken);
+}
+
+function isInternalReferenceToken(token: string): boolean {
+  return [
+    "capability:",
+    "policy:",
+    "evidence:",
+    "trace:",
+    "run:",
+    "session:",
+    "source_ref:",
+    "source_refs:",
+  ].some((prefix) => token.startsWith(prefix));
 }
 
 function humanizeFieldLabel(key: string): string {

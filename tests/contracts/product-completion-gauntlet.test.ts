@@ -1,15 +1,22 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AutonomyDecision } from "../../src/runtime/control/autonomy-governor.js";
 import {
   projectCompanionAction,
   toCompanionUserFacingPolicyProjection,
 } from "../../src/runtime/control/companion-action-projection.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
+import { ChatRunner } from "../../src/interface/chat/chat-runner.js";
+import type { ChatRunnerDeps } from "../../src/interface/chat/chat-runner-contracts.js";
+import { cmdCurrentStatus, cmdStatus } from "../../src/interface/cli/commands/goal-read.js";
 import { formatRuntimeStatus } from "../../src/interface/chat/chat-runner-runtime.js";
 import { formatCurrentGoalSummary } from "../../src/interface/current-goal-summary.js";
 import { formatGoalStatusDetails } from "../../src/interface/goal-status-display.js";
+import { BackgroundRunLedger } from "../../src/runtime/store/background-run-store.js";
+import { RuntimeOperatorHandoffStore } from "../../src/runtime/store/operator-handoff-store.js";
 import { makeDimension, makeGoal } from "../helpers/fixtures.js";
 
 const NOW = "2026-05-15T00:00:00.000Z";
@@ -31,6 +38,109 @@ function expectNormalSurfaceRedacted(text: string): void {
   for (const marker of RAW_INTERNAL_MARKERS) {
     expect(text).not.toContain(marker);
   }
+}
+
+async function captureConsoleLog(run: () => Promise<unknown>): Promise<string> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join("\n");
+}
+
+function chatRunnerForStatus(stateManager: StateManager): ChatRunner {
+  return new ChatRunner({
+    stateManager,
+    adapter: {
+      adapterType: "product-completion-test",
+      execute: vi.fn(),
+    },
+    llmClient: {
+      sendMessage: vi.fn(),
+      parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content) as unknown)),
+    },
+  } as unknown as ChatRunnerDeps);
+}
+
+async function createRuntimeCallerFixture(baseDir: string): Promise<StateManager> {
+  const stateManager = new StateManager(baseDir);
+  await stateManager.init();
+  await stateManager.saveGoal(makeGoal({
+    id: "goal-product-completion",
+    title: "Finish product boundary",
+    loop_status: "running",
+    dimensions: [makeDimension({
+      name: "claim_truth",
+      label: "Claim truth",
+      current_value: 0.5,
+      threshold: { type: "min", value: 1 },
+      confidence: 0.42,
+    })],
+  }));
+
+  const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+  await ledger.create({
+    id: "run:coreloop:raw",
+    kind: "coreloop_run",
+    status: "running",
+    notify_policy: "silent",
+    goal_id: "goal-product-completion",
+    child_session_id: "session:agent:raw",
+    title: "Product completion run",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded",
+    error: "policy:deny evidence:raw admission=approval_required capability:notify trace:raw",
+    source_refs: [{
+      kind: "task_ledger",
+      id: "trace:raw",
+      path: null,
+      relative_path: "state/pulseed-control.sqlite",
+      updated_at: NOW,
+    }],
+  });
+  await ledger.terminal("run:coreloop:raw", {
+    status: "failed",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded",
+    error: "policy:deny evidence:raw admission=approval_required capability:notify trace:raw",
+    completed_at: NOW,
+  });
+
+  await new RuntimeOperatorHandoffStore(path.join(baseDir, "runtime"), {
+    controlBaseDir: baseDir,
+    now: () => new Date(NOW),
+  }).create({
+    handoff_id: "handoff-product-completion",
+    goal_id: "goal-product-completion",
+    run_id: "run:coreloop:raw",
+    triggers: ["policy", "external_action"],
+    title: "Operator approval needed",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded admission=approval_required",
+    current_status: "policy:deny capability:notify evidence:raw",
+    recommended_action: "Review the prepared operation before continuing.",
+    next_action: {
+      label: "Review the prepared operation before continuing.",
+      approval_required: true,
+    },
+    evidence_refs: [{ kind: "audit_trace", ref: "evidence:raw", observed_at: NOW }],
+  });
+
+  await stateManager.writeRaw("reports/goal-product-completion/report-raw.json", {
+    id: "report-product-completion-raw",
+    report_type: "execution_summary",
+    goal_id: "goal-product-completion",
+    title: "Execution Summary - Product boundary",
+    content: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded admission=approval_required capability:notify policy:deny evidence:raw trace:raw session:agent:raw",
+    verbosity: "standard",
+    generated_at: NOW,
+    delivered_at: null,
+    read: false,
+  });
+
+  return stateManager;
 }
 
 function decision(): AutonomyDecision {
@@ -149,6 +259,43 @@ describe("product completion gauntlet", () => {
     expectNormalSurfaceRedacted(currentGoal);
     expect(diagnosticCurrentGoal).toContain("run:coreloop:raw");
     expect(diagnosticCurrentGoal).toContain("policy:deny");
+  });
+
+  it("keeps ChatRunner and CLI status/report caller paths redacted while preserving diagnostic access", async () => {
+    const baseDir = mkdtempSync(path.join(os.tmpdir(), "pulseed-product-completion-caller-"));
+    try {
+      const stateManager = await createRuntimeCallerFixture(baseDir);
+      const runner = chatRunnerForStatus(stateManager);
+
+      const chatStatus = await runner.execute("/status", baseDir);
+      const chatDiagnosticStatus = await runner.execute("/status --details", baseDir);
+      const cliCurrent = await captureConsoleLog(() => cmdCurrentStatus(stateManager));
+      const cliFocused = await captureConsoleLog(() => cmdStatus(stateManager, "goal-product-completion"));
+      const cliDiagnostic = await captureConsoleLog(() =>
+        cmdStatus(stateManager, "goal-product-completion", undefined, { diagnostic: true }));
+
+      expect(chatStatus.success).toBe(true);
+      expect(chatStatus.output).toContain("Current goal");
+      expect(chatStatus.output).toContain("Operator approval needed");
+      expect(chatStatus.output).toContain("Background work is blocked");
+      expect(chatStatus.output).not.toContain("report-product-completion-raw");
+      expectNormalSurfaceRedacted(chatStatus.output);
+
+      expect(cliCurrent).toContain("Current goal");
+      expect(cliCurrent).toContain("Operator approval needed");
+      expectNormalSurfaceRedacted(cliCurrent);
+
+      expect(cliFocused).toContain("# Status: Finish product boundary");
+      expect(cliFocused).toContain("Latest Execution Summary");
+      expect(cliFocused).toContain("Use detailed status when you need exact IDs and full report content.");
+      expectNormalSurfaceRedacted(cliFocused);
+
+      expect(chatDiagnosticStatus.output).toContain("run:coreloop:raw");
+      expect(chatDiagnosticStatus.output).toContain("policy:deny");
+      expect(cliDiagnostic).toContain("RAW_MEMORY_SLOT");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
   });
 
   it("derives normal companion policy surfaces without raw memory, readiness, admission, autonomy, policy, or evidence refs", () => {

@@ -36,6 +36,7 @@ function surfaceDelivery(input: {
   shouldRender: boolean;
   text?: string;
   reason?: string;
+  auditRefs?: SurfaceDeliveryProjection["audit_refs"];
 }): SurfaceDeliveryProjection {
   return SurfaceDeliveryProjectionSchema.parse({
     schema_version: "surface-delivery-projection-v1",
@@ -50,7 +51,7 @@ function surfaceDelivery(input: {
     ...(input.shouldRender
       ? { user_facing_text: input.text ?? "Shared delivery text" }
       : { quiet_audit_reason: input.reason ?? "surface delivery is hidden by policy" }),
-    audit_refs: [],
+    audit_refs: input.auditRefs ?? [],
   });
 }
 
@@ -178,6 +179,32 @@ describe("non-TUI display projector", () => {
     expect(transport.sendFinal).toHaveBeenCalledWith("The admitted outcome is ready.");
     expect(transport.sendProgress).not.toHaveBeenCalled();
     expect(projector.deliveredAssistantOutput).toBe(true);
+  });
+
+  it("renders only the admitted user-facing projection and never audit refs on non-TUI gateway channels", async () => {
+    const transport = createTransport();
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+    });
+
+    await projector.handle({
+      ...base,
+      type: "surface_delivery",
+      projection: surfaceDelivery({
+        deliveryId: "surface-delivery:telegram:redaction",
+        shouldRender: true,
+        text: "The status update is ready.",
+        auditRefs: [
+          ref("audit_trace", "evidence:raw"),
+          ref("policy", "policy:deny"),
+        ],
+      }),
+    });
+
+    expect(transport.sendFinal).toHaveBeenCalledWith("The status update is ready.");
+    expect(transport.calls.join("\n")).not.toContain("evidence:raw");
+    expect(transport.calls.join("\n")).not.toContain("policy:deny");
   });
 
   it("keeps quiet or hidden surface deliveries silent on Telegram-shaped non-TUI channels", async () => {
