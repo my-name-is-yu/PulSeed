@@ -101,6 +101,24 @@ describe("memory lifecycle owner routing", () => {
       review_state: "accepted",
       owner_decision_ref: { kind: "profile_owner_decision", ref: "decision:profile:1" },
     });
+    const proceduralProposal = writebackProposal({
+      proposal_id: "proposal:procedural:1",
+      proposal_kind: "procedural_skill_candidate",
+      proposed_target: "reflection",
+    });
+    const proceduralQueued = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:procedural:1",
+      proposal: proceduralProposal,
+      createdAt: NOW,
+    });
+    expect(ownerRoutingRuleForProposal(proceduralProposal)).toMatchObject({
+      canonical_owner: "procedural",
+    });
+    expect(proceduralQueued.owner).toBe("procedural");
+    expect(() => createMemoryLifecycleEnvelopeFromWritebackQueueEntry({
+      ...proceduralQueued,
+      owner: "reflection",
+    })).toThrow(/does not match lifecycle routing owner procedural/);
     expect(accepted).toMatchObject({
       proposal: {
         auto_apply: false,
@@ -231,6 +249,19 @@ describe("memory lifecycle owner routing", () => {
         },
       ],
     });
+    const normalInbox = createMemoryLifecycleReviewInbox({
+      inboxId: "memory-lifecycle-review:normal",
+      generatedAt: NOW,
+      envelopes: [blockedKnowledgeEnvelope],
+      sourceRefsVisible: false,
+    });
+    expect(normalInbox.items[0]).toMatchObject({
+      item_kind: "correction_invalidation",
+      source_summary_refs: [],
+      invalidation_refs: [],
+      redaction_refs: [],
+    });
+    expect(JSON.stringify(normalInbox.items[0])).not.toContain("knowledge:source:deleted");
   });
 });
 

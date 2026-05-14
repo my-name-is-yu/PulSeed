@@ -157,6 +157,48 @@ describe("cognitive replay index", () => {
     });
   });
 
+  it("defaults source invalidation refresh with dependencies to non-current redacted state", () => {
+    const sourceRef = eventRef("chat:event:default-invalidated");
+    const record = createCognitionReplayRecord({
+      recordId: "cognition:chat:default-invalidated:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:default-invalidated",
+        caller_path: "chat_user_turn",
+        event_refs: [sourceRef],
+      },
+      failure: { message: "stable output intentionally absent in default invalidation test" },
+    });
+    const entry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:cognition:chat:default-invalidated",
+      record,
+    });
+    const invalidationRef = {
+      ...eventRef("surface-invalidation:default"),
+      source_store: "profile" as const,
+      source_event_type: "memory_correction",
+    };
+
+    const [refreshed] = refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [entry],
+      invalidatedSourceRefs: [sourceRef],
+      invalidationRefs: [invalidationRef],
+    });
+
+    expect(refreshed).toMatchObject({
+      source_state: "deleted_or_tombstoned",
+      invalidation_state: "invalidated",
+      invalidation_refs: [invalidationRef],
+      redaction_policy: "redacted",
+    });
+    expect(() => refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [entry],
+      invalidatedSourceRefs: [sourceRef],
+      invalidationRefs: [invalidationRef],
+      sourceState: "current",
+    })).toThrow(/cannot keep affected replay entries current/);
+  });
+
   it("fails closed when replay refresh sees an invalid source without an invalidation dependency", () => {
     const sourceRef = eventRef("chat:event:missing-invalidation");
     const record = createCognitionReplayRecord({

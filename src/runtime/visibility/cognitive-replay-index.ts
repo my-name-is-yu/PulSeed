@@ -79,6 +79,20 @@ export const CognitiveReplayIndexEntrySchema = z.object({
       message: "missing, deleted, or tombstoned source refs must invalidate or fail closed",
     });
   }
+  if (entry.invalidation_state !== "valid" && entry.source_state === "current") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["source_state"],
+      message: "invalidated replay index entries cannot keep current source state",
+    });
+  }
+  if (entry.source_state !== "current" && entry.redaction_policy !== "redacted") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["redaction_policy"],
+      message: "invalidated replay index entries must use redacted inspection policy",
+    });
+  }
   if (
     (entry.invalidation_state === "invalidated" || entry.invalidation_state === "failed_closed")
     && entry.invalidation_refs.length === 0
@@ -248,7 +262,10 @@ export function refreshCognitiveReplayIndexEntriesForSourceInvalidation(input: {
 }): CognitiveReplayIndexEntry[] {
   const invalidatedSourceRefs = z.array(CognitionEventRefSchema).min(1).parse(input.invalidatedSourceRefs);
   const invalidationRefs = z.array(CognitionEventRefSchema).parse(input.invalidationRefs ?? []);
-  const sourceState = input.sourceState ?? (invalidationRefs.length > 0 ? "current" : "missing_source");
+  if (input.sourceState === "current") {
+    throw new Error("source invalidation refresh cannot keep affected replay entries current");
+  }
+  const sourceState = input.sourceState ?? (invalidationRefs.length > 0 ? "deleted_or_tombstoned" : "missing_source");
   return input.indexEntries.map((entry) => {
     const parsedEntry = CognitiveReplayIndexEntrySchema.parse(entry);
     const affected = parsedEntry.source_refs.some((sourceRef) =>
@@ -270,7 +287,7 @@ export function refreshCognitiveReplayIndexEntriesForSourceInvalidation(input: {
       invalidation_state: invalidationState,
       invalidation_refs: uniqueCognitionEventRefs([...parsedEntry.invalidation_refs, ...invalidationRefs]),
       ...(failClosedReason ? { fail_closed_reason: failClosedReason } : {}),
-      redaction_policy: sourceState === "current" ? "metadata_only" : "redacted",
+      redaction_policy: "redacted",
       normal_surface_visible: false,
       cognition_service_is_owner: false,
     });

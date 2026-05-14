@@ -13,17 +13,14 @@ import {
   type CognitionRef,
   type MemoryWritebackProposal,
 } from "../runtime/cognition/index.js";
+import {
+  MemoryLifecycleWritebackOwnerSchema,
+  ownerForMemoryWritebackProposal,
+  type MemoryLifecycleWritebackOwner,
+} from "../runtime/cognition/memory-writeback-owner-routing.js";
 
-export const CognitionWritebackQueueOwnerSchema = z.enum([
-  "dream",
-  "profile",
-  "soil",
-  "knowledge",
-  "procedural",
-  "attention_feedback",
-  "reflection",
-]);
-export type CognitionWritebackQueueOwner = z.infer<typeof CognitionWritebackQueueOwnerSchema>;
+export const CognitionWritebackQueueOwnerSchema = MemoryLifecycleWritebackOwnerSchema;
+export type CognitionWritebackQueueOwner = MemoryLifecycleWritebackOwner;
 
 export const CognitionWritebackSourceStateSchema = z.enum([
   "current",
@@ -83,6 +80,14 @@ export const CognitionWritebackQueueEntrySchema = z.object({
       message: "cognition writeback queue entries must remain refs-only",
     });
   }
+  const expectedOwner = ownerForMemoryWritebackProposal(entry.proposal);
+  if (entry.owner !== expectedOwner) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["owner"],
+      message: `writeback queue owner ${entry.owner} does not match lifecycle routing owner ${expectedOwner}`,
+    });
+  }
   if (entry.source_state !== "current" && entry.state !== "blocked_source_invalid") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -120,20 +125,7 @@ export interface CognitionWritebackQueueStore {
 }
 
 export function ownerForWritebackProposal(proposal: MemoryWritebackProposal): CognitionWritebackQueueOwner {
-  switch (proposal.proposed_target) {
-    case "dream":
-      return "dream";
-    case "profile":
-      return "profile";
-    case "soil":
-      return "soil";
-    case "knowledge":
-      return "knowledge";
-    case "attention_feedback":
-      return "attention_feedback";
-    case "reflection":
-      return proposal.proposal_kind === "procedural_skill_candidate" ? "procedural" : "reflection";
-  }
+  return ownerForMemoryWritebackProposal(proposal);
 }
 
 export function createCognitionWritebackQueueEntry(input: {
