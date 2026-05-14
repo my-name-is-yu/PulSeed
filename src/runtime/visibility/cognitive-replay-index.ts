@@ -93,6 +93,13 @@ export const CognitiveReplayIndexEntrySchema = z.object({
       message: "invalidated replay index entries must use redacted inspection policy",
     });
   }
+  if (entry.invalidation_state !== "failed_closed" && entry.fail_closed_reason) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["fail_closed_reason"],
+      message: "fail-closed reason must be present only while replay invalidation is failed closed",
+    });
+  }
   if (
     (entry.invalidation_state === "invalidated" || entry.invalidation_state === "failed_closed")
     && entry.invalidation_refs.length === 0
@@ -280,9 +287,10 @@ export function refreshCognitiveReplayIndexEntriesForSourceInvalidation(input: {
     const failClosedReason = invalidationState === "failed_closed"
       ? input.failClosedReason ?? "source invalidation was observed without a complete invalidation dependency"
       : undefined;
+    const { fail_closed_reason: _staleFailClosedReason, ...entryWithoutFailClosedReason } = parsedEntry;
 
     return CognitiveReplayIndexEntrySchema.parse({
-      ...parsedEntry,
+      ...entryWithoutFailClosedReason,
       source_state: sourceState,
       invalidation_state: invalidationState,
       invalidation_refs: uniqueCognitionEventRefs([...parsedEntry.invalidation_refs, ...invalidationRefs]),

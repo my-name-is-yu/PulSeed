@@ -199,6 +199,56 @@ describe("cognitive replay index", () => {
     })).toThrow(/cannot keep affected replay entries current/);
   });
 
+  it("clears stale fail-closed reason when source invalidation dependency recovers", () => {
+    const sourceRef = eventRef("chat:event:recover-invalidation");
+    const record = createCognitionReplayRecord({
+      recordId: "cognition:chat:recover-invalidation:replay",
+      createdAt: NOW,
+      input: {
+        cognition_id: "cognition:chat:recover-invalidation",
+        caller_path: "chat_user_turn",
+        event_refs: [sourceRef],
+      },
+      failure: { message: "stable output intentionally absent in recovery invalidation test" },
+    });
+    const entry = createCognitiveReplayIndexEntry({
+      indexEntryId: "index:cognition:chat:recover-invalidation",
+      record,
+    });
+    const [failedClosed] = refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [entry],
+      invalidatedSourceRefs: [sourceRef],
+      failClosedReason: "invalidation dependency missing during first refresh",
+    });
+    const invalidationRef = {
+      ...eventRef("surface-invalidation:recovered"),
+      source_store: "profile" as const,
+      source_event_type: "memory_correction",
+    };
+
+    const [recovered] = refreshCognitiveReplayIndexEntriesForSourceInvalidation({
+      indexEntries: [failedClosed],
+      invalidatedSourceRefs: [sourceRef],
+      invalidationRefs: [invalidationRef],
+    });
+
+    expect(failedClosed).toMatchObject({
+      invalidation_state: "failed_closed",
+      fail_closed_reason: "invalidation dependency missing during first refresh",
+    });
+    expect(recovered).toMatchObject({
+      source_state: "deleted_or_tombstoned",
+      invalidation_state: "invalidated",
+      invalidation_refs: [invalidationRef],
+      redaction_policy: "redacted",
+    });
+    expect(recovered.fail_closed_reason).toBeUndefined();
+    expect(() => CognitiveReplayIndexEntrySchema.parse({
+      ...recovered,
+      fail_closed_reason: "stale failure metadata",
+    })).toThrow(/must be present only while replay invalidation is failed closed/);
+  });
+
   it("fails closed when replay refresh sees an invalid source without an invalidation dependency", () => {
     const sourceRef = eventRef("chat:event:missing-invalidation");
     const record = createCognitionReplayRecord({
