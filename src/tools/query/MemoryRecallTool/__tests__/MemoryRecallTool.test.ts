@@ -333,7 +333,7 @@ describe("MemoryRecallTool", () => {
   });
 
   describe("production recall path", () => {
-    it("does not treat lexical substring matches as the default freeform memory path", async () => {
+    it("reports semantic recall unavailable instead of using lexical substring matches by default", async () => {
       const tmpDir = makeTempDir("pulseed-memory-recall-tool-");
       try {
         const stateManager = new StateManager(tmpDir);
@@ -347,8 +347,8 @@ describe("MemoryRecallTool", () => {
         const realTool = new MemoryRecallTool(realKm);
 
         const freeform = await realTool.call({ query: "TypeScript" }, makeContext());
-        expect(freeform.success).toBe(true);
-        expect((freeform.data as { entries: AgentMemoryEntry[] }).entries).toEqual([]);
+        expect(freeform.success).toBe(false);
+        expect(freeform.error).toContain("semantic agent memory recall requires an embedding client");
 
         const lexical = await realTool.call({ query: "TypeScript", mode: "lexical" }, makeContext());
         expect(lexical.success).toBe(true);

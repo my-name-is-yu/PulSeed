@@ -154,7 +154,10 @@ export async function recallAgentMemoryEntries(
   });
 
   if (mode === "semantic") {
-    if (!host.embeddingClient || candidates.length === 0) return [];
+    if (!host.embeddingClient) {
+      throw new Error("semantic agent memory recall requires an embedding client; use mode='lexical' for explicit substring lookup");
+    }
+    if (candidates.length === 0) return [];
     const texts = candidates.map((e) => {
       const base = `${e.key}: ${e.value}`;
       return e.summary ? `${base} (${e.summary})` : base;

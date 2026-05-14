@@ -89,7 +89,7 @@ describe("recallAgentMemory — semantic mode", () => {
     expect(results[1]!.key).toBe("entry.2");
   });
 
-  it("does not fall back to lexical substring search when semantic mode has no embedding client", async () => {
+  it("reports semantic recall unavailable instead of falling back to lexical substring search", async () => {
     const km = makeKM(undefined); // no embedding client
     const entries = [
       makeEntry({ key: "typescript.preference", value: "TypeScript is preferred" }),
@@ -97,9 +97,9 @@ describe("recallAgentMemory — semantic mode", () => {
     ];
     await seedMemory(km, entries);
 
-    const results = await km.recallAgentMemory("TypeScript", { semantic: true });
-
-    expect(results).toEqual([]);
+    await expect(km.recallAgentMemory("TypeScript", { semantic: true })).rejects.toThrow(
+      "semantic agent memory recall requires an embedding client"
+    );
     expect(await km.recallAgentMemory("TypeScript", { mode: "lexical" })).toEqual([
       expect.objectContaining({ key: "typescript.preference" }),
     ]);
