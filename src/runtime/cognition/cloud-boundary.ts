@@ -363,7 +363,7 @@ function staleCloudRequestReasons(input: {
   if (input.usedDispatchNonceRefs.some((ref) => sameRef(ref, input.request.dispatch_nonce_ref))) {
     reasons.push("dispatch_nonce_reused");
   }
-  if (input.currentInvalidationRefs.some((current) => input.request.invalidation_refs.some((ref) => sameRef(ref, current)))) {
+  if (input.currentInvalidationRefs.length > 0) {
     reasons.push("payload_invalidated");
   }
   return reasons;

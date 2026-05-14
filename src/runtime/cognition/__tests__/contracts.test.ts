@@ -38,6 +38,7 @@ function cloudRequest(input: {
   payloadFingerprint?: string;
   providerPolicyRef?: { kind: string; ref: string };
   dispatchNonceRef?: { kind: string; ref: string };
+  invalidationRefs?: Array<{ kind: string; ref: string }>;
   expiresAt?: string;
 } = {}) {
   const purpose = input.purpose ?? "chat_reply";
@@ -78,7 +79,7 @@ function cloudRequest(input: {
         payload_ref: payloadRef,
       })),
     ],
-    invalidation_refs: [{ kind: "memory_invalidation", ref: "invalidation:1" }],
+    invalidation_refs: input.invalidationRefs ?? [{ kind: "memory_invalidation", ref: "invalidation:1" }],
     retention_expectation: "zero_retention_contract",
     user_visible_summary: "Send the approved redacted summary to the configured model provider.",
     expires_at: input.expiresAt ?? "2099-01-01T00:00:00.000Z",
@@ -393,6 +394,15 @@ describe("Companion cognition contracts", () => {
         input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:1" }] },
       },
       {
+        name: "payload_invalidated",
+        cloudRequest: cloudRequest({
+          requestId: "cloud:stale-rejection:new-invalidation",
+          contextRefs: [context],
+          invalidationRefs: [],
+        }),
+        input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:new-after-request" }] },
+      },
+      {
         name: "cloud_request_expired",
         input: { evaluatedAt: "2099-01-01T00:00:00.001Z" },
       },
@@ -403,7 +413,7 @@ describe("Companion cognition contracts", () => {
         evaluationId: `cloud-boundary:${testCase.name}`,
         mode: "gated_external_service",
         contextRefs: [context],
-        cloudComputeRequest: cloud,
+        cloudComputeRequest: testCase.cloudRequest ?? cloud,
         ...testCase.input,
       });
       expect(blocked.external_service_context_allowed).toBe(false);
