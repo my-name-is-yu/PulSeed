@@ -69,6 +69,53 @@ describe("dispatchGatewayChatInput display contract", () => {
     expect(result).not.toContain("\"finalAnswer\"");
   });
 
+  it("redacts raw internal memory, autonomy, policy, capability, and evidence refs on the gateway dispatch path", async () => {
+    registerGatewayChatSessionPort(async () => ({
+      processIncomingMessage: async () => ({
+        status: "done",
+        finalAnswer: {
+          summary: "The gateway answer is ready.",
+          sections: [{
+            title: "Checks",
+            bullets: [
+              "Read the current status projection.",
+              "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded admission=approval_required",
+            ],
+          }],
+          evidence: ["evidence:raw trace:raw", "run:coreloop:raw", "Checked the public status projection."],
+          blockers: ["policy:deny capability:notify", "No user action is needed."],
+          nextActions: ["Continue from the current goal."],
+        },
+        internal_payload: {
+          source_refs: ["session:agent:raw"],
+        },
+      }),
+    }));
+
+    const result = await dispatchGatewayChatInput(baseInput);
+
+    expect(result).toContain("The gateway answer is ready.");
+    expect(result).toContain("Read the current status projection.");
+    expect(result).toContain("Checked the public status projection.");
+    expect(result).toContain("No user action is needed.");
+    expect(result).toContain("Continue from the current goal.");
+    for (const marker of [
+      "RAW_MEMORY_SLOT",
+      "autonomy=approval_required",
+      "readiness=degraded",
+      "admission=approval_required",
+      "policy:deny",
+      "capability:notify",
+      "evidence:raw",
+      "trace:raw",
+      "run:coreloop:raw",
+      "session:agent:raw",
+      "internal_payload",
+    ]) {
+      expect(result).not.toContain(marker);
+    }
+  });
+
   it("does not invent display text for unwrappable manager objects", async () => {
     registerGatewayChatSessionPort(async () => ({
       processIncomingMessage: async () => ({ internal_payload: { raw: true } }),

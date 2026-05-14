@@ -102,7 +102,7 @@ describe("database-first legacy store check", () => {
 
 
   it("allows explicit migration boundaries and file-backed config surfaces", () => {
-    writeFile(tmpDir, "src/runtime/store/sample-migration.ts", `
+    writeFile(tmpDir, "src/runtime/store/plugin-channel-runtime-state-migration.ts", `
       export const legacyPluginState = "state.json";
       export const legacyChannelHealth = "health.json";
     `);
@@ -122,6 +122,55 @@ describe("database-first legacy store check", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("database-first legacy store check passed");
+  });
+
+  it("does not let a generic migration filename hide unrelated runtime state owners", () => {
+    writeFile(tmpDir, "src/runtime/store/sample-migration.ts", `
+      export const looksLikeMigration = "state.json";
+      export const hiddenQueue = "queue.jsonl";
+      export const hiddenCache = "cache.json";
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/store/sample-migration.ts");
+    expect(result.stderr).toContain("[plugin-channel-runtime-json] PluginChannelRuntimeStateStore or another typed runtime state store");
+    expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
+    expect(result.stderr).toContain("Unclassified legacy store references must be moved to typed stores");
+  });
+
+  it("classifies product-completion non-debt source refs and inventory artifacts", () => {
+    writeFile(tmpDir, "src/interface/chat/chat-runner.ts", `
+      export const sourceRef = { kind: "character_config", ref: "character-config.json", role: "configuration" };
+    `);
+    writeFile(tmpDir, "src/runtime/decision/companion-character-policy-projection.ts", `
+      export const defaultSourceRef = { kind: "character_config", ref: "character-config.json", role: "configuration" };
+    `);
+    writeFile(tmpDir, "scripts/inventory-test-redesign.mjs", `
+      export const obsoleteLockEvidence = "legacy \`.lock\` salvage behavior was deleted";
+    `);
+
+    const result = runCheck(tmpDir, ["--json"]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      allowlistReport: Array<{ id: string; category: string; matchCount: number }>;
+      debtReport: Array<{ id: string }>;
+    };
+    expect(parsed.allowlistReport).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "character-config-source-ref-user-content",
+        category: "user-authored content",
+        matchCount: 2,
+      }),
+      expect.objectContaining({
+        id: "test-redesign-inventory-artifact",
+        category: "debug/export output",
+        matchCount: 1,
+      }),
+    ]));
+    expect(parsed.debtReport).toEqual([]);
   });
 
   it("does not let config-looking files hide unrelated runtime state owners", () => {

@@ -25,7 +25,7 @@ to pages when results are assembled.
 
 | Layer | Role | Storage |
 |---|---|---|
-| Runtime stores | Write truth for reports, schedules, knowledge, agent memory, decisions, and observations | Existing runtime JSON and subsystem stores |
+| Runtime stores | Write truth for reports, schedules, knowledge, agent memory, decisions, and observations | Typed SQLite/Soil/control DB stores plus explicit config, artifact, export, or migration boundaries |
 | Soil records | Canonical retrieval units | `soil_records` in `.index/soil.sqlite` |
 | Soil chunks | Lexical and dense retrieval units | `soil_chunks`, `soil_chunk_fts`, `soil_embeddings` |
 | Soil pages | Human-readable projection | `soil_pages` plus Markdown files |

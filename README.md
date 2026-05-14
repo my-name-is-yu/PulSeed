@@ -16,8 +16,9 @@ PulSeed is local-first companion software for goals that take time.
 </div>
 
 PulSeed pairs a local long-running goal runtime with a companion-software
-design: remember what matters, notice when the situation changes, and bring the
-right tool, agent, or workflow into the moment when help is needed.
+design direction: remembering what matters, noticing when the situation
+changes, and bringing the right tool, agent, or workflow into the moment when
+help is needed.
 
 The current implementation focuses on long-running goal orchestration. It stores
 local state, runs a DurableLoop over goals, delegates bounded work through
@@ -128,7 +129,10 @@ Start with the current operating docs when you want to use PulSeed today:
 - [Architecture](./docs/architecture/index.md)
 
 Product direction, companion scenarios, and design boundaries live under
-[Product Design](./docs/product/index.md). Design documents,
+[Product Design](./docs/product/index.md), with a code-backed/current-vs-design
+boundary in the
+[Product Completion Scenario Matrix](./docs/product/completion-matrix.md).
+Design documents,
 audits, and design history live under [Design Documentation](docs/design/index.md).
 
 ## Evidence
@@ -141,8 +145,9 @@ available at
 
 The repository also includes repeatable verification paths for the implemented
 foundation: `npm run check:docs`, `npm run test:dogfood`,
-`npm run dogfood:agentloop:real`, packaged-artifact checks, and CI lanes for
-unit and integration coverage. These show that the product contract is being
+`npm run dogfood:agentloop:real`, `npm run check:database-first-legacy-stores`,
+packaged-artifact checks, and CI lanes for unit, contract, golden-trace, replay,
+smoke, and integration coverage. These show that the product contract is being
 tested through code-backed goal/runtime behavior. They do not claim customer
 adoption, revenue, or broad market pull yet.
 
