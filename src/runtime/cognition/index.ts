@@ -7,7 +7,11 @@ export {
 } from "./audit-sink.js";
 export {
   CloudBoundaryEvaluationSchema,
+  CloudBoundaryCallerPathSchema,
   CloudBoundaryModeSchema,
+  CloudRefClassificationSchema,
+  CloudRefClassSchema,
+  classifyCognitionMemorySourceForCloud,
   evaluateCloudBoundaryForCognition,
 } from "./cloud-boundary.js";
 export {
@@ -16,7 +20,10 @@ export {
 export {
   AuthorizationRequestSchema,
   ChatSessionCognitionContextSchema,
+  CloudAdmittedRefVersionSchema,
   CloudComputeRequestSchema,
+  CloudComputePurposeSchema,
+  CloudRetentionExpectationSchema,
   CognitionEventRefSchema,
   CognitionMemoryRequestSchema,
   CognitionMemoryResultSchema,
@@ -31,6 +38,8 @@ export {
   CompanionCognitionInputSchema,
   CompanionCognitionOutputSchema,
   CompanionCognitionSurfaceTargetSchema,
+  ExternalDataScopeGrantSchema,
+  ExternalDataScopeUseSchema,
   GoalIntentionContextSchema,
   GoalRefSchema,
   IntentionLifecycleSchema,
@@ -96,12 +105,18 @@ export type {
 } from "./ports.js";
 export type {
   CloudBoundaryEvaluation,
+  CloudBoundaryCallerPath,
+  CloudRefClassification,
+  CloudRefClass,
   CloudBoundaryMode,
 } from "./cloud-boundary.js";
 export type {
   AuthorizationRequest,
   ChatSessionCognitionContext,
+  CloudAdmittedRefVersion,
   CloudComputeRequest,
+  CloudComputePurpose,
+  CloudRetentionExpectation,
   CognitionEventRef,
   CognitionMemoryRequest,
   CognitionMemoryResult,
@@ -117,6 +132,8 @@ export type {
   CompanionCognitionInput,
   CompanionCognitionOutput,
   CompanionCognitionSurfaceTarget,
+  ExternalDataScopeGrant,
+  ExternalDataScopeUse,
   GoalIntentionContext,
   GoalRef,
   IntentionLifecycle,

@@ -329,16 +329,117 @@ export const PrivacyProfileSchema = z.enum([
 ]);
 export type PrivacyProfile = z.infer<typeof PrivacyProfileSchema>;
 
+export const CloudComputePurposeSchema = z.enum([
+  "chat_reply",
+  "tool_reasoning",
+  "research",
+  "summarization",
+  "embedding",
+  "classification",
+]);
+export type CloudComputePurpose = z.infer<typeof CloudComputePurposeSchema>;
+
+export const CloudRetentionExpectationSchema = z.enum([
+  "provider_default",
+  "zero_retention_contract",
+  "unknown",
+]);
+export type CloudRetentionExpectation = z.infer<typeof CloudRetentionExpectationSchema>;
+
+export const ExternalDataScopeUseSchema = z.enum([
+  "external_model_context",
+  "external_tool_payload",
+]);
+export type ExternalDataScopeUse = z.infer<typeof ExternalDataScopeUseSchema>;
+
+export const ExternalDataScopeGrantSchema = z.object({
+  grant_ref: CognitionRefSchema,
+  use: ExternalDataScopeUseSchema,
+  purpose: CloudComputePurposeSchema,
+  context_ref: CognitionEventRefSchema.optional(),
+  payload_ref: CognitionRefSchema.optional(),
+}).strict().superRefine((grant, ctx) => {
+  if (grant.use === "external_model_context" && !grant.context_ref) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["context_ref"],
+      message: "external model context grants must name the exact context ref",
+    });
+  }
+  if (grant.use === "external_tool_payload" && !grant.payload_ref) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["payload_ref"],
+      message: "external tool payload grants must name the exact payload ref",
+    });
+  }
+});
+export type ExternalDataScopeGrant = z.infer<typeof ExternalDataScopeGrantSchema>;
+
+export const CloudAdmittedRefVersionSchema = z.object({
+  ref: CognitionEventRefSchema,
+  lifecycle: z.enum(["active", "matured"]),
+  correction_state: z.literal("current"),
+  source_epoch: z.string().min(1),
+}).strict();
+export type CloudAdmittedRefVersion = z.infer<typeof CloudAdmittedRefVersionSchema>;
+
 export const CloudComputeRequestSchema = z.object({
   request_id: z.string().min(1),
   provider_ref: z.string().min(1),
+  provider_policy_ref: CognitionRefSchema,
+  purpose: CloudComputePurposeSchema,
   surface_projection_ref: z.string().min(1),
   redaction_refs: z.array(CognitionRefSchema).default([]),
   privacy_profile: z.literal("external_service"),
   admission_evaluation_ref: CognitionRefSchema,
   autonomy_evaluation_ref: CognitionRefSchema,
+  payload_fingerprint: z.string().min(1),
+  dispatch_nonce_ref: CognitionRefSchema,
+  target_epoch: z.string().min(1),
+  payload_epoch: z.string().min(1),
+  admitted_ref_versions: z.array(CloudAdmittedRefVersionSchema).default([]),
   model_visible_context_refs: z.array(CognitionEventRefSchema).default([]),
-}).strict();
+  external_tool_payload_refs: z.array(CognitionRefSchema).default([]),
+  external_data_scope_grants: z.array(ExternalDataScopeGrantSchema).default([]),
+  invalidation_refs: z.array(CognitionRefSchema).default([]),
+  retention_expectation: CloudRetentionExpectationSchema,
+  user_visible_summary: z.string().min(1),
+  expires_at: z.string().datetime(),
+}).strict().superRefine((request, ctx) => {
+  if (request.model_visible_context_refs.length > 0 && request.redaction_refs.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["redaction_refs"],
+      message: "cloud compute requests with model-visible context require redaction refs",
+    });
+  }
+  for (const [index, contextRef] of request.model_visible_context_refs.entries()) {
+    if (!hasAdmittedRefVersion(request.admitted_ref_versions, contextRef)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["admitted_ref_versions", index],
+        message: "cloud compute requests require current admitted ref versions for each model-visible context ref",
+      });
+    }
+    if (!hasExternalDataScopeGrant(request.external_data_scope_grants, "external_model_context", request.purpose, contextRef)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["external_data_scope_grants", index],
+        message: "model-visible context requires an explicit purpose-bound external_model_context grant",
+      });
+    }
+  }
+  for (const [index, payloadRef] of request.external_tool_payload_refs.entries()) {
+    if (!hasExternalToolPayloadGrant(request.external_data_scope_grants, request.purpose, payloadRef)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["external_data_scope_grants", index],
+        message: "external tool payload requires an explicit purpose-bound external_tool_payload grant",
+      });
+    }
+  }
+});
 export type CloudComputeRequest = z.infer<typeof CloudComputeRequestSchema>;
 
 export const AuthorizationRequestSchema = z.discriminatedUnion("kind", [
@@ -752,4 +853,49 @@ export type CognitionWritebackReflectionInput = z.infer<typeof CognitionWritebac
 
 export function deliveryKindRank(kind: ProactiveDeliveryKind): number {
   return DELIVERY_KIND_RANK[kind];
+}
+
+function hasAdmittedRefVersion(versions: CloudAdmittedRefVersion[], ref: CognitionEventRef): boolean {
+  return versions.some((version) => cognitionEventRefKey(version.ref) === cognitionEventRefKey(ref));
+}
+
+function hasExternalDataScopeGrant(
+  grants: ExternalDataScopeGrant[],
+  use: ExternalDataScopeUse,
+  purpose: CloudComputePurpose,
+  contextRef: CognitionEventRef
+): boolean {
+  return grants.some((grant) =>
+    grant.use === use
+    && grant.purpose === purpose
+    && grant.context_ref
+    && cognitionEventRefKey(grant.context_ref) === cognitionEventRefKey(contextRef)
+  );
+}
+
+function hasExternalToolPayloadGrant(
+  grants: ExternalDataScopeGrant[],
+  purpose: CloudComputePurpose,
+  payloadRef: CognitionRef
+): boolean {
+  return grants.some((grant) =>
+    grant.use === "external_tool_payload"
+    && grant.purpose === purpose
+    && grant.payload_ref
+    && grant.payload_ref.kind === payloadRef.kind
+    && grant.payload_ref.ref === payloadRef.ref
+  );
+}
+
+function cognitionEventRefKey(ref: CognitionEventRef): string {
+  return JSON.stringify({
+    ref: ref.ref,
+    source_store: ref.source_store,
+    source_event_type: ref.source_event_type,
+    schema_version: ref.schema_version,
+    source_epoch: ref.source_epoch ?? null,
+    high_watermark: ref.high_watermark ?? null,
+    replay_key: ref.replay_key ?? null,
+    redaction_policy: ref.redaction_policy,
+  });
 }

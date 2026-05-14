@@ -48,10 +48,20 @@ export function createCloudComputeAuthorizationRequest(input: {
   expiresAt: string;
   cloudComputeRequest: CloudComputeRequest;
 }): AuthorizationRequest {
+  const cloudComputeRequest = CloudComputeRequestSchema.parse(input.cloudComputeRequest);
+  if (cloudComputeRequest.target_epoch !== input.targetEpoch) {
+    throw new Error("cloud compute authorization target epoch does not match cloud boundary request");
+  }
+  if (cloudComputeRequest.payload_epoch !== input.payloadEpoch) {
+    throw new Error("cloud compute authorization payload epoch does not match cloud boundary request");
+  }
+  if (cloudComputeRequest.expires_at !== input.expiresAt) {
+    throw new Error("cloud compute authorization expiration does not match cloud boundary request");
+  }
   return AuthorizationRequestSchema.parse({
     kind: "cloud_compute_request",
     request_id: input.requestId,
-    cloud_compute_request: CloudComputeRequestSchema.parse(input.cloudComputeRequest),
+    cloud_compute_request: cloudComputeRequest,
     request_fingerprint: input.requestFingerprint,
     origin_ref: input.originRef,
     target_epoch: input.targetEpoch,
@@ -62,6 +72,8 @@ export function createCloudComputeAuthorizationRequest(input: {
     fail_closed_validation_refs: [
       { kind: "admission_evaluation", ref: input.cloudComputeRequest.admission_evaluation_ref.ref },
       { kind: "autonomy_evaluation", ref: input.cloudComputeRequest.autonomy_evaluation_ref.ref },
+      { kind: "cloud_provider_policy", ref: input.cloudComputeRequest.provider_policy_ref.ref },
+      { kind: "cloud_dispatch_nonce", ref: input.cloudComputeRequest.dispatch_nonce_ref.ref },
     ],
   });
 }

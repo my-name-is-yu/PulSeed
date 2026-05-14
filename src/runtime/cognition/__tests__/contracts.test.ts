@@ -3,10 +3,13 @@ import {
   AuthorizationRequestSchema,
   CloudBoundaryEvaluationSchema,
   CloudComputeRequestSchema,
+  CognitionMemoryResultSchema,
+  CognitionMemorySourceSchema,
   CognitionEventRefSchema,
   CompanionCognitionOutputSchema,
   IntentionSelectionSchema,
   ToolCandidateSchema,
+  classifyCognitionMemorySourceForCloud,
   createCloudComputeAuthorizationRequest,
   evaluateCloudBoundaryForCognition,
 } from "../index.js";
@@ -21,6 +24,63 @@ function eventRef(ref = "event:1", sourceEpoch = "turn:1") {
     schema_version: 1,
     source_epoch: sourceEpoch,
     redaction_policy: "metadata_only",
+  });
+}
+
+function cloudRequest(input: {
+  requestId?: string;
+  purpose?: "chat_reply" | "tool_reasoning" | "research" | "summarization" | "embedding" | "classification";
+  contextRefs?: ReturnType<typeof eventRef>[];
+  externalToolPayloadRefs?: Array<{ kind: string; ref: string }>;
+  grants?: Array<Record<string, unknown>>;
+  targetEpoch?: string;
+  payloadEpoch?: string;
+  payloadFingerprint?: string;
+  providerPolicyRef?: { kind: string; ref: string };
+  dispatchNonceRef?: { kind: string; ref: string };
+} = {}) {
+  const purpose = input.purpose ?? "chat_reply";
+  const contextRefs = input.contextRefs ?? [eventRef()];
+  return CloudComputeRequestSchema.parse({
+    request_id: input.requestId ?? "cloud:1",
+    provider_ref: "openai:responses",
+    provider_policy_ref: input.providerPolicyRef ?? { kind: "provider_policy", ref: "provider-policy:openai:2026-05-14" },
+    purpose,
+    surface_projection_ref: "surface:allowed",
+    redaction_refs: [{ kind: "redaction", ref: "redaction:1" }],
+    privacy_profile: "external_service",
+    admission_evaluation_ref: { kind: "admission", ref: "admission:1" },
+    autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:1" },
+    payload_fingerprint: input.payloadFingerprint ?? "payload:fingerprint:1",
+    dispatch_nonce_ref: input.dispatchNonceRef ?? { kind: "dispatch_nonce", ref: "nonce:1" },
+    target_epoch: input.targetEpoch ?? "target:v1",
+    payload_epoch: input.payloadEpoch ?? "payload:v1",
+    admitted_ref_versions: contextRefs.map((ref) => ({
+      ref,
+      lifecycle: "active",
+      correction_state: "current",
+      source_epoch: ref.source_epoch ?? ref.high_watermark ?? ref.replay_key ?? "source:unknown",
+    })),
+    model_visible_context_refs: contextRefs,
+    external_tool_payload_refs: input.externalToolPayloadRefs ?? [],
+    external_data_scope_grants: input.grants ?? [
+      ...contextRefs.map((ref) => ({
+        grant_ref: { kind: "data_scope_grant", ref: `grant:${ref.ref}` },
+        use: "external_model_context",
+        purpose,
+        context_ref: ref,
+      })),
+      ...(input.externalToolPayloadRefs ?? []).map((payloadRef) => ({
+        grant_ref: { kind: "data_scope_grant", ref: `grant:${payloadRef.ref}` },
+        use: "external_tool_payload",
+        purpose,
+        payload_ref: payloadRef,
+      })),
+    ],
+    invalidation_refs: [{ kind: "memory_invalidation", ref: "invalidation:1" }],
+    retention_expectation: "zero_retention_contract",
+    user_visible_summary: "Send the approved redacted summary to the configured model provider.",
+    expires_at: NOW,
   });
 }
 
@@ -125,16 +185,7 @@ describe("Companion cognition contracts", () => {
   });
 
   it("treats cloud compute as an authorization-bearing external service request", () => {
-    const cloud = CloudComputeRequestSchema.parse({
-      request_id: "cloud:1",
-      provider_ref: "openai:responses",
-      surface_projection_ref: "surface:allowed",
-      redaction_refs: [{ kind: "redaction", ref: "redaction:1" }],
-      privacy_profile: "external_service",
-      admission_evaluation_ref: { kind: "admission", ref: "admission:1" },
-      autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:1" },
-      model_visible_context_refs: [eventRef()],
-    });
+    const cloud = cloudRequest();
     const request = createCloudComputeAuthorizationRequest({
       requestId: "auth:cloud:1",
       requestFingerprint: "fingerprint:cloud:1",
@@ -150,6 +201,10 @@ describe("Companion cognition contracts", () => {
       side_effect_profile: "cloud_compute",
       privacy_profile: "external_service",
     });
+    expect(request.fail_closed_validation_refs).toEqual(expect.arrayContaining([
+      { kind: "cloud_provider_policy", ref: "provider-policy:openai:2026-05-14" },
+      { kind: "cloud_dispatch_nonce", ref: "nonce:1" },
+    ]));
   });
 
   it("blocks model-visible cognition context in local-only mode", () => {
@@ -175,15 +230,9 @@ describe("Companion cognition contracts", () => {
     const approvedContext = eventRef("memory:private-context", "turn:approved");
     const sameRefUnapprovedEpochContext = eventRef("memory:private-context", "turn:unapproved");
     const unapprovedContext = eventRef("memory:unapproved-context");
-    const cloud = CloudComputeRequestSchema.parse({
-      request_id: "cloud:admitted",
-      provider_ref: "openai:responses",
-      surface_projection_ref: "surface:redacted",
-      redaction_refs: [{ kind: "redaction", ref: "redaction:private-context" }],
-      privacy_profile: "external_service",
-      admission_evaluation_ref: { kind: "admission", ref: "admission:cloud" },
-      autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:cloud" },
-      model_visible_context_refs: [approvedContext],
+    const cloud = cloudRequest({
+      requestId: "cloud:admitted",
+      contextRefs: [approvedContext],
     });
 
     const allowed = evaluateCloudBoundaryForCognition({
@@ -199,5 +248,168 @@ describe("Companion cognition contracts", () => {
       ...allowed,
       redaction_refs: [],
     })).toThrow(/redaction refs/);
+  });
+
+  it("blocks private model context until an explicit purpose-bound external data scope grant exists", () => {
+    const privateContext = eventRef("memory:private-context", "turn:private");
+    expect(() => cloudRequest({
+      requestId: "cloud:no-grant",
+      contextRefs: [privateContext],
+      grants: [],
+    })).toThrow(/external_model_context grant/);
+
+    const cloud = cloudRequest({
+      requestId: "cloud:with-grant",
+      contextRefs: [privateContext],
+    });
+    const allowed = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:private-with-grant",
+      mode: "gated_external_service",
+      contextRefs: [privateContext],
+      memorySources: [{
+        memory_ref: privateContext,
+        source_kind: "episodic",
+        allowed_uses: ["user_facing_reference"],
+        forbidden_uses: [],
+        sensitivity: "private",
+        lifecycle: "active",
+        correction_state: "current",
+        surface_projection_ref: "surface:private-summary",
+        excerpt: "A redacted private summary.",
+      }],
+      cloudComputeRequest: cloud,
+    });
+
+    expect(allowed).toMatchObject({
+      external_service_context_allowed: true,
+      model_visible_context_refs: [privateContext],
+      admitted_context_refs: [privateContext],
+      retention_expectation: "zero_retention_contract",
+    });
+    expect(CognitionMemoryResultSchema.parse({
+      request_id: "memory-result:cloud-gate",
+      included: [],
+      withheld: [],
+      audit_refs: [],
+    }).model_visible_without_cloud_gate).toBe(false);
+  });
+
+  it("does not admit sensitive, redacted, deleted, tombstoned, superseded, or corrected memory refs", () => {
+    const refs = {
+      sensitive: eventRef("memory:sensitive", "turn:sensitive"),
+      redacted: eventRef("memory:redacted", "turn:redacted"),
+      deleted: eventRef("memory:deleted", "turn:deleted"),
+      tombstoned: eventRef("memory:tombstoned", "turn:tombstoned"),
+      superseded: eventRef("memory:superseded", "turn:superseded"),
+      corrected: eventRef("memory:corrected", "turn:corrected"),
+    };
+    const memorySources = [
+      { ref: refs.sensitive, sensitivity: "sensitive", lifecycle: "active", correction_state: "current" },
+      { ref: refs.redacted, sensitivity: "redacted", lifecycle: "active", correction_state: "current" },
+      { ref: refs.deleted, sensitivity: "private", lifecycle: "deleted", correction_state: "current" },
+      { ref: refs.tombstoned, sensitivity: "private", lifecycle: "retracted", correction_state: "current" },
+      { ref: refs.superseded, sensitivity: "private", lifecycle: "superseded", correction_state: "current" },
+      { ref: refs.corrected, sensitivity: "private", lifecycle: "active", correction_state: "corrected" },
+    ].map((source) => CognitionMemorySourceSchema.parse({
+      memory_ref: source.ref,
+      source_kind: "episodic",
+      allowed_uses: ["user_facing_reference"],
+      forbidden_uses: [],
+      sensitivity: source.sensitivity,
+      lifecycle: source.lifecycle,
+      correction_state: source.correction_state,
+      surface_projection_ref: `surface:${source.ref.ref}`,
+      excerpt: "Redacted summary.",
+    }));
+    const contextRefs = Object.values(refs);
+    const cloud = cloudRequest({
+      requestId: "cloud:block-unsafe-memory",
+      contextRefs,
+    });
+    const blocked = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:block-unsafe-memory",
+      mode: "gated_external_service",
+      contextRefs,
+      memorySources,
+      cloudComputeRequest: cloud,
+    });
+
+    expect(blocked.external_service_context_allowed).toBe(false);
+    expect(blocked.model_visible_context_refs).toEqual([]);
+    expect(blocked.blocked_context_refs.map((ref) => ref.reason)).toEqual([
+      "sensitive_memory_blocked",
+      "redacted_memory_blocked",
+      "deleted_memory_blocked",
+      "tombstoned_memory_blocked",
+      "superseded_memory_blocked",
+      "corrected_memory_blocked",
+    ]);
+    expect(classifyCognitionMemorySourceForCloud(memorySources[0]!)).toMatchObject({
+      cloud_visible: false,
+      blocked_reason: "sensitive_memory_blocked",
+    });
+  });
+
+  it("rejects previously admitted cloud payloads after policy, target, payload, nonce, or invalidation drift", () => {
+    const context = eventRef("memory:admitted", "turn:admitted");
+    const cloud = cloudRequest({
+      requestId: "cloud:stale-rejection",
+      contextRefs: [context],
+    });
+    const cases = [
+      {
+        name: "provider_policy_changed",
+        input: { currentProviderPolicyRef: { kind: "provider_policy", ref: "provider-policy:new" } },
+      },
+      {
+        name: "target_epoch_changed",
+        input: { currentTargetEpoch: "target:v2" },
+      },
+      {
+        name: "payload_fingerprint_changed",
+        input: { currentPayloadFingerprint: "payload:fingerprint:2" },
+      },
+      {
+        name: "dispatch_nonce_reused",
+        input: { usedDispatchNonceRefs: [{ kind: "dispatch_nonce", ref: "nonce:1" }] },
+      },
+      {
+        name: "payload_invalidated",
+        input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:1" }] },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const blocked = evaluateCloudBoundaryForCognition({
+        evaluationId: `cloud-boundary:${testCase.name}`,
+        mode: "gated_external_service",
+        contextRefs: [context],
+        cloudComputeRequest: cloud,
+        ...testCase.input,
+      });
+      expect(blocked.external_service_context_allowed).toBe(false);
+      expect(blocked.blocked_reason).toContain(testCase.name);
+    }
+  });
+
+  it("requires explicit purpose-bound data scope before external tool payload transfer", () => {
+    const payloadRef = { kind: "external_tool_payload", ref: "payload:mcp-calendar-read" };
+    expect(() => cloudRequest({
+      requestId: "cloud:external-tool:no-grant",
+      purpose: "tool_reasoning",
+      externalToolPayloadRefs: [payloadRef],
+      grants: [{
+        grant_ref: { kind: "data_scope_grant", ref: "grant:wrong-use" },
+        use: "external_model_context",
+        purpose: "tool_reasoning",
+        context_ref: eventRef(),
+      }],
+    })).toThrow(/external_tool_payload grant/);
+
+    expect(cloudRequest({
+      requestId: "cloud:external-tool:with-grant",
+      purpose: "tool_reasoning",
+      externalToolPayloadRefs: [payloadRef],
+    }).external_tool_payload_refs).toEqual([payloadRef]);
   });
 });

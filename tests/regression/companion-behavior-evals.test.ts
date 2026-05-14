@@ -17,6 +17,7 @@ import {
   createCompanionGadgetPlan,
 } from "../../src/runtime/decision/index.js";
 import {
+  CloudComputeRequestSchema,
   createCloudComputeAuthorizationRequest,
   createCognitionReplayRecord,
   evaluateCloudBoundaryForCognition,
@@ -237,6 +238,57 @@ describe("companion behavior eval contract", () => {
     expect(writeback).toMatchObject({ review_required: true, owner_write_performed: false });
     expect(proactive).toMatchObject({ reason: "no_backlog_flush", allowed_delivery_kind: "hold" });
     expect(procedural).toMatchObject({ planning_evidence_only: true, execution_authority: false });
+  });
+
+  it("routes chat, runtime task, and GUI/gateway cloud payloads through the same cloud boundary gate", () => {
+    const event = eventRef("cloud:event:caller-path");
+    const cloudRequest = CloudComputeRequestSchema.parse({
+      request_id: "cloud:caller-path",
+      provider_ref: "openai:responses",
+      provider_policy_ref: { kind: "provider_policy", ref: "provider-policy:caller-path" },
+      purpose: "chat_reply",
+      surface_projection_ref: "surface:caller-path",
+      redaction_refs: [{ kind: "redaction", ref: "redaction:caller-path" }],
+      privacy_profile: "external_service",
+      admission_evaluation_ref: { kind: "admission", ref: "admission:caller-path" },
+      autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:caller-path" },
+      payload_fingerprint: "payload:fingerprint:caller-path",
+      dispatch_nonce_ref: { kind: "dispatch_nonce", ref: "nonce:caller-path" },
+      target_epoch: "target:caller-path",
+      payload_epoch: "payload:caller-path",
+      admitted_ref_versions: [{
+        ref: event,
+        lifecycle: "active",
+        correction_state: "current",
+        source_epoch: event.replay_key,
+      }],
+      model_visible_context_refs: [event],
+      external_data_scope_grants: [{
+        grant_ref: { kind: "data_scope_grant", ref: "grant:caller-path" },
+        use: "external_model_context",
+        purpose: "chat_reply",
+        context_ref: event,
+      }],
+      invalidation_refs: [],
+      retention_expectation: "zero_retention_contract",
+      user_visible_summary: "Send only the admitted caller-path summary to the provider.",
+      expires_at: NOW,
+    });
+
+    for (const callerPath of ["chat_user_turn", "long_running_task_turn", "gui_gateway_projection"] as const) {
+      const evaluation = evaluateCloudBoundaryForCognition({
+        evaluationId: `cloud-boundary:${callerPath}`,
+        callerPath,
+        mode: "gated_external_service",
+        contextRefs: [event],
+        cloudComputeRequest: cloudRequest,
+      });
+      expect(evaluation).toMatchObject({
+        caller_path: callerPath,
+        external_service_context_allowed: true,
+        model_visible_context_refs: [event],
+      });
+    }
   });
 });
 
