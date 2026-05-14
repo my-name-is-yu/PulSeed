@@ -3,8 +3,10 @@ import { defaultExecutionPolicy } from "../../../orchestrator/execution/agent-lo
 import {
   buildChatTurnContext,
   renderModelVisibleTurnContext,
+  toPublicCharacterPolicyContext,
   toTurnContextSnapshot,
 } from "../turn-context.js";
+import { createCompanionCharacterPolicyProjection } from "../../../runtime/decision/companion-character-policy-projection.js";
 import type { UserInput } from "../user-input.js";
 
 describe("Chat TurnContext", () => {
@@ -165,5 +167,82 @@ describe("Chat TurnContext", () => {
     expect(snapshotJson).not.toContain("secret-url");
     expect(snapshotJson).not.toContain("/private/secret.log");
     expect(snapshotJson).not.toContain("approvalFn");
+  });
+
+  it("renders typed character policy without raw config knobs or execution authority", () => {
+    const characterPolicy = toPublicCharacterPolicyContext(createCompanionCharacterPolicyProjection({
+      projectionId: "character-policy:test-high",
+      evaluatedAt: "2026-05-14T00:00:00.000Z",
+      characterConfig: {
+        caution_level: 5,
+        stall_flexibility: 5,
+        communication_directness: 5,
+        proactivity_level: 5,
+      },
+    }));
+    const context = buildChatTurnContext({
+      eventContext: { runId: "run-character", turnId: "turn-character" },
+      startedAt: new Date("2026-05-14T00:00:00.000Z"),
+      sessionId: "session-character",
+      cwd: "/repo",
+      gitRoot: "/repo",
+      executionCwd: "/repo",
+      nativeAgentLoopStatePath: null,
+      selectedRoute: {
+        kind: "gateway_model_loop",
+        reason: "direct_model_tool_loop",
+        replyTargetPolicy: "turn_reply_target",
+        eventProjectionPolicy: "turn_only",
+        concurrencyPolicy: "session_serial",
+      },
+      input: "hello",
+      userInput: {
+        schema_version: "user-input-v1",
+        items: [{ kind: "text", text: "hello" }],
+      } satisfies UserInput,
+      priorTurns: [],
+      basePrompt: "hello",
+      prompt: "hello",
+      systemPrompt: "Base instructions",
+      agentLoopSystemPrompt: "Base instructions",
+      runtimeControlContext: {
+        approvalMode: "disallowed",
+        allowed: false,
+      },
+      executionPolicy: defaultExecutionPolicy("/repo"),
+      setupDialogue: null,
+      runSpecConfirmation: null,
+      setupSecretIntake: null,
+      activatedTools: new Set(),
+      characterPolicy,
+    });
+
+    expect(context.modelVisible.characterPolicy).toMatchObject({
+      policyRef: {
+        kind: "character_config_policy",
+        ref: "character-policy:test-high",
+        result: "policy_hint_only",
+      },
+      dialogueStrategy: {
+        directness: "direct",
+        initiative_posture: "high_detail",
+      },
+      authority: {
+        characterCanRelaxApprovalBoundary: false,
+        characterCanGrantAutonomy: false,
+      },
+    });
+    const rendered = renderModelVisibleTurnContext(context.modelVisible);
+    expect(rendered).toContain("character_policy_ref: character_config_policy:character-policy:test-high");
+    expect(rendered).toContain("character_directness: direct");
+    expect(rendered).toContain("character_initiative_posture: high_detail");
+    expect(rendered).toContain("character_can_relax_approval_boundary: false");
+    expect(rendered).toContain("character_can_grant_autonomy: false");
+    expect(rendered).toContain("runtime_control_allowed: false");
+    expect(rendered).toContain("approval_mode: disallowed");
+    expect(rendered).not.toContain("caution_level");
+    expect(rendered).not.toContain("stall_flexibility");
+    expect(rendered).not.toContain("communication_directness");
+    expect(rendered).not.toContain("proactivity_level");
   });
 });
