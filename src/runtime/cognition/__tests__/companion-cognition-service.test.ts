@@ -135,6 +135,86 @@ describe("CompanionCognitionService", () => {
     expect(output.tool_candidates).toEqual([]);
   });
 
+  it("keeps high-risk relationship tension as confirmation context without increasing proactivity", async () => {
+    const input = eventRef("attention:dependency-risk:1");
+    const output = await new CompanionCognitionService().evaluateIntervention({
+      cognition_id: "cognition:resident:dependency-risk",
+      caller_path: "resident_proactive_check",
+      event_refs: [input],
+      working_context: {
+        input_ref: input,
+        route_ref: { kind: "resident_action", ref: "supportive_check" },
+        hidden_prompt_content_materialized: false,
+      },
+      attention_context: {
+        attention_input_ref: { kind: "attention_input", ref: "attention:dependency-risk" },
+        admission_status: "admitted",
+        initiative_gate_decision_id: "gate:dependency-risk",
+        operation_boundary: "allowed",
+        max_delivery_kind: "speak",
+        feedback_policy_refs: [],
+      },
+      memory_context_request: {
+        request_id: "memory-request:resident:dependency-risk",
+        requested_uses: ["proactive_action_candidate"],
+        caller_path: "resident_proactive_check",
+        query_ref: input,
+        surface_projection_required: true,
+        side_effect_authorization_allowed: false,
+        include_sensitive_content: false,
+      },
+      memory_result: {
+        request_id: "memory-request:resident:dependency-risk",
+        surface_projection_ref: {
+          kind: "surface_projection",
+          ref: "surface:dependency-risk",
+        },
+        core_memory_projection_ref: {
+          kind: "memory_projection",
+          ref: "core-memory:dependency-risk",
+        },
+        included: [{
+          memory_ref: {
+            ...input,
+            ref: "profile:relationship:dependency-risk",
+            source_store: "profile",
+            source_event_type: "open_tension",
+          },
+          source_kind: "semantic",
+          allowed_uses: ["proactive_action_candidate"],
+          forbidden_uses: [],
+          sensitivity: "private",
+          lifecycle: "active",
+          correction_state: "current",
+          confidence: 0.35,
+          surface_projection_ref: "surface:dependency-risk",
+          relationship_role: "open_tension",
+          excerpt: "Potential dependency risk must stay under review.",
+        }],
+        withheld: [],
+        audit_refs: [],
+        model_visible_without_cloud_gate: false,
+      },
+      surface_target: "internal_audit",
+    });
+
+    expect(output.response_plan).toMatchObject({
+      guidance_kind: "suggest",
+      delivery_kind: "suggest",
+      quieting_applied: false,
+    });
+    expect(output.relationship_state).toMatchObject({
+      posture: "careful",
+      overreach_risk: "medium",
+      included: [expect.objectContaining({
+        role: "open_tension",
+        allowed_surface_use: "ask_for_confirmation",
+      })],
+    });
+    expect(output.authorization_requests).toEqual([]);
+    expect(output.tool_candidates).toEqual([]);
+  });
+
   it("represents stale targets as uncertainty and regrounding-only intention", async () => {
     const output = await new CompanionCognitionService().evaluateTurn(chatInput({
       goal_context: {
