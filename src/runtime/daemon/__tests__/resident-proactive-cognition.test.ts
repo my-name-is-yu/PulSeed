@@ -11,6 +11,46 @@ import { FileCognitionAuditSink } from "../../cognition/index.js";
 import { FileCognitiveReplayIndexStore } from "../../visibility/index.js";
 import { evaluateResidentProactiveCognition } from "../runner-resident-proactive.js";
 
+const residentCognitionIdPattern = /^cognition:resident:gate:1:evaluation:[0-9a-f-]+$/;
+const residentCognitionReplayIdPattern = /^cognition:resident:gate:1:evaluation:[0-9a-f-]+:replay$/;
+const residentCognitionReplayIndexIdPattern = /^cognition:resident:gate:1:evaluation:[0-9a-f-]+:replay-index$/;
+
+function blockedAttentionAdmission() {
+  return {
+    action: "preemptive_check" as const,
+    source_kind: "resident_proactive_maintenance" as const,
+    attention_input_id: "attention:input:1",
+    signal_context_id: "signal:1",
+    urge_id: "urge:1",
+    agenda_item_id: "agenda:1",
+    inhibition_decision_id: "inhibition:1",
+    initiative_gate_decision_id: "gate:1",
+    replay_disposition: "accepted" as const,
+    requested_outcome: "prepare_action_candidate" as const,
+    admission_status: "admitted" as const,
+    branch_admitted: true,
+    summary: "Resident proactive maintenance selected a preemptive check.",
+  };
+}
+
+function blockedOperationActivityMetadata() {
+  return {
+    operation_plan_status: "fail_closed" as const,
+    operation_plan_reason: "operation boundary blocked preparation",
+    operation_preparation_allowed: false,
+    operation_execution_allowed: false,
+  };
+}
+
+function testLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as never;
+}
+
 describe("resident proactive cognition", () => {
   it("records hold-only cognition metadata when the resident operation boundary blocks preparation", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-resident-cognition-memory-"));
@@ -24,46 +64,22 @@ describe("resident proactive cognition", () => {
       now: "2026-05-14T00:00:00.000Z",
     });
     const metadata = await evaluateResidentProactiveCognition({
-      attentionAdmission: {
-        action: "preemptive_check",
-        source_kind: "resident_proactive_maintenance",
-        attention_input_id: "attention:input:1",
-        signal_context_id: "signal:1",
-        urge_id: "urge:1",
-        agenda_item_id: "agenda:1",
-        inhibition_decision_id: "inhibition:1",
-        initiative_gate_decision_id: "gate:1",
-        replay_disposition: "accepted",
-        requested_outcome: "prepare_action_candidate",
-        admission_status: "admitted",
-        branch_admitted: true,
-        summary: "Resident proactive maintenance selected a preemptive check.",
-      },
-      operationActivityMetadata: {
-        operation_plan_status: "fail_closed",
-        operation_plan_reason: "operation boundary blocked preparation",
-        operation_preparation_allowed: false,
-        operation_execution_allowed: false,
-      },
+      attentionAdmission: blockedAttentionAdmission(),
+      operationActivityMetadata: blockedOperationActivityMetadata(),
       surfaceActivityMetadata: {},
       baseDir,
-      logger: {
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      } as never,
+      logger: testLogger(),
     });
 
     expect(metadata).toMatchObject({
-      cognition_id: "cognition:resident:gate:1",
+      cognition_id: expect.stringMatching(residentCognitionIdPattern),
       cognition_delivery_kind: "hold",
       cognition_writeback_proposal_count: 1,
-      cognition_replay_record_id: "cognition:resident:gate:1:replay",
-      cognition_replay_index_entry_id: "cognition:resident:gate:1:replay-index",
+      cognition_replay_record_id: expect.stringMatching(residentCognitionReplayIdPattern),
+      cognition_replay_index_entry_id: expect.stringMatching(residentCognitionReplayIndexIdPattern),
     });
     expect(await new FileCognitionAuditSink(baseDir).list()).toMatchObject([{
-      record_id: "cognition:resident:gate:1:replay",
+      record_id: expect.stringMatching(residentCognitionReplayIdPattern),
       retention_policy: {
         materialized_content: false,
         refs_only: true,
@@ -76,6 +92,44 @@ describe("resident proactive cognition", () => {
       normal_surface_visible: false,
       cognition_service_is_owner: false,
     }]);
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it("preserves replay history across repeated resident cognition evaluations for the same gate", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-resident-cognition-replay-"));
+    const attentionAdmission = blockedAttentionAdmission();
+    const operationActivityMetadata = blockedOperationActivityMetadata();
+
+    const first = await evaluateResidentProactiveCognition({
+      attentionAdmission,
+      operationActivityMetadata,
+      surfaceActivityMetadata: {},
+      baseDir,
+      logger: testLogger(),
+    });
+    const second = await evaluateResidentProactiveCognition({
+      attentionAdmission,
+      operationActivityMetadata,
+      surfaceActivityMetadata: {},
+      baseDir,
+      logger: testLogger(),
+    });
+    const records = await new FileCognitionAuditSink(baseDir).list();
+    const indexEntries = await new FileCognitiveReplayIndexStore(baseDir).list();
+
+    expect(first.cognition_id).toEqual(expect.stringMatching(residentCognitionIdPattern));
+    expect(second.cognition_id).toEqual(expect.stringMatching(residentCognitionIdPattern));
+    expect(second.cognition_id).not.toBe(first.cognition_id);
+    expect(records.map((record) => record.record_id).sort()).toEqual([
+      first.cognition_replay_record_id,
+      second.cognition_replay_record_id,
+    ].sort());
+    expect(indexEntries.map((entry) => entry.index_entry_id).sort()).toEqual([
+      first.cognition_replay_index_entry_id,
+      second.cognition_replay_index_entry_id,
+    ].sort());
+    expect(records).toHaveLength(2);
+    expect(indexEntries).toHaveLength(2);
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 

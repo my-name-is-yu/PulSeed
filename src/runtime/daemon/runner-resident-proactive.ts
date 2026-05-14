@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Goal } from "../../base/types/goal.js";
 import {
   evaluateResidentOperationBoundary,
@@ -300,7 +301,7 @@ export async function evaluateResidentProactiveCognition(input: {
   goalId?: string;
   logger: DaemonRunnerResidentContext["logger"];
 }): Promise<ResidentCognitionActivityMetadata> {
-  const cognitionId = `cognition:resident:${input.attentionAdmission.initiative_gate_decision_id}`;
+  const cognitionId = residentProactiveCognitionId(input.attentionAdmission.initiative_gate_decision_id);
   const eventRef = {
     ref: input.attentionAdmission.initiative_gate_decision_id,
     source_store: "attention_ledger" as const,
@@ -435,6 +436,10 @@ export async function evaluateResidentProactiveCognition(input: {
       cognition_tool_candidate_count: 0,
     };
   }
+}
+
+function residentProactiveCognitionId(initiativeGateDecisionId: string): string {
+  return `cognition:resident:${initiativeGateDecisionId}:evaluation:${randomUUID()}`;
 }
 
 function residentToolCandidatesFromOperationBoundary(input: {
