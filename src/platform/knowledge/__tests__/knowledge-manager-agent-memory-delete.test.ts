@@ -3,6 +3,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
+import { AgentMemoryEntrySchema } from "../types/agent-memory.js";
 
 describe("KnowledgeManager physical agent memory delete gate", () => {
   let tmpDir: string;
@@ -73,5 +74,53 @@ describe("KnowledgeManager physical agent memory delete gate", () => {
         }),
       }),
     ]);
+  });
+
+  it("prefers deleting the active replacement when duplicate repaired keys exist", async () => {
+    const original = await manager.saveAgentMemory({
+      key: "repair.reverified-key",
+      value: "Original stale value.",
+      tags: ["repair"],
+    });
+    const store = await manager.loadAgentMemoryStore();
+    store.entries[0] = AgentMemoryEntrySchema.parse({
+      ...store.entries[0]!,
+      status: "corrected",
+    });
+    const activeReplacement = AgentMemoryEntrySchema.parse({
+      ...original,
+      id: "memory-active-replacement",
+      value: "Active replacement value.",
+      status: "raw",
+      supersedes_memory_id: original.id,
+      created_at: "2026-05-14T00:01:00.000Z",
+      updated_at: "2026-05-14T00:01:00.000Z",
+    });
+    store.entries.push(activeReplacement);
+    await manager.saveAgentMemoryStore(store);
+
+    const removed = await manager.deleteAgentMemory("repair.reverified-key", {
+      caller: "memory_repair",
+      targetKey: "repair.reverified-key",
+      reason: "Repair manifest approved removal of the active replacement.",
+      manifestRef: "memory-repair-manifest:active-replacement",
+      approvedAt: "2026-05-14T00:02:00.000Z",
+    });
+
+    expect(removed).toBe(true);
+    const updated = await manager.loadAgentMemoryStore();
+    expect(updated.entries).toEqual([
+      expect.objectContaining({
+        id: original.id,
+        key: "repair.reverified-key",
+        status: "corrected",
+      }),
+    ]);
+    expect(updated.corrections.at(-1)).toMatchObject({
+      target_ref: { kind: "agent_memory", id: "memory-active-replacement" },
+      audit: expect.objectContaining({
+        status: "destructive_delete_requested",
+      }),
+    });
   });
 });

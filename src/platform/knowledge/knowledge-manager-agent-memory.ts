@@ -226,7 +226,10 @@ export async function deleteAgentMemoryEntry(
   }
 
   const store = await host.loadAgentMemoryStore();
-  const idx = store.entries.findIndex((e) => e.key === key);
+  const activeIdx = store.entries.findIndex((e) => e.key === key && isAgentMemoryEntryActive(e));
+  const idx = activeIdx >= 0
+    ? activeIdx
+    : store.entries.findIndex((e) => e.key === key);
   if (idx < 0) return false;
   const target = store.entries[idx]!;
   store.corrections.push(MemoryCorrectionEntrySchema.parse({
