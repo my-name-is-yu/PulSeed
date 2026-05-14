@@ -275,6 +275,10 @@ export function candidateToolAcquisitionFromForeignPluginCompatibility(input: {
   const manifest = report.manifest;
   const capabilityId = manifest?.name ?? `${report.source}:foreign-plugin`;
   const sideEffect = sideEffectForForeignPluginType(manifest?.type);
+  const cognitionSideEffect = cognitionSideEffectForForeignPlugin({
+    sideEffect,
+    hasNetworkPermission: report.permissions.network,
+  });
   const riskProfile = sideEffect === "read" ? "low" : "medium";
   return CandidateToolAcquisitionSchema.parse({
     candidate_id: input.candidateId,
@@ -296,10 +300,10 @@ export function candidateToolAcquisitionFromForeignPluginCompatibility(input: {
       reversibility: "draft_only",
       authority_scope: "requires_runtime_selection",
       external_action_authority: false,
-      cognition_side_effect_profile: report.permissions.network ? "cloud_compute" : "read",
+      cognition_side_effect_profile: cognitionSideEffect,
       cognition_privacy_profile: report.permissions.network ? "external_service" : "workspace_private",
     },
-    side_effect_profile: report.permissions.network ? "cloud_compute" : "read",
+    side_effect_profile: cognitionSideEffect,
     privacy_profile: report.permissions.network ? "external_service" : "workspace_private",
     trust_boundary_ref: input.trustBoundaryRef,
     credential_requirements: [],
@@ -603,6 +607,16 @@ function sideEffectForForeignPluginType(type: string | undefined): "read" | "sen
   if (type === "data_source" || type === "schedule_source") return "read";
   if (type === "notifier") return "send";
   return "mutate";
+}
+
+function cognitionSideEffectForForeignPlugin(input: {
+  sideEffect: "read" | "send" | "mutate";
+  hasNetworkPermission: boolean;
+}): "read" | "notification" | "runtime_mutation" | "cloud_compute" {
+  if (input.hasNetworkPermission) return "cloud_compute";
+  if (input.sideEffect === "send") return "notification";
+  if (input.sideEffect === "mutate") return "runtime_mutation";
+  return "read";
 }
 
 function validateCostAcknowledgmentEvidence(input: {

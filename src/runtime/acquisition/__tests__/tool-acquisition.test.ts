@@ -148,9 +148,43 @@ describe("tool acquisition proposals", () => {
     expect(proposal.operation_scope).toMatchObject({
       operation_kind: "read",
       side_effect_profile: "read",
+      cognition_side_effect_profile: "read",
       risk_profile: "low",
       privacy_profile: "workspace_private",
     });
+    expect(proposal.side_effect_profile).toBe("read");
+  });
+
+  it("preserves local foreign plugin notification side effects in cognition policy", () => {
+    const report = analyzeForeignPluginManifest("openclaw", {
+      name: "local-status-notifier",
+      version: "1.0.0",
+      type: "notifier",
+      capabilities: ["status.notify"],
+      description: "Notify a local status surface.",
+      entry_point: "dist/index.js",
+      permissions: { network: false },
+    }, {
+      manifestPath: "quarantine/local-status-notifier/plugin.json",
+      sourceProvenance: {
+        imported_path: "quarantine/local-status-notifier",
+        directory_checksum: "sha256:local-notifier",
+      },
+    });
+    const proposal = candidateToolAcquisitionFromForeignPluginCompatibility({
+      candidateId: "acquisition:foreign-local-status-notifier",
+      report,
+      trustBoundaryRef: "trust-boundary:foreign-plugin",
+      rollbackPlanRef: "rollback:foreign-plugin",
+    });
+
+    expect(proposal.operation_scope).toMatchObject({
+      operation_kind: "prepare",
+      side_effect_profile: "send",
+      cognition_side_effect_profile: "notification",
+      privacy_profile: "workspace_private",
+    });
+    expect(proposal.side_effect_profile).toBe("notification");
   });
 
   it("invalidates stale approval fingerprints when proposal fields change", () => {
