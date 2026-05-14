@@ -178,6 +178,7 @@ export const EvaluatorReportSchema = z.object({
   review_gate_results: z.array(z.object({
     gate_id: z.string().min(1),
     kind: z.enum(["evidence_coverage", "unsupported_claims", "stale_unknown_handling", "citation_policy", "tool_policy"]),
+    required: z.boolean().default(true),
     status: z.enum(["passed", "blocked"]),
     reason: z.string().min(1),
   }).strict()).default([]),
@@ -241,11 +242,12 @@ export function evaluateResearchBriefEvidence(input: {
     return {
       gate_id: gate.gate_id,
       kind: gate.kind,
+      required: gate.required,
       status: blocked ? "blocked" as const : "passed" as const,
       reason: blocked ?? `Deep Research ${gate.kind} gate passed for contract-only evidence evaluation.`,
     };
   });
-  const readyForSynthesis = reviewGateResults.every((gate) => gate.status === "passed");
+  const readyForSynthesis = reviewGateResults.every((gate) => gate.status === "passed" || !gate.required);
 
   return EvaluatorReportSchema.parse({
     schema_version: "deep-research-evaluator-report/v1",

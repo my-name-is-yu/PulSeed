@@ -234,4 +234,40 @@ describe("Deep Research typed contract", () => {
       excluded_actions: valid.excluded_actions.filter((action) => action !== "memory_auto_apply"),
     })).toThrow(/memory auto-apply/);
   });
+
+  it("does not let optional review gates block synthesis readiness", () => {
+    const optionalGateBrief = createResearchBrief({
+      ...brief(),
+      review_gates: [
+        { gate_id: "optional-unsupported", kind: "unsupported_claims", required: false },
+        { gate_id: "tool-policy", kind: "tool_policy", required: true },
+      ],
+    });
+    const report = evaluateResearchBriefEvidence({
+      brief: optionalGateBrief,
+      claims: [{
+        claim_id: "claim:optional-unsupported",
+        statement: "Optional unsupported gate should not block synthesis readiness.",
+        evidence_refs: [],
+        citation_refs: [],
+      }],
+      evidenceEntries: [],
+      evaluatedAt: NOW,
+      reportId: "report:deep-research:optional-gate",
+    });
+
+    expect(report.review_gate_results).toEqual([
+      expect.objectContaining({
+        gate_id: "optional-unsupported",
+        required: false,
+        status: "blocked",
+      }),
+      expect.objectContaining({
+        gate_id: "tool-policy",
+        required: true,
+        status: "passed",
+      }),
+    ]);
+    expect(report.ready_for_synthesis).toBe(true);
+  });
 });
