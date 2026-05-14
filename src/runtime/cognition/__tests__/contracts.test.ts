@@ -27,6 +27,17 @@ function eventRef(ref = "event:1", sourceEpoch = "turn:1") {
   });
 }
 
+function memoryRef(ref = "memory:1", sourceEpoch = "memory:1") {
+  return CognitionEventRefSchema.parse({
+    ref,
+    source_store: "profile",
+    source_event_type: "preference",
+    schema_version: 1,
+    source_epoch: sourceEpoch,
+    redaction_policy: "metadata_only",
+  });
+}
+
 function cloudRequest(input: {
   requestId?: string;
   purpose?: "chat_reply" | "tool_reasoning" | "research" | "summarization" | "embedding" | "classification";
@@ -267,7 +278,7 @@ describe("Companion cognition contracts", () => {
   });
 
   it("blocks private model context until an explicit purpose-bound external data scope grant exists", () => {
-    const privateContext = eventRef("memory:private-context", "turn:private");
+    const privateContext = memoryRef("memory:private-context", "memory:private");
     expect(() => cloudRequest({
       requestId: "cloud:no-grant",
       contextRefs: [privateContext],
@@ -301,6 +312,17 @@ describe("Companion cognition contracts", () => {
       model_visible_context_refs: [privateContext],
       admitted_context_refs: [privateContext],
       retention_expectation: "zero_retention_contract",
+    });
+    const missingMetadata = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:private-missing-metadata",
+      mode: "gated_external_service",
+      contextRefs: [privateContext],
+      cloudComputeRequest: cloud,
+    });
+
+    expect(missingMetadata).toMatchObject({
+      external_service_context_allowed: false,
+      blocked_context_refs: [{ ref: privateContext, reason: "missing_memory_source_metadata" }],
     });
     expect(CognitionMemoryResultSchema.parse({
       request_id: "memory-result:cloud-gate",

@@ -312,6 +312,9 @@ function blockedContextRefsFor(input: {
         blocked.push({ ref: requestedRef, reason: memoryBlockedReason });
         continue;
       }
+    } else if (requiresMemorySourceMetadata(requestedRef)) {
+      blocked.push({ ref: requestedRef, reason: "missing_memory_source_metadata" });
+      continue;
     }
     if (!hasAdmittedVersion(input.request.admitted_ref_versions, requestedRef)) {
       blocked.push({ ref: requestedRef, reason: "missing_current_admitted_ref_version" });
@@ -333,6 +336,13 @@ function blockedReasonForMemorySource(source: CognitionMemorySource): string | n
   if (source.lifecycle !== "active" && source.lifecycle !== "matured") return "inactive_memory_lifecycle_blocked";
   if (source.correction_state !== "current") return "corrected_memory_blocked";
   return null;
+}
+
+function requiresMemorySourceMetadata(ref: CognitionEventRef): boolean {
+  return ref.source_store === "profile"
+    || ref.source_store === "knowledge"
+    || ref.source_store === "soil"
+    || ref.source_store === "dream_event_log";
 }
 
 function staleCloudRequestReasons(input: {
