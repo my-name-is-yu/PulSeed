@@ -75,7 +75,10 @@ export async function saveAgentMemoryEntry(
 ): Promise<AgentMemoryEntry> {
   const store = await host.loadAgentMemoryStore();
   const now = new Date().toISOString();
-  const existing = store.entries.findIndex((e) => e.key === entry.key);
+  const existingActive = store.entries.findIndex((e) => e.key === entry.key && isAgentMemoryEntryActive(e));
+  const existing = existingActive >= 0
+    ? existingActive
+    : store.entries.findIndex((e) => e.key === entry.key);
 
   let saved: AgentMemoryEntry;
   if (existing >= 0) {

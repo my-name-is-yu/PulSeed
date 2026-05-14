@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lintAgentMemory } from "../knowledge-manager-lint.js";
-import type { KnowledgeManager } from "../knowledge-manager.js";
+import { KnowledgeManager } from "../knowledge-manager.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../types/agent-memory.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Mock helpers ───
 
@@ -336,6 +339,69 @@ describe("lintAgentMemory", () => {
       expect(deleteAgentMemory).not.toHaveBeenCalled();
       expect(saveAgentMemory).not.toHaveBeenCalled();
       expect(result.repairs_applied).toBe(1);
+    });
+
+    it("staleness repair keeps later saves on the active replacement for the same key", async () => {
+      const tmpDir = makeTempDir("pulseed-lint-stale-repair-");
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const km = new KnowledgeManager(stateManager, {} as ILLMClient);
+        await km.saveAgentMemory({
+          key: "stale-fact",
+          value: "old value",
+          tags: ["important"],
+          category: "work",
+          memory_type: "fact",
+        });
+        await km.saveAgentMemory({
+          key: "other-fact",
+          value: "other value",
+          category: "work",
+          memory_type: "fact",
+        });
+        const seededStore = await km.loadAgentMemoryStore();
+        seededStore.entries = seededStore.entries.map((entry) => ({
+          ...entry,
+          status: "compiled",
+        }));
+        await km.saveAgentMemoryStore(seededStore);
+        const staleId = seededStore.entries.find((entry) => entry.key === "stale-fact")!.id;
+        const llmCall = makeLlmCall(JSON.stringify({
+          findings: [{
+            type: "staleness",
+            entry_ids: [staleId],
+            description: "Outdated fact",
+            confidence: 0.9,
+            suggested_action: "mark_stale",
+          }],
+        }));
+
+        await lintAgentMemory({ km, llmCall, autoRepair: true });
+        await km.saveAgentMemory({
+          key: "stale-fact",
+          value: "fresh value",
+          tags: ["important", "fresh"],
+          category: "work",
+          memory_type: "fact",
+        });
+
+        expect(await km.recallAgentMemory("stale-fact", { exact: true })).toEqual([
+          expect.objectContaining({
+            key: "stale-fact",
+            value: "fresh value",
+            tags: expect.arrayContaining(["fresh"]),
+          }),
+        ]);
+        const store = await km.loadAgentMemoryStore();
+        expect(store.entries.find((entry) => entry.id === staleId)).toMatchObject({
+          status: "corrected",
+          value: "old value",
+        });
+        expect(store.entries.filter((entry) => entry.key === "stale-fact")).toHaveLength(2);
+      } finally {
+        cleanupTempDir(tmpDir);
+      }
     });
 
     it("redundancy: keeps longest value entry, archives shorter ones", async () => {
