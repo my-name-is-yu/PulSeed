@@ -262,12 +262,14 @@ function overreachRiskForRelationshipFacts(
 function maxOverreachRisk(
   risks: RelationshipStateProjection["overreach_risk"][],
 ): RelationshipStateProjection["overreach_risk"] {
-  const rank: Record<RelationshipStateProjection["overreach_risk"], number> = {
+  type KnownOverreachRisk = Exclude<RelationshipStateProjection["overreach_risk"], "unknown">;
+  const knownRisks = risks.filter((risk): risk is KnownOverreachRisk => risk !== "unknown");
+  if (knownRisks.length === 0) return "unknown";
+  const rank: Record<KnownOverreachRisk, number> = {
     none: 0,
     low: 1,
-    unknown: 2,
-    medium: 3,
-    high: 4,
+    medium: 2,
+    high: 3,
   };
-  return risks.reduce((max, risk) => rank[risk] > rank[max] ? risk : max, "none");
+  return knownRisks.reduce((max, risk) => rank[risk] > rank[max] ? risk : max, "none");
 }

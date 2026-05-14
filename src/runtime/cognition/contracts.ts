@@ -453,7 +453,11 @@ export const RelationshipSurfaceFactSchema = z.object({
   sensitivity: z.enum(["public", "private"]),
   repair_paths: z.array(RelationshipSurfaceRepairPathSchema).min(1),
 }).strict().superRefine((fact, ctx) => {
-  if (fact.role === "boundary" && fact.allowed_surface_use === "tone_adaptation") {
+  if (
+    fact.role === "boundary"
+    && fact.allowed_surface_use !== "behavioral_inhibition"
+    && fact.allowed_surface_use !== "ask_for_confirmation"
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["allowed_surface_use"],

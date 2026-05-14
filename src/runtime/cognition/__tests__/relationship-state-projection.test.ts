@@ -119,6 +119,42 @@ describe("relationship state projection v2", () => {
     expect(JSON.stringify(projection.withheld)).not.toContain("Sensitive value must not render.");
   });
 
+  it("preserves computed low or none overreach risk instead of defaulting normal chat to unknown", () => {
+    const privatePreference = createRelationshipStateProjectionV2({
+      projectionId: "relationship:turn:private-low",
+      turnRef: { kind: "chat_turn", ref: "turn:private-low" },
+      callerPath: "chat_user_turn",
+      memoryResult: makeMemoryResult({
+        included: [
+          memorySource("relationship-profile:private-preference", {
+            role: "preference",
+            sourceEventType: "preference",
+            sensitivity: "private",
+            allowedUses: ["runtime_grounding"],
+          }),
+        ],
+      }),
+    });
+    const publicPreference = createRelationshipStateProjectionV2({
+      projectionId: "relationship:turn:public-none",
+      turnRef: { kind: "chat_turn", ref: "turn:public-none" },
+      callerPath: "chat_user_turn",
+      memoryResult: makeMemoryResult({
+        included: [
+          memorySource("relationship-profile:public-preference", {
+            role: "preference",
+            sourceEventType: "preference",
+            sensitivity: "public",
+            allowedUses: ["runtime_grounding"],
+          }),
+        ],
+      }),
+    });
+
+    expect(privatePreference.overreach_risk).toBe("low");
+    expect(publicPreference.overreach_risk).toBe("none");
+  });
+
   it("rejects direct low-confidence user-facing reference bypasses", () => {
     expect(RelationshipSurfaceFactSchema.safeParse({
       memory_ref: "relationship-profile:low-confidence",
@@ -126,6 +162,15 @@ describe("relationship state projection v2", () => {
       user_readable_reason: "Unsafe direct bypass.",
       allowed_surface_use: "user_facing_reference",
       confidence: 0.2,
+      sensitivity: "private",
+      repair_paths: ["correct"],
+    }).success).toBe(false);
+    expect(RelationshipSurfaceFactSchema.safeParse({
+      memory_ref: "relationship-profile:boundary-reference",
+      role: "boundary",
+      user_readable_reason: "Unsafe direct boundary display.",
+      allowed_surface_use: "user_facing_reference",
+      confidence: 0.9,
       sensitivity: "private",
       repair_paths: ["correct"],
     }).success).toBe(false);
