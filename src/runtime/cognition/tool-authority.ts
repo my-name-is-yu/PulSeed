@@ -55,7 +55,7 @@ export function createCloudComputeAuthorizationRequest(input: {
   if (cloudComputeRequest.payload_epoch !== input.payloadEpoch) {
     throw new Error("cloud compute authorization payload epoch does not match cloud boundary request");
   }
-  if (cloudComputeRequest.expires_at !== input.expiresAt) {
+  if (!sameInstant(cloudComputeRequest.expires_at, input.expiresAt)) {
     throw new Error("cloud compute authorization expiration does not match cloud boundary request");
   }
   return AuthorizationRequestSchema.parse({
@@ -85,4 +85,10 @@ function riskClassForGadgetPlan(plan: CompanionGadgetPlan): ToolCandidate["risk_
   if (sideEffect === "send" || sideEffect === "publish") return "external_side_effect";
   if (sideEffect === "write" || sideEffect === "delete" || sideEffect === "mutate") return "high";
   return "medium";
+}
+
+function sameInstant(left: string, right: string): boolean {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
 }

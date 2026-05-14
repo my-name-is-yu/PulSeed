@@ -14,6 +14,8 @@ import {
   type ExternalDataScopeGrant,
 } from "./contracts.js";
 
+const DateTimeStringSchema = z.string().datetime();
+
 export const CloudBoundaryModeSchema = z.enum([
   "local_only",
   "gated_external_service",
@@ -343,7 +345,7 @@ function staleCloudRequestReasons(input: {
   currentInvalidationRefs: CognitionRef[];
 }): string[] {
   const reasons: string[] = [];
-  if (Date.parse(input.evaluatedAt) > Date.parse(input.request.expires_at)) {
+  if (isCloudRequestExpired(input.request, input.evaluatedAt)) {
     reasons.push("cloud_request_expired");
   }
   if (
@@ -365,6 +367,10 @@ function staleCloudRequestReasons(input: {
     reasons.push("payload_invalidated");
   }
   return reasons;
+}
+
+function isCloudRequestExpired(request: CloudComputeRequest, evaluatedAt: string): boolean {
+  return instantMs(evaluatedAt) > instantMs(request.expires_at);
 }
 
 function blockedReasonFor(input: {
@@ -412,4 +418,8 @@ function hasExternalModelGrant(
 
 function sameRef(left: CognitionRef, right: CognitionRef): boolean {
   return left.kind === right.kind && left.ref === right.ref;
+}
+
+function instantMs(value: string): number {
+  return Date.parse(DateTimeStringSchema.parse(value));
 }

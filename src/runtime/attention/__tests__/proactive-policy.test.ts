@@ -366,6 +366,21 @@ describe("proactive policy state", () => {
       allowed_delivery_kind: "hold",
       downgrade_reasons: ["stale_target_rejected"],
     });
+
+    expect(decideProactiveThreshold({
+      state,
+      thresholdInput: thresholdInput({
+        target_ref: oldTarget,
+        stale_target_refs: [oldTarget],
+        requires_approval_ref: { kind: "approval", ref: "approval:old-target" },
+        requested_delivery_kind: "speak",
+      }),
+      candidateCreatedAt: "2026-05-14T00:03:00.000Z",
+    })).toMatchObject({
+      requested_delivery_kind: "speak",
+      allowed_delivery_kind: "hold",
+      downgrade_reasons: ["stale_target_rejected"],
+    });
   });
 
   it("lets interruption budget only downgrade and projects normal/operator views without raw policy leakage", () => {

@@ -284,6 +284,9 @@ export function decideProactiveThreshold(input: {
   const requested = thresholdInput.requested_delivery_kind ?? requestedKindForThreshold(thresholdInput, downgradeReasons);
   let allowed = requested;
 
+  const staleTargetCap = staleTargetDeliveryCap(thresholdInput, requested, downgradeReasons);
+  allowed = minDelivery(allowed, staleTargetCap);
+
   const safetyCap = safetyDeliveryCap(thresholdInput, downgradeReasons);
   allowed = minDelivery(allowed, safetyCap);
 
@@ -410,10 +413,6 @@ function requestedKindForThreshold(
     }
   }
   if ((input.requires_user_decision_ref || input.requires_approval_ref) && passesAskCutoff(input)) {
-    if (input.target_ref && hasRef(input.stale_target_refs, input.target_ref)) {
-      downgradeReasons.push("stale_target_rejected");
-      return "hold";
-    }
     return "speak";
   }
   if ((input.urgency === "high" || input.urgency === "deadline") && passesNotifyCutoff(input)) {
@@ -455,6 +454,22 @@ function safetyDeliveryCap(
   ) {
     downgradeReasons.push("prepare_requires_local_reversible_current_boundary");
     return "suggest";
+  }
+  return "execute";
+}
+
+function staleTargetDeliveryCap(
+  input: ProactiveThresholdInput,
+  requested: ProactiveDeliveryKind,
+  downgradeReasons: string[]
+): ProactiveDeliveryKind {
+  if (!input.target_ref || !hasRef(input.stale_target_refs, input.target_ref)) {
+    return "execute";
+  }
+  const targetRequiresUserDecision = Boolean(input.requires_user_decision_ref || input.requires_approval_ref);
+  if (targetRequiresUserDecision || deliveryKindRank(requested) >= deliveryKindRank("speak")) {
+    downgradeReasons.push("stale_target_rejected");
+    return "hold";
   }
   return "execute";
 }

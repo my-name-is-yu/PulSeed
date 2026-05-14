@@ -208,6 +208,20 @@ describe("Companion cognition contracts", () => {
     ]));
   });
 
+  it("matches cloud authorization expiration by instant instead of raw string", () => {
+    const cloud = cloudRequest({ expiresAt: "2026-05-14T00:00:00.000Z" });
+
+    expect(createCloudComputeAuthorizationRequest({
+      requestId: "auth:cloud:instant-match",
+      requestFingerprint: "fingerprint:cloud:instant-match",
+      originRef: eventRef(),
+      targetEpoch: "target:v1",
+      payloadEpoch: "payload:v1",
+      expiresAt: "2026-05-14T00:00:00Z",
+      cloudComputeRequest: cloud,
+    }).expires_at).toBe("2026-05-14T00:00:00Z");
+  });
+
   it("blocks model-visible cognition context in local-only mode", () => {
     const blocked = evaluateCloudBoundaryForCognition({
       evaluationId: "cloud-boundary:local-only",
