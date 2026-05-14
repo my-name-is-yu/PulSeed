@@ -133,6 +133,37 @@ describe("resident proactive cognition", () => {
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
+  it("does not emit replay artifact refs when durable replay persistence fails", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-resident-cognition-persist-fail-"));
+    fs.writeFileSync(path.join(baseDir, "runtime"), "not a directory");
+    const logger = testLogger() as {
+      warn: ReturnType<typeof vi.fn>;
+    };
+
+    const metadata = await evaluateResidentProactiveCognition({
+      attentionAdmission: blockedAttentionAdmission(),
+      operationActivityMetadata: blockedOperationActivityMetadata(),
+      surfaceActivityMetadata: {},
+      baseDir,
+      logger: logger as never,
+    });
+
+    expect(metadata).toMatchObject({
+      cognition_id: expect.stringMatching(residentCognitionIdPattern),
+      cognition_delivery_kind: "hold",
+      cognition_writeback_proposal_count: 1,
+    });
+    expect(metadata.cognition_replay_record_id).toBeUndefined();
+    expect(metadata.cognition_replay_index_entry_id).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Resident proactive cognition replay persistence failed; continuing with resident gates",
+      expect.objectContaining({
+        cognition_id: expect.stringMatching(residentCognitionIdPattern),
+      }),
+    );
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
   it("builds cognition tool candidates only through the existing gadget planning path", async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-resident-cognition-gadget-"));
     const attentionAdmission = {

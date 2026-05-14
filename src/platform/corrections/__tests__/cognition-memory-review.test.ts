@@ -60,6 +60,32 @@ describe("cognition memory review controls", () => {
     });
   });
 
+  it("requires proposal refs for proposal-scoped review actions", () => {
+    const baseCommand = {
+      schema_version: "cognition-memory-review-command/v1" as const,
+      command_id: "memory-review-command:proposal",
+      reason: "Owner decided on the proposed writeback.",
+      owner_write_performed: false,
+    };
+
+    expect(CognitionMemoryReviewCommandSchema.parse({
+      ...baseCommand,
+      action: "review",
+      proposal_ref: { kind: "memory_writeback_proposal", ref: "writeback:1" },
+    })).toMatchObject({
+      action: "review",
+      proposal_ref: { kind: "memory_writeback_proposal", ref: "writeback:1" },
+    });
+    expect(() => CognitionMemoryReviewCommandSchema.parse({
+      ...baseCommand,
+      action: "review",
+    })).toThrow(/writeback proposal ref/);
+    expect(() => CognitionMemoryReviewCommandSchema.parse({
+      ...baseCommand,
+      action: "reject_proposal",
+    })).toThrow(/writeback proposal ref/);
+  });
+
   it("keeps destructive delete as an owner-approved request instead of direct deletion", () => {
     const command = CognitionMemoryReviewCommandSchema.parse({
       schema_version: "cognition-memory-review-command/v1",

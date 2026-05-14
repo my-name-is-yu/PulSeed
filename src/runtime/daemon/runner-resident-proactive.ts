@@ -398,10 +398,12 @@ export async function evaluateResidentProactiveCognition(input: {
         : {}),
     }).evaluateIntervention(cognitionInput);
     const replayRecord = auditSink.list()[0];
+    let replayRecordId: string | undefined;
     let replayIndexEntryId: string | undefined;
     if (input.baseDir && replayRecord) {
       try {
         await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+        replayRecordId = replayRecord.record_id;
         const replayIndexEntry = createCognitiveReplayIndexEntry({
           indexEntryId: `${cognitionId}:replay-index`,
           record: replayRecord,
@@ -421,7 +423,7 @@ export async function evaluateResidentProactiveCognition(input: {
       cognition_delivery_kind: output.response_plan.delivery_kind,
       cognition_writeback_proposal_count: output.memory_writeback.length,
       cognition_tool_candidate_count: output.tool_candidates.length,
-      ...(replayRecord ? { cognition_replay_record_id: replayRecord.record_id } : {}),
+      ...(replayRecordId ? { cognition_replay_record_id: replayRecordId } : {}),
       ...(replayIndexEntryId ? { cognition_replay_index_entry_id: replayIndexEntryId } : {}),
     };
   } catch (err) {

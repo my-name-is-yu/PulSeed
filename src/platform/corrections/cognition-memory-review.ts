@@ -59,6 +59,13 @@ export const CognitionMemoryReviewCommandSchema = z.object({
       message: "memory correction, forget, and retract commands require an owner memory target ref",
     });
   }
+  if ((command.action === "review" || command.action === "reject_proposal") && !command.proposal_ref) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["proposal_ref"],
+      message: "proposal review and rejection commands require a writeback proposal ref",
+    });
+  }
   if (command.action === "delete_request" && command.destructive_delete_requires_owner_approval !== true) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
