@@ -13,13 +13,13 @@ import {
 
 const NOW = "2026-05-14T00:00:00.000Z";
 
-function eventRef(ref = "event:1") {
+function eventRef(ref = "event:1", sourceEpoch = "turn:1") {
   return CognitionEventRefSchema.parse({
     ref,
     source_store: "chat_history",
     source_event_type: "user_input",
     schema_version: 1,
-    source_epoch: "turn:1",
+    source_epoch: sourceEpoch,
     redaction_policy: "metadata_only",
   });
 }
@@ -172,7 +172,8 @@ describe("Companion cognition contracts", () => {
   });
 
   it("requires redaction, admission, and autonomy refs before cloud-visible context leaves local cognition", () => {
-    const approvedContext = eventRef("memory:private-context");
+    const approvedContext = eventRef("memory:private-context", "turn:approved");
+    const sameRefUnapprovedEpochContext = eventRef("memory:private-context", "turn:unapproved");
     const unapprovedContext = eventRef("memory:unapproved-context");
     const cloud = CloudComputeRequestSchema.parse({
       request_id: "cloud:admitted",
@@ -188,7 +189,7 @@ describe("Companion cognition contracts", () => {
     const allowed = evaluateCloudBoundaryForCognition({
       evaluationId: "cloud-boundary:gated",
       mode: "gated_external_service",
-      contextRefs: [approvedContext, unapprovedContext],
+      contextRefs: [sameRefUnapprovedEpochContext, approvedContext, unapprovedContext],
       cloudComputeRequest: cloud,
     });
 

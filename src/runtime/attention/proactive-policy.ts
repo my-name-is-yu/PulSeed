@@ -95,7 +95,6 @@ export function reduceProactivePolicyState(
     return ProactivePolicyStateSchema.parse({
       ...parsedState,
       mode: "active",
-      max_delivery_kind: parsedState.max_delivery_kind === "hold" ? "digest" : parsedState.max_delivery_kind,
       no_backlog_flush_after_quiet_lift_at: parsedEvent.recorded_at,
       updated_at: parsedEvent.recorded_at,
     });

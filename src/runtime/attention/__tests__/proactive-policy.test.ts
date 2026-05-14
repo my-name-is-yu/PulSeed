@@ -101,4 +101,39 @@ describe("proactive policy state", () => {
       reason: "no_backlog_flush",
     });
   });
+
+  it("does not relax hold feedback when quiet mode lifts", () => {
+    const initial = createProactivePolicyState({
+      policyId: "policy:resident",
+      now: "2026-05-14T00:00:00.000Z",
+      maxDeliveryKind: "suggest",
+    });
+    const held = reduceProactivePolicyState(initial, {
+      kind: "feedback",
+      feedback_ref: { kind: "feedback", ref: "feedback:overreach" },
+      feedback_kind: "overreach",
+      recorded_at: "2026-05-14T00:01:00.000Z",
+    });
+    const quiet = reduceProactivePolicyState(held, {
+      kind: "quiet_entered",
+      control_ref: { kind: "runtime_control", ref: "quiet:on" },
+      recorded_at: "2026-05-14T00:02:00.000Z",
+    });
+    const active = reduceProactivePolicyState(quiet, {
+      kind: "quiet_lifted",
+      control_ref: { kind: "runtime_control", ref: "quiet:off" },
+      recorded_at: "2026-05-14T00:10:00.000Z",
+    });
+
+    expect(active.max_delivery_kind).toBe("hold");
+    expect(decideProactiveDelivery({
+      state: active,
+      requestedDeliveryKind: "suggest",
+      candidateCreatedAt: "2026-05-14T00:11:00.000Z",
+    })).toMatchObject({
+      allowed_delivery_kind: "hold",
+      reason: "cooldown",
+      reason_refs: [{ kind: "feedback", ref: "feedback:overreach" }],
+    });
+  });
 });
