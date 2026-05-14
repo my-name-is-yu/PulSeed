@@ -40,6 +40,8 @@ import {
   type ForeignPluginCompatibilityReport,
 } from "../foreign-plugins/types.js";
 
+const DateTimeStringSchema = z.string().datetime();
+
 export const ToolNeedSchema = z.object({
   need_id: z.string().min(1),
   goal_ref: CognitionRefSchema.optional(),
@@ -343,10 +345,52 @@ export function validateToolAcquisitionApproval(input: {
   proposal: CandidateToolAcquisition;
   envelope: ToolAcquisitionApprovalEnvelope;
   approvalKind: ToolAcquisitionApprovalEnvelope["approval_kind"];
+  costAcknowledgmentEnvelope?: ToolAcquisitionApprovalEnvelope;
   now: string;
 }): ToolAcquisitionApprovalValidation {
+  const nowMs = instantMs(input.now);
+  if (nowMs === null) {
+    return approvalValidation(false, "approval validation time is invalid");
+  }
   const proposal = CandidateToolAcquisitionSchema.parse(input.proposal);
   const envelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.envelope);
+  const envelopeValidation = validateApprovalEnvelopeForProposal({
+    proposal,
+    envelope,
+    approvalKind: input.approvalKind,
+    nowMs,
+  });
+  if (!envelopeValidation.valid) {
+    return envelopeValidation;
+  }
+  if (proposal.cost_profile.requires_user_cost_ack && input.approvalKind !== "cost_acknowledgment") {
+    if (!proposal.cost_ack_ref || !input.costAcknowledgmentEnvelope) {
+      return approvalValidation(false, "cost acknowledgment approval is required before acquisition can proceed");
+    }
+    const costAcknowledgmentEnvelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.costAcknowledgmentEnvelope);
+    if (!sameRef(proposal.cost_ack_ref, costAcknowledgmentEnvelope.approval_ref)) {
+      return approvalValidation(false, "cost acknowledgment ref does not match cost acknowledgment approval");
+    }
+    const costAcknowledgmentValidation = validateApprovalEnvelopeForProposal({
+      proposal,
+      envelope: costAcknowledgmentEnvelope,
+      approvalKind: "cost_acknowledgment",
+      nowMs,
+    });
+    if (!costAcknowledgmentValidation.valid) {
+      return approvalValidation(false, `cost acknowledgment approval invalid: ${costAcknowledgmentValidation.reason}`);
+    }
+  }
+  return approvalValidation(true, "approval envelope matches current acquisition proposal fingerprint");
+}
+
+function validateApprovalEnvelopeForProposal(input: {
+  proposal: CandidateToolAcquisition;
+  envelope: ToolAcquisitionApprovalEnvelope;
+  approvalKind: ToolAcquisitionApprovalEnvelope["approval_kind"];
+  nowMs: number;
+}): ToolAcquisitionApprovalValidation {
+  const { proposal, envelope } = input;
   if (envelope.proposal_ref !== proposal.candidate_id) {
     return approvalValidation(false, "approval proposal ref does not match acquisition proposal");
   }
@@ -356,14 +400,11 @@ export function validateToolAcquisitionApproval(input: {
   if (envelope.proposal_fingerprint !== computeAcquisitionProposalFingerprint(proposal)) {
     return approvalValidation(false, "approval proposal fingerprint is stale");
   }
-  if (Date.parse(input.now) < Date.parse(envelope.approved_at)) {
+  if (input.nowMs < Date.parse(envelope.approved_at)) {
     return approvalValidation(false, "approval envelope is not active yet");
   }
-  if (Date.parse(input.now) > Date.parse(envelope.expires_at)) {
+  if (input.nowMs > Date.parse(envelope.expires_at)) {
     return approvalValidation(false, "approval envelope expired");
-  }
-  if (proposal.cost_profile.requires_user_cost_ack && !proposal.cost_ack_ref && envelope.approval_kind !== "cost_acknowledgment") {
-    return approvalValidation(false, "cost acknowledgment is required before acquisition can proceed");
   }
   return approvalValidation(true, "approval envelope matches current acquisition proposal fingerprint");
 }
@@ -558,6 +599,17 @@ function approvalValidation(valid: boolean, reason: string): ToolAcquisitionAppr
     reason,
     runtime_authority: false,
   });
+}
+
+function sameRef(left: CognitionRef, right: CognitionRef): boolean {
+  return left.kind === right.kind && left.ref === right.ref;
+}
+
+function instantMs(value: string): number | null {
+  const parsed = DateTimeStringSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const ms = Date.parse(parsed.data);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function stableStringify(value: unknown): string {

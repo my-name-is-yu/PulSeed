@@ -179,6 +179,81 @@ describe("tool acquisition proposals", () => {
       reason: "approval envelope is not active yet",
       runtime_authority: false,
     });
+    expect(validateToolAcquisitionApproval({
+      proposal,
+      envelope,
+      approvalKind: "install_or_enable_code",
+      now: "not-a-date",
+    })).toMatchObject({
+      valid: false,
+      reason: "approval validation time is invalid",
+      runtime_authority: false,
+    });
+  });
+
+  it("requires real cost acknowledgment approval evidence before cost-bearing acquisition steps", () => {
+    const costAckRef = { kind: "approval", ref: "approval:cost-calendar" };
+    const costBearingProposal = baseAcquisition({
+      cost_profile: {
+        billing_owner: "user",
+        cost_kind: "metered",
+        requires_user_cost_ack: true,
+      },
+      cost_ack_ref: costAckRef,
+    });
+    const installEnvelope = createToolAcquisitionApprovalEnvelope({
+      proposal: costBearingProposal,
+      approvalRef: { kind: "approval", ref: "approval:install-calendar" },
+      approvalKind: "install_or_enable_code",
+      approvedAt: NOW,
+      expiresAt: "2026-05-14T01:00:00.000Z",
+      approverRef: { kind: "user", ref: "user:yu" },
+    });
+    const costAcknowledgmentEnvelope = createToolAcquisitionApprovalEnvelope({
+      proposal: costBearingProposal,
+      approvalRef: costAckRef,
+      approvalKind: "cost_acknowledgment",
+      approvedAt: NOW,
+      expiresAt: "2026-05-14T01:00:00.000Z",
+      approverRef: { kind: "user", ref: "user:yu" },
+    });
+    const wrongCostAcknowledgmentEnvelope = createToolAcquisitionApprovalEnvelope({
+      proposal: costBearingProposal,
+      approvalRef: { kind: "approval", ref: "approval:wrong-cost-calendar" },
+      approvalKind: "cost_acknowledgment",
+      approvedAt: NOW,
+      expiresAt: "2026-05-14T01:00:00.000Z",
+      approverRef: { kind: "user", ref: "user:yu" },
+    });
+
+    expect(validateToolAcquisitionApproval({
+      proposal: costBearingProposal,
+      envelope: installEnvelope,
+      approvalKind: "install_or_enable_code",
+      now: NOW,
+    })).toMatchObject({
+      valid: false,
+      reason: "cost acknowledgment approval is required before acquisition can proceed",
+      runtime_authority: false,
+    });
+    expect(validateToolAcquisitionApproval({
+      proposal: costBearingProposal,
+      envelope: installEnvelope,
+      approvalKind: "install_or_enable_code",
+      costAcknowledgmentEnvelope: wrongCostAcknowledgmentEnvelope,
+      now: NOW,
+    })).toMatchObject({
+      valid: false,
+      reason: "cost acknowledgment ref does not match cost acknowledgment approval",
+      runtime_authority: false,
+    });
+    expect(validateToolAcquisitionApproval({
+      proposal: costBearingProposal,
+      envelope: installEnvelope,
+      approvalKind: "install_or_enable_code",
+      costAcknowledgmentEnvelope,
+      now: NOW,
+    })).toMatchObject({ valid: true });
   });
 
   it("canonicalizes undefined optional proposal fields before fingerprinting", () => {
