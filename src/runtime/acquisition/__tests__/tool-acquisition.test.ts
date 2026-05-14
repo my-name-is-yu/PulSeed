@@ -160,6 +160,25 @@ describe("tool acquisition proposals", () => {
       reason: "approval kind does not match requested acquisition step",
       runtime_authority: false,
     });
+    const futureEnvelope = createToolAcquisitionApprovalEnvelope({
+      proposal,
+      approvalRef: { kind: "approval", ref: "approval:future-install-calendar" },
+      approvalKind: "install_or_enable_code",
+      approvedAt: "2026-05-14T02:00:00.000Z",
+      expiresAt: "2026-05-14T03:00:00.000Z",
+      approverRef: { kind: "user", ref: "user:yu" },
+    });
+
+    expect(validateToolAcquisitionApproval({
+      proposal,
+      envelope: futureEnvelope,
+      approvalKind: "install_or_enable_code",
+      now: NOW,
+    })).toMatchObject({
+      valid: false,
+      reason: "approval envelope is not active yet",
+      runtime_authority: false,
+    });
   });
 
   it("canonicalizes undefined optional proposal fields before fingerprinting", () => {

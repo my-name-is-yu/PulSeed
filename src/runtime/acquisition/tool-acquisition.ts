@@ -356,6 +356,9 @@ export function validateToolAcquisitionApproval(input: {
   if (envelope.proposal_fingerprint !== computeAcquisitionProposalFingerprint(proposal)) {
     return approvalValidation(false, "approval proposal fingerprint is stale");
   }
+  if (Date.parse(input.now) < Date.parse(envelope.approved_at)) {
+    return approvalValidation(false, "approval envelope is not active yet");
+  }
   if (Date.parse(input.now) > Date.parse(envelope.expires_at)) {
     return approvalValidation(false, "approval envelope expired");
   }

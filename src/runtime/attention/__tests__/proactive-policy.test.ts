@@ -438,6 +438,10 @@ describe("proactive policy state", () => {
       allowed_delivery_kind: "digest",
       downgrade_reasons: ["interruption_budget_exhausted"],
     });
+    expect(normal.budget_status).toMatchObject({
+      budget_debit: 0,
+      exhausted: true,
+    });
     expect(normal.operator_refs).toBeUndefined();
     expect(operator.operator_refs?.feedback_policy_refs).toEqual([
       { kind: "feedback", ref: "feedback:recent-dismissal" },

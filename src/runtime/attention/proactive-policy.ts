@@ -341,9 +341,7 @@ export function projectProactiveThresholdDecisionForSurface(input: {
 }): ProactiveThresholdSurfaceProjection {
   const decision = ProactiveThresholdDecisionSchema.parse(input.decision);
   const budget = input.budget ? ProactiveInterruptionBudgetSchema.parse(input.budget) : undefined;
-  const exhausted = budget
-    ? budget.current_debits + decision.budget_debit > budgetCapacityFor(decision.allowed_delivery_kind, budget)
-    : false;
+  const exhausted = budget ? budgetExhaustedForProjection(decision, budget) : false;
 
   return ProactiveThresholdSurfaceProjectionSchema.parse({
     schema_version: "proactive-threshold-surface-projection/v1",
@@ -491,6 +489,17 @@ function budgetDeliveryCap(
     return current === "notify" ? "digest" : "hold";
   }
   return "execute";
+}
+
+function budgetExhaustedForProjection(
+  decision: ProactiveThresholdDecision,
+  budget: ProactiveInterruptionBudget
+): boolean {
+  const kind = decision.downgrade_reasons.includes("interruption_budget_exhausted")
+    ? decision.requested_delivery_kind
+    : decision.allowed_delivery_kind;
+  const debit = budgetDebitFor(kind);
+  return debit > 0 && budget.current_debits + debit > budgetCapacityFor(kind, budget);
 }
 
 function budgetCapacityFor(kind: ProactiveDeliveryKind, budget: ProactiveInterruptionBudget): number {
