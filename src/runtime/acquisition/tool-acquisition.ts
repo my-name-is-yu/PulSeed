@@ -412,8 +412,15 @@ function validateApprovalEnvelopeForProposal(input: {
 export function renderToolAcquisitionSurfaceProjection(input: {
   proposal: CandidateToolAcquisition;
   surfaceTarget: "normal_user" | "operator_debug";
+  costAcknowledgmentEnvelope?: ToolAcquisitionApprovalEnvelope;
+  evaluatedAt?: string;
 }): ToolAcquisitionSurfaceProjection {
   const proposal = CandidateToolAcquisitionSchema.parse(input.proposal);
+  const costAcknowledgmentValidation = validateCostAcknowledgmentEvidence({
+    acquisition: proposal,
+    envelope: input.costAcknowledgmentEnvelope,
+    evaluatedAt: input.evaluatedAt,
+  });
   return ToolAcquisitionSurfaceProjectionSchema.parse({
     schema_version: "tool-acquisition-surface-projection/v1",
     surface_target: input.surfaceTarget,
@@ -421,7 +428,7 @@ export function renderToolAcquisitionSurfaceProjection(input: {
     source: proposal.source,
     operation_id: proposal.operation_scope.operation_id,
     approval_required: true,
-    cost_ack_required: proposal.cost_profile.requires_user_cost_ack && !proposal.cost_ack_ref,
+    cost_ack_required: !costAcknowledgmentValidation.valid,
     rollback_plan_ref: proposal.rollback_plan_ref,
     secret_material_visible: false,
     normal_runtime_loadable: false,
@@ -477,7 +484,7 @@ export function adaptAcquisitionToRuntime(input: {
     result: input.verificationResult,
     evidence_ref: input.evidenceRef,
   });
-  const costAcknowledgmentValidation = validateRuntimeCostAcknowledgment({
+  const costAcknowledgmentValidation = validateCostAcknowledgmentEvidence({
     acquisition,
     envelope: input.costAcknowledgmentEnvelope,
     evaluatedAt: input.evaluatedAt,
@@ -585,13 +592,16 @@ function sideEffectForForeignPluginType(type: string | undefined): "read" | "sen
   return "mutate";
 }
 
-function validateRuntimeCostAcknowledgment(input: {
+function validateCostAcknowledgmentEvidence(input: {
   acquisition: CandidateToolAcquisition;
   envelope: ToolAcquisitionApprovalEnvelope | undefined;
-  evaluatedAt: string;
+  evaluatedAt: string | undefined;
 }): ToolAcquisitionApprovalValidation {
   if (!input.acquisition.cost_profile.requires_user_cost_ack) {
     return approvalValidation(true, "cost acknowledgment is not required");
+  }
+  if (!input.evaluatedAt) {
+    return approvalValidation(false, "cost acknowledgment validation time is required before acquisition can proceed");
   }
   if (!input.acquisition.cost_ack_ref) {
     return approvalValidation(false, "cost acknowledgment approval is required before acquisition can proceed");

@@ -395,6 +395,16 @@ describe("tool acquisition proposals", () => {
       proposal: unknownCost,
       surfaceTarget: "normal_user",
     }).cost_ack_required).toBe(true);
+    expect(renderToolAcquisitionSurfaceProjection({
+      proposal: costAcknowledgedProposal,
+      surfaceTarget: "normal_user",
+    }).cost_ack_required).toBe(true);
+    expect(renderToolAcquisitionSurfaceProjection({
+      proposal: costAcknowledgedProposal,
+      surfaceTarget: "normal_user",
+      costAcknowledgmentEnvelope,
+      evaluatedAt: NOW,
+    }).cost_ack_required).toBe(false);
     expect(placeholderOnly.readiness_snapshot).toMatchObject({
       state: "blocked",
       metadata: {
