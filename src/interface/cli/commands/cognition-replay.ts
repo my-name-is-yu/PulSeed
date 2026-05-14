@@ -16,6 +16,12 @@ import {
   FileCognitionWritebackQueueStore,
   type CognitionWritebackQueueEntry,
 } from "../../../reflection/index.js";
+import {
+  createMemoryLifecycleEnvelopeFromCognitionReplayIndexEntry,
+  createMemoryLifecycleEnvelopeFromWritebackQueueEntry,
+  createMemoryLifecycleReviewInbox,
+  type MemoryLifecycleReviewInbox,
+} from "../../../grounding/memory-lifecycle-owner-routing.js";
 import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 
@@ -47,6 +53,7 @@ export type RuntimeCognitionReplayDiagnostic = {
   mutation_performed: false;
   view: CognitiveReplayInspectionView;
   writeback_queue_refs: RuntimeCognitionReplayQueueRef[];
+  memory_lifecycle_review_inbox: MemoryLifecycleReviewInbox;
 };
 
 function parseRuntimeCognitionReplayArgs(args: string[]): RuntimeCognitionReplayArgs {
@@ -137,6 +144,10 @@ export async function createRuntimeCognitionReplayDiagnostic(input: {
     indexEntries,
     replayRecords,
   });
+  const lifecycleEnvelopes = [
+    ...indexEntries.map(createMemoryLifecycleEnvelopeFromCognitionReplayIndexEntry),
+    ...queueEntries.map(createMemoryLifecycleEnvelopeFromWritebackQueueEntry),
+  ];
 
   return {
     schema_version: "runtime-cognition-replay-diagnostic-v1",
@@ -145,6 +156,12 @@ export async function createRuntimeCognitionReplayDiagnostic(input: {
     mutation_performed: false,
     view,
     writeback_queue_refs: queueRefsForView(queueEntries, view),
+    memory_lifecycle_review_inbox: createMemoryLifecycleReviewInbox({
+      inboxId: `runtime:memory-lifecycle-review:${input.surfaceTarget}:${generatedAt}`,
+      generatedAt,
+      envelopes: lifecycleEnvelopes,
+      sourceRefsVisible: input.surfaceTarget === "operator_debug" || input.surfaceTarget === "internal_audit",
+    }),
   };
 }
 
@@ -158,6 +175,7 @@ export function printRuntimeCognitionReplayDiagnostic(diagnostic: RuntimeCogniti
   console.log(`  Debug to normal:${view.normal_surface_debug_visible ? "visible" : "hidden"}`);
   console.log(`  Read only:      ${diagnostic.read_only ? "yes" : "no"}`);
   console.log(`  Mutated:        ${diagnostic.mutation_performed ? "yes" : "no"}`);
+  console.log(`  Review inbox:   ${diagnostic.memory_lifecycle_review_inbox.items.length}`);
 
   if (view.items.length === 0) {
     console.log("  Replay items:   -");
@@ -179,17 +197,26 @@ export function printRuntimeCognitionReplayDiagnostic(diagnostic: RuntimeCogniti
 
   if (diagnostic.writeback_queue_refs.length === 0) {
     console.log("  Writeback queue refs: -");
-    return;
+  } else {
+    console.log("  Writeback queue refs:");
+    for (const queueRef of diagnostic.writeback_queue_refs) {
+      console.log(`    - ${refKey(queueRef.queue_entry_ref)} -> ${refKey(queueRef.proposal_ref)}`);
+      console.log(`      owner/state: ${queueRef.owner}/${queueRef.state}`);
+      console.log(`      source:      ${queueRef.source_state}`);
+      console.log(`      owner write: ${queueRef.owner_write_performed ? "yes" : "no"}`);
+      console.log(`      authority:   ${queueRef.runtime_authority ? "yes" : "no"}`);
+      console.log(`      sources:     ${queueRef.source_refs_visible ? queueRef.source_refs.map(eventRefLabel).join(", ") || "-" : "hidden"}`);
+    }
   }
 
-  console.log("  Writeback queue refs:");
-  for (const queueRef of diagnostic.writeback_queue_refs) {
-    console.log(`    - ${refKey(queueRef.queue_entry_ref)} -> ${refKey(queueRef.proposal_ref)}`);
-    console.log(`      owner/state: ${queueRef.owner}/${queueRef.state}`);
-    console.log(`      source:      ${queueRef.source_state}`);
-    console.log(`      owner write: ${queueRef.owner_write_performed ? "yes" : "no"}`);
-    console.log(`      authority:   ${queueRef.runtime_authority ? "yes" : "no"}`);
-    console.log(`      sources:     ${queueRef.source_refs_visible ? queueRef.source_refs.map(eventRefLabel).join(", ") || "-" : "hidden"}`);
+  if (diagnostic.memory_lifecycle_review_inbox.items.length > 0) {
+    console.log("  Memory lifecycle review:");
+    for (const item of diagnostic.memory_lifecycle_review_inbox.items) {
+      console.log(`    - ${item.item_id}`);
+      console.log(`      kind/state: ${item.item_kind}/${item.review_state}`);
+      console.log(`      actions:    ${item.allowed_actions.join(", ") || "-"}`);
+      console.log(`      raw content: hidden`);
+    }
   }
 }
 

@@ -12,7 +12,11 @@ import type { AgentResult } from "../../../orchestrator/execution/adapter-layer.
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
-import { CompanionCognitionService, type CompanionCognitionInput } from "../../../runtime/cognition/index.js";
+import {
+  CompanionCognitionService,
+  createRelationshipProfileCognitionMemoryPort,
+  type CompanionCognitionInput,
+} from "../../../runtime/cognition/index.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -117,6 +121,78 @@ describe("chat caller path cognition integration", () => {
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords).toHaveLength(1);
+  });
+
+  it("routes gateway reply-target memory through Surface projection on the ChatRunner caller path", async () => {
+    const stateManager = makeStateManager();
+    await upsertRelationshipProfileItem(stateManager.getBaseDir(), {
+      stableKey: "gateway.status_style",
+      kind: "preference",
+      value: "Prefer terse gateway replies when nothing needs tools.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval"],
+      sensitivity: "private",
+      now: "2026-05-14T00:00:00.000Z",
+    });
+    const service = new CompanionCognitionService({
+      memoryPort: createRelationshipProfileCognitionMemoryPort({
+        baseDir: stateManager.getBaseDir(),
+        now: () => new Date("2026-05-14T00:00:00.000Z"),
+      }),
+    });
+    const evaluateTurn = vi.fn((input: CompanionCognitionInput) => service.evaluateTurn(input));
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      llmClient: makeLlmClient("gateway reply"),
+      runtimeReplyTarget: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: "chat-42",
+        message_id: "message-7",
+        deliveryMode: "reply",
+      } as ChatRunnerDeps["runtimeReplyTarget"],
+      companionCognitionService: { evaluateTurn },
+    });
+
+    const result = await runner.execute("普通の相談です", testHome!, 10_000, {
+      selectedRoute: gatewayModelLoopRoute(),
+    });
+
+    expect(result.success).toBe(true);
+    expect(evaluateTurn).toHaveBeenCalledOnce();
+    expect(evaluateTurn.mock.calls[0]?.[0]).toMatchObject({
+      working_context: {
+        route_ref: { kind: "chat_route", ref: "gateway_model_loop" },
+        reply_target_ref: {
+          kind: "gateway_reply_target",
+          ref: "gateway:telegram:chat-42:message-7:reply",
+        },
+      },
+      session_context: {
+        route_kind: "gateway_model_loop",
+      },
+      memory_context_request: {
+        surface_projection_required: true,
+      },
+    });
+    const session = await latestSession(stateManager);
+    const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
+    const payload = cognitionRecords[0]?.payload;
+    expect(payload).toMatchObject({
+      stable_output: {
+        relationship_state: {
+          relationship_refs: [{
+            memory_ref: {
+              source_store: "profile",
+              source_event_type: "preference",
+            },
+            surface_projection_ref: expect.stringContaining("surface:relationship-profile:chat"),
+          }],
+        },
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("Prefer terse gateway replies when nothing needs tools.");
   });
 
   it("keeps slash command early returns pre-cognition", async () => {

@@ -132,6 +132,16 @@ async function seedCognitionReplay(baseDir: string): Promise<void> {
     proposal,
     createdAt: NOW,
   }));
+  await new FileCognitionWritebackQueueStore(baseDir).enqueue(createCognitionWritebackQueueEntry({
+    queueEntryId: "queue:writeback:blocked:1",
+    proposal: writebackProposal({
+      proposal_id: "writeback:diagnostic:blocked",
+      source_event_refs: [eventRef("chat:event:blocked")],
+    }),
+    createdAt: NOW,
+    sourceState: "deleted_or_tombstoned",
+    invalidationRefs: [eventRef("profile:source:deleted", "profile")],
+  }));
 }
 
 describe("runtime cognition-replay command", () => {
@@ -148,6 +158,7 @@ describe("runtime cognition-replay command", () => {
       expect(output).not.toContain(RAW_PROMPT_SECRET);
       expect(output).not.toContain(RAW_MEMORY_SECRET);
       expect(output).not.toContain(SENSITIVE_REVIEW_SECRET);
+      expect(output).not.toContain("profile:source:deleted");
       const parsed = JSON.parse(output);
       expect(parsed).toMatchObject({
         schema_version: "runtime-cognition-replay-diagnostic-v1",
@@ -172,6 +183,36 @@ describe("runtime cognition-replay command", () => {
           owner_write_performed: false,
           runtime_authority: false,
         }],
+        memory_lifecycle_review_inbox: {
+          read_only: true,
+          mutation_performed: false,
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              item_kind: "cognition_replay_ref",
+              source_summary_refs: [],
+              raw_content_visible: false,
+              hidden_prompt_visible: false,
+              sensitive_content_visible: false,
+            }),
+            expect.objectContaining({
+              item_kind: "profile_candidate",
+              review_state: "pending_user_review",
+              source_summary_refs: [],
+              redaction_refs: [],
+              allowed_actions: ["accept", "edit", "reject", "suppress", "forget_source"],
+              raw_content_visible: false,
+              hidden_prompt_visible: false,
+              sensitive_content_visible: false,
+            }),
+            expect.objectContaining({
+              item_kind: "correction_invalidation",
+              review_state: "blocked_source_invalid",
+              source_summary_refs: [],
+              invalidation_refs: [],
+              redaction_refs: [],
+            }),
+          ]),
+        },
       });
     } finally {
       cleanupTempDir(tmpDir);
@@ -196,6 +237,8 @@ describe("runtime cognition-replay command", () => {
       expect(output).not.toContain(SENSITIVE_REVIEW_SECRET);
       expect(output).toContain("owner write: no");
       expect(output).toContain("authority:   no");
+      expect(output).toContain("Review inbox:   3");
+      expect(output).toContain("raw content: hidden");
     } finally {
       cleanupTempDir(tmpDir);
     }

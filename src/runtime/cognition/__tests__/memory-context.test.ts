@@ -169,6 +169,64 @@ describe("cognition memory context", () => {
     }
   });
 
+  it("regenerates the next-turn Surface projection after a user correction supersedes the prior profile memory", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-cognition-memory-correction-"));
+    try {
+      await upsertRelationshipProfileItem(baseDir, {
+        stableKey: "operator.reply_style",
+        kind: "preference",
+        value: "Prefer expansive gateway replies.",
+        source: "cli_update",
+        allowedScopes: ["memory_retrieval"],
+        sensitivity: "private",
+        now: NOW,
+      });
+      const memoryPort = createRelationshipProfileCognitionMemoryPort({
+        baseDir,
+        now: () => new Date(NOW),
+      });
+      const firstTurn = await memoryPort.retrieveMemory(
+        CognitionMemoryRequestSchema.parse(chatInput({
+          memory_context_request: {
+            ...chatInput().memory_context_request,
+            request_id: "memory-request:chat:first",
+          },
+        }).memory_context_request),
+      );
+
+      await upsertRelationshipProfileItem(baseDir, {
+        stableKey: "operator.reply_style",
+        kind: "preference",
+        value: "Prefer concise gateway replies.",
+        source: "user_correction",
+        allowedScopes: ["memory_retrieval"],
+        sensitivity: "private",
+        now: "2026-05-14T00:01:00.000Z",
+      });
+
+      const nextTurn = await memoryPort.retrieveMemory(
+        CognitionMemoryRequestSchema.parse(chatInput({
+          memory_context_request: {
+            ...chatInput().memory_context_request,
+            request_id: "memory-request:chat:next",
+            query_ref: {
+              ...chatInput().memory_context_request.query_ref,
+              ref: "chat:event:2",
+              source_epoch: "turn:2",
+            },
+          },
+        }).memory_context_request),
+      );
+
+      expect(firstTurn.included.map((source) => source.excerpt)).toEqual(["Prefer expansive gateway replies."]);
+      expect(nextTurn.included.map((source) => source.excerpt)).toEqual(["Prefer concise gateway replies."]);
+      expect(JSON.stringify(nextTurn)).not.toContain("Prefer expansive gateway replies.");
+      expect(nextTurn.included[0]?.surface_projection_ref).toContain("chat_3Aevent_3A2");
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("classifies governed knowledge facts as semantic cognition memory", () => {
     const projection = CoreCompanionMemoryProjectionSchema.parse({
       schema_version: "core-companion-memory-projection/v1",

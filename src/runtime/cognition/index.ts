@@ -56,6 +56,15 @@ export {
   cognitionMemoryResultFromCoreProjection,
 } from "./memory-context.js";
 export {
+  MEMORY_LIFECYCLE_OWNER_ROUTING_TABLE,
+  MemoryLifecycleCanonicalOwnerSchema,
+  MemoryLifecycleOwnerRoutingRuleSchema,
+  MemoryLifecycleProposedTargetSchema,
+  MemoryLifecycleWritebackOwnerSchema,
+  ownerForMemoryWritebackProposal,
+  ownerRoutingRuleForProposal,
+} from "./memory-writeback-owner-routing.js";
+export {
   assembleSituationModel,
 } from "./situation.js";
 export {
@@ -116,3 +125,9 @@ export type {
 export type {
   CompanionCognitionServiceDeps,
 } from "./companion-cognition-service.js";
+export type {
+  MemoryLifecycleCanonicalOwner,
+  MemoryLifecycleOwnerRoutingRule,
+  MemoryLifecycleProposedTarget,
+  MemoryLifecycleWritebackOwner,
+} from "./memory-writeback-owner-routing.js";

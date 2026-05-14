@@ -9,6 +9,7 @@ export {
   createCognitiveReplayInspectionView,
   defaultCognitiveReplayOwnerStore,
   ownerStoreAllowedForCallerPath,
+  refreshCognitiveReplayIndexEntriesForSourceInvalidation,
 } from "./cognitive-replay-index.js";
 export {
   createAuditInspectionView,

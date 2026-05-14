@@ -116,6 +116,7 @@ import {
   createCognitionReplayRecord,
   createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
+  type CognitionRef,
 } from "../../runtime/cognition/index.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import { createCompanionCharacterPolicyProjection } from "../../runtime/decision/companion-character-policy-projection.js";
@@ -154,6 +155,28 @@ function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | nul
       ...replyTarget,
       ...(replyTarget.metadata ?? {}),
     },
+  };
+}
+
+function cognitionReplyTargetRef(
+  replyTarget: ChatTurnContext["modelVisible"]["runtime"]["replyTarget"] | RuntimeControlReplyTarget | null | undefined,
+): CognitionRef | undefined {
+  if (!replyTarget) return undefined;
+  const surface = replyTarget.surface ?? "unknown_surface";
+  const target = replyTarget.conversation_id
+    ?? replyTarget.identity_key
+    ?? replyTarget.user_id
+    ?? replyTarget.message_id
+    ?? "unknown_target";
+  return {
+    kind: surface === "gateway" ? "gateway_reply_target" : "reply_target",
+    ref: [
+      surface,
+      replyTarget.platform ?? "unknown_platform",
+      target,
+      replyTarget.message_id ?? "no_message",
+      replyTarget.deliveryMode ?? "reply",
+    ].join(":"),
   };
 }
 
@@ -1006,6 +1029,11 @@ export class ChatRunner {
       redaction_policy: "metadata_only" as const,
     };
     const cognitionId = `cognition:chat:${turn.turnId}`;
+    const replyTargetRef = cognitionReplyTargetRef(
+      turnContext.hostOnly.runtime.runtimeControlContext?.replyTarget
+        ?? turnContext.hostOnly.runtime.fallbackReplyTarget
+        ?? turnContext.modelVisible.runtime.replyTarget,
+    );
     return {
       cognition_id: cognitionId,
       caller_path: "chat_user_turn",
@@ -1023,6 +1051,11 @@ export class ChatRunner {
                 kind: "chat_session",
                 ref: session.sessionId,
               },
+            }
+          : {}),
+        ...(replyTargetRef
+          ? {
+              reply_target_ref: replyTargetRef,
             }
           : {}),
         turn_started_at: turn.startedAt,
