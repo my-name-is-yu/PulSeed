@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ChatRunner } from "../chat-runner.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
@@ -163,5 +164,51 @@ describe("chat character policy caller paths", () => {
     expect(system).toContain("runtime_control_allowed: false");
     expect(system).toContain("approval_mode: disallowed");
     expectNoRawCharacterKnobs(system);
+  });
+
+  it("merges relationship normal-surface context with character policy on the gateway caller path", async () => {
+    const stateManager = makeStateManager();
+    await stateManager.init();
+    await new CharacterConfigManager(stateManager).save({
+      caution_level: 5,
+      stall_flexibility: 5,
+      communication_directness: 5,
+      proactivity_level: 5,
+    });
+    await upsertRelationshipProfileItem(stateManager.getBaseDir(), {
+      stableKey: "operator.gateway_style",
+      kind: "preference",
+      value: "Prefer terse gateway answers.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval"],
+      sensitivity: "private",
+      now: "2026-05-14T00:00:00.000Z",
+    });
+    const llmClient = makeLlmClient("relationship-aware reply");
+    const runner = new ChatRunner(makeDeps(stateManager, llmClient));
+
+    const result = await runner.execute("hello", stateManager.getBaseDir(), 5_000, {
+      routeSelector: async () => gatewayModelRoute(),
+      runtimeControlContext: {
+        allowed: false,
+        approvalMode: "disallowed",
+        explicit: true,
+      },
+    });
+
+    expect(result).toMatchObject({ success: true, output: "relationship-aware reply" });
+    const system = firstSystemPrompt(llmClient);
+    expect(system).toContain("relationship_surface_ref: relationship-normal-surface:chat:");
+    expect(system).toContain("relationship_surface_projection_ref: surface_projection:surface:relationship-profile:chat:");
+    expect(system).toContain("relationship_core_memory_projection_ref: memory_projection:core-memory:relationship-normal-surface:chat:");
+    expect(system).toContain("relationship_character_policy_ref: character_policy_projection:character_config_policy:character-policy:chat:");
+    expect(system).toContain("relationship_included_count: 1");
+    expect(system).toContain("relationship_included[0]: role=preference; use=tone_adaptation");
+    expect(system).toContain("relationship_normal_surface_debug_visible: false");
+    expect(system).toContain("character_can_relax_approval_boundary: false");
+    expect(system).toContain("character_can_grant_autonomy: false");
+    expect(system).not.toContain("Prefer terse gateway answers.");
+    expect(system).not.toContain("caution_level");
+    expect(system).not.toContain("proactivity_level");
   });
 });

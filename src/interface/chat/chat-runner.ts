@@ -21,7 +21,7 @@ import {
 import { buildChatContext, resolveGitRoot } from "../../platform/observation/context-provider.js";
 import { buildChatAgentLoopSystemPrompt, buildStaticSystemPrompt, createChatGroundingGateway } from "./grounding.js";
 import type { GroundingGateway } from "../../grounding/gateway.js";
-import type { ChatEventHandler } from "./chat-events.js";
+import type { ChatEventContext, ChatEventHandler } from "./chat-events.js";
 import { classifyRuntimeControlIntent } from "../../runtime/control/index.js";
 import { classifyConfirmationDecision } from "../../runtime/confirmation-decision.js";
 import type { RuntimeControlReplyTarget } from "../../runtime/store/runtime-operation-schemas.js";
@@ -84,8 +84,10 @@ import { createTurnStartOperation, createTurnSteerOperation } from "./turn-proto
 import {
   buildChatTurnContext,
   toPublicCharacterPolicyContext,
+  toPublicRelationshipSurfaceContext,
   toTurnContextSnapshot,
   type PublicCharacterPolicyContext,
+  type PublicRelationshipSurfaceContext,
   type ChatTurnContext,
 } from "./turn-context.js";
 import {
@@ -113,8 +115,11 @@ import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime
 import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
 import {
   CompanionCognitionService,
+  CognitionMemoryRequestSchema,
   createCognitionReplayRecord,
   createRelationshipProfileCognitionMemoryPort,
+  createRelationshipStateProjectionV2,
+  relationshipCharacterPolicyProjectionRef,
   type CompanionCognitionInput,
   type CognitionRef,
 } from "../../runtime/cognition/index.js";
@@ -898,6 +903,13 @@ export class ChatRunner {
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
     const turnStartedAt = new Date(start);
     const characterPolicy = await this.resolveCharacterPolicyContext(turnStartedAt.toISOString());
+    const relationshipSurface = await this.resolveRelationshipSurfaceContext({
+      eventContext,
+      sessionId: history.getSessionId(),
+      selectedRoute,
+      startedAt: turnStartedAt,
+      characterPolicy,
+    });
     const turnContext = buildChatTurnContext({
       eventContext,
       startedAt: turnStartedAt,
@@ -927,6 +939,7 @@ export class ChatRunner {
       setupSecretIntake,
       activatedTools: this.activatedTools,
       characterPolicy,
+      relationshipSurface,
     });
     await history.recordTurnContext(toTurnContextSnapshot(turnContext));
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
@@ -1121,6 +1134,61 @@ export class ChatRunner {
         ],
       });
       return toPublicCharacterPolicyContext(projection);
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveRelationshipSurfaceContext(input: {
+    eventContext: ChatEventContext;
+    sessionId: string | null;
+    selectedRoute: SelectedChatRoute | null;
+    startedAt: Date;
+    characterPolicy: PublicCharacterPolicyContext | null;
+  }): Promise<PublicRelationshipSurfaceContext | null> {
+    if (input.selectedRoute?.kind !== "agent_loop" && input.selectedRoute?.kind !== "gateway_model_loop") {
+      return null;
+    }
+    const routeKind = input.selectedRoute.kind === "agent_loop" ? "agent_loop" : "gateway_model_loop";
+    const inputRef = {
+      ref: `${input.sessionId ?? "session:none"}:${input.eventContext.turnId}:user_input`,
+      source_store: "chat_history" as const,
+      source_event_type: "user_input",
+      schema_version: 1,
+      source_epoch: input.eventContext.turnId,
+      redaction_policy: "metadata_only" as const,
+    };
+    const cognitionId = `relationship-normal-surface:chat:${input.eventContext.turnId}`;
+    try {
+      const memoryPort = createRelationshipProfileCognitionMemoryPort({
+        baseDir: this.providerConfigBaseDir(),
+        now: () => input.startedAt,
+      });
+      const memoryResult = await memoryPort.retrieveMemory(CognitionMemoryRequestSchema.parse({
+        request_id: `${cognitionId}:memory-request`,
+        requested_uses: ["runtime_grounding", "user_facing_reference"],
+        caller_path: "chat_user_turn",
+        query_ref: inputRef,
+        surface_projection_required: true,
+        side_effect_authorization_allowed: false,
+        include_sensitive_content: false,
+      }));
+      if (memoryResult.included.length === 0 && memoryResult.withheld.length === 0) {
+        return null;
+      }
+      const projection = createRelationshipStateProjectionV2({
+        projectionId: cognitionId,
+        turnRef: {
+          kind: routeKind === "gateway_model_loop" ? "gateway_turn" : "chat_turn",
+          ref: input.eventContext.turnId,
+        },
+        memoryResult,
+        callerPath: "chat_user_turn",
+        ...(input.characterPolicy
+          ? { characterPolicyRef: relationshipCharacterPolicyProjectionRef(input.characterPolicy.policyRef) }
+          : {}),
+      });
+      return toPublicRelationshipSurfaceContext(projection);
     } catch {
       return null;
     }

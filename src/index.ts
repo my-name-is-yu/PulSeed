@@ -460,6 +460,15 @@ export type {
   RelationshipProfileProposalStore,
 } from "./platform/profile/profile-change-proposal.js";
 export {
+  RelationshipSurfaceRepairActionSchema,
+  RelationshipSurfaceRepairRequestSchema,
+  createRelationshipSurfaceRepairProposal,
+} from "./platform/profile/relationship-surface-repair.js";
+export type {
+  RelationshipSurfaceRepairAction,
+  RelationshipSurfaceRepairRequest,
+} from "./platform/profile/relationship-surface-repair.js";
+export {
   parseRelationshipProfileCandidatesFromUserMd,
   createRelationshipProfileProposalsFromUserMdImport,
 } from "./platform/profile/user-md-profile-import.js";

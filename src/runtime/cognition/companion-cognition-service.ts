@@ -5,7 +5,6 @@ import {
   CompanionCognitionInputSchema,
   CompanionCognitionOutputSchema,
   ResponsePlanSchema,
-  RelationshipStateProjectionSchema,
   IntentionSelectionSchema,
   deliveryKindRank,
   type CognitionMemoryResult,
@@ -17,6 +16,10 @@ import {
 } from "./contracts.js";
 import type { CognitionAuditSink, CognitionMemoryPort } from "./ports.js";
 import { createEmptyCognitionMemoryResult } from "./memory-context.js";
+import {
+  createRelationshipStateProjectionV2,
+  relationshipTurnRefForCognitionInput,
+} from "./relationship-state-projection.js";
 import { assembleSituationModel } from "./situation.js";
 import {
   createReflectionHintForWriteback,
@@ -70,13 +73,12 @@ export class CompanionCognitionService {
     const memoryResult = await this.resolveMemory(input);
     const firstEventRef = input.event_refs[0]!;
     const situationModel = assembleSituationModel({ cognitionInput: input, memoryResult });
-    const relationshipState = RelationshipStateProjectionSchema.parse({
-      projection_id: `${input.cognition_id}:relationship`,
-      relationship_refs: memoryResult.included.filter((source) => source.source_kind === "semantic"),
-      withheld_memory_refs: memoryResult.withheld,
-      conflict_refs: [],
-      overreach_risk: input.caller_path === "resident_proactive_check" ? "medium" : "unknown",
-      ordinary_surface_debug_visible: false,
+    const relationshipState = createRelationshipStateProjectionV2({
+      projectionId: `${input.cognition_id}:relationship`,
+      turnRef: relationshipTurnRefForCognitionInput(input),
+      memoryResult,
+      callerPath: input.caller_path,
+      overreachRisk: input.caller_path === "resident_proactive_check" ? "medium" : "unknown",
     });
     const responsePlan = responsePlanFor(input);
     const selectedIntention = intentionFor(input);

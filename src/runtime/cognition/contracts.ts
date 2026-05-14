@@ -180,6 +180,32 @@ export const CognitionMemoryRequestSchema = z.object({
 }).strict();
 export type CognitionMemoryRequest = z.infer<typeof CognitionMemoryRequestSchema>;
 
+export const RelationshipSurfaceFactRoleSchema = z.enum([
+  "preference",
+  "boundary",
+  "promise",
+  "intervention_policy",
+  "notification_preference",
+  "open_tension",
+]);
+export type RelationshipSurfaceFactRole = z.infer<typeof RelationshipSurfaceFactRoleSchema>;
+
+export const RelationshipSurfaceAllowedUseSchema = z.enum([
+  "tone_adaptation",
+  "behavioral_inhibition",
+  "ask_for_confirmation",
+  "user_facing_reference",
+]);
+export type RelationshipSurfaceAllowedUse = z.infer<typeof RelationshipSurfaceAllowedUseSchema>;
+
+export const RelationshipSurfaceRepairPathSchema = z.enum([
+  "correct",
+  "suppress",
+  "revoke",
+  "forget",
+]);
+export type RelationshipSurfaceRepairPath = z.infer<typeof RelationshipSurfaceRepairPathSchema>;
+
 export const CognitionMemorySourceSchema = z.object({
   memory_ref: CognitionEventRefSchema,
   source_kind: z.enum(["working", "episodic", "semantic", "procedural"]),
@@ -190,6 +216,7 @@ export const CognitionMemorySourceSchema = z.object({
   correction_state: z.enum(["current", "corrected", "superseded", "retracted", "unknown"]),
   confidence: z.number().min(0).max(1).optional(),
   surface_projection_ref: z.string().min(1).optional(),
+  relationship_role: RelationshipSurfaceFactRoleSchema.optional(),
   excerpt: z.string().min(1).optional(),
 }).strict();
 export type CognitionMemorySource = z.infer<typeof CognitionMemorySourceSchema>;
@@ -210,6 +237,8 @@ export type CognitionWithheldMemorySource = z.infer<typeof CognitionWithheldMemo
 
 export const CognitionMemoryResultSchema = z.object({
   request_id: z.string().min(1),
+  surface_projection_ref: CognitionRefSchema.optional(),
+  core_memory_projection_ref: CognitionRefSchema.optional(),
   included: z.array(CognitionMemorySourceSchema).default([]),
   withheld: z.array(CognitionWithheldMemorySourceSchema).default([]),
   audit_refs: z.array(CognitionEventRefSchema).default([]),
@@ -403,14 +432,97 @@ export const SituationModelSchema = z.object({
 }).strict();
 export type SituationModel = z.infer<typeof SituationModelSchema>;
 
-export const RelationshipStateProjectionSchema = z.object({
+export const RelationshipProjectionTurnRefSchema = z.object({
+  kind: z.enum(["chat_turn", "gateway_turn", "resident_turn", "task_turn"]),
+  ref: z.string().min(1),
+}).strict();
+export type RelationshipProjectionTurnRef = z.infer<typeof RelationshipProjectionTurnRefSchema>;
+
+export const RelationshipProjectionSourceRefSchema = z.object({
+  kind: z.enum(["surface_projection", "memory_projection", "character_policy_projection"]),
+  ref: z.string().min(1),
+}).strict();
+export type RelationshipProjectionSourceRef = z.infer<typeof RelationshipProjectionSourceRefSchema>;
+
+export const RelationshipSurfaceFactSchema = z.object({
+  memory_ref: z.string().min(1),
+  role: RelationshipSurfaceFactRoleSchema,
+  user_readable_reason: z.string().min(1),
+  allowed_surface_use: RelationshipSurfaceAllowedUseSchema,
+  confidence: z.number().min(0).max(1),
+  sensitivity: z.enum(["public", "private"]),
+  repair_paths: z.array(RelationshipSurfaceRepairPathSchema).min(1),
+}).strict().superRefine((fact, ctx) => {
+  if (fact.role === "boundary" && fact.allowed_surface_use === "tone_adaptation") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowed_surface_use"],
+      message: "boundary relationship facts must inhibit behavior or ask for confirmation",
+    });
+  }
+  if (fact.role === "open_tension" && fact.allowed_surface_use !== "ask_for_confirmation") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowed_surface_use"],
+      message: "open tension facts can only ask for confirmation on the normal surface",
+    });
+  }
+  if (fact.confidence < 0.5 && fact.allowed_surface_use === "user_facing_reference") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["allowed_surface_use"],
+      message: "low-confidence relationship facts cannot be projected as stable user-facing references",
+    });
+  }
+});
+export type RelationshipSurfaceFact = z.infer<typeof RelationshipSurfaceFactSchema>;
+
+export const RelationshipWithheldFactSchema = z.object({
+  memory_ref: z.string().min(1),
+  role: RelationshipSurfaceFactRoleSchema.default("preference"),
+  withheld_reason: CognitionWithheldMemorySourceSchema.shape.withheld_reason,
+  user_readable_reason: z.string().min(1),
+  sensitivity: z.enum(["public", "private", "sensitive", "redacted"]),
+  repair_paths: z.array(RelationshipSurfaceRepairPathSchema).min(1),
+}).strict();
+export type RelationshipWithheldFact = z.infer<typeof RelationshipWithheldFactSchema>;
+
+export const RelationshipStateProjectionV2Schema = z.object({
   projection_id: z.string().min(1),
+  turn_ref: RelationshipProjectionTurnRefSchema.optional(),
+  surface_projection_ref: RelationshipProjectionSourceRefSchema.optional(),
+  core_memory_projection_ref: RelationshipProjectionSourceRefSchema.optional(),
+  included: z.array(RelationshipSurfaceFactSchema).default([]),
+  withheld: z.array(RelationshipWithheldFactSchema).default([]),
+  character_policy_ref: RelationshipProjectionSourceRefSchema.optional(),
+  posture: z.enum(["neutral", "concise", "careful", "encouraging", "boundary_first"]).default("neutral"),
   relationship_refs: z.array(CognitionMemorySourceSchema).default([]),
   withheld_memory_refs: z.array(CognitionWithheldMemorySourceSchema).default([]),
   conflict_refs: z.array(CognitionRefSchema).default([]),
   overreach_risk: z.enum(["none", "low", "medium", "high", "unknown"]).default("unknown"),
+  normal_surface_debug_visible: z.literal(false).default(false),
   ordinary_surface_debug_visible: z.literal(false).default(false),
-}).strict();
+}).strict().superRefine((projection, ctx) => {
+  const hasBoundary = projection.included.some((fact) => fact.role === "boundary");
+  const hasPreference = projection.included.some((fact) => fact.role === "preference");
+  if (hasBoundary && hasPreference && projection.posture !== "boundary_first") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["posture"],
+      message: "boundary/preference conflicts must resolve boundary-first on the normal surface",
+    });
+  }
+  if (projection.normal_surface_debug_visible !== false || projection.ordinary_surface_debug_visible !== false) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["normal_surface_debug_visible"],
+      message: "relationship projection debug state must stay hidden from normal surfaces",
+    });
+  }
+});
+export type RelationshipStateProjectionV2 = z.infer<typeof RelationshipStateProjectionV2Schema>;
+
+export const RelationshipStateProjectionSchema = RelationshipStateProjectionV2Schema;
 export type RelationshipStateProjection = z.infer<typeof RelationshipStateProjectionSchema>;
 
 export const IntentionSelectionSchema = z.object({
