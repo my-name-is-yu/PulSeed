@@ -17,7 +17,6 @@ interface WriteJsonFileAtomicOptions {
 
 interface JsonFileMutationLockOptions {
   timeoutMs?: number;
-  staleLockMs?: number;
   retryDelayMs?: number;
 }
 
@@ -88,7 +87,6 @@ export async function withJsonFileMutationLock<T>(
   options: JsonFileMutationLockOptions = {},
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const staleLockMs = options.staleLockMs ?? 60_000;
   const retryDelayMs = options.retryDelayMs ?? 10;
   const lockPath = `${filePath}.lock`;
   const startedAt = Date.now();
@@ -100,7 +98,6 @@ export async function withJsonFileMutationLock<T>(
       lockHandle = await fsp.open(lockPath, "wx");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      await removeStaleJsonMutationLock(lockPath, staleLockMs);
       if (Date.now() - startedAt >= timeoutMs) {
         throw new Error(`Timed out waiting for JSON mutation lock: ${lockPath}`);
       }
@@ -116,18 +113,6 @@ export async function withJsonFileMutationLock<T>(
       if (err.code !== "ENOENT") throw err;
     });
   }
-}
-
-async function removeStaleJsonMutationLock(lockPath: string, staleLockMs: number): Promise<void> {
-  if (staleLockMs <= 0) return;
-  const lockStat = await fsp.stat(lockPath).catch((err: NodeJS.ErrnoException) => {
-    if (err.code === "ENOENT") return undefined;
-    throw err;
-  });
-  if (!lockStat || Date.now() - lockStat.mtimeMs < staleLockMs) return;
-  await fsp.unlink(lockPath).catch((err: NodeJS.ErrnoException) => {
-    if (err.code !== "ENOENT") throw err;
-  });
 }
 
 /**

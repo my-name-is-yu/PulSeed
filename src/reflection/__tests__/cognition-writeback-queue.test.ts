@@ -80,6 +80,59 @@ describe("cognition writeback queue", () => {
     }]);
   });
 
+  it("serializes concurrent queue enqueues so proposals are not lost", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-concurrent-enqueue-"));
+    const store = new FileCognitionWritebackQueueStore(tempDir);
+    const entries = Array.from({ length: 16 }, (_, index) => createCognitionWritebackQueueEntry({
+      queueEntryId: `queue:writeback:concurrent:${index}`,
+      proposal: proposal({
+        proposal_id: `writeback:concurrent:${index}`,
+      }),
+      createdAt: NOW,
+    }));
+
+    await Promise.all(entries.map((entry) => store.enqueue(entry)));
+
+    expect((await store.list()).map((entry) => entry.queue_entry_id).sort()).toEqual(
+      entries.map((entry) => entry.queue_entry_id).sort(),
+    );
+  });
+
+  it("serializes concurrent queue updates so owner-review states are not lost", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-concurrent-update-"));
+    const store = new FileCognitionWritebackQueueStore(tempDir);
+    const first = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:writeback:update:first",
+      proposal: proposal({ proposal_id: "writeback:update:first" }),
+      createdAt: NOW,
+    });
+    const second = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:writeback:update:second",
+      proposal: proposal({ proposal_id: "writeback:update:second" }),
+      createdAt: NOW,
+    });
+    await store.enqueue(first);
+    await store.enqueue(second);
+
+    await Promise.all([
+      store.update(decideCognitionWritebackQueueEntry({
+        entry: first,
+        decidedAt: "2026-05-14T00:01:00.000Z",
+        decision: { kind: "ready_for_owner_review", reason: "first proposal source refs are current" },
+      })),
+      store.update(decideCognitionWritebackQueueEntry({
+        entry: second,
+        decidedAt: "2026-05-14T00:01:01.000Z",
+        decision: { kind: "ready_for_owner_review", reason: "second proposal source refs are current" },
+      })),
+    ]);
+
+    expect((await store.list()).map((entry) => [entry.queue_entry_id, entry.state]).sort()).toEqual([
+      ["queue:writeback:update:first", "ready_for_owner_review"],
+      ["queue:writeback:update:second", "ready_for_owner_review"],
+    ]);
+  });
+
   it("does not let replay reprocessing erase an owner decision", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-"));
     const store = new FileCognitionWritebackQueueStore(tempDir);

@@ -1,6 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
+import {
+  withJsonFileMutationLock,
+  writeJsonFileAtomic,
+} from "../base/utils/json-io.js";
 import {
   CognitionEventRefSchema,
   CognitionRefSchema,
@@ -196,19 +200,23 @@ export class FileCognitionWritebackQueueStore implements CognitionWritebackQueue
 
   async enqueue(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry> {
     const parsed = CognitionWritebackQueueEntrySchema.parse(entry);
-    const entries = await this.list();
-    const existing = entries.find((candidate) => candidate.queue_entry_id === parsed.queue_entry_id);
-    if (existing) return existing;
-    await this.write([...entries, parsed]);
-    return parsed;
+    return withJsonFileMutationLock(this.path(), async () => {
+      const entries = await this.list();
+      const existing = entries.find((candidate) => candidate.queue_entry_id === parsed.queue_entry_id);
+      if (existing) return existing;
+      await this.write([...entries, parsed]);
+      return parsed;
+    });
   }
 
   async update(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry> {
     const parsed = CognitionWritebackQueueEntrySchema.parse(entry);
-    const entries = await this.list();
-    const next = [...entries.filter((existing) => existing.queue_entry_id !== parsed.queue_entry_id), parsed];
-    await this.write(next);
-    return parsed;
+    return withJsonFileMutationLock(this.path(), async () => {
+      const entries = await this.list();
+      const next = [...entries.filter((existing) => existing.queue_entry_id !== parsed.queue_entry_id), parsed];
+      await this.write(next);
+      return parsed;
+    });
   }
 
   async list(): Promise<CognitionWritebackQueueEntry[]> {
@@ -223,8 +231,7 @@ export class FileCognitionWritebackQueueStore implements CognitionWritebackQueue
   }
 
   private async write(entries: CognitionWritebackQueueEntry[]): Promise<void> {
-    await mkdir(dirname(this.path()), { recursive: true });
-    await writeFile(this.path(), `${JSON.stringify(entries, null, 2)}\n`, "utf8");
+    await writeJsonFileAtomic(this.path(), entries);
   }
 
   private path(): string {
