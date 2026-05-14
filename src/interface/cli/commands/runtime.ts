@@ -46,6 +46,7 @@ import { getCliLogger } from "../cli-logger.js";
 import { formatOperationError } from "../utils.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./operator-binding-status.js";
+import { cmdRuntimeCognitionReplay } from "./cognition-replay.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -453,7 +454,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay");
     return 1;
   }
 
@@ -674,6 +675,10 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     }
   }
 
+  if (runtimeSubcommand === "cognition-replay") {
+    return await cmdRuntimeCognitionReplay(stateManager, args.slice(1));
+  }
+
   if (runtimeSubcommand === "proactive-feedback") {
     const values = parseProactiveFeedbackArgs(args.slice(1));
     if (!values.interventionId || !values.outcome) {
@@ -737,7 +742,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay");
   return 1;
 }
 
