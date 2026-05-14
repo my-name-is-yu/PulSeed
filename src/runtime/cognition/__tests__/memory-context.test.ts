@@ -222,6 +222,27 @@ describe("cognition memory context", () => {
       expect(nextTurn.included.map((source) => source.excerpt)).toEqual(["Prefer concise gateway replies."]);
       expect(JSON.stringify(nextTurn)).not.toContain("Prefer expansive gateway replies.");
       expect(nextTurn.included[0]?.surface_projection_ref).toContain("chat_3Aevent_3A2");
+
+      const cognition = await new CompanionCognitionService({ memoryPort }).evaluateTurn(chatInput({
+        cognition_id: "cognition:chat:memory-correction-next",
+        memory_context_request: {
+          ...chatInput().memory_context_request,
+          request_id: "memory-request:chat:correction-next",
+          query_ref: {
+            ...chatInput().memory_context_request.query_ref,
+            ref: "chat:event:3",
+            source_epoch: "turn:3",
+          },
+        },
+      }));
+      expect(cognition.relationship_state.included).toEqual([expect.objectContaining({
+        role: "preference",
+        allowed_surface_use: "tone_adaptation",
+      })]);
+      expect(cognition.relationship_state.relationship_refs.map((source) => source.excerpt)).toEqual([
+        "Prefer concise gateway replies.",
+      ]);
+      expect(JSON.stringify(cognition.relationship_state)).not.toContain("Prefer expansive gateway replies.");
     } finally {
       fs.rmSync(baseDir, { recursive: true, force: true });
     }

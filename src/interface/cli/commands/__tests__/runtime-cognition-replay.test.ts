@@ -74,6 +74,9 @@ async function seedCognitionReplay(baseDir: string): Promise<void> {
       },
       relationship_state: {
         projection_id: "relationship:diagnostic",
+        included: [],
+        withheld: [],
+        posture: "neutral",
         relationship_refs: [{
           memory_ref: eventRef("profile:memory:raw", "profile"),
           source_kind: "episodic",
@@ -87,6 +90,7 @@ async function seedCognitionReplay(baseDir: string): Promise<void> {
         withheld_memory_refs: [],
         conflict_refs: [],
         overreach_risk: "unknown",
+        normal_surface_debug_visible: false,
         ordinary_surface_debug_visible: false,
       },
       selected_intention: null,

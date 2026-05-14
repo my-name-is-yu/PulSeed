@@ -18,6 +18,14 @@ import {
   type CompanionCharacterSurfacePolicy,
 } from "../../runtime/decision/companion-character-policy-projection.js";
 import type { CognitionPolicyRef } from "../../runtime/decision/companion-decision-contract.js";
+import {
+  RelationshipStateProjectionSchema,
+  type RelationshipProjectionSourceRef,
+  type RelationshipStateProjection,
+  type RelationshipSurfaceAllowedUse,
+  type RelationshipSurfaceFactRole,
+  type RelationshipSurfaceRepairPath,
+} from "../../runtime/cognition/contracts.js";
 
 export const CHAT_TURN_CONTEXT_SCHEMA_VERSION = "chat-turn-context-v1";
 
@@ -70,6 +78,7 @@ export interface ChatTurnModelVisibleContext {
     actor: PublicRuntimeActor | null;
   };
   characterPolicy: PublicCharacterPolicyContext | null;
+  relationshipSurface: PublicRelationshipSurfaceContext | null;
   tools: {
     activatedTools: string[];
     selectedRoute: string | null;
@@ -130,6 +139,7 @@ export interface ChatTurnContextInput {
   setupSecretIntake: SetupSecretIntakeResult | null;
   activatedTools: Set<string>;
   characterPolicy?: PublicCharacterPolicyContext | null;
+  relationshipSurface?: PublicRelationshipSurfaceContext | null;
 }
 
 export interface ChatTurnContextSnapshot {
@@ -164,6 +174,35 @@ export interface PublicCharacterPolicyContext {
     characterCanRelaxApprovalBoundary: false;
     characterCanGrantAutonomy: false;
   };
+}
+
+export interface PublicRelationshipSurfaceContext {
+  projectionRef: string;
+  surfaceProjectionRef: RelationshipProjectionSourceRef | null;
+  coreMemoryProjectionRef: RelationshipProjectionSourceRef | null;
+  characterPolicyRef: RelationshipProjectionSourceRef | null;
+  posture: RelationshipStateProjection["posture"];
+  overreachRisk: RelationshipStateProjection["overreach_risk"];
+  normalSurfaceDebugVisible: false;
+  included: PublicRelationshipSurfaceFact[];
+  withheld: PublicRelationshipWithheldFact[];
+}
+
+interface PublicRelationshipSurfaceFact {
+  role: RelationshipSurfaceFactRole;
+  allowedSurfaceUse: RelationshipSurfaceAllowedUse;
+  userReadableReason: string;
+  confidence: number;
+  sensitivity: "public" | "private";
+  repairPaths: RelationshipSurfaceRepairPath[];
+}
+
+interface PublicRelationshipWithheldFact {
+  role: RelationshipSurfaceFactRole;
+  withheldReason: string;
+  userReadableReason: string;
+  sensitivity: "public" | "private" | "sensitive" | "redacted";
+  repairPaths: RelationshipSurfaceRepairPath[];
 }
 
 interface PublicSetupDialogueState {
@@ -261,6 +300,7 @@ export function buildChatTurnContext(input: ChatTurnContextInput): ChatTurnConte
         actor: toPublicActor(runtimeControlContext?.actor ?? null),
       },
       characterPolicy: input.characterPolicy ?? null,
+      relationshipSurface: input.relationshipSurface ?? null,
       tools: {
         activatedTools: [...input.activatedTools].sort(),
         selectedRoute: route?.kind ?? null,
@@ -308,6 +348,7 @@ export function renderModelVisibleTurnContext(context: ChatTurnModelVisibleConte
     `- approval_mode: ${context.runtime.approvalMode}`,
     `- reply_target: ${formatReplyTarget(context.runtime.replyTarget)}`,
     ...renderCharacterPolicyContext(context.characterPolicy),
+    ...renderRelationshipSurfaceContext(context.relationshipSurface),
     `- activated_tools: ${context.tools.activatedTools.length > 0 ? context.tools.activatedTools.join(", ") : "none"}`,
     `- setup_dialogue: ${context.outstanding.setupDialogue ? `${context.outstanding.setupDialogue.channel}:${context.outstanding.setupDialogue.state}` : "none"}`,
     `- run_spec_confirmation: ${context.outstanding.runSpecConfirmation ? `${context.outstanding.runSpecConfirmation.state}:${context.outstanding.runSpecConfirmation.specId}` : "none"}`,
@@ -346,6 +387,36 @@ export function toPublicCharacterPolicyContext(
       characterCanRelaxApprovalBoundary: parsed.decision_policy.character_can_relax_approval_boundary,
       characterCanGrantAutonomy: parsed.decision_policy.character_can_grant_autonomy,
     },
+  };
+}
+
+export function toPublicRelationshipSurfaceContext(
+  projection: RelationshipStateProjection
+): PublicRelationshipSurfaceContext {
+  const parsed = RelationshipStateProjectionSchema.parse(projection);
+  return {
+    projectionRef: parsed.projection_id,
+    surfaceProjectionRef: parsed.surface_projection_ref ?? null,
+    coreMemoryProjectionRef: parsed.core_memory_projection_ref ?? null,
+    characterPolicyRef: parsed.character_policy_ref ?? null,
+    posture: parsed.posture,
+    overreachRisk: parsed.overreach_risk,
+    normalSurfaceDebugVisible: parsed.normal_surface_debug_visible,
+    included: parsed.included.map((fact) => ({
+      role: fact.role,
+      allowedSurfaceUse: fact.allowed_surface_use,
+      userReadableReason: fact.user_readable_reason,
+      confidence: fact.confidence,
+      sensitivity: fact.sensitivity,
+      repairPaths: fact.repair_paths,
+    })),
+    withheld: parsed.withheld.map((fact) => ({
+      role: fact.role,
+      withheldReason: fact.withheld_reason,
+      userReadableReason: fact.user_readable_reason,
+      sensitivity: fact.sensitivity,
+      repairPaths: fact.repair_paths,
+    })),
   };
 }
 
@@ -440,6 +511,31 @@ function renderCharacterPolicyContext(policy: PublicCharacterPolicyContext | nul
     `- character_can_relax_approval_boundary: ${policy.authority.characterCanRelaxApprovalBoundary}`,
     `- character_can_grant_autonomy: ${policy.authority.characterCanGrantAutonomy}`,
   ];
+}
+
+function renderRelationshipSurfaceContext(surface: PublicRelationshipSurfaceContext | null): string[] {
+  if (!surface) return ["- relationship_surface: none"];
+  return [
+    `- relationship_surface_ref: ${surface.projectionRef}`,
+    `- relationship_surface_projection_ref: ${formatRelationshipSourceRef(surface.surfaceProjectionRef)}`,
+    `- relationship_core_memory_projection_ref: ${formatRelationshipSourceRef(surface.coreMemoryProjectionRef)}`,
+    `- relationship_character_policy_ref: ${formatRelationshipSourceRef(surface.characterPolicyRef)}`,
+    `- relationship_posture: ${surface.posture}`,
+    `- relationship_overreach_risk: ${surface.overreachRisk}`,
+    `- relationship_normal_surface_debug_visible: ${surface.normalSurfaceDebugVisible}`,
+    `- relationship_included_count: ${surface.included.length}`,
+    ...surface.included.map((fact, index) =>
+      `  - relationship_included[${index}]: role=${fact.role}; use=${fact.allowedSurfaceUse}; confidence=${fact.confidence.toFixed(2)}; sensitivity=${fact.sensitivity}; repair=${fact.repairPaths.join(",")}; reason=${preview(fact.userReadableReason, 300)}`
+    ),
+    `- relationship_withheld_count: ${surface.withheld.length}`,
+    ...surface.withheld.map((fact, index) =>
+      `  - relationship_withheld[${index}]: role=${fact.role}; reason_code=${fact.withheldReason}; sensitivity=${fact.sensitivity}; repair=${fact.repairPaths.join(",")}; reason=${preview(fact.userReadableReason, 300)}`
+    ),
+  ];
+}
+
+function formatRelationshipSourceRef(ref: RelationshipProjectionSourceRef | null): string {
+  return ref ? `${ref.kind}:${ref.ref}` : "none";
 }
 
 function previewJson(value: unknown, maxChars: number): string {

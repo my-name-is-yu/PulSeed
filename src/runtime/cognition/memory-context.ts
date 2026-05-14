@@ -16,10 +16,12 @@ import type { CognitionProjectionCallerPathKind } from "../decision/companion-de
 import {
   CognitionEventRefSchema,
   CognitionMemoryResultSchema,
+  CognitionRefSchema,
   type CognitionMemoryRequest,
   type CognitionMemoryResult,
   type CognitionMemorySource,
   type CognitionRequestedMemoryUse,
+  type RelationshipSurfaceFactRole,
 } from "./contracts.js";
 import type { CognitionMemoryPort } from "./ports.js";
 
@@ -66,6 +68,14 @@ export function cognitionMemoryResultFromCoreProjection(input: {
   });
   return CognitionMemoryResultSchema.parse({
     request_id: input.requestId,
+    surface_projection_ref: CognitionRefSchema.parse({
+      kind: "surface_projection",
+      ref: input.projection.surface_ref,
+    }),
+    core_memory_projection_ref: CognitionRefSchema.parse({
+      kind: "memory_projection",
+      ref: input.projection.projection_id,
+    }),
     included: input.projection.included_entries.map((entry): CognitionMemorySource => ({
       memory_ref: {
         ref: entry.source_ref.memory_id,
@@ -81,7 +91,9 @@ export function cognitionMemoryResultFromCoreProjection(input: {
       sensitivity: entry.source_ref.sensitivity === "public" ? "public" : "private",
       lifecycle: entry.source_ref.lifecycle === "matured" ? "matured" : "active",
       correction_state: "current",
+      confidence: confidenceForMemorySource(entry.source_ref),
       surface_projection_ref: entry.source_projection_ref,
+      relationship_role: relationshipRoleForMemorySource(entry.source_ref),
       ...(entry.content.state === "available" ? { excerpt: entry.content.excerpt } : {}),
     })),
     withheld: input.projection.restricted_entries.map((entry) => ({
@@ -99,7 +111,9 @@ export function cognitionMemoryResultFromCoreProjection(input: {
       sensitivity: entry.source_ref.sensitivity === "sensitive" ? "sensitive" : "private",
       lifecycle: lifecycleForWithheld(entry),
       correction_state: entry.source_ref.correction_state === "current" ? "current" : "corrected",
+      confidence: confidenceForMemorySource(entry.source_ref),
       surface_projection_ref: entry.source_projection_ref,
+      relationship_role: relationshipRoleForMemorySource(entry.source_ref),
       withheld_reason: withheldReasonFor(entry.restriction_reasons),
     })),
     audit_refs: [auditRef],
@@ -162,6 +176,25 @@ function sourceKindForMemoryRole(role: string): CognitionMemorySource["source_ki
   if (role === "seed") return "episodic";
   if (role === "knowledge") return "semantic";
   return "semantic";
+}
+
+function confidenceForMemorySource(
+  source: CoreCompanionMemoryProjection["included_entries"][number]["source_ref"],
+): number | undefined {
+  const confidence = source.domain_fields["confidence"];
+  return typeof confidence === "number" ? confidence : undefined;
+}
+
+function relationshipRoleForMemorySource(
+  source: CoreCompanionMemoryProjection["included_entries"][number]["source_ref"],
+): RelationshipSurfaceFactRole {
+  const profileKind = source.domain_fields["profile_kind"];
+  if (profileKind === "notification_preference") return "notification_preference";
+  if (source.record_kind === "boundary") return "boundary";
+  if (source.record_kind === "promise" || source.record_kind === "work_commitment") return "promise";
+  if (source.record_kind === "open_tension") return "open_tension";
+  if (source.record_kind === "intervention_policy") return "intervention_policy";
+  return "preference";
 }
 
 function relationshipProfileBindingForCognitionRequest(
