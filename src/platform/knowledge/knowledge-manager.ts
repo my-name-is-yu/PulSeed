@@ -62,6 +62,7 @@ import {
   quarantineAgentMemoryEntries,
   recallAgentMemoryEntries,
   saveAgentMemoryEntry,
+  type AgentMemoryPhysicalDeleteManifest,
 } from "./knowledge-manager-agent-memory.js";
 import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
@@ -506,11 +507,13 @@ export class KnowledgeManager {
   }
 
   /**
-   * Delete an agent memory entry by key.
+   * Physically delete an agent memory entry by key.
+   * This is repair-only and requires an explicit manifest; user-facing memory
+   * operations must use correct/forget/retract so audit history is retained.
    * Returns true if the entry was found and removed, false otherwise.
    */
-  async deleteAgentMemory(key: string): Promise<boolean> {
-    return deleteAgentMemoryEntry(this.agentMemoryHost(), key);
+  async deleteAgentMemory(key: string, manifest?: AgentMemoryPhysicalDeleteManifest): Promise<boolean> {
+    return deleteAgentMemoryEntry(this.agentMemoryHost(), key, manifest);
   }
 
   async correctAgentMemory(input: {
@@ -519,6 +522,9 @@ export class KnowledgeManager {
     reason: string;
     replacementValue?: string;
     replacementKey?: string;
+    replacementTags?: string[];
+    replacementStatus?: "raw" | "compiled";
+    actor?: "user" | "dream_lint" | "runtime_verification" | "manual_tool";
     provenanceRef?: string;
   }): Promise<Awaited<ReturnType<typeof applyAgentMemoryCorrection>>> {
     return applyAgentMemoryCorrection(this.agentMemoryHost(), input);

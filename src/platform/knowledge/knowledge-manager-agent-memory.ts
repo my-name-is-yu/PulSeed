@@ -22,10 +22,20 @@ import {
 } from "../corrections/memory-governance.js";
 import {
   AgentMemoryEntrySchema,
+  AgentMemoryStatusEnum,
 } from "./types/agent-memory.js";
 import type { AgentMemoryEntry, AgentMemoryStatus, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import { cosineSimilarity } from "./embedding-client.js";
 import type { IEmbeddingClient } from "./embedding-client.js";
+
+export const AgentMemoryPhysicalDeleteManifestSchema = z.object({
+  caller: z.literal("memory_repair"),
+  targetKey: z.string().min(1),
+  reason: z.string().min(1),
+  manifestRef: z.string().min(1),
+  approvedAt: z.string().datetime(),
+}).strict();
+export type AgentMemoryPhysicalDeleteManifest = z.infer<typeof AgentMemoryPhysicalDeleteManifestSchema>;
 
 export interface AgentMemoryHost {
   llmClient: ILLMClient;
@@ -194,10 +204,43 @@ export async function listAgentMemoryEntries(
   return results.slice(0, limit);
 }
 
-export async function deleteAgentMemoryEntry(host: AgentMemoryHost, key: string): Promise<boolean> {
+export async function deleteAgentMemoryEntry(
+  host: AgentMemoryHost,
+  key: string,
+  manifest?: AgentMemoryPhysicalDeleteManifest
+): Promise<boolean> {
+  if (!manifest) {
+    throw new Error("physical agent memory deletion requires an explicit memory_repair manifest");
+  }
+  const parsedManifest = AgentMemoryPhysicalDeleteManifestSchema.parse(manifest);
+  if (parsedManifest.targetKey !== key) {
+    throw new Error("physical agent memory deletion manifest targetKey does not match the requested key");
+  }
+
   const store = await host.loadAgentMemoryStore();
   const idx = store.entries.findIndex((e) => e.key === key);
   if (idx < 0) return false;
+  const target = store.entries[idx]!;
+  store.corrections.push(MemoryCorrectionEntrySchema.parse({
+    correction_id: `agent-memory-physical-delete-${randomUUID()}`,
+    target_ref: agentMemoryRef(target.id),
+    correction_kind: "forgotten",
+    replacement_ref: null,
+    actor: "manual_tool",
+    reason: parsedManifest.reason,
+    created_at: parsedManifest.approvedAt,
+    provenance: {
+      source: "manual_tool",
+      source_ref: parsedManifest.manifestRef,
+      confidence: 1,
+      note: "Repair-only physical delete manifest retained for audit.",
+    },
+    audit: {
+      status: "destructive_delete_requested",
+      retained_for_audit: true,
+      destructive_delete_approved_at: parsedManifest.approvedAt,
+    },
+  }));
   store.entries.splice(idx, 1);
   await host.saveAgentMemoryStore(store);
   return true;
@@ -252,6 +295,8 @@ export interface AgentMemoryCorrectionInput {
   reason: string;
   replacementValue?: string;
   replacementKey?: string;
+  replacementTags?: string[];
+  replacementStatus?: Extract<AgentMemoryStatus, "raw" | "compiled">;
   actor?: MemoryCorrectionEntry["actor"];
   createdAt?: string;
   provenanceRef?: string;
@@ -302,13 +347,15 @@ export async function applyAgentMemoryCorrection(
       id: randomUUID(),
       key: input.replacementKey ?? `${target.key}.corrected.${now.replace(/[^0-9]/g, "").slice(0, 14)}`,
       value: input.replacementValue,
-      tags: target.tags,
+      tags: input.replacementTags ?? target.tags,
       category: target.category,
       memory_type: target.memory_type,
       governance: target.governance,
       provenance: target.provenance,
       verification_status: target.verification_status,
-      status: target.status === "compiled" ? "compiled" : "raw",
+      status: input.replacementStatus
+        ? AgentMemoryStatusEnum.extract(["raw", "compiled"]).parse(input.replacementStatus)
+        : target.status === "compiled" ? "compiled" : "raw",
       supersedes_memory_id: target.id,
       created_at: now,
       updated_at: now,

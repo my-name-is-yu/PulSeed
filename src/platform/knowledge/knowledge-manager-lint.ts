@@ -219,18 +219,21 @@ export async function lintAgentMemory(opts: {
         break;
       }
       case "staleness": {
-        // Mark stale entries as raw so they re-enter consolidation pipeline:
-        // delete existing entry + re-save with "needs-reverification" tag (new entries default to "raw")
+        // Mark stale entries as corrected and re-save an auditable raw
+        // replacement so the fact re-enters verification without physical delete.
         for (const id of finding.entry_ids) {
           const entry = entriesById.get(id);
           if (entry) {
-            await km.deleteAgentMemory(entry.key);
-            await km.saveAgentMemory({
-              key: entry.key,
-              value: entry.value,
-              tags: [...entry.tags, "needs-reverification"],
-              category: entry.category,
-              memory_type: entry.memory_type,
+            await km.correctAgentMemory({
+              targetId: entry.id,
+              correctionKind: "corrected",
+              reason: finding.description,
+              replacementValue: entry.value,
+              replacementKey: entry.key,
+              replacementTags: [...new Set([...entry.tags, "needs-reverification"])],
+              replacementStatus: "raw",
+              actor: "dream_lint",
+              provenanceRef: "memory_lint:auto_repair:staleness",
             });
             repairsApplied++;
           }

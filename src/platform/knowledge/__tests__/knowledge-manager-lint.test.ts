@@ -30,6 +30,7 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   saveAgentMemory: ReturnType<typeof vi.fn>;
   archiveAgentMemory: ReturnType<typeof vi.fn>;
   deleteAgentMemory: ReturnType<typeof vi.fn>;
+  correctAgentMemory: ReturnType<typeof vi.fn>;
   quarantineAgentMemory: ReturnType<typeof vi.fn>;
 } {
   const listAgentMemory = vi.fn().mockResolvedValue(entries);
@@ -38,6 +39,11 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   );
   const archiveAgentMemory = vi.fn().mockResolvedValue(1);
   const deleteAgentMemory = vi.fn().mockResolvedValue(true);
+  const correctAgentMemory = vi.fn().mockResolvedValue({
+    correction: { correction_id: "correction-1" },
+    target: entries[0] ?? null,
+    replacement: makeEntry({ id: "replacement-id", key: "replacement" }),
+  });
   const quarantineAgentMemory = vi.fn().mockResolvedValue(1);
 
   return {
@@ -46,12 +52,14 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
       saveAgentMemory,
       archiveAgentMemory,
       deleteAgentMemory,
+      correctAgentMemory,
       quarantineAgentMemory,
     } as unknown as KnowledgeManager,
     listAgentMemory,
     saveAgentMemory,
     archiveAgentMemory,
     deleteAgentMemory,
+    correctAgentMemory,
     quarantineAgentMemory,
   };
 }
@@ -289,7 +297,7 @@ describe("lintAgentMemory", () => {
       expect(result.repairs_applied).toBe(1);
     });
 
-    it("staleness: deletes and re-saves with needs-reverification tag", async () => {
+    it("staleness: records a correction-ledger replacement without physical deletion", async () => {
       const stale = makeEntry({
         id: "e1",
         key: "stale-fact",
@@ -299,7 +307,7 @@ describe("lintAgentMemory", () => {
         memory_type: "fact",
       });
       const other = makeEntry({ id: "e2", key: "other-fact" });
-      const { km, deleteAgentMemory, saveAgentMemory } = makeKM([stale, other]);
+      const { km, correctAgentMemory, deleteAgentMemory, saveAgentMemory } = makeKM([stale, other]);
 
       const finding = {
         type: "staleness",
@@ -312,16 +320,21 @@ describe("lintAgentMemory", () => {
 
       const result = await lintAgentMemory({ km, llmCall, autoRepair: true });
 
-      expect(deleteAgentMemory).toHaveBeenCalledWith("stale-fact");
-      expect(saveAgentMemory).toHaveBeenCalledWith(
+      expect(correctAgentMemory).toHaveBeenCalledWith(
         expect.objectContaining({
-          key: "stale-fact",
-          value: "old value",
-          tags: expect.arrayContaining(["important", "needs-reverification"]),
-          category: "work",
-          memory_type: "fact",
+          targetId: "e1",
+          correctionKind: "corrected",
+          reason: "Outdated fact",
+          replacementKey: "stale-fact",
+          replacementValue: "old value",
+          replacementTags: expect.arrayContaining(["important", "needs-reverification"]),
+          replacementStatus: "raw",
+          actor: "dream_lint",
+          provenanceRef: "memory_lint:auto_repair:staleness",
         })
       );
+      expect(deleteAgentMemory).not.toHaveBeenCalled();
+      expect(saveAgentMemory).not.toHaveBeenCalled();
       expect(result.repairs_applied).toBe(1);
     });
 
