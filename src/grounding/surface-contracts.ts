@@ -773,6 +773,12 @@ export function attachSurfaceDependencyRef(
   });
 }
 
+/**
+ * Contract-only Surface runtime admission helper.
+ *
+ * Production caller paths must wire this explicitly before treating the result
+ * as live runtime behavior.
+ */
 export function evaluateSurfaceRuntimeAdmission(
   input: SurfaceRuntimeAdmissionRequestInput
 ): SurfaceRuntimeAdmission {
@@ -1157,6 +1163,12 @@ export type SurfaceMemoryWriteCandidateRevalidationInput = {
   redaction_ref?: string;
 };
 
+/**
+ * Contract-only memory-write revalidation helper for Surface invalidation.
+ *
+ * It returns the fail-closed candidate state that a production caller can
+ * persist later, but does not write owner memory or apply replay mutations.
+ */
 export function revalidateSurfaceMemoryWriteCandidateAfterInvalidation(
   input: SurfaceMemoryWriteCandidateRevalidationInput
 ): SurfaceMemoryWriteCandidateRevalidationResult {
@@ -1257,6 +1269,12 @@ export type SurfacePermissionInvalidationInput = {
   policy_ref?: string;
 };
 
+/**
+ * Contract-only invalidation helper for memory correction events.
+ *
+ * It materializes an invalidation event and blocked admission refs without
+ * mutating owner stores or live runtime state.
+ */
 export function invalidateSurfaceProjectionFromMemoryCorrection(
   input: SurfaceMemoryCorrectionInvalidationInput
 ): SurfaceInvalidationRunResult {

@@ -53,6 +53,7 @@ Usage:
   pulseed runtime budget <id> [--json]  Show one runtime budget
   pulseed runtime evidence <goal-id|run-id> [--json]  Summarize runtime evidence ledger
   pulseed runtime dream-review <run-id> [--json]  Read-only Dream sidecar review for active run
+  pulseed runtime cognition-replay [--view normal|operator|internal] [--json]  Read-only cognition replay refs inspection
   pulseed log --goal <id>              View observation and gap history log
   pulseed tui                          Launch the interactive TUI
   pulseed start --goal <id>            Start daemon mode for one or more goals

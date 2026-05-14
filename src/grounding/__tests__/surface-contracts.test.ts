@@ -977,7 +977,7 @@ describe("SurfaceProjection contract", () => {
   });
 });
 
-describe("SurfaceInvalidation contract", () => {
+describe("SurfaceInvalidation contract-only helpers", () => {
   it("defaults missing and contradictory dependency behavior to fail closed and reruns canonical gates", () => {
     const parsed = SurfaceInvalidationPolicySchema.parse({
       id: "policy-memory-removal",
@@ -1077,7 +1077,7 @@ describe("SurfaceInvalidation contract", () => {
     }).success).toBe(false);
   });
 
-  it("starts from memory deletion and invalidates Surface history plus dependent runtime admissions", () => {
+  it("models memory deletion invalidation without claiming a production runtime caller", () => {
     const dependency = derivedRef("expression_decision");
     const parsed = SurfaceProjectionSchema.parse(projection({
       dependent_refs: {
@@ -1112,7 +1112,7 @@ describe("SurfaceInvalidation contract", () => {
     expect(JSON.stringify(result)).not.toContain("The user prefers concise status reports.");
   });
 
-  it("starts from permission revocation and blocks expression or resume through the same Surface runner", () => {
+  it("models permission revocation readmission without claiming a production runtime caller", () => {
     const expressionRef = derivedRef("expression_decision");
     const resumeRef = derivedRef("session_resume_attempt");
     const parsed = SurfaceProjectionSchema.parse(projection({
@@ -1141,7 +1141,7 @@ describe("SurfaceInvalidation contract", () => {
     expect(result.inspection.excluded_summaries[0]?.blocked_by).toContain("permission");
   });
 
-  it("revalidates pending memory-write candidates after Surface correction before acceptance", () => {
+  it("models memory-write candidate revalidation after Surface correction before acceptance", () => {
     const memoryWriteRef = derivedRef("memory_write_candidate", {
       ref: "memory-write-candidate-1",
       use_class: "memory_write_candidate",
