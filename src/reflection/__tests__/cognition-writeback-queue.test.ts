@@ -28,13 +28,13 @@ afterEach(() => {
   }
 });
 
-function eventRef(ref = "chat:event:1", sourceStore: CognitionSourceStore = "chat_history") {
+function eventRef(ref = "chat:event:1", sourceStore: CognitionSourceStore = "chat_history", sourceEpoch = "turn:1") {
   return {
     ref,
     source_store: sourceStore,
     source_event_type: sourceStore === "runtime_operation" ? "agent_loop_command_result" : "user_input",
     schema_version: 1,
-    source_epoch: "turn:1",
+    source_epoch: sourceEpoch,
     redaction_policy: "metadata_only" as const,
   };
 }
@@ -248,6 +248,35 @@ describe("cognition writeback queue", () => {
       state: "blocked_source_invalid",
       source_state: "deleted_or_tombstoned",
       invalidation_refs: [runtimeRef],
+    }]);
+  });
+
+  it("keeps source state invalidation scoped to the exact event identity", () => {
+    const currentRef = eventRef("shared:event:2", "runtime_operation", "turn:current");
+    const deletedPreviousEpochRef = eventRef("shared:event:2", "runtime_operation", "turn:previous");
+    const entries = evaluateCognitionWritebackReflectionInput({
+      reflectionInput: {
+        schema_version: "cognition-writeback-reflection-input/v1",
+        input_id: "reflection:cognition:exact-source-state",
+        episode_refs: [currentRef],
+        writeback_proposals: [proposal({
+          proposal_id: "writeback:exact-source-ref",
+          source_event_refs: [currentRef],
+        })],
+        tool_trace_refs: [],
+        feedback_refs: [],
+        runtime_authority: false,
+      },
+      evaluatedAt: NOW,
+      sourceStates: {
+        [cognitionWritebackSourceStateKey(deletedPreviousEpochRef)]: "deleted_or_tombstoned",
+      },
+    });
+
+    expect(entries).toMatchObject([{
+      state: "ready_for_owner_review",
+      source_state: "current",
+      invalidation_refs: [],
     }]);
   });
 

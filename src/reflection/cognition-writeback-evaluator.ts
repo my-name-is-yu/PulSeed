@@ -46,7 +46,16 @@ export function evaluateCognitionWritebackReflectionInput(input: {
 
 export function cognitionWritebackSourceStateKey(ref: CognitionEventRef): string {
   const parsed = CognitionEventRefSchema.parse(ref);
-  return `${parsed.source_store}:${parsed.ref}`;
+  return JSON.stringify({
+    ref: parsed.ref,
+    source_store: parsed.source_store,
+    source_event_type: parsed.source_event_type,
+    schema_version: parsed.schema_version,
+    source_epoch: parsed.source_epoch ?? null,
+    high_watermark: parsed.high_watermark ?? null,
+    replay_key: parsed.replay_key ?? null,
+    redaction_policy: parsed.redaction_policy,
+  });
 }
 
 function sourceStateForRef(
