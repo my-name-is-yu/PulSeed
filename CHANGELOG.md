@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.6] - 2026-05-14
+
+### Added
+- Added the local companion-software foundation for capability readiness, admission, action projection, governed memory surfaces, attention agenda/metabolism, resident autonomy, feedback ingestion, resident runtime contracts, and companion cognition audit/replay (#1374, #1375, #1376, #1378, #1379, #1380, #1381, #1382, #1383, #1385, #1519, #1534, #1537, #1546, #1566, #1568, #1932, #1934, #1935, #1936, #1937, #1938, #1939, #1940, #1941, #1942, #1944, #1954, #1955, #1956, #1957, #1958, #1959, #1964, #1968, #1969)
+- Added Seedy presence and direct gateway-chat improvements, including editable channel status projection, Codex-identical gateway chat, direct model/tool routing, first-visible latency instrumentation, and more natural runtime/status wording (#1780, #1784, #1786, #1791, #1798, #1806, #1808, #1863, #1866, #1871, #1876, #1913, #1914, #1915, #1917, #1918, #1922, #1924, #1927, #1931, #1943)
+- Added database-first and typed-state migrations across runtime control, schedules, task/goal state, chat AgentLoop sessions, journal/state stores, knowledge memory, strategy/dream state, reflection reports, learning runtime, and capability dependency state (#1640, #1650, #1675, #1685, #1696, #1707, #1712, #1720, #1744, #1761, #1777, #1804, #1809, #1817, #1824, #1853, #1862, #1868, #1869)
+- Added the redesigned test architecture, real-runner fixtures, schema-ahead traces, golden-trace/replay harnesses, and final first-wave legacy test cleanup (#1945, #1946, #1947, #1948, #1949)
+
+### Changed
+- Released `v0.6.6` as **The prelude to PulSeed's companion era**: a stabilization patch that ships the many fixes and foundation pieces since `v0.6.5` while keeping the larger Doraemon-like companion milestone for a later `v0.7.0`.
+- Reworked the public documentation structure, README, docs map, runtime/status/reference pages, and product positioning so current operating behavior stays separate from future companion-software direction (#1926, #1928, #1933)
+- Removed premature companion cognition abstractions before replacing them with the newer advisory `runtime/cognition` architecture, including the retired `CompanionDecisionFrame` and `MemoryGateway` paths (#1967, #1968, #1969)
+- Bumped the package version to `0.6.6`
+
+### Fixed
+- Fixed many runtime correctness and hardening issues around numeric bounds, timestamp parsing, PID handling, JSON reads, tool schemas, event spool behavior, runtime-control acks, schedule history, process/session snapshots, and daemon/status projections (#1440, #1441, #1442, #1448, #1449, #1460, #1472, #1474, #1477, #1480, #1488, #1490, #1500, #1501, #1502, #1503, #1507, #1517, #1520, #1551, #1552, #1585, #1587, #1603, #1629, #1630, #1631, #1632, #1634, #1705, #1763, #1764, #1807, #1810, #1831, #1858, #1884, #1885, #1888, #1889, #1890, #1891, #1892, #1893, #1894, #1895, #1896, #1897, #1898, #1899, #1900, #1901, #1902, #1903, #1904, #1905, #1906)
+- Fixed gateway and chat regressions around buffering, runtime-control routing, fallback streaming, progress visibility, self-protected workspace read tools, post-final typing, and direct-chat latency (#1871, #1876, #1913, #1914, #1915, #1916, #1917, #1918, #1922, #1924, #1925, #1927, #1929, #1931)
+- Fixed memory, profile, Surface, and governance behavior around stale or deleted audit records, inactive memory exports, profile grounding redaction, Surface admission/invalidation, relationship Surface routing, correction-safe grounding, and cognition replay/writeback persistence (#1440, #1446, #1453, #1519, #1527, #1534, #1537, #1546, #1549, #1938, #1944, #1967, #1968, #1969)
+
 ## [0.6.5] - 2026-05-07
 
 ### Added
