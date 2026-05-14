@@ -342,12 +342,16 @@ export function createToolAcquisitionApprovalEnvelope(input: {
 export function validateToolAcquisitionApproval(input: {
   proposal: CandidateToolAcquisition;
   envelope: ToolAcquisitionApprovalEnvelope;
+  approvalKind: ToolAcquisitionApprovalEnvelope["approval_kind"];
   now: string;
 }): ToolAcquisitionApprovalValidation {
   const proposal = CandidateToolAcquisitionSchema.parse(input.proposal);
   const envelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.envelope);
   if (envelope.proposal_ref !== proposal.candidate_id) {
     return approvalValidation(false, "approval proposal ref does not match acquisition proposal");
+  }
+  if (envelope.approval_kind !== input.approvalKind) {
+    return approvalValidation(false, "approval kind does not match requested acquisition step");
   }
   if (envelope.proposal_fingerprint !== computeAcquisitionProposalFingerprint(proposal)) {
     return approvalValidation(false, "approval proposal fingerprint is stale");

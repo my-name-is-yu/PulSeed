@@ -137,15 +137,27 @@ describe("tool acquisition proposals", () => {
     expect(validateToolAcquisitionApproval({
       proposal,
       envelope,
+      approvalKind: "install_or_enable_code",
       now: NOW,
     })).toMatchObject({ valid: true });
     expect(validateToolAcquisitionApproval({
       proposal: modified,
       envelope,
+      approvalKind: "install_or_enable_code",
       now: NOW,
     })).toMatchObject({
       valid: false,
       reason: "approval proposal fingerprint is stale",
+      runtime_authority: false,
+    });
+    expect(validateToolAcquisitionApproval({
+      proposal,
+      envelope,
+      approvalKind: "credential_use",
+      now: NOW,
+    })).toMatchObject({
+      valid: false,
+      reason: "approval kind does not match requested acquisition step",
       runtime_authority: false,
     });
   });

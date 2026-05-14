@@ -313,6 +313,22 @@ describe("proactive policy state", () => {
     expect(decideProactiveThreshold({
       state,
       thresholdInput: thresholdInput({
+        reversibility: "easy",
+        side_effect_profile: "read",
+        privacy_profile: "external_service",
+        requested_delivery_kind: "prepare",
+        prepared_artifact_ref: { kind: "artifact", ref: "prep:external" },
+      }),
+      candidateCreatedAt: "2026-05-14T00:01:00.000Z",
+    })).toMatchObject({
+      requested_delivery_kind: "prepare",
+      allowed_delivery_kind: "suggest",
+      downgrade_reasons: ["prepare_requires_local_reversible_current_boundary"],
+    });
+
+    expect(decideProactiveThreshold({
+      state,
+      thresholdInput: thresholdInput({
         expected_user_value: 0.75,
         confidence: 0.75,
         interruption_cost: 0.5,

@@ -450,6 +450,7 @@ function safetyDeliveryCap(
       input.operation_boundary === "allowed"
       && (input.reversibility === "easy" || input.reversibility === "moderate")
       && (input.side_effect_profile === "read" || input.side_effect_profile === "local_write")
+      && input.privacy_profile !== "external_service"
     )
   ) {
     downgradeReasons.push("prepare_requires_local_reversible_current_boundary");
