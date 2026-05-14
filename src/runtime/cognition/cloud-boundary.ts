@@ -153,6 +153,7 @@ export function evaluateCloudBoundaryForCognition(input: {
   contextRefs?: CognitionEventRef[];
   memorySources?: CognitionMemorySource[];
   cloudComputeRequest?: CloudComputeRequest;
+  evaluatedAt?: string;
   currentProviderPolicyRef?: CognitionRef;
   currentTargetEpoch?: string;
   currentPayloadFingerprint?: string;
@@ -166,6 +167,7 @@ export function evaluateCloudBoundaryForCognition(input: {
     : undefined;
   const staleReasons = cloudComputeRequest ? staleCloudRequestReasons({
     request: cloudComputeRequest,
+    evaluatedAt: input.evaluatedAt ?? new Date().toISOString(),
     currentProviderPolicyRef: input.currentProviderPolicyRef,
     currentTargetEpoch: input.currentTargetEpoch,
     currentPayloadFingerprint: input.currentPayloadFingerprint,
@@ -333,6 +335,7 @@ function blockedReasonForMemorySource(source: CognitionMemorySource): string | n
 
 function staleCloudRequestReasons(input: {
   request: CloudComputeRequest;
+  evaluatedAt: string;
   currentProviderPolicyRef?: CognitionRef;
   currentTargetEpoch?: string;
   currentPayloadFingerprint?: string;
@@ -340,6 +343,9 @@ function staleCloudRequestReasons(input: {
   currentInvalidationRefs: CognitionRef[];
 }): string[] {
   const reasons: string[] = [];
+  if (Date.parse(input.evaluatedAt) > Date.parse(input.request.expires_at)) {
+    reasons.push("cloud_request_expired");
+  }
   if (
     input.currentProviderPolicyRef
     && !sameRef(input.currentProviderPolicyRef, input.request.provider_policy_ref)

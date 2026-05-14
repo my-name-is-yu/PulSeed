@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { analyzeForeignPluginManifest } from "../../foreign-plugins/compatibility.js";
 import {
+  CandidateToolAcquisitionSchema,
   CredentialRequirementSchema,
   McpServerAcquisitionProposalSchema,
   ToolAcquisitionLifecycleRecordSchema,
   adaptAcquisitionToRuntime,
   candidateToolAcquisitionFromForeignPluginCompatibility,
+  computeAcquisitionProposalFingerprint,
   createCandidateToolAcquisition,
   createToolAcquisitionApprovalEnvelope,
   renderToolAcquisitionSurfaceProjection,
@@ -146,6 +148,20 @@ describe("tool acquisition proposals", () => {
       reason: "approval proposal fingerprint is stale",
       runtime_authority: false,
     });
+  });
+
+  it("canonicalizes undefined optional proposal fields before fingerprinting", () => {
+    const proposal = baseAcquisition();
+    const withUndefined = CandidateToolAcquisitionSchema.parse({
+      ...proposal,
+      manifest_ref: undefined,
+      manifest_digest: undefined,
+      capability_operation_contract_ref: undefined,
+    });
+    const persistedRoundTrip = CandidateToolAcquisitionSchema.parse(JSON.parse(JSON.stringify(withUndefined)));
+
+    expect(computeAcquisitionProposalFingerprint(withUndefined))
+      .toBe(computeAcquisitionProposalFingerprint(persistedRoundTrip));
   });
 
   it("requires declarative credentials and never stores or projects secret material", () => {

@@ -38,6 +38,7 @@ function cloudRequest(input: {
   payloadFingerprint?: string;
   providerPolicyRef?: { kind: string; ref: string };
   dispatchNonceRef?: { kind: string; ref: string };
+  expiresAt?: string;
 } = {}) {
   const purpose = input.purpose ?? "chat_reply";
   const contextRefs = input.contextRefs ?? [eventRef()];
@@ -80,7 +81,7 @@ function cloudRequest(input: {
     invalidation_refs: [{ kind: "memory_invalidation", ref: "invalidation:1" }],
     retention_expectation: "zero_retention_contract",
     user_visible_summary: "Send the approved redacted summary to the configured model provider.",
-    expires_at: NOW,
+    expires_at: input.expiresAt ?? "2099-01-01T00:00:00.000Z",
   });
 }
 
@@ -185,7 +186,7 @@ describe("Companion cognition contracts", () => {
   });
 
   it("treats cloud compute as an authorization-bearing external service request", () => {
-    const cloud = cloudRequest();
+    const cloud = cloudRequest({ expiresAt: NOW });
     const request = createCloudComputeAuthorizationRequest({
       requestId: "auth:cloud:1",
       requestFingerprint: "fingerprint:cloud:1",
@@ -376,6 +377,10 @@ describe("Companion cognition contracts", () => {
       {
         name: "payload_invalidated",
         input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:1" }] },
+      },
+      {
+        name: "cloud_request_expired",
+        input: { evaluatedAt: "2099-01-01T00:00:00.001Z" },
       },
     ];
 

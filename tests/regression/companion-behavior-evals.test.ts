@@ -272,7 +272,7 @@ describe("companion behavior eval contract", () => {
       invalidation_refs: [],
       retention_expectation: "zero_retention_contract",
       user_visible_summary: "Send only the admitted caller-path summary to the provider.",
-      expires_at: NOW,
+      expires_at: "2099-01-01T00:00:00.000Z",
     });
 
     for (const callerPath of ["chat_user_turn", "long_running_task_turn", "gui_gateway_projection"] as const) {
