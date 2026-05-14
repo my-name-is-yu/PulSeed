@@ -51,12 +51,15 @@ export function createReflectionInputFromCognitionReplay(input: {
   toolTraceRefs?: CognitionEventRef[];
   feedbackRefs?: CognitionEventRef[];
 }): CognitionWritebackReflectionInput {
+  const inferredToolTraceRefs = input.record.event_refs.filter((ref) =>
+    ref.source_store === "runtime_operation" && ref.source_event_type === "agent_loop_command_result"
+  );
   return CognitionWritebackReflectionInputSchema.parse({
     schema_version: "cognition-writeback-reflection-input/v1",
     input_id: input.inputId,
     episode_refs: input.record.event_refs,
     writeback_proposals: input.record.stable_output?.memory_writeback ?? [],
-    tool_trace_refs: input.toolTraceRefs ?? [],
+    tool_trace_refs: input.toolTraceRefs ?? inferredToolTraceRefs,
     feedback_refs: input.feedbackRefs ?? [],
     runtime_authority: false,
   });

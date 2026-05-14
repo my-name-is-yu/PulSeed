@@ -11,7 +11,7 @@ import type {
 } from "./agent-loop-model.js";
 import { BoundedAgentLoopRunner } from "./bounded-agent-loop-runner.js";
 import { createAgentLoopSession, type AgentLoopSession } from "./agent-loop-session.js";
-import type { AgentLoopResult } from "./agent-loop-result.js";
+import type { AgentLoopCommandResult, AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
 import { AgentLoopContextAssembler, type SoilPrefetchQuery, type SoilPrefetchResult } from "./agent-loop-context-assembler.js";
 import { buildTaskAgentLoopTurnContext } from "./task-agent-loop-context.js";
@@ -21,7 +21,6 @@ import {
   type TaskAgentLoopOutput,
 } from "./task-agent-loop-result.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
-import type { AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 import { isTaskRelevantVerificationCommand } from "./task-agent-loop-verification.js";
 import {
   prepareTaskAgentLoopWorkspace,
@@ -31,9 +30,19 @@ import type { ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import {
   CompanionCognitionService,
+  FileCognitionAuditSink,
+  InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
+  type CognitionEventRef,
+  type CognitionRef,
+  type CognitionReplayRecord,
   type CompanionCognitionOutput,
 } from "../../../runtime/cognition/index.js";
+import {
+  FileCognitiveReplayIndexStore,
+  createCognitiveReplayIndexEntry,
+  type CognitiveReplayIndexEntry,
+} from "../../../runtime/visibility/index.js";
 
 export interface TaskAgentLoopRunnerDeps {
   boundedRunner: BoundedAgentLoopRunner;
@@ -92,7 +101,7 @@ export class TaskAgentLoopRunner {
     let finalizationInput = { success: false, changedFiles: [] as string[] };
     let finalResult: AgentLoopResult<TaskAgentLoopOutput> | null = null;
     let runError: unknown = null;
-    let cognitionOutput: CompanionCognitionOutput | undefined;
+    let cognitionAudit: TaskAgentLoopCognitionAudit | undefined;
     try {
       const executionPolicy = this.deps.defaultToolCallContext?.executionPolicy
         ?? this.deps.defaultExecutionPolicy;
@@ -104,12 +113,6 @@ export class TaskAgentLoopRunner {
         soilPrefetch: this.deps.soilPrefetch,
         trustProjectInstructions: executionPolicy?.trustProjectInstructions,
       });
-      cognitionOutput = await evaluateTaskAgentLoopCognition({
-        task: input.task,
-        cwd: assembled.cwd,
-        phaseRef: "task-agent-loop:assemble",
-        baseDir: this.cognitionMemoryBaseDir(),
-      }).catch(() => undefined);
       const turn = buildTaskAgentLoopTurnContext({
         task: input.task,
         artifactGoal: input.artifactGoal,
@@ -131,6 +134,18 @@ export class TaskAgentLoopRunner {
         abortSignal: input.abortSignal,
         role: input.role,
       });
+      const cognitionAttempt = {
+        sessionId: session.sessionId,
+        traceId: session.traceId,
+        turnId: turn.turnId,
+      };
+      cognitionAudit = await evaluateTaskAgentLoopCognition({
+        task: input.task,
+        cwd: assembled.cwd,
+        phaseRef: "task-agent-loop:pre-run",
+        baseDir: this.cognitionMemoryBaseDir(),
+        attempt: cognitionAttempt,
+      }).catch(() => undefined);
       const result = await this.deps.boundedRunner.run(turn);
       const success = result.success && collectTaskAgentLoopNotExecutedBlockers(result).length === 0;
       finalizationInput = {
@@ -151,6 +166,15 @@ export class TaskAgentLoopRunner {
         modelInfo.capabilities.toolCalling === false &&
         result.changedFiles.length > 0 &&
         !hasPulSeedObservedRuntimeVerification;
+      cognitionAudit = await evaluateTaskAgentLoopCognition({
+        task: input.task,
+        cwd: assembled.cwd,
+        phaseRef: "task-agent-loop:post-run",
+        baseDir: this.cognitionMemoryBaseDir(),
+        attempt: cognitionAttempt,
+        commandResults,
+      }).catch(() => cognitionAudit);
+      const cognitionOutput = cognitionAudit?.output;
       finalResult = {
         ...result,
         success,
@@ -158,6 +182,8 @@ export class TaskAgentLoopRunner {
         activeBudgetMs: turn.budget.maxWallClockMs,
         requiresPostVerificationBeforeSuccessLedger,
         ...(cognitionOutput ? { cognitionOutput } : {}),
+        ...(cognitionAudit?.replayRecord ? { cognitionReplayRecord: cognitionAudit.replayRecord } : {}),
+        ...(cognitionAudit?.replayIndexEntry ? { cognitionReplayIndexEntry: cognitionAudit.replayIndexEntry } : {}),
       };
     } catch (error) {
       runError = error;
@@ -184,29 +210,46 @@ export class TaskAgentLoopRunner {
   }
 }
 
+interface TaskAgentLoopCognitionAudit {
+  output: CompanionCognitionOutput;
+  replayRecord?: CognitionReplayRecord;
+  replayIndexEntry?: CognitiveReplayIndexEntry;
+}
+
 async function evaluateTaskAgentLoopCognition(input: {
   task: Task;
   cwd: string;
   phaseRef: string;
   baseDir: string;
-}): Promise<CompanionCognitionOutput> {
-  const cognitionId = `cognition:task:${input.task.id}`;
-  const eventRef = {
-    ref: input.task.id,
-    source_store: "runtime_operation" as const,
-    source_event_type: "task_agent_loop_context",
-    schema_version: 1,
-    source_epoch: input.task.started_at ?? input.task.created_at ?? input.task.id,
-    redaction_policy: "metadata_only" as const,
+  attempt: {
+    sessionId: string;
+    traceId: string;
+    turnId: string;
   };
-  return new CompanionCognitionService({
+  commandResults?: AgentLoopCommandResult[];
+}): Promise<TaskAgentLoopCognitionAudit> {
+  const cognitionId = taskCognitionId(input);
+  const eventRef = taskCognitionEventRef(input.task);
+  const toolTraceEventRefs = taskCognitionToolTraceEventRefs(input);
+  const toolTraceRefs = toolTraceEventRefs.map((ref) => ({
+    kind: "agent_loop_command_result",
+    ref: ref.ref,
+  }));
+  const approvalRefs = taskCognitionApprovalRefs({
+    commandResults: input.commandResults ?? [],
+    toolTraceRefs,
+  });
+  const eventRefs = [eventRef, ...toolTraceEventRefs];
+  const auditSink = new InMemoryCognitionAuditSink();
+  const output = await new CompanionCognitionService({
+    auditSink,
     memoryPort: createRelationshipProfileCognitionMemoryPort({
       baseDir: input.baseDir,
     }),
   }).evaluateTaskContext({
     cognition_id: cognitionId,
     caller_path: "long_running_task_turn",
-    event_refs: [eventRef],
+    event_refs: eventRefs,
     working_context: {
       input_ref: eventRef,
       route_ref: {
@@ -220,12 +263,26 @@ async function evaluateTaskAgentLoopCognition(input: {
       hidden_prompt_content_materialized: false,
     },
     runtime_context: {
-      runtime_item_refs: [{
-        kind: "task",
-        ref: input.task.id,
-      }],
-      approval_refs: [],
-      last_tool_trace_refs: [],
+      runtime_item_refs: [
+        {
+          kind: "task",
+          ref: input.task.id,
+        },
+        {
+          kind: "agent_loop_session",
+          ref: input.attempt.sessionId,
+        },
+        {
+          kind: "agent_loop_trace",
+          ref: input.attempt.traceId,
+        },
+        {
+          kind: "agent_loop_turn",
+          ref: input.attempt.turnId,
+        },
+      ],
+      approval_refs: approvalRefs,
+      last_tool_trace_refs: toolTraceRefs,
       phase_ref: {
         kind: "task_phase",
         ref: input.phaseRef,
@@ -255,4 +312,76 @@ async function evaluateTaskAgentLoopCognition(input: {
     },
     surface_target: "internal_audit",
   });
+  const replayRecord = auditSink.list()[0];
+  if (!replayRecord) return { output };
+  let replayIndexEntry: CognitiveReplayIndexEntry | undefined;
+  try {
+    await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+    replayIndexEntry = createCognitiveReplayIndexEntry({
+      indexEntryId: `${cognitionId}:replay-index`,
+      record: replayRecord,
+    });
+    await new FileCognitiveReplayIndexStore(input.baseDir).upsert(replayIndexEntry);
+  } catch {
+    replayIndexEntry = undefined;
+  }
+  return {
+    output,
+    replayRecord,
+    ...(replayIndexEntry ? { replayIndexEntry } : {}),
+  };
+}
+
+function taskCognitionId(input: {
+  task: Task;
+  attempt: {
+    traceId: string;
+    turnId: string;
+  };
+}): string {
+  return `cognition:task:${input.task.id}:attempt:${input.attempt.traceId}:${input.attempt.turnId}`;
+}
+
+function taskCognitionEventRef(task: Task): CognitionEventRef {
+  return {
+    ref: task.id,
+    source_store: "runtime_operation" as const,
+    source_event_type: "task_agent_loop_context",
+    schema_version: 1,
+    source_epoch: task.started_at ?? task.created_at ?? task.id,
+    redaction_policy: "metadata_only" as const,
+  };
+}
+
+function taskCognitionToolTraceEventRefs(input: {
+  attempt: {
+    traceId: string;
+    turnId: string;
+  };
+  commandResults?: AgentLoopCommandResult[];
+}): CognitionEventRef[] {
+  return (input.commandResults ?? []).map((commandResult, index) => {
+    const sequence = commandResult.sequence ?? index + 1;
+    return {
+      ref: `agent-loop-command:${input.attempt.traceId}:${input.attempt.turnId}:${sequence}`,
+      source_store: "runtime_operation" as const,
+      source_event_type: "agent_loop_command_result",
+      schema_version: 1,
+      source_epoch: `${input.attempt.traceId}:${input.attempt.turnId}:${sequence}:${commandResult.success ? "success" : "failure"}`,
+      redaction_policy: "metadata_only" as const,
+    };
+  });
+}
+
+function taskCognitionApprovalRefs(input: {
+  commandResults: AgentLoopCommandResult[];
+  toolTraceRefs: CognitionRef[];
+}): CognitionRef[] {
+  return input.commandResults.flatMap((commandResult, index) =>
+    commandResult.execution?.status === "not_executed"
+      && commandResult.execution.reason === "approval_denied"
+      && input.toolTraceRefs[index]
+      ? [{ kind: "approval_denied", ref: input.toolTraceRefs[index].ref }]
+      : []
+  );
 }

@@ -1,9 +1,15 @@
 export {
   COGNITION_AUDIT_STORAGE_PLAN,
+  FileCognitionAuditSink,
   InMemoryCognitionAuditSink,
   cognitionAuditEventRef,
   createCognitionReplayRecord,
 } from "./audit-sink.js";
+export {
+  CloudBoundaryEvaluationSchema,
+  CloudBoundaryModeSchema,
+  evaluateCloudBoundaryForCognition,
+} from "./cloud-boundary.js";
 export {
   CompanionCognitionService,
 } from "./companion-cognition-service.js";
@@ -50,6 +56,9 @@ export {
   cognitionMemoryResultFromCoreProjection,
 } from "./memory-context.js";
 export {
+  assembleSituationModel,
+} from "./situation.js";
+export {
   createCloudComputeAuthorizationRequest,
   toolCandidateFromGadgetPlan,
 } from "./tool-authority.js";
@@ -63,6 +72,10 @@ export type {
   CognitionMemoryPort,
   CognitionWritebackPort,
 } from "./ports.js";
+export type {
+  CloudBoundaryEvaluation,
+  CloudBoundaryMode,
+} from "./cloud-boundary.js";
 export type {
   AuthorizationRequest,
   ChatSessionCognitionContext,

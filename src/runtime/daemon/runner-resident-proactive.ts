@@ -1,13 +1,26 @@
+import { randomUUID } from "node:crypto";
 import type { Goal } from "../../base/types/goal.js";
 import {
   evaluateResidentOperationBoundary,
   residentOperationBoundaryActivityMetadata,
+  type ResidentOperationBoundaryResult,
 } from "../capability-operation-planner.js";
 import {
   CompanionCognitionService,
+  FileCognitionAuditSink,
+  InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
+  toolCandidateFromGadgetPlan,
+  type CognitionEventRef,
   type CompanionCognitionInput,
+  type ToolCandidate,
 } from "../cognition/index.js";
+import { projectCompanionAction } from "../control/companion-action-projection.js";
+import { createCompanionGadgetPlan } from "../decision/companion-gadget-planning.js";
+import {
+  FileCognitiveReplayIndexStore,
+  createCognitiveReplayIndexEntry,
+} from "../visibility/index.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
 import {
   evaluateResidentAttentionAdmission,
@@ -198,6 +211,7 @@ export async function proactiveTick(
   const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
   const cognitionActivityMetadata = await evaluateResidentProactiveCognition({
     attentionAdmission,
+    operationBoundary,
     operationActivityMetadata,
     surfaceActivityMetadata,
     baseDir: context.baseDir,
@@ -280,13 +294,14 @@ export async function proactiveTick(
 
 export async function evaluateResidentProactiveCognition(input: {
   attentionAdmission: Awaited<ReturnType<typeof evaluateResidentAttentionAdmission>>;
+  operationBoundary?: ResidentOperationBoundaryResult;
   operationActivityMetadata: ResidentActivityMetadata;
   surfaceActivityMetadata: ResidentSurfaceActivityMetadata;
   baseDir?: string;
   goalId?: string;
   logger: DaemonRunnerResidentContext["logger"];
 }): Promise<ResidentCognitionActivityMetadata> {
-  const cognitionId = `cognition:resident:${input.attentionAdmission.initiative_gate_decision_id}`;
+  const cognitionId = residentProactiveCognitionId(input.attentionAdmission.initiative_gate_decision_id);
   const eventRef = {
     ref: input.attentionAdmission.initiative_gate_decision_id,
     source_store: "attention_ledger" as const,
@@ -351,6 +366,13 @@ export async function evaluateResidentProactiveCognition(input: {
           stale_target_refs: [],
         }
       : undefined,
+    proposed_tool_candidates: input.operationBoundary
+      ? residentToolCandidatesFromOperationBoundary({
+          cognitionId,
+          boundary: input.operationBoundary,
+          eventRef,
+        })
+      : [],
     memory_context_request: {
       request_id: `${cognitionId}:memory-request`,
       requested_uses: ["proactive_action_candidate", "behavioral_inhibition"],
@@ -364,7 +386,9 @@ export async function evaluateResidentProactiveCognition(input: {
   };
 
   try {
+    const auditSink = new InMemoryCognitionAuditSink();
     const output = await new CompanionCognitionService({
+      auditSink,
       ...(input.baseDir
         ? {
             memoryPort: createRelationshipProfileCognitionMemoryPort({
@@ -373,11 +397,34 @@ export async function evaluateResidentProactiveCognition(input: {
           }
         : {}),
     }).evaluateIntervention(cognitionInput);
+    const replayRecord = auditSink.list()[0];
+    let replayRecordId: string | undefined;
+    let replayIndexEntryId: string | undefined;
+    if (input.baseDir && replayRecord) {
+      try {
+        await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+        replayRecordId = replayRecord.record_id;
+        const replayIndexEntry = createCognitiveReplayIndexEntry({
+          indexEntryId: `${cognitionId}:replay-index`,
+          record: replayRecord,
+        });
+        await new FileCognitiveReplayIndexStore(input.baseDir).upsert(replayIndexEntry);
+        replayIndexEntryId = replayIndexEntry.index_entry_id;
+      } catch (err) {
+        input.logger.warn("Resident proactive cognition replay persistence failed; continuing with resident gates", {
+          error: err instanceof Error ? err.message : String(err),
+          cognition_id: cognitionId,
+        });
+      }
+    }
     return {
       cognition_id: output.cognition_id,
       cognition_response_plan_id: output.response_plan.plan_id,
       cognition_delivery_kind: output.response_plan.delivery_kind,
       cognition_writeback_proposal_count: output.memory_writeback.length,
+      cognition_tool_candidate_count: output.tool_candidates.length,
+      ...(replayRecordId ? { cognition_replay_record_id: replayRecordId } : {}),
+      ...(replayIndexEntryId ? { cognition_replay_index_entry_id: replayIndexEntryId } : {}),
     };
   } catch (err) {
     input.logger.warn("Resident proactive cognition failed; continuing with resident gates", {
@@ -388,8 +435,53 @@ export async function evaluateResidentProactiveCognition(input: {
       cognition_id: cognitionId,
       cognition_delivery_kind: "hold",
       cognition_writeback_proposal_count: 0,
+      cognition_tool_candidate_count: 0,
     };
   }
+}
+
+function residentProactiveCognitionId(initiativeGateDecisionId: string): string {
+  return `cognition:resident:${initiativeGateDecisionId}:evaluation:${randomUUID()}`;
+}
+
+function residentToolCandidatesFromOperationBoundary(input: {
+  cognitionId: string;
+  boundary: ResidentOperationBoundaryResult;
+  eventRef: CognitionEventRef;
+}): ToolCandidate[] {
+  const operationCandidate = input.boundary.assembly.candidate_plans[0];
+  if (
+    !input.boundary.preparation_allowed
+    || !operationCandidate
+    || !input.boundary.admission_evaluation
+    || !input.boundary.autonomy_decision
+  ) {
+    return [];
+  }
+  const projection = projectCompanionAction({
+    decision: input.boundary.autonomy_decision,
+    context: {
+      surface_ref: "surface:resident-daemon",
+      surface_kind: "normal_companion",
+      quieted: !input.boundary.preparation_allowed,
+    },
+    evaluated_at: input.boundary.assembly.assembled_at,
+  });
+  const gadgetPlan = createCompanionGadgetPlan({
+    assetKind: "capability",
+    operationCandidate,
+    admissionEvaluation: input.boundary.admission_evaluation,
+    autonomyDecision: input.boundary.autonomy_decision,
+    actionProjection: projection,
+    generatedAt: input.boundary.assembly.assembled_at,
+  });
+  return [
+    toolCandidateFromGadgetPlan({
+      candidateId: `${input.cognitionId}:tool-candidate:${operationCandidate.plan_id}`,
+      plan: gadgetPlan,
+      originRef: input.eventRef,
+    }),
+  ];
 }
 
 function residentPreemptiveGoalIsCurrent(goal: Goal): boolean {

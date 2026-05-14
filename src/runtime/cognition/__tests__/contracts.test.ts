@@ -1,23 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   AuthorizationRequestSchema,
+  CloudBoundaryEvaluationSchema,
   CloudComputeRequestSchema,
   CognitionEventRefSchema,
   CompanionCognitionOutputSchema,
   IntentionSelectionSchema,
   ToolCandidateSchema,
   createCloudComputeAuthorizationRequest,
+  evaluateCloudBoundaryForCognition,
 } from "../index.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
 
-function eventRef(ref = "event:1") {
+function eventRef(ref = "event:1", sourceEpoch = "turn:1") {
   return CognitionEventRefSchema.parse({
     ref,
     source_store: "chat_history",
     source_event_type: "user_input",
     schema_version: 1,
-    source_epoch: "turn:1",
+    source_epoch: sourceEpoch,
     redaction_policy: "metadata_only",
   });
 }
@@ -148,5 +150,54 @@ describe("Companion cognition contracts", () => {
       side_effect_profile: "cloud_compute",
       privacy_profile: "external_service",
     });
+  });
+
+  it("blocks model-visible cognition context in local-only mode", () => {
+    const blocked = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:local-only",
+      mode: "local_only",
+      contextRefs: [eventRef("memory:private-context")],
+    });
+
+    expect(blocked).toMatchObject({
+      external_service_context_allowed: false,
+      model_visible_context_refs: [],
+      runtime_authority: false,
+      memory_authority: false,
+    });
+    expect(() => CloudBoundaryEvaluationSchema.parse({
+      ...blocked,
+      external_service_context_allowed: true,
+    })).toThrow(/local-only cognition/);
+  });
+
+  it("requires redaction, admission, and autonomy refs before cloud-visible context leaves local cognition", () => {
+    const approvedContext = eventRef("memory:private-context", "turn:approved");
+    const sameRefUnapprovedEpochContext = eventRef("memory:private-context", "turn:unapproved");
+    const unapprovedContext = eventRef("memory:unapproved-context");
+    const cloud = CloudComputeRequestSchema.parse({
+      request_id: "cloud:admitted",
+      provider_ref: "openai:responses",
+      surface_projection_ref: "surface:redacted",
+      redaction_refs: [{ kind: "redaction", ref: "redaction:private-context" }],
+      privacy_profile: "external_service",
+      admission_evaluation_ref: { kind: "admission", ref: "admission:cloud" },
+      autonomy_evaluation_ref: { kind: "autonomy", ref: "autonomy:cloud" },
+      model_visible_context_refs: [approvedContext],
+    });
+
+    const allowed = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:gated",
+      mode: "gated_external_service",
+      contextRefs: [sameRefUnapprovedEpochContext, approvedContext, unapprovedContext],
+      cloudComputeRequest: cloud,
+    });
+
+    expect(allowed.external_service_context_allowed).toBe(true);
+    expect(allowed.model_visible_context_refs).toEqual([approvedContext]);
+    expect(() => CloudBoundaryEvaluationSchema.parse({
+      ...allowed,
+      redaction_refs: [],
+    })).toThrow(/redaction refs/);
   });
 });

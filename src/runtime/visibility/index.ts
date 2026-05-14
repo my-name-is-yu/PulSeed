@@ -1,4 +1,16 @@
 export {
+  CognitiveReplayIndexEntrySchema,
+  CognitiveReplayIndexInvalidationStateSchema,
+  CognitiveReplayIndexSourceStateSchema,
+  CognitiveReplayInspectionItemSchema,
+  CognitiveReplayInspectionViewSchema,
+  FileCognitiveReplayIndexStore,
+  createCognitiveReplayIndexEntry,
+  createCognitiveReplayInspectionView,
+  defaultCognitiveReplayOwnerStore,
+  ownerStoreAllowedForCallerPath,
+} from "./cognitive-replay-index.js";
+export {
   createAuditInspectionView,
   createAuditRepairAction,
   createAuditTraceRef,
@@ -22,3 +34,11 @@ export type {
   CreateCompanionVisibilityPolicyInput,
   VisibilitySurfaceDecision,
 } from "./companion-audit-visibility.js";
+export type {
+  CognitiveReplayIndexEntry,
+  CognitiveReplayIndexInvalidationState,
+  CognitiveReplayIndexStore,
+  CognitiveReplayIndexSourceState,
+  CognitiveReplayInspectionItem,
+  CognitiveReplayInspectionView,
+} from "./cognitive-replay-index.js";

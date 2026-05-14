@@ -15,6 +15,11 @@ interface WriteJsonFileAtomicOptions {
   directoryMode?: number;
 }
 
+interface JsonFileMutationLockOptions {
+  timeoutMs?: number;
+  retryDelayMs?: number;
+}
+
 export interface ReadTextFileWithinLimitOptions {
   maxBytes: number;
   chunkBytes?: number;
@@ -73,6 +78,40 @@ export async function writeJsonFileAtomic(
       // Ignore cleanup errors
     }
     throw err;
+  }
+}
+
+export async function withJsonFileMutationLock<T>(
+  filePath: string,
+  operation: () => Promise<T>,
+  options: JsonFileMutationLockOptions = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const retryDelayMs = options.retryDelayMs ?? 10;
+  const lockPath = `${filePath}.lock`;
+  const startedAt = Date.now();
+  await fsp.mkdir(dirname(filePath), { recursive: true });
+
+  let lockHandle: fsp.FileHandle | undefined;
+  while (!lockHandle) {
+    try {
+      lockHandle = await fsp.open(lockPath, "wx");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(`Timed out waiting for JSON mutation lock: ${lockPath}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  try {
+    return await operation();
+  } finally {
+    await lockHandle.close();
+    await fsp.unlink(lockPath).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== "ENOENT") throw err;
+    });
   }
 }
 

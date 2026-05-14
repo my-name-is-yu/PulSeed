@@ -153,6 +153,15 @@ export {
   SurfaceDeliveryProjectionSchema,
 } from "./surface-delivery.js";
 export {
+  ProactiveDeliveryPolicyDecisionSchema,
+  ProactivePolicyEventSchema,
+  ProactivePolicyModeSchema,
+  ProactivePolicyStateSchema,
+  createProactivePolicyState,
+  decideProactiveDelivery,
+  reduceProactivePolicyState,
+} from "./proactive-policy.js";
+export {
   LivingAutonomyDirectPathIds,
   LivingAutonomyDirectPathInventory,
   currentPreGateOutwardEffects,
@@ -214,6 +223,12 @@ export type {
   SurfaceDeliveryProjection,
   SurfaceDeliveryProjectionInput,
 } from "./surface-delivery.js";
+export type {
+  ProactiveDeliveryPolicyDecision,
+  ProactivePolicyEvent,
+  ProactivePolicyMode,
+  ProactivePolicyState,
+} from "./proactive-policy.js";
 export type {
   LivingAutonomyDirectPathId,
   LivingAutonomyDirectPathInventoryEntry,

@@ -1,3 +1,10 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import {
+  withJsonFileMutationLock,
+  writeJsonFileAtomic,
+} from "../../base/utils/json-io.js";
 import {
   RelationshipStateProjectionSchema,
   CognitionReplayStableOutputSchema,
@@ -93,5 +100,32 @@ export class InMemoryCognitionAuditSink implements CognitionAuditSink {
 
   list(): CognitionReplayRecord[] {
     return [...this.records];
+  }
+}
+
+export class FileCognitionAuditSink implements CognitionAuditSink {
+  constructor(private readonly baseDir: string, private readonly relativePath = "runtime/cognition-audit-records.json") {}
+
+  async recordCognition(record: CognitionReplayRecord): Promise<void> {
+    const parsed = CognitionReplayRecordSchema.parse(record);
+    await withJsonFileMutationLock(this.path(), async () => {
+      const records = await this.list();
+      const next = [...records.filter((existing) => existing.record_id !== parsed.record_id), parsed];
+      await writeJsonFileAtomic(this.path(), next);
+    });
+  }
+
+  async list(): Promise<CognitionReplayRecord[]> {
+    try {
+      const text = await readFile(this.path(), "utf8");
+      return z.array(CognitionReplayRecordSchema).parse(JSON.parse(text));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private path(): string {
+    return join(this.baseDir, this.relativePath);
   }
 }
