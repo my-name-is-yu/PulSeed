@@ -10,6 +10,14 @@ import type { SelectedChatRoute } from "./ingress-router.js";
 import type { SetupDialoguePublicState } from "./setup-dialogue.js";
 import type { SetupSecretIntakeResult } from "./setup-secret-intake.js";
 import { USER_INPUT_SCHEMA_VERSION, type UserInput } from "./user-input.js";
+import {
+  createCompanionCharacterPolicyCognitionPolicyRef,
+  CompanionCharacterPolicyProjectionSchema,
+  type CompanionCharacterDialogueStrategy,
+  type CompanionCharacterPolicyProjection,
+  type CompanionCharacterSurfacePolicy,
+} from "../../runtime/decision/companion-character-policy-projection.js";
+import type { CognitionPolicyRef } from "../../runtime/decision/companion-decision-contract.js";
 
 export const CHAT_TURN_CONTEXT_SCHEMA_VERSION = "chat-turn-context-v1";
 
@@ -61,6 +69,7 @@ export interface ChatTurnModelVisibleContext {
     replyTarget: PublicReplyTarget | null;
     actor: PublicRuntimeActor | null;
   };
+  characterPolicy: PublicCharacterPolicyContext | null;
   tools: {
     activatedTools: string[];
     selectedRoute: string | null;
@@ -120,6 +129,7 @@ export interface ChatTurnContextInput {
   runSpecConfirmation: RunSpecConfirmationState | null;
   setupSecretIntake: SetupSecretIntakeResult | null;
   activatedTools: Set<string>;
+  characterPolicy?: PublicCharacterPolicyContext | null;
 }
 
 export interface ChatTurnContextSnapshot {
@@ -143,6 +153,17 @@ interface PublicRuntimeActor {
   conversation_id?: string;
   identity_key?: string;
   user_id?: string;
+}
+
+export interface PublicCharacterPolicyContext {
+  policyRef: CognitionPolicyRef;
+  dialogueStrategy: CompanionCharacterDialogueStrategy;
+  surfacePolicy: CompanionCharacterSurfacePolicy;
+  authority: {
+    characterCanRelaxSafetyBoundary: false;
+    characterCanRelaxApprovalBoundary: false;
+    characterCanGrantAutonomy: false;
+  };
 }
 
 interface PublicSetupDialogueState {
@@ -239,6 +260,7 @@ export function buildChatTurnContext(input: ChatTurnContextInput): ChatTurnConte
         replyTarget: toPublicReplyTarget(runtimeControlContext?.replyTarget ?? null),
         actor: toPublicActor(runtimeControlContext?.actor ?? null),
       },
+      characterPolicy: input.characterPolicy ?? null,
       tools: {
         activatedTools: [...input.activatedTools].sort(),
         selectedRoute: route?.kind ?? null,
@@ -285,6 +307,7 @@ export function renderModelVisibleTurnContext(context: ChatTurnModelVisibleConte
     `- runtime_control_allowed: ${context.runtime.runtimeControlAllowed}`,
     `- approval_mode: ${context.runtime.approvalMode}`,
     `- reply_target: ${formatReplyTarget(context.runtime.replyTarget)}`,
+    ...renderCharacterPolicyContext(context.characterPolicy),
     `- activated_tools: ${context.tools.activatedTools.length > 0 ? context.tools.activatedTools.join(", ") : "none"}`,
     `- setup_dialogue: ${context.outstanding.setupDialogue ? `${context.outstanding.setupDialogue.channel}:${context.outstanding.setupDialogue.state}` : "none"}`,
     `- run_spec_confirmation: ${context.outstanding.runSpecConfirmation ? `${context.outstanding.runSpecConfirmation.state}:${context.outstanding.runSpecConfirmation.specId}` : "none"}`,
@@ -307,6 +330,22 @@ export function toTurnContextSnapshot(context: ChatTurnContext): ChatTurnContext
   return {
     schema_version: context.schema_version,
     modelVisible: context.modelVisible,
+  };
+}
+
+export function toPublicCharacterPolicyContext(
+  projection: CompanionCharacterPolicyProjection
+): PublicCharacterPolicyContext {
+  const parsed = CompanionCharacterPolicyProjectionSchema.parse(projection);
+  return {
+    policyRef: createCompanionCharacterPolicyCognitionPolicyRef(parsed),
+    dialogueStrategy: parsed.dialogue_strategy,
+    surfacePolicy: parsed.surface_policy,
+    authority: {
+      characterCanRelaxSafetyBoundary: parsed.decision_policy.character_can_relax_safety_boundary,
+      characterCanRelaxApprovalBoundary: parsed.decision_policy.character_can_relax_approval_boundary,
+      characterCanGrantAutonomy: parsed.decision_policy.character_can_grant_autonomy,
+    },
   };
 }
 
@@ -380,6 +419,26 @@ function renderCompactionRecord(record: PublicCompactionRecord, index: number): 
     `    pending_permissions: ${previewJson(record.pendingPermissions, 1200)}`,
     `    active_targets: ${previewJson(record.activeTargets, 1200)}`,
     `    replacement_history: ${previewJson(record.replacementHistory, 800)}`,
+  ];
+}
+
+function renderCharacterPolicyContext(policy: PublicCharacterPolicyContext | null): string[] {
+  if (!policy) return ["- character_policy: none"];
+  return [
+    `- character_policy_ref: ${policy.policyRef.kind}:${policy.policyRef.ref} (${policy.policyRef.result})`,
+    `- character_directness: ${policy.dialogueStrategy.directness}`,
+    `- character_response_shape: ${policy.dialogueStrategy.default_response_shape}`,
+    `- character_initiative_posture: ${policy.dialogueStrategy.initiative_posture}`,
+    `- character_clarification_bias: ${policy.dialogueStrategy.clarification_bias}`,
+    `- character_visible_reason: ${policy.surfacePolicy.normal_companion_user_visible_reason}`,
+    `- character_execution_summary_verbosity: ${policy.surfacePolicy.execution_summary_verbosity}`,
+    `- character_escalation_suggestion_policy: ${policy.surfacePolicy.escalation_suggestion_policy}`,
+    `- character_raw_policy_state_visible: ${policy.surfacePolicy.normal_companion_raw_policy_state_visible}`,
+    `- character_debug_state_visible: ${policy.surfacePolicy.normal_companion_debug_state_visible}`,
+    `- character_discloses_raw_knobs: ${policy.surfacePolicy.ordinary_surface_discloses_character_knobs}`,
+    `- character_can_relax_safety_boundary: ${policy.authority.characterCanRelaxSafetyBoundary}`,
+    `- character_can_relax_approval_boundary: ${policy.authority.characterCanRelaxApprovalBoundary}`,
+    `- character_can_grant_autonomy: ${policy.authority.characterCanGrantAutonomy}`,
   ];
 }
 

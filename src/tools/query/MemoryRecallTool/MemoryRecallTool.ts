@@ -17,14 +17,13 @@ export const MemoryRecallInputSchema = z.object({
   query: z
     .string()
     .describe(
-      "Search query (key for exact match, or keywords for search)"
+      "Search query. Freeform recall uses semantic mode; exact/lexical modes are for explicit protocol lookups."
     ),
   exact: z
     .boolean()
     .optional()
-    .default(false)
     .describe(
-      "If true, match key exactly; if false, keyword search across key+value+tags"
+      "Deprecated compatibility flag. Use mode='exact' for exact key lookup."
     ),
   category: z.string().optional().describe("Filter by category"),
   memory_type: z
@@ -45,10 +44,10 @@ export const MemoryRecallInputSchema = z.object({
     .default(false)
     .describe("Include archived entries in results"),
   mode: z
-    .enum(["keyword", "semantic"])
+    .enum(["semantic", "exact", "lexical"])
     .optional()
-    .default("keyword")
-    .describe("Search mode: keyword (substring match) or semantic (embedding-based similarity)"),
+    .default("semantic")
+    .describe("Recall mode: semantic for freeform memory recall, exact for key lookup, lexical for explicit substring maintenance queries"),
   consent_scope: z
     .string()
     .optional()
@@ -95,18 +94,21 @@ export class MemoryRecallTool
     _context: ToolCallContext
   ): Promise<ToolResult> {
     const startTime = Date.now();
+    const hasExplicitMode = typeof input === "object"
+      && input !== null
+      && Object.prototype.hasOwnProperty.call(input, "mode");
     const parsedInput = this.inputSchema.parse(input);
+    const mode = parsedInput.exact === true && !hasExplicitMode ? "exact" : parsedInput.mode;
 
     try {
       const entries = await this.knowledgeManager.recallAgentMemory(
         parsedInput.query,
         {
-          exact: parsedInput.exact,
+          mode,
           category: parsedInput.category,
           memory_type: parsedInput.memory_type,
           limit: parsedInput.limit,
           include_archived: parsedInput.include_archived,
-          semantic: parsedInput.mode === "semantic",
           consent_scope: parsedInput.consent_scope,
           max_sensitivity: parsedInput.max_sensitivity,
         }

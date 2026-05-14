@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lintAgentMemory } from "../knowledge-manager-lint.js";
-import type { KnowledgeManager } from "../knowledge-manager.js";
+import { KnowledgeManager } from "../knowledge-manager.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../types/agent-memory.js";
+import { StateManager } from "../../../base/state/state-manager.js";
+import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Mock helpers ───
 
@@ -30,6 +33,7 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   saveAgentMemory: ReturnType<typeof vi.fn>;
   archiveAgentMemory: ReturnType<typeof vi.fn>;
   deleteAgentMemory: ReturnType<typeof vi.fn>;
+  correctAgentMemory: ReturnType<typeof vi.fn>;
   quarantineAgentMemory: ReturnType<typeof vi.fn>;
 } {
   const listAgentMemory = vi.fn().mockResolvedValue(entries);
@@ -38,6 +42,11 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
   );
   const archiveAgentMemory = vi.fn().mockResolvedValue(1);
   const deleteAgentMemory = vi.fn().mockResolvedValue(true);
+  const correctAgentMemory = vi.fn().mockResolvedValue({
+    correction: { correction_id: "correction-1" },
+    target: entries[0] ?? null,
+    replacement: makeEntry({ id: "replacement-id", key: "replacement" }),
+  });
   const quarantineAgentMemory = vi.fn().mockResolvedValue(1);
 
   return {
@@ -46,12 +55,14 @@ function makeKM(entries: AgentMemoryEntry[] = []): {
       saveAgentMemory,
       archiveAgentMemory,
       deleteAgentMemory,
+      correctAgentMemory,
       quarantineAgentMemory,
     } as unknown as KnowledgeManager,
     listAgentMemory,
     saveAgentMemory,
     archiveAgentMemory,
     deleteAgentMemory,
+    correctAgentMemory,
     quarantineAgentMemory,
   };
 }
@@ -289,7 +300,7 @@ describe("lintAgentMemory", () => {
       expect(result.repairs_applied).toBe(1);
     });
 
-    it("staleness: deletes and re-saves with needs-reverification tag", async () => {
+    it("staleness: records a correction-ledger replacement without physical deletion", async () => {
       const stale = makeEntry({
         id: "e1",
         key: "stale-fact",
@@ -299,7 +310,7 @@ describe("lintAgentMemory", () => {
         memory_type: "fact",
       });
       const other = makeEntry({ id: "e2", key: "other-fact" });
-      const { km, deleteAgentMemory, saveAgentMemory } = makeKM([stale, other]);
+      const { km, correctAgentMemory, deleteAgentMemory, saveAgentMemory } = makeKM([stale, other]);
 
       const finding = {
         type: "staleness",
@@ -312,17 +323,85 @@ describe("lintAgentMemory", () => {
 
       const result = await lintAgentMemory({ km, llmCall, autoRepair: true });
 
-      expect(deleteAgentMemory).toHaveBeenCalledWith("stale-fact");
-      expect(saveAgentMemory).toHaveBeenCalledWith(
+      expect(correctAgentMemory).toHaveBeenCalledWith(
         expect.objectContaining({
-          key: "stale-fact",
-          value: "old value",
-          tags: expect.arrayContaining(["important", "needs-reverification"]),
-          category: "work",
-          memory_type: "fact",
+          targetId: "e1",
+          correctionKind: "corrected",
+          reason: "Outdated fact",
+          replacementKey: "stale-fact",
+          replacementValue: "old value",
+          replacementTags: expect.arrayContaining(["important", "needs-reverification"]),
+          replacementStatus: "raw",
+          actor: "dream_lint",
+          provenanceRef: "memory_lint:auto_repair:staleness",
         })
       );
+      expect(deleteAgentMemory).not.toHaveBeenCalled();
+      expect(saveAgentMemory).not.toHaveBeenCalled();
       expect(result.repairs_applied).toBe(1);
+    });
+
+    it("staleness repair keeps later saves on the active replacement for the same key", async () => {
+      const tmpDir = makeTempDir("pulseed-lint-stale-repair-");
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const km = new KnowledgeManager(stateManager, {} as ILLMClient);
+        await km.saveAgentMemory({
+          key: "stale-fact",
+          value: "old value",
+          tags: ["important"],
+          category: "work",
+          memory_type: "fact",
+        });
+        await km.saveAgentMemory({
+          key: "other-fact",
+          value: "other value",
+          category: "work",
+          memory_type: "fact",
+        });
+        const seededStore = await km.loadAgentMemoryStore();
+        seededStore.entries = seededStore.entries.map((entry) => ({
+          ...entry,
+          status: "compiled",
+        }));
+        await km.saveAgentMemoryStore(seededStore);
+        const staleId = seededStore.entries.find((entry) => entry.key === "stale-fact")!.id;
+        const llmCall = makeLlmCall(JSON.stringify({
+          findings: [{
+            type: "staleness",
+            entry_ids: [staleId],
+            description: "Outdated fact",
+            confidence: 0.9,
+            suggested_action: "mark_stale",
+          }],
+        }));
+
+        await lintAgentMemory({ km, llmCall, autoRepair: true });
+        await km.saveAgentMemory({
+          key: "stale-fact",
+          value: "fresh value",
+          tags: ["important", "fresh"],
+          category: "work",
+          memory_type: "fact",
+        });
+
+        expect(await km.recallAgentMemory("stale-fact", { exact: true })).toEqual([
+          expect.objectContaining({
+            key: "stale-fact",
+            value: "fresh value",
+            tags: expect.arrayContaining(["fresh"]),
+          }),
+        ]);
+        const store = await km.loadAgentMemoryStore();
+        expect(store.entries.find((entry) => entry.id === staleId)).toMatchObject({
+          status: "corrected",
+          value: "old value",
+        });
+        expect(store.entries.filter((entry) => entry.key === "stale-fact")).toHaveLength(2);
+      } finally {
+        cleanupTempDir(tmpDir);
+      }
     });
 
     it("redundancy: keeps longest value entry, archives shorter ones", async () => {

@@ -62,6 +62,8 @@ import {
   quarantineAgentMemoryEntries,
   recallAgentMemoryEntries,
   saveAgentMemoryEntry,
+  type AgentMemoryPhysicalDeleteManifest,
+  type AgentMemoryRecallMode,
 } from "./knowledge-manager-agent-memory.js";
 import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
@@ -467,9 +469,10 @@ export class KnowledgeManager {
   }
 
   /**
-   * Search agent memory entries by keyword or exact key match.
-   * exact=true: filter where entry.key === query.
-   * exact=false (default): case-insensitive substring match on key + value + tags.
+   * Search agent memory entries by explicit recall mode.
+   * mode="exact": filter where entry.key === query.
+   * mode="lexical": case-insensitive substring match on key + value + tags.
+   * mode="semantic": embedding-based similarity; no lexical fallback.
    * Optionally filter by category and/or memory_type.
    * Excludes archived entries unless include_archived=true.
    * Tiered sort: compiled entries first, then raw, both by updated_at desc.
@@ -477,6 +480,7 @@ export class KnowledgeManager {
   async recallAgentMemory(
     query: string,
     opts?: {
+      mode?: AgentMemoryRecallMode;
       exact?: boolean;
       category?: string;
       memory_type?: AgentMemoryType;
@@ -506,11 +510,13 @@ export class KnowledgeManager {
   }
 
   /**
-   * Delete an agent memory entry by key.
+   * Physically delete an agent memory entry by key.
+   * This is repair-only and requires an explicit manifest; user-facing memory
+   * operations must use correct/forget/retract so audit history is retained.
    * Returns true if the entry was found and removed, false otherwise.
    */
-  async deleteAgentMemory(key: string): Promise<boolean> {
-    return deleteAgentMemoryEntry(this.agentMemoryHost(), key);
+  async deleteAgentMemory(key: string, manifest?: AgentMemoryPhysicalDeleteManifest): Promise<boolean> {
+    return deleteAgentMemoryEntry(this.agentMemoryHost(), key, manifest);
   }
 
   async correctAgentMemory(input: {
@@ -519,6 +525,9 @@ export class KnowledgeManager {
     reason: string;
     replacementValue?: string;
     replacementKey?: string;
+    replacementTags?: string[];
+    replacementStatus?: "raw" | "compiled";
+    actor?: "user" | "dream_lint" | "runtime_verification" | "manual_tool";
     provenanceRef?: string;
   }): Promise<Awaited<ReturnType<typeof applyAgentMemoryCorrection>>> {
     return applyAgentMemoryCorrection(this.agentMemoryHost(), input);

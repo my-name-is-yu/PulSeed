@@ -83,7 +83,9 @@ import {
 import { createTurnStartOperation, createTurnSteerOperation } from "./turn-protocol.js";
 import {
   buildChatTurnContext,
+  toPublicCharacterPolicyContext,
   toTurnContextSnapshot,
+  type PublicCharacterPolicyContext,
   type ChatTurnContext,
 } from "./turn-context.js";
 import {
@@ -115,6 +117,8 @@ import {
   createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
 } from "../../runtime/cognition/index.js";
+import { CharacterConfigManager } from "../../platform/traits/character-config.js";
+import { createCompanionCharacterPolicyProjection } from "../../runtime/decision/companion-character-policy-projection.js";
 
 export type {
   ChatRunResult,
@@ -869,9 +873,11 @@ export class ChatRunner {
     const context = resumeOnly || usesNativeAgentLoop || usesGatewayModelLoop ? "" : await buildChatContext(safeInput, gitRoot);
     const basePrompt = resumeOnly ? "" : (context ? `${context}\n\n${safeInput}` : safeInput);
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
+    const turnStartedAt = new Date(start);
+    const characterPolicy = await this.resolveCharacterPolicyContext(turnStartedAt.toISOString());
     const turnContext = buildChatTurnContext({
       eventContext,
-      startedAt: new Date(start),
+      startedAt: turnStartedAt,
       sessionId: history.getSessionId(),
       cwd,
       gitRoot,
@@ -897,6 +903,7 @@ export class ChatRunner {
       runSpecConfirmation: history.getRunSpecConfirmation(),
       setupSecretIntake,
       activatedTools: this.activatedTools,
+      characterPolicy,
     });
     await history.recordTurnContext(toTurnContextSnapshot(turnContext));
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
@@ -1066,6 +1073,24 @@ export class ChatRunner {
       },
       surface_target: "internal_audit",
     };
+  }
+
+  private async resolveCharacterPolicyContext(evaluatedAt: string): Promise<PublicCharacterPolicyContext | null> {
+    try {
+      const characterConfig = await new CharacterConfigManager(this.deps.stateManager).load();
+      const projection = createCompanionCharacterPolicyProjection({
+        projectionId: `character-policy:chat:${this.getSessionId() ?? "session:none"}`,
+        evaluatedAt,
+        characterConfig,
+        sourceRefs: [
+          { kind: "character_config", ref: "character-config.json", role: "configuration" },
+          { kind: "surface_policy", ref: "chat_turn_context", role: "surface" },
+        ],
+      });
+      return toPublicCharacterPolicyContext(projection);
+    } catch {
+      return null;
+    }
   }
 
   getSessionCwd(): string | null {

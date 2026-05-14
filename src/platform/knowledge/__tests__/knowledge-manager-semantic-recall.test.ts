@@ -89,7 +89,7 @@ describe("recallAgentMemory — semantic mode", () => {
     expect(results[1]!.key).toBe("entry.2");
   });
 
-  it("falls back to keyword search when embeddingClient is undefined and semantic=true", async () => {
+  it("reports semantic recall unavailable instead of falling back to lexical substring search", async () => {
     const km = makeKM(undefined); // no embedding client
     const entries = [
       makeEntry({ key: "typescript.preference", value: "TypeScript is preferred" }),
@@ -97,11 +97,12 @@ describe("recallAgentMemory — semantic mode", () => {
     ];
     await seedMemory(km, entries);
 
-    const results = await km.recallAgentMemory("TypeScript", { semantic: true });
-
-    // Falls back to keyword search — only the TypeScript entry matches
-    expect(results).toHaveLength(1);
-    expect(results[0]!.key).toBe("typescript.preference");
+    await expect(km.recallAgentMemory("TypeScript", { semantic: true })).rejects.toThrow(
+      "semantic agent memory recall requires an embedding client"
+    );
+    expect(await km.recallAgentMemory("TypeScript", { mode: "lexical" })).toEqual([
+      expect.objectContaining({ key: "typescript.preference" }),
+    ]);
   });
 
   it("respects category filter before semantic ranking", async () => {
@@ -203,7 +204,7 @@ describe("recallAgentMemory — semantic mode", () => {
     expect(results).toHaveLength(2);
   });
 
-  it("works with default keyword mode unchanged (no semantic flag)", async () => {
+  it("keeps low-level default lexical mode explicit to KnowledgeManager callers", async () => {
     const mockEmbeddingClient: IEmbeddingClient = {
       embed: vi.fn(),
       batchEmbed: vi.fn(),
@@ -217,7 +218,7 @@ describe("recallAgentMemory — semantic mode", () => {
     ];
     await seedMemory(km, entries);
 
-    // Default keyword mode — should NOT call embeddingClient
+    // Low-level KnowledgeManager default remains lexical for explicit API callers.
     const results = await km.recallAgentMemory("TypeScript");
 
     expect(results).toHaveLength(1);
