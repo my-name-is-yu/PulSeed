@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRecallTool } from "../MemoryRecallTool.js";
 import type { KnowledgeManager } from "../../../../platform/knowledge/knowledge-manager.js";
+import { KnowledgeManager as RealKnowledgeManager } from "../../../../platform/knowledge/knowledge-manager.js";
 import type { ToolCallContext } from "../../../types.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
+import { StateManager } from "../../../../base/state/state-manager.js";
+import type { ILLMClient } from "../../../../base/llm/llm-client.js";
+import { cleanupTempDir, makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 
 const makeContext = (): ToolCallContext => ({
   cwd: "/tmp",
@@ -91,12 +95,12 @@ describe("MemoryRecallTool", () => {
     });
   });
 
-  describe("keyword search", () => {
-    it("returns matching entries for keyword search", async () => {
+  describe("lexical search", () => {
+    it("returns matching entries for explicit lexical search", async () => {
       const entry = makeEntry({ key: "user.language", value: "TypeScript" });
       vi.mocked(km.recallAgentMemory).mockResolvedValue([entry]);
 
-      const result = await tool.call({ query: "TypeScript" }, makeContext());
+      const result = await tool.call({ query: "TypeScript", mode: "lexical" }, makeContext());
 
       expect(result.success).toBe(true);
       const data = result.data as { entries: AgentMemoryEntry[]; totalFound: number };
@@ -104,7 +108,7 @@ describe("MemoryRecallTool", () => {
       expect(data.entries[0]).toMatchObject({ key: "user.language", value: "TypeScript" });
       expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
         "TypeScript",
-        expect.any(Object)
+        expect.objectContaining({ mode: "lexical" })
       );
     });
 
@@ -135,7 +139,7 @@ describe("MemoryRecallTool", () => {
       expect(data.totalFound).toBe(1);
       expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
         "user.language",
-        expect.objectContaining({ exact: true })
+        expect.objectContaining({ mode: "exact" })
       );
     });
   });
@@ -305,26 +309,55 @@ describe("MemoryRecallTool", () => {
   });
 
   describe("semantic mode", () => {
-    it("passes semantic=true when mode='semantic'", async () => {
+    it("passes semantic mode when mode='semantic'", async () => {
       vi.mocked(km.recallAgentMemory).mockResolvedValue([]);
 
       await tool.call({ query: "test", mode: "semantic" }, makeContext());
 
       expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
         "test",
-        expect.objectContaining({ semantic: true })
+        expect.objectContaining({ mode: "semantic" })
       );
     });
 
-    it("defaults to keyword mode (semantic=false) when mode not specified", async () => {
+    it("defaults to semantic mode when mode is not specified", async () => {
       vi.mocked(km.recallAgentMemory).mockResolvedValue([]);
 
       await tool.call({ query: "test" }, makeContext());
 
       expect(vi.mocked(km.recallAgentMemory)).toHaveBeenCalledWith(
         "test",
-        expect.objectContaining({ semantic: false })
+        expect.objectContaining({ mode: "semantic" })
       );
+    });
+  });
+
+  describe("production recall path", () => {
+    it("does not treat lexical substring matches as the default freeform memory path", async () => {
+      const tmpDir = makeTempDir("pulseed-memory-recall-tool-");
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const realKm = new RealKnowledgeManager(stateManager, {} as ILLMClient);
+        await realKm.saveAgentMemory({
+          key: "user.language",
+          value: "The user prefers TypeScript.",
+          tags: ["typescript", "preference"],
+        });
+        const realTool = new MemoryRecallTool(realKm);
+
+        const freeform = await realTool.call({ query: "TypeScript" }, makeContext());
+        expect(freeform.success).toBe(true);
+        expect((freeform.data as { entries: AgentMemoryEntry[] }).entries).toEqual([]);
+
+        const lexical = await realTool.call({ query: "TypeScript", mode: "lexical" }, makeContext());
+        expect(lexical.success).toBe(true);
+        expect((lexical.data as { entries: AgentMemoryEntry[] }).entries).toEqual([
+          expect.objectContaining({ key: "user.language" }),
+        ]);
+      } finally {
+        cleanupTempDir(tmpDir);
+      }
     });
   });
 });

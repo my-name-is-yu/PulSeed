@@ -93,7 +93,7 @@ const STATE_QUERY_TOOL_SCHEMA_CASES: StateQueryToolSchemaCase[] = [
   {
     name: "memory_recall",
     schema: MemoryRecallInputSchema,
-    validInput: { query: "deployment", limit: 10, mode: "keyword" },
+    validInput: { query: "deployment", limit: 10, mode: "lexical" },
     tool: new MemoryRecallTool(knowledgeManager),
   },
 ];

@@ -63,6 +63,7 @@ import {
   recallAgentMemoryEntries,
   saveAgentMemoryEntry,
   type AgentMemoryPhysicalDeleteManifest,
+  type AgentMemoryRecallMode,
 } from "./knowledge-manager-agent-memory.js";
 import type { MemoryQuarantineState } from "../corrections/memory-quarantine.js";
 import type { MemoryProvenance, MemoryVerificationStatus } from "../corrections/memory-quarantine.js";
@@ -468,9 +469,10 @@ export class KnowledgeManager {
   }
 
   /**
-   * Search agent memory entries by keyword or exact key match.
-   * exact=true: filter where entry.key === query.
-   * exact=false (default): case-insensitive substring match on key + value + tags.
+   * Search agent memory entries by explicit recall mode.
+   * mode="exact": filter where entry.key === query.
+   * mode="lexical": case-insensitive substring match on key + value + tags.
+   * mode="semantic": embedding-based similarity; no lexical fallback.
    * Optionally filter by category and/or memory_type.
    * Excludes archived entries unless include_archived=true.
    * Tiered sort: compiled entries first, then raw, both by updated_at desc.
@@ -478,6 +480,7 @@ export class KnowledgeManager {
   async recallAgentMemory(
     query: string,
     opts?: {
+      mode?: AgentMemoryRecallMode;
       exact?: boolean;
       category?: string;
       memory_type?: AgentMemoryType;

@@ -37,6 +37,9 @@ export const AgentMemoryPhysicalDeleteManifestSchema = z.object({
 }).strict();
 export type AgentMemoryPhysicalDeleteManifest = z.infer<typeof AgentMemoryPhysicalDeleteManifestSchema>;
 
+export const AgentMemoryRecallModeSchema = z.enum(["exact", "lexical", "semantic"]);
+export type AgentMemoryRecallMode = z.infer<typeof AgentMemoryRecallModeSchema>;
+
 export interface AgentMemoryHost {
   llmClient: ILLMClient;
   embeddingClient?: IEmbeddingClient;
@@ -115,6 +118,7 @@ export async function recallAgentMemoryEntries(
   host: AgentMemoryHost,
   query: string,
   opts?: {
+    mode?: AgentMemoryRecallMode;
     exact?: boolean;
     category?: string;
     memory_type?: AgentMemoryType;
@@ -127,15 +131,15 @@ export async function recallAgentMemoryEntries(
 ): Promise<AgentMemoryEntry[]> {
   const store = await host.loadAgentMemoryStore();
   const {
-    exact = false,
     category,
     memory_type,
     limit = 10,
     include_archived = false,
-    semantic = false,
     consent_scope,
     max_sensitivity,
   } = opts ?? {};
+  const mode = opts?.mode
+    ?? (opts?.exact ? "exact" : opts?.semantic ? "semantic" : "lexical");
 
   const candidates = store.entries.filter((e) => {
     if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
@@ -146,7 +150,8 @@ export async function recallAgentMemoryEntries(
     return matchesCategory && matchesType;
   });
 
-  if (semantic && host.embeddingClient) {
+  if (mode === "semantic") {
+    if (!host.embeddingClient || candidates.length === 0) return [];
     const texts = candidates.map((e) => {
       const base = `${e.key}: ${e.value}`;
       return e.summary ? `${base} (${e.summary})` : base;
@@ -161,7 +166,7 @@ export async function recallAgentMemoryEntries(
   }
 
   const lower = query.toLowerCase();
-  const results = candidates.filter((e) => exact
+  const results = candidates.filter((e) => mode === "exact"
     ? e.key === query
     : e.key.toLowerCase().includes(lower) ||
       e.value.toLowerCase().includes(lower) ||

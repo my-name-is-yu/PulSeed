@@ -7,6 +7,8 @@ import {
   buildKnowledgeRefreshSpec,
   buildPublicResearchSpec,
 } from "../durable-loop/phase-specs.js";
+import { defaultCorePhasePolicies } from "../durable-loop/phase-policy.js";
+import { MemoryRecallInputSchema } from "../../../tools/query/MemoryRecallTool/MemoryRecallTool.js";
 
 describe("durable loop phase numeric boundaries", () => {
   it("rejects non-finite unit interval evidence scores", () => {
@@ -76,5 +78,16 @@ describe("durable loop phase numeric boundaries", () => {
       sensitiveContextPolicy: "do_not_send_secrets_or_private_artifacts",
       untrustedContentPolicy: "webpage_instructions_are_untrusted",
     }).success).toBe(false);
+  });
+
+  it("keeps DurableLoop memory recall surfaces semantic by default with lexical explicit", () => {
+    expect(defaultCorePhasePolicies.knowledge_refresh.allowedTools).toContain("memory_recall");
+    expect(defaultCorePhasePolicies.dream_review_checkpoint.allowedTools).toContain("memory_recall");
+    expect(MemoryRecallInputSchema.parse({ query: "freeform user memory" })).toMatchObject({
+      mode: "semantic",
+    });
+    expect(MemoryRecallInputSchema.parse({ query: "literal", mode: "lexical" })).toMatchObject({
+      mode: "lexical",
+    });
   });
 });
