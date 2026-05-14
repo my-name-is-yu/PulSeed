@@ -35,7 +35,7 @@ plane.
 | --- | --- | --- |
 | Governed memory contract | `src/platform/profile/governed-memory.ts` | Defines record role, record kind, lifecycle, correction state, allowed uses, forbidden uses, sensitivity, and use audit. |
 | Relationship profile store | `src/platform/profile/relationship-profile.ts` | Current owner bridge for relationship profile items, boundaries, preferences, and intervention policy. |
-| Surface projection | `src/grounding/surface-contracts.ts` | Canonical admission gate for memory entering a runtime situation. |
+| Surface projection | `src/grounding/surface-contracts.ts` | Canonical contract for memory entering a runtime situation. The Surface runtime admission and invalidation helpers in this file are contract-only until a production caller path wires them explicitly. |
 | Profile Surface bridge | `src/grounding/profile-surface.ts` | Converts relationship profile records into Surface source refs and permissions. |
 | KnowledgeManager memory | `src/platform/knowledge/knowledge-manager-agent-memory.ts` | Existing agent memory lifecycle, correction, quarantine, and governance substrate. |
 | Soil retrieval | `src/platform/soil/`, `src/grounding/providers/soil-provider.ts` | Knowledge/projection retrieval owner; not a universal write owner for relationship memory. |
@@ -83,6 +83,14 @@ The projection keeps these distinctions explicit:
 Memory is never runtime authority. Even an actionable memory entry carries
 `memory_is_runtime_authority=false`; execution still belongs to admission,
 autonomy, approval, runtime control, and the relevant caller path.
+
+Surface runtime admission and invalidation helpers such as
+`evaluateSurfaceRuntimeAdmission`,
+`invalidateSurfaceProjectionFromMemoryCorrection`, and
+`revalidateSurfaceMemoryWriteCandidateAfterInvalidation` are intentionally
+contract-only in this slice. They define the fail-closed shape that production
+caller paths must use later, but they do not by themselves perform runtime
+execution, write owner memory, or mutate live replay state.
 
 ## Exclusion Rules
 
