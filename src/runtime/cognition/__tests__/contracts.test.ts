@@ -413,7 +413,7 @@ describe("Companion cognition contracts", () => {
       },
       {
         name: "payload_invalidated",
-        input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:1" }] },
+        input: { currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:2" }] },
       },
       {
         name: "payload_invalidated",
@@ -441,6 +441,16 @@ describe("Companion cognition contracts", () => {
       expect(blocked.external_service_context_allowed).toBe(false);
       expect(blocked.blocked_reason).toContain(testCase.name);
     }
+
+    const unchangedInvalidationSnapshot = evaluateCloudBoundaryForCognition({
+      evaluationId: "cloud-boundary:existing-invalidation-snapshot",
+      mode: "gated_external_service",
+      contextRefs: [context],
+      cloudComputeRequest: cloud,
+      currentInvalidationRefs: [{ kind: "memory_invalidation", ref: "invalidation:1" }],
+    });
+    expect(unchangedInvalidationSnapshot.external_service_context_allowed).toBe(true);
+    expect(unchangedInvalidationSnapshot.blocked_reason).toBeUndefined();
   });
 
   it("requires explicit purpose-bound data scope before external tool payload transfer", () => {

@@ -373,10 +373,14 @@ function staleCloudRequestReasons(input: {
   if (input.usedDispatchNonceRefs.some((ref) => sameRef(ref, input.request.dispatch_nonce_ref))) {
     reasons.push("dispatch_nonce_reused");
   }
-  if (input.currentInvalidationRefs.length > 0) {
+  if (hasNewInvalidationRef(input.currentInvalidationRefs, input.request.invalidation_refs)) {
     reasons.push("payload_invalidated");
   }
   return reasons;
+}
+
+function hasNewInvalidationRef(currentRefs: CognitionRef[], requestSnapshotRefs: CognitionRef[]): boolean {
+  return currentRefs.some((ref) => !requestSnapshotRefs.some((snapshotRef) => sameRef(ref, snapshotRef)));
 }
 
 function isCloudRequestExpired(request: CloudComputeRequest, evaluatedAt: string): boolean {
