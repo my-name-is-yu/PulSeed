@@ -265,7 +265,7 @@ describe("Companion cognition contracts", () => {
     const allowed = evaluateCloudBoundaryForCognition({
       evaluationId: "cloud-boundary:gated",
       mode: "gated_external_service",
-      contextRefs: [sameRefUnapprovedEpochContext, approvedContext, unapprovedContext],
+      contextRefs: [sameRefUnapprovedEpochContext, approvedContext, approvedContext, unapprovedContext],
       cloudComputeRequest: cloud,
     });
 

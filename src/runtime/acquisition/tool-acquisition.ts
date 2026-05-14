@@ -363,13 +363,26 @@ export function validateToolAcquisitionApproval(input: {
   if (!envelopeValidation.valid) {
     return envelopeValidation;
   }
+  if (proposal.cost_profile.requires_user_cost_ack && input.approvalKind === "cost_acknowledgment") {
+    const costAcknowledgmentRefValidation = validateCostAcknowledgmentRef({
+      proposal,
+      envelope,
+    });
+    if (!costAcknowledgmentRefValidation.valid) {
+      return costAcknowledgmentRefValidation;
+    }
+  }
   if (proposal.cost_profile.requires_user_cost_ack && input.approvalKind !== "cost_acknowledgment") {
     if (!proposal.cost_ack_ref || !input.costAcknowledgmentEnvelope) {
       return approvalValidation(false, "cost acknowledgment approval is required before acquisition can proceed");
     }
     const costAcknowledgmentEnvelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.costAcknowledgmentEnvelope);
-    if (!sameRef(proposal.cost_ack_ref, costAcknowledgmentEnvelope.approval_ref)) {
-      return approvalValidation(false, "cost acknowledgment ref does not match cost acknowledgment approval");
+    const costAcknowledgmentRefValidation = validateCostAcknowledgmentRef({
+      proposal,
+      envelope: costAcknowledgmentEnvelope,
+    });
+    if (!costAcknowledgmentRefValidation.valid) {
+      return costAcknowledgmentRefValidation;
     }
     const costAcknowledgmentValidation = validateApprovalEnvelopeForProposal({
       proposal,
@@ -614,8 +627,12 @@ function validateCostAcknowledgmentEvidence(input: {
     return approvalValidation(false, "cost acknowledgment validation time is invalid");
   }
   const envelope = ToolAcquisitionApprovalEnvelopeSchema.parse(input.envelope);
-  if (!sameRef(input.acquisition.cost_ack_ref, envelope.approval_ref)) {
-    return approvalValidation(false, "cost acknowledgment ref does not match cost acknowledgment approval");
+  const costAcknowledgmentRefValidation = validateCostAcknowledgmentRef({
+    proposal: input.acquisition,
+    envelope,
+  });
+  if (!costAcknowledgmentRefValidation.valid) {
+    return costAcknowledgmentRefValidation;
   }
   return validateApprovalEnvelopeForProposal({
     proposal: input.acquisition,
@@ -623,6 +640,19 @@ function validateCostAcknowledgmentEvidence(input: {
     approvalKind: "cost_acknowledgment",
     nowMs,
   });
+}
+
+function validateCostAcknowledgmentRef(input: {
+  proposal: CandidateToolAcquisition;
+  envelope: ToolAcquisitionApprovalEnvelope;
+}): ToolAcquisitionApprovalValidation {
+  if (!input.proposal.cost_ack_ref) {
+    return approvalValidation(false, "cost acknowledgment approval is required before acquisition can proceed");
+  }
+  if (!sameRef(input.proposal.cost_ack_ref, input.envelope.approval_ref)) {
+    return approvalValidation(false, "cost acknowledgment ref does not match cost acknowledgment approval");
+  }
+  return approvalValidation(true, "cost acknowledgment ref matches acquisition proposal");
 }
 
 function requiredRefsForAcquisition(

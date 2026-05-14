@@ -190,14 +190,17 @@ export function evaluateCloudBoundaryForCognition(input: {
   const modelVisibleContextRefs = requestAvailable && cloudComputeRequest
     ? approvedModelVisibleContextRefs(contextRefs, cloudComputeRequest)
     : [];
+  const requestedVisibleContextCount = cloudComputeRequest
+    ? uniqueCognitionEventRefCount(cloudComputeRequest.model_visible_context_refs)
+    : 0;
   const allowed = requestAvailable
-    && (!cloudComputeRequest || modelVisibleContextRefs.length === cloudComputeRequest.model_visible_context_refs.length);
+    && (!cloudComputeRequest || modelVisibleContextRefs.length === requestedVisibleContextCount);
   const blockedReason = blockedReasonFor({
     mode: input.mode,
     hasRequest: Boolean(cloudComputeRequest),
     staleReasons,
     blockedContextRefs,
-    requestedCount: cloudComputeRequest?.model_visible_context_refs.length ?? 0,
+    requestedCount: requestedVisibleContextCount,
     admittedCount: modelVisibleContextRefs.length,
   });
 
@@ -266,11 +269,25 @@ function approvedModelVisibleContextRefs(
 ): CognitionEventRef[] {
   const approvedRefKeys = new Set(request.model_visible_context_refs.map(cognitionEventRefKey));
   const admittedVersionKeys = new Set(request.admitted_ref_versions.map((version) => cognitionEventRefKey(version.ref)));
-  return contextRefs.filter((ref) =>
-    approvedRefKeys.has(cognitionEventRefKey(ref))
-    && admittedVersionKeys.has(cognitionEventRefKey(ref))
-    && hasExternalModelGrant(request.external_data_scope_grants, request.purpose, ref)
-  );
+  const approvedRefs: CognitionEventRef[] = [];
+  const seenRefKeys = new Set<string>();
+  for (const ref of contextRefs) {
+    const refKey = cognitionEventRefKey(ref);
+    if (seenRefKeys.has(refKey)) continue;
+    if (
+      approvedRefKeys.has(refKey)
+      && admittedVersionKeys.has(refKey)
+      && hasExternalModelGrant(request.external_data_scope_grants, request.purpose, ref)
+    ) {
+      seenRefKeys.add(refKey);
+      approvedRefs.push(ref);
+    }
+  }
+  return approvedRefs;
+}
+
+function uniqueCognitionEventRefCount(refs: CognitionEventRef[]): number {
+  return new Set(refs.map(cognitionEventRefKey)).size;
 }
 
 function cognitionEventRefKey(ref: CognitionEventRef): string {

@@ -280,6 +280,22 @@ describe("tool acquisition proposals", () => {
     });
     expect(validateToolAcquisitionApproval({
       proposal: costBearingProposal,
+      envelope: wrongCostAcknowledgmentEnvelope,
+      approvalKind: "cost_acknowledgment",
+      now: NOW,
+    })).toMatchObject({
+      valid: false,
+      reason: "cost acknowledgment ref does not match cost acknowledgment approval",
+      runtime_authority: false,
+    });
+    expect(validateToolAcquisitionApproval({
+      proposal: costBearingProposal,
+      envelope: costAcknowledgmentEnvelope,
+      approvalKind: "cost_acknowledgment",
+      now: NOW,
+    })).toMatchObject({ valid: true });
+    expect(validateToolAcquisitionApproval({
+      proposal: costBearingProposal,
       envelope: installEnvelope,
       approvalKind: "install_or_enable_code",
       costAcknowledgmentEnvelope,
