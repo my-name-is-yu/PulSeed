@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { CorePhaseKind, CorePhaseSpec } from "../../execution/agent-loop/core-phase-runner.js";
 
 const PhaseUnitIntervalSchema = z.number().finite().min(0).max(1);

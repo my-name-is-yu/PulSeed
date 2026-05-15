@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { createRuntimeSessionRegistry } from "../../runtime/session-registry/index.js";
 import type { BackgroundRun } from "../../runtime/session-registry/index.js";
 import type { StateManager } from "../../base/state/state-manager.js";

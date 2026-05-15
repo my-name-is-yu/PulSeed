@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { isIP } from "node:net";
 import { StringDecoder } from "node:string_decoder";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, PERMISSION_LEVEL, MAX_OUTPUT_CHARS } from "./constants.js";

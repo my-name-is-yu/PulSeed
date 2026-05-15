@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const PositiveSafeIntegerSchema = z.number().finite().int().safe().positive();
 const NonNegativeSafeIntegerSchema = z.number().finite().int().safe().min(0);

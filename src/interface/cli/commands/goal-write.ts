@@ -2,7 +2,7 @@
 
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { getReportsDir, getDatasourcesDir } from "../../../base/utils/paths.js";
 import { readJsonFile } from "../../../base/utils/json-io.js";
 

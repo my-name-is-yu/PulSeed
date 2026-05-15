@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const PackageStringRecordSchema = z.record(z.string(), z.string());
 const PackageManifestShapeSchema = z.object({

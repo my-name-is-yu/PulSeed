@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { GoalWorker, type GoalWorkerConfig, type WorkerResult } from './goal-worker.js';
 import { createEnvelope } from '../types/envelope.js';
 import type { DurableLoop } from '../../orchestrator/loop/durable-loop.js';

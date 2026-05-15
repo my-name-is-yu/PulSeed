@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const EnvelopePrioritySchema = z.enum(["critical", "high", "normal", "low"]);
 export type EnvelopePriority = z.infer<typeof EnvelopePrioritySchema>;

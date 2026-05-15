@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 
 // ─── LLM Response Schemas ───

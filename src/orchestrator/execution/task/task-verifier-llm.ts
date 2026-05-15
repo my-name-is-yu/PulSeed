@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Task } from "../../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { Logger } from "../../../runtime/logger.js";

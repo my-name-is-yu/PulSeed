@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { CapabilityReadinessSnapshot } from "../../platform/observation/types/capability.js";
 import {
   CapabilityOperationKindEnum,

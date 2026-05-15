@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import { GlobInputSchema, GlobTool } from "../GlobTool/GlobTool.js";
 import { GrepInputSchema, GrepTool } from "../GrepTool/GrepTool.js";

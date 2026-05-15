@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import type { AgentMemoryEntry } from "../knowledge/types/agent-memory.js";
 import { LearnedPatternSchema, type LearnedPattern } from "../knowledge/types/learning.js";

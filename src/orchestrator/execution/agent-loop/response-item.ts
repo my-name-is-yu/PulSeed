@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ToolResultSchema } from "../../../tools/types.js";
 import type { ToolResult } from "../../../tools/types.js";
 

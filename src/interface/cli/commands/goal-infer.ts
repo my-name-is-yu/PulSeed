@@ -1,6 +1,6 @@
 // ─── goal-infer.ts: LLM-powered dimension inference for goal add ───
 
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { getCliLogger } from "../cli-logger.js";
 import { ThresholdTypeEnum } from "../../../base/types/core.js";

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import { ProcessSessionStateStore } from "../../../runtime/store/process-session-state-store.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";

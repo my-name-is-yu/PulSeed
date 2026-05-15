@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── Mock the openai SDK ───
 //

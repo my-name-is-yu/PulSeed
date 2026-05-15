@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ToolExecutor } from "../executor.js";
 import { ToolRegistry } from "../registry.js";
 import { ToolPermissionManager } from "../permission.js";

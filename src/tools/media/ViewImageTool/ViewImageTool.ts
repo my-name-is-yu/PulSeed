@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 
 export const ViewImageInputSchema = z.object({

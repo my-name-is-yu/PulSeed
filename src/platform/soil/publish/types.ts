@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const SoilPublishProviderSchema = z.enum(["notion", "apple_notes", "all"]);
 export type SoilPublishProvider = z.infer<typeof SoilPublishProviderSchema>;

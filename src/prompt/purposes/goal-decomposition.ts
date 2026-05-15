@@ -4,7 +4,7 @@
  * Used by PromptGateway to decompose a goal into measurable dimensions.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const GOAL_DECOMPOSITION_SYSTEM_PROMPT = `Decompose the given goal into measurable dimensions.
 Each dimension should be independently observable and have clear success criteria.

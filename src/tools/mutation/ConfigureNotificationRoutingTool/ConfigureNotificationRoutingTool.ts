@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import { applyNaturalLanguageNotificationRouting } from "../../../runtime/notification-routing.js";
 import { buildLLMClient } from "../../../base/llm/provider-factory.js";

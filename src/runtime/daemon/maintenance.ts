@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import type { DaemonConfig, DaemonState } from "../../base/types/daemon.js";

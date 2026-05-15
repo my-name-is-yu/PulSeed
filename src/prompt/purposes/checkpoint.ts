@@ -4,7 +4,7 @@
  * Used by PromptGateway for CHECKPOINT_ANALYZE.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── CHECKPOINT_ANALYZE ───────────────────────────────────────────────────────
 

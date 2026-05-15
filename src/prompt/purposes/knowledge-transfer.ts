@@ -5,7 +5,7 @@
  * and KNOWLEDGE_TRANSFER_VALIDATE.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── KNOWLEDGE_TRANSFER_EXTRACT ───────────────────────────────────────────────
 

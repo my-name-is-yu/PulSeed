@@ -13,7 +13,7 @@ import type { ITool, ToolActivityCategory, ToolResult, ToolCallContext } from ".
 import type { ChatEvent } from "../chat-events.js";
 import { CapabilityVerificationStore } from "../../../runtime/store/capability-verification-store.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({

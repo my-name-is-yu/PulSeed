@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const MAX_DRIVE_DURATION_HOURS = 1_000_000;
 export const MAX_DRIVE_URGENCY_STEEPNESS = 100;

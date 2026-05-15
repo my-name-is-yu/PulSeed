@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ToolRegistry } from "../registry.js";
 import type { ITool, ToolMetadata, ToolResult, ToolCallContext, PermissionCheckResult } from "../types.js";
 

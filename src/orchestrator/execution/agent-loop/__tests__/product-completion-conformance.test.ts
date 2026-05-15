@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { ConcurrencyController } from "../../../../tools/concurrency.js";

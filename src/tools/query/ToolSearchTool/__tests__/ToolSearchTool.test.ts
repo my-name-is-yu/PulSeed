@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ToolSearchTool } from "../ToolSearchTool.js";
 import { ToolRegistry } from "../../../registry.js";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../../types.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // --- Minimal mock tool factory ---
 

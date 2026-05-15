@@ -4,7 +4,7 @@
  * Used by PromptGateway to evaluate current state of a goal dimension.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const OBSERVATION_SYSTEM_PROMPT = `You are an objective evaluator of software project progress.
 Evaluate the current state of the specified dimension based on the provided context.

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const MAX_AUTONOMY_TTL_MS = 24 * 60 * 60 * 1000;
 

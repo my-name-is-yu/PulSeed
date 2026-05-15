@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const MemoryCorrectionTargetKindSchema = z.enum([
   "agent_memory",

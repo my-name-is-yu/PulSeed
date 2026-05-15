@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { ScheduleEngine } from "../../../../runtime/schedule/engine.js";
 import { resolveScheduleEntry } from "../../../../runtime/schedule/entry-resolver.js";
 import type { ScheduleEntry, ScheduleTriggerInput } from "../../../../runtime/types/schedule.js";

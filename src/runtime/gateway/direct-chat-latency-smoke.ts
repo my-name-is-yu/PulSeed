@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { StateManager } from "../../base/state/state-manager.js";
 import { buildGatewayLLMClient } from "../../base/llm/provider-factory.js";
 import { loadProviderConfig } from "../../base/llm/provider-config.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const ScheduleToolPositiveSafeIntegerSchema = z.number().finite().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const ScheduleToolNonNegativeSafeIntegerSchema = z.number().finite().int().min(0).max(Number.MAX_SAFE_INTEGER);

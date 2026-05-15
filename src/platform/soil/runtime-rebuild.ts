@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ReportSchema } from "../../base/types/report.js";
 import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";

@@ -37,7 +37,7 @@ import * as DriveScorer from "../../src/platform/drive/drive-scorer.js";
 import type { Goal } from "../../src/base/types/goal.js";
 import type { ObservationMethod } from "../../src/base/types/core.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 
 // ─── Helpers ───
 import { makeTempDir } from "../helpers/temp-dir.js";

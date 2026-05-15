@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { EthicsGate } from "./ethics-gate.js";

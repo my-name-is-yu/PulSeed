@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { SessionManager } from "../../../orchestrator/execution/session-manager.js";
 import type { SessionType } from "../../../orchestrator/execution/types/session.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { ShellTimeoutMsSchema, ShellTool } from "../ShellTool/ShellTool.js";
 import { containsShellExecutable } from "../ShellTool/command-policy.js";

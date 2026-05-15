@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type * as NodeFs from "node:fs";
 import type * as NodeFsPromises from "node:fs/promises";
 

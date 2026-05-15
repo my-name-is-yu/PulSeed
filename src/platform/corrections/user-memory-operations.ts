@@ -1,5 +1,5 @@
 import path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { RuntimeEvidenceLedger } from "../../runtime/store/evidence-ledger.js";
 import {

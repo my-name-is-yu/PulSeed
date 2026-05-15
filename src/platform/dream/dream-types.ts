@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { MemoryCorrectionTargetStateSchema } from "../corrections/memory-correction-ledger.js";
 import { LearnedPatternSchema, LearnedPatternTypeEnum } from "../knowledge/types/learning.js";
 import { ScheduleTriggerSchema } from "../../runtime/types/schedule.js";

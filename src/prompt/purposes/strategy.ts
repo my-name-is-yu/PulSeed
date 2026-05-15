@@ -4,7 +4,7 @@
  * Used by PromptGateway to generate candidate strategies for achieving a goal.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StrategyArraySchema } from "../../orchestrator/strategy/strategy-helpers.js";
 
 export const STRATEGY_SYSTEM_PROMPT = `Generate candidate strategies for achieving the goal.

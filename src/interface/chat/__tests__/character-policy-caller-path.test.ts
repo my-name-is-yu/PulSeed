@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ChatRunner } from "../chat-runner.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import { CharacterConfigManager } from "../../../platform/traits/character-config.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { AdapterRegistry } from "../../../orchestrator/execution/adapter-layer.js";
 import type { SessionManager } from "../../../orchestrator/execution/session-manager.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";

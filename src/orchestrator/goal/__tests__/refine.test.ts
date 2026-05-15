@@ -7,7 +7,7 @@ import type { GoalTreeManager } from "../goal-tree-manager.js";
 import type { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeGoal, makeDimension } from "../../../../tests/helpers/fixtures.js";
-import { ZodError } from "zod";
+import { ZodError } from "zod/v3";
 
 const measurableResponses = {
   shell: JSON.stringify({

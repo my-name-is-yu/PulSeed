@@ -4,7 +4,7 @@
  * Used by PromptGateway to review task results against success criteria.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const VERIFICATION_SYSTEM_PROMPT = `Review task results objectively against success criteria.
 Ignore the executor's self-assessment. Focus on evidence-based verification.

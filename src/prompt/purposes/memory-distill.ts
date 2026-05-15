@@ -4,7 +4,7 @@
  * Used by PromptGateway for MEMORY_DISTILL_SUMMARIZE and MEMORY_DISTILL_PRIORITIZE.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── MEMORY_DISTILL_SUMMARIZE ─────────────────────────────────────────────────
 

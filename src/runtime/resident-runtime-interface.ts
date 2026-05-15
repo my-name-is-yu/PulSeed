@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ApprovalRequiredEvent } from "./approval-broker.js";
 import type { RuntimeSessionRegistrySnapshot } from "./session-registry/types.js";
 import {

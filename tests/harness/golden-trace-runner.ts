@@ -4,7 +4,7 @@ import * as fsp from "node:fs/promises";
 import * as http from "node:http";
 import * as path from "node:path";
 import Database from "better-sqlite3";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse, LLMStreamHandlers } from "../../src/base/llm/llm-client.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
 import { ChatRunner, type ChatRunnerDeps } from "../../src/interface/chat/chat-runner.js";

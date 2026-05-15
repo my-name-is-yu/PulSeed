@@ -4,7 +4,7 @@ import {
   type RuntimeControlDbStoreOptions,
 } from "../../runtime/store/control-db/index.js";
 import { type KnowledgeEdge, KnowledgeEdgeSchema } from "../../base/types/knowledge.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const KnowledgeGraphNodeSchema = z.object({
   entry_id: z.string().min(1),

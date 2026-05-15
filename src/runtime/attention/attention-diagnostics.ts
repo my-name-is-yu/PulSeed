@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { attentionScopeKey } from "./attention-scope.js";
 import type {
   AgendaDecomposition,

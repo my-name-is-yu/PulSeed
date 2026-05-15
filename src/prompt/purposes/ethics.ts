@@ -4,7 +4,7 @@
  * Used by PromptGateway for ETHICS_EVALUATE and ETHICS_EXPLAIN.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── ETHICS_EVALUATE & ETHICS_EXPLAIN ────────────────────────────────────────
 

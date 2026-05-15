@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { CrossPlatformChatSessionManager } from "../../../interface/chat/cross-platform-session.js";
 import type { ChatEvent } from "../../../interface/chat/chat-events.js";
 import type { ChatRunnerDeps } from "../../../interface/chat/chat-runner-contracts.js";

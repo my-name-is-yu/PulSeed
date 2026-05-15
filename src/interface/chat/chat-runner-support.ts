@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 

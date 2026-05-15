@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const MAX_CURIOSITY_INTERVAL_HOURS = 365 * 24;
 const CuriosityUnitIntervalSchema = z.number().finite().min(0).max(1);

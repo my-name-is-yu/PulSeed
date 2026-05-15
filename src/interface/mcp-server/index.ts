@@ -2,7 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StateManager } from "../../base/state/state-manager.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import type { MCPServerDeps } from "./tools.js";

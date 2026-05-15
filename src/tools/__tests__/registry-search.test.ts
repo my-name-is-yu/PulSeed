@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ToolRegistry } from "../registry.js";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../types.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 function makeTool(opts: { name: string; description: string; tags: string[] }): ITool {
   return {

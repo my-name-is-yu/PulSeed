@@ -21,7 +21,7 @@ import {
   type SqliteDatabase,
 } from "../store/control-db/index.js";
 import type { BrowserSessionScope } from "./browser-session-store.js";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 const ACTIVE_STATES = new Set<RuntimeAuthHandoffState>([
   "requested",

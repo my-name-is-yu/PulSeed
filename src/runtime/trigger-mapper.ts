@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { TriggerEvent, TriggerMapping } from "../base/types/trigger.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { readTriggerMappingsConfig } from "./trigger-mappings-json.js";

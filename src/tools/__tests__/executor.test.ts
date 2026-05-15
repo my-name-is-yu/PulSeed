@@ -1,7 +1,7 @@
 // src/tools/__tests__/executor.test.ts
 
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ToolExecutor } from "../executor.js";
 import { ToolRegistry } from "../registry.js";
 import { ToolPermissionManager } from "../permission.js";

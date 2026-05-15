@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { KnowledgeManager } from "./knowledge-manager.js";
 import {
   LintFindingSchema,

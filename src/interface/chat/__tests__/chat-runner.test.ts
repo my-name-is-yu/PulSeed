@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";

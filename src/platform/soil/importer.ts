@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { computeSoilChecksum } from "./checksum.js";
 import { createSoilConfig, type SoilConfigInput } from "./config.js";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";

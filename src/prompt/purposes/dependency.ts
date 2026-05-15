@@ -4,7 +4,7 @@
  * Used by PromptGateway to auto-detect dependency relationships between goals.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── DEPENDENCY_ANALYSIS ─────────────────────────────────────────────────────
 

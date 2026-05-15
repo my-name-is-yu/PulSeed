@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { NegotiationResponseTypeEnum } from "../../../base/types/core.js";
 import { DimensionObservationMappingSchema } from "./goal.js";
 

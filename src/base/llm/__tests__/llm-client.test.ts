@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { MockLLMClient, LLMClient } from "../llm-client.js";
 import type { ILLMClient } from "../llm-client.js";
 import { extractJSON, isRateLimitError, getRateLimitRetryDelay, RATE_LIMIT_RETRY_DELAYS_MS } from "../base-llm-client.js";

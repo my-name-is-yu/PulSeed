@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { OpenAILLMClient } from "../../src/base/llm/openai-client.js";
 import { buildLLMClient } from "../../src/base/llm/provider-factory.js";
 import type { LLMResponse } from "../../src/base/llm/llm-client.js";

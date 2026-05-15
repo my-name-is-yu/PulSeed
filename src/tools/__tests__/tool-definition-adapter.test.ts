@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { toToolDefinition } from "../tool-definition-adapter.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../types.js";
 

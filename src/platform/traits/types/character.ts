@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const CharacterLevelSchema = z.number().int().min(1).max(5);
 

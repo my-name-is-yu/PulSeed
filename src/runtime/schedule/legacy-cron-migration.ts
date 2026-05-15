@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { ScheduleEntrySchema } from "../types/schedule.js";
 import { computeNextFireAt } from "./engine-mutations.js";

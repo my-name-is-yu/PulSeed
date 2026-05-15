@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { defaultExecutionPolicy } from "../../../orchestrator/execution/agent-loop/execution-policy.js";
 import type { ITool, ToolCallContext, ToolResult } from "../../../tools/types.js";
 import {
