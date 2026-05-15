@@ -1,4 +1,5 @@
 import { z } from "zod/v3";
+import { PeerInitiativeKindSchema } from "../peer-initiative/kinds.js";
 
 export const OutboundConversationSurfaceSchema = z.enum([
   "telegram",
@@ -35,7 +36,7 @@ export const PeerInitiativeFeedbackActionSchema = z.object({
     "mute_this_kind",
   ]),
   candidate_id: z.string().min(1),
-  initiative_kind: z.string().min(1),
+  initiative_kind: PeerInitiativeKindSchema,
   feedback_target: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("peer_initiative_candidate"),
@@ -90,4 +91,3 @@ export interface GatewayOutboundConversationPort {
     message: OutboundConversationMessage
   ): Promise<OutboundConversationDeliveryReceipt>;
 }
-
