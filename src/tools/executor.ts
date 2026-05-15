@@ -21,17 +21,30 @@ import {
 } from "./execution-orchestrator.js";
 import { persistCapabilityExecutionRecords } from "./capability-execution-records.js";
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
-import { resolveWorkspaceCwd } from "./workspace-scope.js";
-import type { PermissionWaitCanonicalPlan } from "../runtime/store/permission-wait-plan-store.js";
 import {
   recordPersonalAgentToolDecision,
 } from "./personal-agent-tool-trace.js";
+import {
+  buildApprovedToolCallContext,
+  buildPermissionApprovalWaitPlan,
+  buildPermissionWaitCanonicalPlan,
+} from "./permission-wait-plan.js";
+import {
+  buildDryRunToolResult,
+  buildNotExecutedToolResult,
+  buildToolFailureResult,
+  buildToolOutcomeSummary,
+} from "./tool-result-envelope.js";
 import type {
   CapabilityRegistryDecisionKind,
   InterventionDecisionKind,
   InterventionTargetEffect,
 } from "../runtime/personal-agent/index.js";
 import type { PersonalAgentRuntimeStore } from "../runtime/personal-agent/index.js";
+
+type PermissionApprovalResult =
+  | { status: "approved"; context: ToolCallContext }
+  | { status: "blocked"; result: ToolResult };
 
 /**
  * 5-gate execution pipeline for tool invocations.
@@ -91,6 +104,7 @@ export class ToolExecutor {
     if (hostPreflightResult) return hostPreflightResult;
 
     let precheckedPermissionResult: Awaited<ReturnType<ToolPermissionManager["check"]>> | null = null;
+    let executionContext = context;
 
     // --- Gate 2: Semantic Validation (tool-specific) ---
     const semanticResult = await tool.checkPermissions(input, context);
@@ -152,13 +166,14 @@ export class ToolExecutor {
           reversibility: "unknown",
           permissionGrantDecision: grantBackedPermissionResult.permissionGrantDecision,
         });
-        if (approvalResult) return approvalResult;
+        if (approvalResult.status === "blocked") return approvalResult.result;
+        executionContext = approvalResult.context;
         precheckedPermissionResult = { status: "allowed" };
       }
     }
 
     // --- Gate 3: Permission Manager (3-layer) ---
-    const permResult = precheckedPermissionResult ?? await this.permissionManager.check(tool, input, context);
+    const permResult = precheckedPermissionResult ?? await this.permissionManager.check(tool, input, executionContext);
     if (permResult.status === "denied") {
       await this.recordToolPolicyDecision(tool, input, context, {
         decision: "block",
@@ -184,18 +199,19 @@ export class ToolExecutor {
       const approvalResult = await this.requestPermissionApproval({
         tool,
         input,
-        context,
+        context: executionContext,
         startTime,
         reason: permResult.reason,
         reversibility: "reversible",
         policyDecision: permResult.policyDecision,
         permissionGrantDecision: permResult.permissionGrantDecision,
       });
-      if (approvalResult) return approvalResult;
+      if (approvalResult.status === "blocked") return approvalResult.result;
+      executionContext = approvalResult.context;
     }
 
     // --- Gate 4: Input Sanitization ---
-    const sanitizeError = this.sanitizeInput(tool, input, context);
+    const sanitizeError = this.sanitizeInput(tool, input, executionContext);
     if (sanitizeError) {
       await this.recordToolPolicyDecision(tool, input, context, {
         decision: "block",
@@ -211,7 +227,7 @@ export class ToolExecutor {
       );
     }
 
-    await this.recordToolPolicyDecision(tool, input, context, {
+    await this.recordToolPolicyDecision(tool, input, executionContext, {
       decision: "allow",
       capabilityDecision: "available",
       decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
@@ -226,24 +242,18 @@ export class ToolExecutor {
         tool,
         input,
         async () => {
-          if (context.dryRun) {
-            return {
-              success: true,
-              data: null,
-              summary: "dry-run: skipped",
-              execution: { status: "not_executed", reason: "dry_run", message: "dry-run skipped tool.call()" },
-              durationMs: 0,
-            };
+          if (executionContext.dryRun) {
+            return buildDryRunToolResult();
           }
-          const callFn = () => tool.call(input, context);
+          const callFn = () => tool.call(input, executionContext);
           const isSafe = tool.isConcurrencySafe(input);
-          if (context.timeoutMs) {
+          if (executionContext.timeoutMs) {
             return this.withTimeout(
-              () => this.callWithRetry(callFn, tool.metadata.name, isSafe, context),
-              context.timeoutMs,
+              () => this.callWithRetry(callFn, tool.metadata.name, isSafe, executionContext),
+              executionContext.timeoutMs,
             );
           }
-          return this.callWithRetry(callFn, tool.metadata.name, isSafe, context);
+          return this.callWithRetry(callFn, tool.metadata.name, isSafe, executionContext);
         },
       );
     } catch (err) {
@@ -252,18 +262,18 @@ export class ToolExecutor {
       const failure = this.failResult(
         `Tool ${toolName} failed: ${error}`,
         Date.now() - startTime,
-        this.executionForFailure(err, context) ?? { status: "executed", reason: "tool_error", message: error },
+        this.executionForFailure(err, executionContext) ?? { status: "executed", reason: "tool_error", message: error },
       );
-      await this.recordToolPolicyDecision(tool, input, context, {
+      await this.recordToolPolicyDecision(tool, input, executionContext, {
         decision: "allow",
         capabilityDecision: "available",
         decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
         targetEffect: "execute_tool",
         targetSummary: `${tool.metadata.name} tool execution was admitted before side effects.`,
-        outcomeSummary: toolOutcomeSummary(tool.metadata.name, failure),
+        outcomeSummary: buildToolOutcomeSummary(tool.metadata.name, failure),
       });
       try {
-        await persistCapabilityExecutionRecords({ tool, rawInput: input, result: failure, context });
+        await persistCapabilityExecutionRecords({ tool, rawInput: input, result: failure, context: executionContext });
       } catch (persistErr) {
         const persistError = persistErr instanceof Error ? persistErr.message : String(persistErr);
         logger?.warn("tool.capability_records.failure", { tool: toolName, callId, error: persistError });
@@ -287,17 +297,17 @@ export class ToolExecutor {
       }
     }
 
-    await this.recordToolPolicyDecision(tool, input, context, {
+    await this.recordToolPolicyDecision(tool, input, executionContext, {
       decision: "allow",
       capabilityDecision: "available",
       decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
       targetEffect: "execute_tool",
       targetSummary: `${tool.metadata.name} tool execution was admitted before side effects.`,
-      outcomeSummary: toolOutcomeSummary(tool.metadata.name, result),
+      outcomeSummary: buildToolOutcomeSummary(tool.metadata.name, result),
     });
 
     try {
-      await persistCapabilityExecutionRecords({ tool, rawInput: input, result, context });
+      await persistCapabilityExecutionRecords({ tool, rawInput: input, result, context: executionContext });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       logger?.warn("tool.capability_records.failure", { tool: toolName, callId, error });
@@ -353,102 +363,83 @@ export class ToolExecutor {
     reversibility: "reversible" | "irreversible" | "unknown";
     policyDecision?: HostToolExecutionDecision;
     permissionGrantDecision?: PermissionGrantEvaluation;
-  }): Promise<ToolResult | null> {
-    const approvalId = `permission-wait:${randomUUID()}`;
-    const canonicalPlan = this.buildCanonicalPermissionWaitPlan(input);
-    const auditRef = `tool:${input.tool.metadata.name}:${input.context.callId ?? approvalId}`;
+  }): Promise<PermissionApprovalResult> {
+    const waitPlan = buildPermissionApprovalWaitPlan(input);
     if (input.context.permissionWaitPlanStore) {
       await input.context.permissionWaitPlanStore.createWaiting({
-        wait_plan_id: approvalId,
-        approval_id: approvalId,
+        wait_plan_id: waitPlan.approvalId,
+        approval_id: waitPlan.approvalId,
         goal_id: input.context.goalId,
-        canonical_plan: canonicalPlan,
-        audit_refs: [auditRef],
+        canonical_plan: waitPlan.canonicalPlan,
+        audit_refs: [waitPlan.auditRef],
       });
     }
-    const approvalRequest = {
-      toolName: input.tool.metadata.name,
-      input: input.input,
-      reason: input.reason,
-      permissionLevel: input.tool.metadata.permissionLevel,
-      isDestructive: input.tool.metadata.isDestructive,
-      reversibility: input.reversibility,
-      approvalId,
-      permissionWaitPlanId: approvalId,
-      canonicalPermissionPlan: canonicalPlan,
-      ...(input.context.callId ? { callId: input.context.callId } : {}),
-      ...(input.context.sessionId ? { sessionId: input.context.sessionId } : {}),
-      ...(input.context.runId ? { runId: input.context.runId } : {}),
-      ...(input.context.turnId ? { turnId: input.context.turnId } : {}),
-      ...(input.permissionGrantDecision ? { permissionGrantDecision: input.permissionGrantDecision } : {}),
-    } as const;
 
-    await input.context.onApprovalRequested?.(approvalRequest);
-    const approved = await input.context.approvalFn(approvalRequest);
+    await input.context.onApprovalRequested?.(waitPlan.approvalRequest);
+    const approved = await input.context.approvalFn(waitPlan.approvalRequest);
     if (!approved) {
-      await input.context.permissionWaitPlanStore?.markDenied(approvalId, {
+      await input.context.permissionWaitPlanStore?.markDenied(waitPlan.approvalId, {
         reason: "approval_denied",
-        audit_refs: [auditRef],
+        audit_refs: [waitPlan.auditRef],
       });
-      const denied = this.failResult(
-        `User denied approval: ${input.reason}`,
-        Date.now() - input.startTime,
-        { status: "not_executed", reason: "approval_denied", message: input.reason },
-      );
+      const denied = buildNotExecutedToolResult({
+        summary: `User denied approval: ${input.reason}`,
+        durationMs: Date.now() - input.startTime,
+        reason: "approval_denied",
+        message: input.reason,
+      });
       await this.recordToolPolicyDecision(input.tool, input.input, input.context, {
         decision: "block",
         capabilityDecision: "blocked",
         decisionReason: `Operator denied confirmation for ${input.tool.metadata.name}: ${input.reason}`,
         targetEffect: "execute_tool",
         targetSummary: `${input.tool.metadata.name} tool execution was blocked after confirmation was denied.`,
-        outcomeSummary: toolOutcomeSummary(input.tool.metadata.name, denied),
+        outcomeSummary: buildToolOutcomeSummary(input.tool.metadata.name, denied),
       });
-      return denied;
+      return { status: "blocked", result: denied };
     }
 
-    input.context.preApproved = true;
-    input.context.hostPolicyApproved = true;
+    if (!input.context.permissionWaitPlanStore) {
+      return { status: "approved", context: buildApprovedToolCallContext(input.context) };
+    }
 
-    if (!input.context.permissionWaitPlanStore) return null;
-
-    await input.context.permissionWaitPlanStore.markApproved(approvalId, {
-      audit_refs: [`approval:${approvalId}`, auditRef],
+    await input.context.permissionWaitPlanStore.markApproved(waitPlan.approvalId, {
+      audit_refs: [`approval:${waitPlan.approvalId}`, waitPlan.auditRef],
     });
-    const resumePlan = this.buildCanonicalPermissionWaitPlan({
-      ...input,
-      policyDecision: input.policyDecision ?? decideHostToolExecution({
-        tool: input.tool,
-        input: input.input,
-        context: input.context,
-      }),
+    const resumePlan = buildPermissionWaitCanonicalPlan({
+      tool: input.tool,
+      input: input.input,
+      context: input.context,
+      reason: input.reason,
+      reversibility: input.reversibility,
+      permissionGrantDecision: input.permissionGrantDecision,
     });
-    const resumeResult = await input.context.permissionWaitPlanStore.resumeApproved(approvalId, {
+    const resumeResult = await input.context.permissionWaitPlanStore.resumeApproved(waitPlan.approvalId, {
       canonical_plan: resumePlan,
-      audit_refs: [auditRef],
+      audit_refs: [waitPlan.auditRef],
     });
-    if (resumeResult.status === "resumed") return null;
+    if (resumeResult.status === "resumed") {
+      return { status: "approved", context: buildApprovedToolCallContext(input.context) };
+    }
 
     const message = resumeResult.status === "mismatch_rejected"
       ? `Approval mismatch: ${resumeResult.mismatch_reasons.join(", ")}`
       : `Approval could not resume stored plan: ${resumeResult.status}`;
-    const blocked = this.failResult(
+    const blocked = buildNotExecutedToolResult({
+      summary: message,
+      durationMs: Date.now() - input.startTime,
+      reason: resumeResult.status === "mismatch_rejected" ? "stale_state" : "approval_denied",
       message,
-      Date.now() - input.startTime,
-      {
-        status: "not_executed",
-        reason: resumeResult.status === "mismatch_rejected" ? "stale_state" : "approval_denied",
-        message,
-      },
-    );
+    });
     await this.recordToolPolicyDecision(input.tool, input.input, input.context, {
       decision: "block",
       capabilityDecision: "blocked",
       decisionReason: `Approval resume blocked ${input.tool.metadata.name}: ${message}`,
       targetEffect: "execute_tool",
       targetSummary: `${input.tool.metadata.name} tool execution was blocked because approval could not resume safely.`,
-      outcomeSummary: toolOutcomeSummary(input.tool.metadata.name, blocked),
+      outcomeSummary: buildToolOutcomeSummary(input.tool.metadata.name, blocked),
     });
-    return blocked;
+    return { status: "blocked", result: blocked };
   }
 
   private isAllowedByPermissionGrant(result: PermissionCheckResult): boolean {
@@ -497,64 +488,6 @@ export class ToolExecutor {
         ...(options.outcomeSummary ? { outcomeSummary: options.outcomeSummary } : {}),
       },
     );
-  }
-
-  private buildCanonicalPermissionWaitPlan(input: {
-    tool: ITool;
-    input: unknown;
-    context: ToolCallContext;
-    reason: string;
-    reversibility: "reversible" | "irreversible" | "unknown";
-    policyDecision?: HostToolExecutionDecision;
-    permissionGrantDecision?: unknown;
-  }): PermissionWaitCanonicalPlan {
-    const inputRecord = input.input && typeof input.input === "object"
-      ? input.input as Record<string, unknown>
-      : {};
-    const cwdInput = typeof inputRecord["cwd"] === "string" ? inputRecord["cwd"] as string : undefined;
-    const cwdResolution = resolveWorkspaceCwd(cwdInput, input.context);
-    const hostDecision = input.policyDecision ?? decideHostToolExecution({
-      tool: input.tool,
-      input: input.input,
-      context: input.context,
-    });
-    const permissionGrantSummary = summarizePermissionGrantDecision(input.permissionGrantDecision);
-    return {
-      schema_version: "permission-wait-canonical-plan-v1",
-      tool_name: input.tool.metadata.name,
-      input: input.input,
-      cwd: cwdResolution.valid ? cwdResolution.resolved : input.context.cwd,
-      ...(typeof inputRecord["command"] === "string" && inputRecord["command"].trim()
-        ? { command: inputRecord["command"] as string }
-        : {}),
-      target: {
-        goal_id: input.context.goalId,
-        ...(input.context.runId ? { run_id: input.context.runId } : {}),
-        ...(input.context.sessionId ? { session_id: input.context.sessionId } : {}),
-        ...(input.context.turnId ? { turn_id: input.context.turnId } : {}),
-        ...(input.context.callId ? { tool_call_id: input.context.callId } : {}),
-      },
-      permission: {
-        permission_level: input.tool.metadata.permissionLevel,
-        is_destructive: input.tool.metadata.isDestructive,
-        reversibility: input.reversibility,
-      },
-      ...(input.context.hostToolState?.currentEpoch ?? input.context.hostToolState?.observedEpoch
-        ? { state_epoch: input.context.hostToolState?.currentEpoch ?? input.context.hostToolState?.observedEpoch }
-        : {}),
-      capability_facts: {
-        tool_permission_level: input.tool.metadata.permissionLevel,
-        tool_is_read_only: input.tool.metadata.isReadOnly,
-        tool_is_destructive: input.tool.metadata.isDestructive,
-        ...(input.tool.metadata.requiresNetwork !== undefined ? { tool_requires_network: input.tool.metadata.requiresNetwork } : {}),
-        ...(input.tool.metadata.activityCategory ? { tool_activity_category: input.tool.metadata.activityCategory } : {}),
-        tool_tags: [...input.tool.metadata.tags].sort(),
-        host_decision_status: hostDecision.status,
-        host_decision_reason: hostDecision.reason,
-        ...(permissionGrantSummary.status ? { permission_grant_status: permissionGrantSummary.status } : {}),
-        ...(permissionGrantSummary.reason ? { permission_grant_reason: permissionGrantSummary.reason } : {}),
-      },
-    };
   }
 
   private async checkHostPolicyPreflight(
@@ -680,14 +613,7 @@ export class ToolExecutor {
   }
 
   private failResult(error: string, durationMs: number, execution?: ToolResult["execution"]): ToolResult {
-    return {
-      success: false,
-      data: null,
-      summary: error,
-      error,
-      ...(execution ? { execution } : {}),
-      durationMs,
-    };
+    return buildToolFailureResult({ error, durationMs, execution });
   }
 
   private executionForFailure(error: unknown, context: ToolCallContext): ToolResult["execution"] | undefined {
@@ -707,28 +633,6 @@ export class ToolExecutionTimeoutError extends Error {
     super(`Tool call timed out after ${timeoutMs}ms`);
     this.name = "ToolExecutionTimeoutError";
   }
-}
-
-function summarizePermissionGrantDecision(value: unknown): { status?: string; reason?: string } {
-  if (!value || typeof value !== "object") return {};
-  const record = value as Record<string, unknown>;
-  const status = typeof record["status"] === "string" ? record["status"] : undefined;
-  const reason = typeof record["reason"] === "string"
-    ? record["reason"]
-    : typeof record["evidence"] === "string"
-      ? record["evidence"]
-      : undefined;
-  return {
-    ...(status ? { status } : {}),
-    ...(reason ? { reason } : {}),
-  };
-}
-
-function toolOutcomeSummary(toolName: string, result: ToolResult): string {
-  const status = result.execution?.status ?? (result.success ? "executed" : "failed");
-  const reason = result.execution?.reason ? ` reason=${result.execution.reason}` : "";
-  const summary = result.summary ? ` ${result.summary}` : "";
-  return `${toolName} action outcome: ${status}${reason}.${summary}`.trim();
 }
 
 export interface ToolExecutorDeps {

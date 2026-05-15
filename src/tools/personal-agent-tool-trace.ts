@@ -1,5 +1,9 @@
 import type { ToolCallContext, ToolResult } from "./types.js";
 import {
+  buildNotExecutedToolResult,
+  buildToolOutcomeSummary,
+} from "./tool-result-envelope.js";
+import {
   PersonalAgentRuntimeStore,
   buildPersonalAgentDecisionTrace,
   stableId,
@@ -56,23 +60,18 @@ export async function rejectUnapprovedPersonalAgentToolCall(
     capabilityDecision: "permission_required",
     decisionReason: `${toolName} requires InterventionPolicy confirmation before execution.`,
   });
-  const denied: ToolResult = {
-    success: false,
-    data: null,
+  const denied = buildNotExecutedToolResult({
     summary: options.denialSummary ?? `${toolName} requires approval before execution.`,
-    execution: {
-      status: "not_executed",
-      reason: "permission_denied",
-      message: options.denialMessage ?? `${toolName} requires approval before execution.`,
-    },
+    reason: "permission_denied",
+    message: options.denialMessage ?? `${toolName} requires approval before execution.`,
     durationMs: Date.now() - startTime,
-  };
+  });
   await recordPersonalAgentToolDecision(deps, toolName, input, context, {
     ...options,
     decision: "block",
     capabilityDecision: "blocked",
     decisionReason: `${toolName} was blocked because InterventionPolicy confirmation was not present.`,
-    outcomeSummary: `${toolName} action outcome: not_executed reason=${denied.execution?.reason}. ${denied.summary}`,
+    outcomeSummary: buildToolOutcomeSummary(toolName, denied),
   });
   return denied;
 }

@@ -607,6 +607,13 @@ export {
   ToolPermissionManager,
   ConcurrencyController,
   createBuiltinTools,
+  buildApprovedToolCallContext,
+  buildPermissionApprovalWaitPlan,
+  buildPermissionWaitCanonicalPlan,
+  buildDryRunToolResult,
+  buildNotExecutedToolResult,
+  buildToolFailureResult,
+  buildToolOutcomeSummary,
 } from "./tools/index.js";
 export type {
   ITool,
@@ -616,6 +623,12 @@ export type {
   AssembledPool,
   ToolExecutorDeps,
   PermissionRule,
+  PermissionApprovalWaitPlan,
+  PermissionWaitPlanInput,
+  ToolExecutionStatus,
+  ToolFailureResultInput,
+  ToolNotExecutedReason,
+  ToolNotExecutedResultInput,
 } from "./tools/index.js";
 
 // --- Builtin tool classes ---
