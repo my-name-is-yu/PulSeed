@@ -423,8 +423,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
           try {
             const callbackQuery = update.callback_query;
             if (callbackQuery?.data) {
-              await this.processCallbackQuery(callbackQuery, update.update_id);
               shouldAdvanceOffset = true;
+              await this.processCallbackQueryWithoutBlockingPoll(callbackQuery, update.update_id);
               continue;
             }
             const msg = update.message;
@@ -485,6 +485,34 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         backoffIndex++;
         await sleep(delay);
       }
+    }
+  }
+
+  private async processCallbackQueryWithoutBlockingPoll(
+    query: TelegramCallbackQuery,
+    updateId?: number,
+  ): Promise<void> {
+    try {
+      await this.processCallbackQuery(query, updateId);
+    } catch (error) {
+      console.warn("TelegramGatewayAdapter: callback query processing failed", error);
+      await this.answerCallbackQueryAfterFailure(query.id);
+      try {
+        await this.recordHealth({
+          last_error: error instanceof Error ? error.message : String(error),
+          last_timing: this.timing.snapshot(),
+        });
+      } catch (healthError) {
+        console.warn("TelegramGatewayAdapter: callback failure health recording failed", healthError);
+      }
+    }
+  }
+
+  private async answerCallbackQueryAfterFailure(callbackQueryId: string): Promise<void> {
+    try {
+      await this.api.answerCallbackQuery(callbackQueryId, "PulSeed could not complete that button action.");
+    } catch (error) {
+      console.warn("TelegramGatewayAdapter: callback failure acknowledgement failed", error);
     }
   }
 
