@@ -474,6 +474,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       || typeof chatId !== "number" || !Number.isInteger(chatId)
       || typeof messageId !== "number" || !Number.isInteger(messageId)
     ) {
+      await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button in this chat.");
       return;
     }
     if (this.config.denied_user_ids.includes(fromId)) return;

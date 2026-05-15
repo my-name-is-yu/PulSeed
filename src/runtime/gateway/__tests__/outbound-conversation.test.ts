@@ -352,7 +352,7 @@ describe("gateway outbound conversation port", () => {
       processCallbackQuery(query: {
         id: string;
         from: { id: number };
-        message: { message_id: number; chat: { id: number } };
+        message?: { message_id: number; chat: { id: number } };
         data: string;
       }): Promise<void>;
     }).processCallbackQuery({
@@ -361,7 +361,19 @@ describe("gateway outbound conversation port", () => {
       message: { message_id: 77, chat: { id: 12345 } },
       data: "not-a-peer-callback",
     });
+    await (adapter as unknown as {
+      processCallbackQuery(query: {
+        id: string;
+        from: { id: number };
+        message?: { message_id: number; chat: { id: number } };
+        data: string;
+      }): Promise<void>;
+    }).processCallbackQuery({
+      id: "callback-missing-message",
+      from: { id: 42 },
+      data: "psp1:lt:peer-candidate:missing",
+    });
 
-    expect(callbackAckIds).toEqual(["callback-malformed"]);
+    expect(callbackAckIds).toEqual(["callback-malformed", "callback-missing-message"]);
   });
 });

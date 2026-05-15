@@ -10,7 +10,13 @@ import type {
 } from "../../gateway/index.js";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { PeerInitiativeStore } from "../../peer-initiative/index.js";
-import { proactiveTick } from "../runner-resident-proactive.js";
+import { ref } from "../../attention/attention-refs.js";
+import { evaluateResidentOperationBoundary } from "../../capability-operation-planner.js";
+import { OutcomeDecisionSchema } from "../../types/companion-autonomy.js";
+import {
+  proactiveTick,
+  triggerResidentPeerInitiative,
+} from "../runner-resident-proactive.js";
 
 function logger() {
   return {
@@ -188,5 +194,115 @@ describe("resident peer initiative caller path", () => {
     );
 
     expect(gatewayPort.messages).toHaveLength(1);
+  });
+
+  it("keeps digest-only peer initiatives out of outbound chat delivery", async () => {
+    const baseDir = makeTempDir("resident-peer-initiative-digest-");
+    const gatewayPort = new FakeOutboundConversationPort();
+    const state = DaemonStateSchema.parse({
+      pid: 123,
+      started_at: "2026-05-15T00:00:00.000Z",
+      last_loop_at: null,
+      loop_count: 4,
+      active_goals: [],
+      status: "idle",
+      runtime_root: path.join(baseDir, "runtime"),
+      last_resident_at: null,
+      resident_activity: null,
+    });
+    const details = {
+      peer_initiative: {
+        kind: "care_presence",
+        message: "今日も頑張ってね。",
+        max_delivery_kind: "digest",
+        action_plan: {
+          mode: "care_only",
+          permission_required: false,
+        },
+        worthiness: {
+          can_be_valuable_without_reply: true,
+          user_cognitive_load: "low",
+          reply_pressure: "none",
+          care_value: "high",
+          attention_fit: "medium",
+          concrete_helpfulness: "medium",
+          self_serving_risk: "none",
+          tutorial_risk: "none",
+        },
+      },
+    };
+    const outcomeDecision = OutcomeDecisionSchema.parse({
+      outcome_decision_id: "outcome:peer:digest",
+      initiative_decision_ref: ref("initiative_gate_decision", "gate:peer:digest"),
+      decided_at: "2026-05-15T00:00:00.000Z",
+      requested_outcome: "express_to_user",
+      admission_status: "admitted",
+      final_outcome: "express_to_user",
+      visibility_policy_ref: ref("visibility_policy", "visibility:peer:digest"),
+    });
+    const attentionAdmission = {
+      action: "peer_initiative",
+      source_kind: "resident_proactive_maintenance",
+      attention_input_id: "attention:peer:digest",
+      signal_context_id: "signal:peer:digest",
+      urge_id: "urge:peer:digest",
+      agenda_item_id: "agenda:peer:digest",
+      inhibition_decision_id: "inhibition:peer:digest",
+      initiative_gate_decision_id: "gate:peer:digest",
+      outcome_decision_id: outcomeDecision.outcome_decision_id,
+      outcome_decision: outcomeDecision,
+      replay_disposition: "accepted",
+      requested_outcome: "express_to_user",
+      admission_status: "admitted",
+      final_outcome: "express_to_user",
+      branch_admitted: true,
+      summary: "Resident peer initiative admitted for expression, then downgraded by threshold.",
+    };
+    const operationBoundary = evaluateResidentOperationBoundary({
+      admission: attentionAdmission as never,
+      assembledAt: "2026-05-15T00:00:00.000Z",
+      details,
+    });
+
+    const context = {
+      baseDir,
+      config: DaemonConfigSchema.parse({
+        proactive_mode: true,
+        proactive_interval_ms: 1,
+        goal_review_interval_ms: 7 * 24 * 60 * 60 * 1000,
+        runtime_root: path.join(baseDir, "runtime"),
+      }),
+      state,
+      logger: logger() as never,
+      saveDaemonState: vi.fn(async () => {}),
+      gateway: {
+        getOutboundConversationPort: (surface: OutboundConversationSurface) => surface === "telegram" ? gatewayPort : undefined,
+      },
+    };
+
+    await triggerResidentPeerInitiative(
+      context,
+      details,
+      {
+        attentionAdmission: attentionAdmission as never,
+        operationBoundary,
+        selectionSurfaceRef: "surface:relationship-profile:peer:digest",
+        metadata: {},
+      },
+    );
+
+    expect(gatewayPort.messages).toHaveLength(0);
+    expect(state.resident_activity).toMatchObject({
+      kind: "skipped",
+      peer_initiative_delivery_status: "held",
+      peer_initiative_threshold_delivery_kind: "digest",
+    });
+    const records = await new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: "care_presence",
+      selected_state: "digested",
+    });
   });
 });

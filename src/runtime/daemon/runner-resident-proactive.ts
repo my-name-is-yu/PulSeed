@@ -437,13 +437,16 @@ export async function triggerResidentPeerInitiative(
       : boundary.shouldRender ? "suggested" : "held",
   });
 
-  if (!boundary.shouldRender || !input.attentionAdmission.outcome_decision) {
+  const digestOnly = boundary.thresholdDecision.allowed_delivery_kind === "digest";
+  if (digestOnly || !boundary.shouldRender || !input.attentionAdmission.outcome_decision) {
     await store.recordDelivery({
       delivery_id: `peer-delivery:${selected.candidate_id}:held`,
       candidate_id: selected.candidate_id,
       surface: "telegram",
       status: "held",
-      failure_reason: boundary.thresholdDecision.downgrade_reasons.join(", ") || "peer initiative held by threshold or missing outcome",
+      failure_reason: digestOnly
+        ? "peer initiative held for digest-only delivery"
+        : boundary.thresholdDecision.downgrade_reasons.join(", ") || "peer initiative held by threshold or missing outcome",
     });
     await persistResidentActivity(context, {
       kind: "skipped",
