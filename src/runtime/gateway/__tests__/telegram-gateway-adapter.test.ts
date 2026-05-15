@@ -182,6 +182,75 @@ describe("TelegramGatewayAdapter", () => {
     }
   });
 
+  it("advances message update offsets when message response handling fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const configDir = await writeConfig({
+        bot_token: "test-token",
+        allowed_user_ids: [42],
+        denied_user_ids: [],
+        allowed_chat_ids: [],
+        denied_chat_ids: [],
+        runtime_control_allowed_user_ids: [42],
+        chat_goal_map: {},
+        user_goal_map: {},
+        allow_all: true,
+        polling_timeout: 30,
+        identity_key: "seedy",
+      });
+      const pollOffsets: number[] = [];
+      const adapterRef: { current?: TelegramGatewayAdapter } = {};
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = String(url).split("/").at(-1);
+        if (method === "getMe") {
+          return telegramResponse({ id: 1, username: "pulseed_test_bot" });
+        }
+        if (method === "getUpdates") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { offset?: number };
+          pollOffsets.push(body.offset ?? -1);
+          if (pollOffsets.length === 1) {
+            return telegramResponse([{
+              update_id: 100,
+              message: {
+                message_id: 2718,
+                from: { id: 42 },
+                chat: { id: 314 },
+                text: "hello",
+              },
+            }]);
+          }
+          (adapterRef.current as unknown as { running: boolean }).running = false;
+          return telegramResponse([]);
+        }
+        if (method === "sendChatAction") {
+          return telegramResponse(true);
+        }
+        if (method === "sendMessage") {
+          return telegramErrorResponse(500, "send failed");
+        }
+        throw new Error(`unexpected Telegram method: ${method}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      adapterRef.current = adapter;
+      adapters.push(adapter);
+
+      await adapter.start();
+      await vi.waitFor(() => {
+        expect(pollOffsets).toEqual([0]);
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => {
+        expect(pollOffsets.length).toBeGreaterThanOrEqual(2);
+      });
+
+      expect(pollOffsets.slice(0, 2)).toEqual([0, 101]);
+      await adapter.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not start Telegram typing on inbound admission before rendered output", async () => {
     vi.useFakeTimers();
     try {
