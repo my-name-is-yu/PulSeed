@@ -35,6 +35,9 @@ export const PeerDeliveryRecordSchema = z.object({
   candidate_id: z.string().min(1),
   surface: z.string().min(1),
   status: z.enum(["pending_send", "delivered", "held", "failed"]),
+  claimed_at: z.string().datetime().optional(),
+  claim_expires_at: z.string().datetime().optional(),
+  claim_attempt: z.number().int().positive().optional(),
   delivered_at: z.string().datetime().optional(),
   message_id: z.string().min(1).optional(),
   target_binding_ref: z.string().min(1).optional(),
@@ -177,13 +180,21 @@ export class PeerInitiativeStore {
     return delivery;
   }
 
-  async claimDelivery(input: PeerDeliveryRecord): Promise<{
+  async claimDelivery(input: PeerDeliveryRecord, options: {
+    now?: string;
+    leaseMs?: number;
+  } = {}): Promise<{
     status: "claimed" | "existing";
     record: PeerDeliveryRecord;
   }> {
+    const now = options.now ?? new Date().toISOString();
+    const leaseMs = Math.max(1, Math.floor(options.leaseMs ?? 10 * 60 * 1000));
+    const claimExpiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
     const delivery = PeerDeliveryRecordSchema.parse({
       ...input,
       status: "pending_send",
+      claimed_at: now,
+      claim_expires_at: claimExpiresAt,
     });
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -193,12 +204,22 @@ export class PeerInitiativeStore {
         WHERE delivery_id = ?
       `).get(delivery.delivery_id) as { delivery_json: string } | undefined;
       const current = currentRow ? parsePeerDelivery(currentRow.delivery_json) : null;
-      if (current?.status === "pending_send" || current?.status === "delivered") {
+      if (current?.status === "delivered") {
         return {
           status: "existing",
           record: current,
         };
       }
+      if (current?.status === "pending_send" && !pendingDeliveryLeaseExpired(current, now)) {
+        return {
+          status: "existing",
+          record: current,
+        };
+      }
+      const claimedDelivery = PeerDeliveryRecordSchema.parse({
+        ...delivery,
+        claim_attempt: (current?.claim_attempt ?? 0) + 1,
+      });
       sqlite.prepare(`
         INSERT INTO peer_deliveries (
           delivery_id,
@@ -216,16 +237,16 @@ export class PeerInitiativeStore {
           delivered_at = excluded.delivered_at,
           delivery_json = excluded.delivery_json
       `).run(
-        delivery.delivery_id,
-        delivery.candidate_id,
-        delivery.surface,
-        delivery.status,
-        delivery.delivered_at ?? null,
-        JSON.stringify(delivery),
+        claimedDelivery.delivery_id,
+        claimedDelivery.candidate_id,
+        claimedDelivery.surface,
+        claimedDelivery.status,
+        claimedDelivery.delivered_at ?? null,
+        JSON.stringify(claimedDelivery),
       );
       return {
         status: "claimed",
-        record: delivery,
+        record: claimedDelivery,
       };
     });
   }
@@ -413,6 +434,14 @@ function parsePeerDelivery(deliveryJson: string): PeerDeliveryRecord | null {
   } catch {
     return null;
   }
+}
+
+function pendingDeliveryLeaseExpired(delivery: PeerDeliveryRecord, now: string): boolean {
+  if (!delivery.claim_expires_at) return true;
+  const expiresAtMs = Date.parse(delivery.claim_expires_at);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(expiresAtMs) || !Number.isFinite(nowMs)) return true;
+  return expiresAtMs <= nowMs;
 }
 
 function parsePeerPreparedArtifact(artifactJson: string): PeerPreparedArtifact | null {

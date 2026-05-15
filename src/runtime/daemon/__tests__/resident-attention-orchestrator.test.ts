@@ -46,6 +46,26 @@ async function saveVerifiedControl(
   }, { emitEvent: false });
 }
 
+function peerInitiativeDetails(): Record<string, unknown> {
+  return {
+    peer_initiative: {
+      kind: "care_presence",
+      message: "今日も頑張ってね。",
+      action_plan: { mode: "care_only", permission_required: false },
+      worthiness: {
+        can_be_valuable_without_reply: true,
+        user_cognitive_load: "low",
+        reply_pressure: "none",
+        care_value: "high",
+        attention_fit: "medium",
+        concrete_helpfulness: "medium",
+        self_serving_risk: "none",
+        tutorial_risk: "none",
+      },
+    },
+  };
+}
+
 describe("resident attention orchestrator", () => {
   it("dedupes the same resident candidate across daemon and store restart", async () => {
     const baseDir = makeTempDir("resident-attention-replay-");
@@ -181,6 +201,54 @@ describe("resident attention orchestrator", () => {
       kind: "runtime_item",
       id: second.agenda_item_id,
     }]);
+  });
+
+  it("requires surface-derived runtime-control admission before peer initiatives can express to the user", async () => {
+    const heldBaseDir = makeTempDir("resident-attention-peer-no-surface-");
+    const admittedBaseDir = makeTempDir("resident-attention-peer-surface-");
+    const held = await evaluateResidentAttentionAdmission(
+      makeContext(heldBaseDir, "2026-05-12T00:00:00.000Z", 1),
+      {
+        action: "peer_initiative",
+        trigger: "proactive_tick",
+        details: peerInitiativeDetails(),
+        summary: "Resident proactive maintenance selected peer_initiative.",
+        now: "2026-05-12T00:00:00.000Z",
+      },
+    );
+    const admitted = await evaluateResidentAttentionAdmission(
+      makeContext(admittedBaseDir, "2026-05-12T00:00:00.000Z", 1),
+      {
+        action: "peer_initiative",
+        trigger: "proactive_tick",
+        details: peerInitiativeDetails(),
+        summary: "Resident proactive maintenance selected peer_initiative.",
+        now: "2026-05-12T00:00:00.000Z",
+        surfaceActivityMetadata: {
+          surface_id: "relationship-profile-surface:peer:1",
+          surface_included_count: 1,
+          surface_excluded_count: 0,
+        },
+      },
+    );
+
+    expect(held.branch_admitted).toBe(false);
+    expect(held.admission_status).toBe("held");
+    expect(held.summary).toContain("resident-peer-initiative-surface:missing");
+    expect(admitted.branch_admitted).toBe(true);
+    expect(admitted.final_outcome).toBe("express_to_user");
+
+    const snapshot = await new AttentionStateStore(path.join(admittedBaseDir, "runtime"), { controlBaseDir: admittedBaseDir })
+      .loadDecisionChainSnapshot({ includeTerminal: true });
+    const gate = snapshot.initiative_gate_decisions.find((decision) =>
+      decision.decision_id === admitted.initiative_gate_decision_id
+    );
+    expect(gate?.required_runtime_control_refs).toHaveLength(1);
+    expect(gate?.required_runtime_control_refs[0]).toMatchObject({
+      kind: "runtime_control",
+    });
+    expect(gate?.required_runtime_control_refs[0]?.id).toMatch(/^resident-peer-initiative-surface:/);
+    expect(gate?.required_runtime_control_refs[0]?.id).not.toBe("resident-peer-initiative-surface:daemon");
   });
 
   it("fails closed without fabricating active suspend control when companion controls are unavailable", async () => {

@@ -373,7 +373,7 @@ describe("peer initiative contracts and gates", () => {
     });
   });
 
-  it("claims peer delivery before send so retrying the same delivery does not acquire a second send slot", async () => {
+  it("claims peer delivery before send, blocks live duplicates, and reclaims expired pending leases", async () => {
     const tmpDir = makeTempDir("peer-delivery-claim-");
     const [candidate] = generatePeerInitiativeCandidates({
       details: {
@@ -401,7 +401,7 @@ describe("peer initiative contracts and gates", () => {
     const store = new PeerInitiativeStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
 
     await store.upsertCandidate({ candidate, selectedState: "suggested" });
-    const first = await store.claimDelivery({
+    const deliveryInput = {
       delivery_id: `peer-delivery:${candidate.candidate_id}:telegram`,
       candidate_id: candidate.candidate_id,
       surface: "telegram",
@@ -410,25 +410,44 @@ describe("peer initiative contracts and gates", () => {
       target_binding_ref: "gateway:telegram:home_chat:12345",
       expression_decision_ref: "expression:peer:claim",
       visibility_policy_ref: "visibility:peer:claim",
+    } as const;
+    const first = await store.claimDelivery(deliveryInput, {
+      now: "2026-05-15T00:00:00.000Z",
+      leaseMs: 60_000,
     });
-    const second = await store.claimDelivery({
-      delivery_id: `peer-delivery:${candidate.candidate_id}:telegram`,
-      candidate_id: candidate.candidate_id,
-      surface: "telegram",
-      status: "pending_send",
-      message_id: `peer-message:${candidate.candidate_id}`,
-      target_binding_ref: "gateway:telegram:home_chat:12345",
-      expression_decision_ref: "expression:peer:claim",
-      visibility_policy_ref: "visibility:peer:claim",
+    const second = await store.claimDelivery(deliveryInput, {
+      now: "2026-05-15T00:00:30.000Z",
+      leaseMs: 60_000,
+    });
+    const afterLeaseExpiry = await store.claimDelivery(deliveryInput, {
+      now: "2026-05-15T00:02:00.000Z",
+      leaseMs: 60_000,
     });
 
     expect(first).toMatchObject({
       status: "claimed",
-      record: { status: "pending_send" },
+      record: {
+        status: "pending_send",
+        claimed_at: "2026-05-15T00:00:00.000Z",
+        claim_expires_at: "2026-05-15T00:01:00.000Z",
+        claim_attempt: 1,
+      },
     });
     expect(second).toMatchObject({
       status: "existing",
-      record: { status: "pending_send" },
+      record: {
+        status: "pending_send",
+        claim_attempt: 1,
+      },
+    });
+    expect(afterLeaseExpiry).toMatchObject({
+      status: "claimed",
+      record: {
+        status: "pending_send",
+        claimed_at: "2026-05-15T00:02:00.000Z",
+        claim_expires_at: "2026-05-15T00:03:00.000Z",
+        claim_attempt: 2,
+      },
     });
   });
 

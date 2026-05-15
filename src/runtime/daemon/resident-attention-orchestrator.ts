@@ -215,7 +215,12 @@ export async function evaluateResidentAttentionAdmission(
     ],
     policy_refs: companionSnapshot.unavailableReason ? companionEvidenceRefs : [],
   });
-  const requiredRuntimeControlRefs = requiredRuntimeControlsForResidentAction(input.action, goalId);
+  const runtimeControlRefs = runtimeControlRefsForResidentAction({
+    action: input.action,
+    goalId,
+    requestedOutcome,
+    surfaceActivityMetadata: input.surfaceActivityMetadata,
+  });
   const companionControlChecks = residentCompanionControlChecks(companionSnapshot);
   const gate = selectInitiativeGateDecision({
     decision_id: `gate:resident:${stableId(sourceId)}`,
@@ -227,14 +232,14 @@ export async function evaluateResidentAttentionAdmission(
     permission_checks: [passedCheck("permission", "resident branch requires typed attention admission")],
     staleness_checks: [passedCheck("staleness", "resident branch target was grounded in this source high-watermark")],
     side_effect_checks: [passedCheck("authority", "runtime-control admission remains separate from capability availability")],
-    required_runtime_control_refs: requiredRuntimeControlRefs,
+    required_runtime_control_refs: runtimeControlRefs.required,
   });
   const outcome = admitInitiativeGateDecision({
     outcome_decision_id: `outcome:resident:${stableId(sourceId)}`,
     gate_decision: gate,
     decided_at: now,
     runtime_item_refs: [ref("runtime_item", decisionAgendaItem.agenda_item_id)],
-    admitted_runtime_control_refs: admittedRuntimeControlsForResidentAction(input.action, goalId),
+    admitted_runtime_control_refs: runtimeControlRefs.admitted,
     authority_checks: [passedCheck("authority", "resident outcome has no execution authority without runtime-control admission")],
     staleness_checks: [passedCheck("staleness", "resident outcome uses the current source high-watermark")],
     companion_control_checks: companionControlChecks,
@@ -606,21 +611,41 @@ function residentBranchAdmitted(
   return outcome.final_outcome === requestedOutcomeForResidentAction(action, details);
 }
 
-function requiredRuntimeControlsForResidentAction(
-  action: ResidentAttentionAction,
-  goalId: string,
-): CompanionAutonomyRef[] {
-  if (action === "peer_initiative") return [ref("runtime_control", `resident-peer-initiative-surface:${goalId || "daemon"}`)];
-  if (action !== "preemptive_check") return [];
-  return [ref("runtime_control", `resident-preemptive-check:${goalId || "unknown"}`)];
+function runtimeControlRefsForResidentAction(input: {
+  action: ResidentAttentionAction;
+  goalId: string;
+  requestedOutcome: OutcomeClass;
+  surfaceActivityMetadata?: ResidentSurfaceActivityMetadata;
+}): { required: CompanionAutonomyRef[]; admitted: CompanionAutonomyRef[] } {
+  if (input.action === "preemptive_check") {
+    return {
+      required: [ref("runtime_control", `resident-preemptive-check:${input.goalId || "unknown"}`)],
+      admitted: [],
+    };
+  }
+  if (input.action !== "peer_initiative" || input.requestedOutcome !== "express_to_user") {
+    return { required: [], admitted: [] };
+  }
+
+  const controlRef = peerInitiativeSurfaceRuntimeControlRef(input.surfaceActivityMetadata);
+  if (!controlRef) {
+    return {
+      required: [ref("runtime_control", "resident-peer-initiative-surface:missing")],
+      admitted: [],
+    };
+  }
+  return {
+    required: [controlRef],
+    admitted: (input.surfaceActivityMetadata?.surface_included_count ?? 0) > 0 ? [controlRef] : [],
+  };
 }
 
-function admittedRuntimeControlsForResidentAction(
-  action: ResidentAttentionAction,
-  goalId: string,
-): CompanionAutonomyRef[] {
-  if (action !== "peer_initiative") return [];
-  return [ref("runtime_control", `resident-peer-initiative-surface:${goalId || "daemon"}`)];
+function peerInitiativeSurfaceRuntimeControlRef(
+  metadata?: ResidentSurfaceActivityMetadata,
+): CompanionAutonomyRef | null {
+  const surfaceId = metadata?.surface_id?.trim();
+  if (!surfaceId) return null;
+  return ref("runtime_control", `resident-peer-initiative-surface:${stableId(surfaceId)}`);
 }
 
 function visibilityPolicyRefForResidentAction(
