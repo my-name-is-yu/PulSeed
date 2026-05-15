@@ -5,11 +5,20 @@ const mockServerStart = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendChannelMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendFollowUp = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
-vi.mock("pulseed", () => ({
-  getGlobalCrossPlatformChatSessionManager: vi.fn().mockResolvedValue({
-    processIncomingMessage: mockDispatchChatInput,
-  }),
-}));
+vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
+  return {
+    assertExternalAdapterBoolean: gateway.assertExternalAdapterBoolean,
+    assertExternalAdapterIntegerInRange: gateway.assertExternalAdapterIntegerInRange,
+    assertExternalAdapterNonEmptyString: gateway.assertExternalAdapterNonEmptyString,
+    assertExternalAdapterStringArray: gateway.assertExternalAdapterStringArray,
+    assertExternalAdapterStringMap: gateway.assertExternalAdapterStringMap,
+    loadExternalAdapterConfigJson: gateway.loadExternalAdapterConfigJson,
+    getGlobalCrossPlatformChatSessionManager: vi.fn().mockResolvedValue({
+      processIncomingMessage: mockDispatchChatInput,
+    }),
+  };
+});
 
 vi.mock("../src/discord-api.js", () => ({
   DiscordAPI: class {

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
   const channelPolicy = await import("../../../src/runtime/gateway/channel-policy.js");
   return {
+    ExternalAdapterIntervalPoller: gateway.ExternalAdapterIntervalPoller,
     buildChannelPolicyMetadata: channelPolicy.buildChannelPolicyMetadata,
     buildExternalSurfaceDecision: channelPolicy.buildExternalSurfaceDecision,
     evaluateChannelAccess: channelPolicy.evaluateChannelAccess,
+    formatExternalAdapterHttpFailure: gateway.formatExternalAdapterHttpFailure,
     resolveChannelRoute: channelPolicy.resolveChannelRoute,
   };
 });

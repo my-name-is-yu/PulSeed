@@ -9,6 +9,7 @@ import type {
   ITool,
   ToolCallContext,
 } from "./types.js";
+import type { PermissionGrantEvaluation } from "./permission-grant-evaluation.js";
 import { resolveWorkspaceCwd } from "./workspace-scope.js";
 
 export interface PermissionWaitPlanInput {
@@ -18,7 +19,7 @@ export interface PermissionWaitPlanInput {
   reason: string;
   reversibility: "reversible" | "irreversible" | "unknown";
   policyDecision?: HostToolExecutionDecision;
-  permissionGrantDecision?: unknown;
+  permissionGrantDecision?: PermissionGrantEvaluation;
 }
 
 export interface PermissionApprovalWaitPlan {
@@ -114,15 +115,10 @@ export function buildApprovedToolCallContext(context: ToolCallContext): ToolCall
   };
 }
 
-function summarizePermissionGrantDecision(value: unknown): { status?: string; reason?: string } {
-  if (!value || typeof value !== "object") return {};
-  const record = value as Record<string, unknown>;
-  const status = typeof record["status"] === "string" ? record["status"] : undefined;
-  const reason = typeof record["reason"] === "string"
-    ? record["reason"]
-    : typeof record["evidence"] === "string"
-      ? record["evidence"]
-      : undefined;
+function summarizePermissionGrantDecision(value: PermissionGrantEvaluation | undefined): { status?: string; reason?: string } {
+  if (value === undefined) return {};
+  const status = value.status;
+  const reason = value.reason;
   return {
     ...(status ? { status } : {}),
     ...(reason ? { reason } : {}),

@@ -72,7 +72,11 @@ describe("permission-wait-plan", () => {
       reversibility: "reversible",
       permissionGrantDecision: {
         status: "expired_grant",
+        allowed: false,
         reason: "Grant was consumed",
+        requiredCapabilities: [],
+        excludedCapabilities: [],
+        consideredGrantIds: [],
       },
     });
 
