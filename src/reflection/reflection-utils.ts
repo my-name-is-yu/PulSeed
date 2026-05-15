@@ -8,6 +8,10 @@ import {
   type ReflectionReportStateStoreOptions,
   type ReflectionReportType,
 } from "./reflection-report-state-store.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+} from "../runtime/personal-agent/index.js";
 
 type GapHistoryEntry = { gap_vector: Array<{ normalized_weighted_gap: number }> };
 
@@ -56,7 +60,37 @@ export async function saveReflectionReport<TType extends ReflectionReportType>(
 ): Promise<ReflectionReportByType[TType]> {
   const store = new ReflectionReportStateStore(baseDir, options);
   try {
-    return await store.save(reportType, periodKey, report);
+    const saved = await store.save(reportType, periodKey, report);
+    await new PersonalAgentRuntimeStore(baseDir, options).recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "reflection",
+      source: {
+        sourceKind: "reflection_cycle",
+        sourceId: `${reportType}:${periodKey}`,
+        emittedAt: reflectionGeneratedAt(saved),
+        sourceEpoch: reportType,
+        highWatermark: periodKey,
+        replayKey: ["reflection", reportType, periodKey].join(":"),
+        summary: `Reflection ${reportType} report for ${periodKey} entered durable runtime history.`,
+        sourceRef: { kind: "reflection_cycle", ref: `${reportType}:${periodKey}` },
+      },
+      target: {
+        kind: "reflection",
+        ref: { kind: "reflection_report", ref: `${reportType}:${periodKey}` },
+        effect: "record_reflection",
+        summary: `Reflection ${reportType} ${periodKey}`,
+      },
+      decision: "allow",
+      decisionReason: "Reflection report was recorded as a durable outcome before notification or follow-up decisions.",
+      capabilityDecision: "not_applicable",
+      policyRef: { kind: "intervention_policy", ref: "policy:reflection-cycle-v1" },
+      currentRefs: [{ kind: "reflection_report", ref: `${reportType}:${periodKey}` }],
+      outcomeEvent: {
+        type: "reflection_recorded",
+        summary: "Reflection outcome was persisted to durable runtime history.",
+        targetRef: { kind: "reflection_report", ref: `${reportType}:${periodKey}` },
+      },
+    }));
+    return saved;
   } finally {
     await store.close();
   }
@@ -112,4 +146,23 @@ export async function dispatchReflectionNotification(
     delivered_at: null,
     read: false,
   });
+}
+
+function reflectionGeneratedAt(report: unknown): string {
+  const maybeGenerated = typeof report === "object" && report !== null && "generated_at" in report
+    ? (report as { generated_at?: unknown }).generated_at
+    : null;
+  const maybeDate = typeof report === "object" && report !== null && "date" in report
+    ? (report as { date?: unknown }).date
+    : null;
+  const raw = typeof maybeGenerated === "string"
+    ? maybeGenerated
+    : typeof maybeDate === "string"
+      ? `${maybeDate}T00:00:00.000Z`
+      : null;
+  if (raw) {
+    const parsed = new Date(raw);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  return new Date().toISOString();
 }

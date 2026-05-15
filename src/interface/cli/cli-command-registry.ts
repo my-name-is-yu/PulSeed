@@ -14,6 +14,7 @@ import type { DurableLoop, LoopConfig } from "../../orchestrator/loop/durable-lo
 import { cmdRun } from "./commands/run.js";
 import { cmdStatus, cmdCurrentStatus, cmdLog, cmdCleanup } from "./commands/goal.js";
 import { dispatchGoalCommand } from "./commands/goal-dispatch.js";
+import { recordCliGoalCommandDecision } from "./commands/goal-personal-agent-trace.js";
 import { cmdPluginList, cmdPluginInstall, cmdPluginRemove, cmdPluginUpdate, cmdPluginSearch } from "./commands/plugin.js";
 import { cmdReport } from "./commands/report.js";
 import { cmdApprovalList } from "./commands/approval.js";
@@ -166,6 +167,21 @@ export async function dispatchCommand(
       const goal = await stateManager.loadGoal(goalId);
       if (goal) {
         upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
+        if (!(await recordCliGoalCommandDecision(stateManager, {
+          command: "pulseed run workspace",
+          goalId,
+          effect: "mutate_runtime_control",
+          targetSummary: `Persist workspace path for goal "${goal.title}" before CLI run.`,
+          sourceId: `pulseed run workspace:${goalId}:${resolvedWorkspace}`,
+          sourceEpoch: goal.updated_at,
+          decisionReason: "Explicit CLI run was allowed to persist its workspace boundary before execution.",
+          currentRefs: [
+            { kind: "goal", ref: goalId },
+            { kind: "workspace", ref: resolvedWorkspace },
+          ],
+        }))) {
+          return 1;
+        }
         await stateManager.saveGoal(goal);
       }
     } else {
@@ -177,12 +193,42 @@ export async function dispatchCommand(
           resolvedWorkspace = resolveWorkspacePath(existing, commandCwd);
           if (resolvedWorkspace !== existing) {
             upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
+            if (!(await recordCliGoalCommandDecision(stateManager, {
+              command: "pulseed run workspace",
+              goalId,
+              effect: "mutate_runtime_control",
+              targetSummary: `Normalize workspace path for goal "${goal.title}" before CLI run.`,
+              sourceId: `pulseed run workspace:${goalId}:${resolvedWorkspace}`,
+              sourceEpoch: goal.updated_at,
+              decisionReason: "Explicit CLI run was allowed to normalize its workspace boundary before execution.",
+              currentRefs: [
+                { kind: "goal", ref: goalId },
+                { kind: "workspace", ref: resolvedWorkspace },
+              ],
+            }))) {
+              return 1;
+            }
             await stateManager.saveGoal(goal);
           }
         } else {
           // Auto-add workspace_path from cwd so observation can read real files
           resolvedWorkspace = resolveWorkspacePath(commandCwd);
           upsertWorkspacePathConstraint(goal.constraints, resolvedWorkspace);
+          if (!(await recordCliGoalCommandDecision(stateManager, {
+            command: "pulseed run workspace",
+            goalId,
+            effect: "mutate_runtime_control",
+            targetSummary: `Persist inferred workspace path for goal "${goal.title}" before CLI run.`,
+            sourceId: `pulseed run workspace:${goalId}:${resolvedWorkspace}`,
+            sourceEpoch: goal.updated_at,
+            decisionReason: "Explicit CLI run was allowed to persist its inferred workspace boundary before execution.",
+            currentRefs: [
+              { kind: "goal", ref: goalId },
+              { kind: "workspace", ref: resolvedWorkspace },
+            ],
+          }))) {
+            return 1;
+          }
           await stateManager.saveGoal(goal);
         }
       }

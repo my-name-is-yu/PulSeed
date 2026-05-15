@@ -9,14 +9,26 @@ import {
   toCompanionUserFacingPolicyProjection,
 } from "../../src/runtime/control/companion-action-projection.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
+import type { ILLMClient } from "../../src/base/llm/llm-client.js";
 import { ChatRunner } from "../../src/interface/chat/chat-runner.js";
 import type { ChatRunnerDeps } from "../../src/interface/chat/chat-runner-contracts.js";
+import type { SelectedChatRoute } from "../../src/interface/chat/ingress-router.js";
 import { cmdCurrentStatus, cmdStatus } from "../../src/interface/cli/commands/goal-read.js";
 import { formatRuntimeStatus } from "../../src/interface/chat/chat-runner-runtime.js";
 import { formatCurrentGoalSummary } from "../../src/interface/current-goal-summary.js";
 import { formatGoalStatusDetails } from "../../src/interface/goal-status-display.js";
+import {
+  AdapterRegistry,
+  type AgentResult,
+  type AgentTask,
+  type IAdapter,
+} from "../../src/orchestrator/execution/adapter-layer.js";
+import { PipelineExecutor } from "../../src/orchestrator/execution/pipeline-executor.js";
+import { TaskLifecycle } from "../../src/orchestrator/execution/task/task-lifecycle.js";
+import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
 import { BackgroundRunLedger } from "../../src/runtime/store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../../src/runtime/store/operator-handoff-store.js";
+import type { PersonalAgentDecisionTrace } from "../../src/runtime/personal-agent/index.js";
 import { makeDimension, makeGoal } from "../helpers/fixtures.js";
 
 const NOW = "2026-05-15T00:00:00.000Z";
@@ -65,6 +77,92 @@ function chatRunnerForStatus(stateManager: StateManager): ChatRunner {
       parseJSON: vi.fn((content: string, schema: { parse(value: unknown): unknown }) => schema.parse(JSON.parse(content) as unknown)),
     },
   } as unknown as ChatRunnerDeps);
+}
+
+function modelLlm(content: string): ILLMClient {
+  return {
+    sendMessage: vi.fn().mockResolvedValue({
+      content,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      stop_reason: "end_turn",
+    }),
+    parseJSON: vi.fn((raw: string, schema?: { parse(value: unknown): unknown }) => {
+      const parsed = JSON.parse(raw) as unknown;
+      return schema ? schema.parse(parsed) : parsed;
+    }),
+    supportsToolCalling: () => true,
+  } as unknown as ILLMClient;
+}
+
+function taskGenerationLlm(): ILLMClient {
+  return modelLlm(JSON.stringify({
+    work_description: "Prove the durable personal-agent runtime path.",
+    rationale: "The production completion gauntlet must exercise the real caller path.",
+    approach: "Run the production task creation admission path.",
+    success_criteria: [{
+      description: "The task is materialized through task_create admission.",
+      verification_method: "contract test",
+      is_blocking: true,
+    }],
+    scope_boundary: {
+      in_scope: ["runtime trace", "task creation"],
+      out_of_scope: ["external deployment"],
+      blast_radius: "local runtime state only",
+    },
+    constraints: ["No external side effects"],
+    reversibility: "reversible",
+    intended_direction: "increase",
+    estimated_duration: { value: 1, unit: "minutes" },
+  }));
+}
+
+function knowledgeAcquisitionLlm(): ILLMClient {
+  return modelLlm(JSON.stringify({
+    knowledge_target: "Durable personal-agent runtime evidence",
+    knowledge_questions: [
+      "Which production caller path recorded SituationFrame?",
+      "Which admission path created the task?",
+      "Which tool execution path was policy-admitted?",
+    ],
+    in_scope: ["local runtime traces", "contract evidence"],
+    out_of_scope: ["external services"],
+  }));
+}
+
+function gatewayModelRoute(): SelectedChatRoute {
+  return {
+    kind: "gateway_model_loop",
+    reason: "direct_model_tool_loop",
+    replyTargetPolicy: "turn_reply_target",
+    eventProjectionPolicy: "turn_only",
+    concurrencyPolicy: "session_serial",
+  };
+}
+
+function mockAdapter(adapterType = "product-completion-adapter"): IAdapter {
+  return {
+    adapterType,
+    execute: vi.fn(async (_task: AgentTask): Promise<AgentResult> => ({
+      success: true,
+      output: "done",
+      error: null,
+      exit_code: 0,
+      elapsed_ms: 1,
+      stopped_reason: "completed",
+    })),
+  } as unknown as IAdapter;
+}
+
+function sessionManager() {
+  return {
+    createSession: vi.fn().mockResolvedValue({ id: "session-product-completion-task" }),
+    buildTaskExecutionContext: vi.fn().mockReturnValue([]),
+    endSession: vi.fn().mockResolvedValue(undefined),
+  } as never;
+}
+
+function recordedTraces(spy: ReturnType<typeof vi.fn>): PersonalAgentDecisionTrace[] {
+  return spy.mock.calls.map((call) => call[0] as PersonalAgentDecisionTrace);
 }
 
 async function createRuntimeCallerFixture(baseDir: string): Promise<StateManager> {
@@ -325,6 +423,175 @@ describe("product completion gauntlet", () => {
     expect(JSON.stringify(userFacing)).not.toContain("source_refs");
   });
 
+  it("proves the production personal-agent paths behind the gauntlet use durable SituationFrame and tool admission", async () => {
+    const baseDir = mkdtempSync(path.join(os.tmpdir(), "pulseed-product-completion-paths-"));
+    try {
+      const stateManager = await createRuntimeCallerFixture(baseDir);
+
+      const chatTrace = vi.fn().mockResolvedValue(undefined);
+      const chatRunner = new ChatRunner({
+        stateManager,
+        adapter: mockAdapter("chat-product-completion"),
+        llmClient: modelLlm("gateway reply"),
+        personalAgentRuntime: { recordTrace: chatTrace },
+      } as unknown as ChatRunnerDeps);
+
+      const chat = await chatRunner.execute("普通の製品完了確認です", baseDir, 10_000, {
+        selectedRoute: gatewayModelRoute(),
+      });
+
+      expect(chat.success).toBe(true);
+      expect(recordedTraces(chatTrace)).toEqual([
+        expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "chat_gateway_turn",
+            cognition_situation: expect.objectContaining({
+              caller_path: "chat_user_turn",
+              route_ref: { kind: "chat_route", ref: "gateway_model_loop" },
+            }),
+            normal_surface_trace_visible: false,
+          }),
+          initiative_events: expect.arrayContaining([
+            expect.objectContaining({ event_type: "user_follow_up" }),
+            expect.objectContaining({ event_type: "task_candidate_proposed" }),
+            expect.objectContaining({ event_type: "action_requested" }),
+            expect.objectContaining({ event_type: "policy_decision_recorded" }),
+          ]),
+        }),
+      ]);
+
+      const taskRecordTrace = vi.fn().mockResolvedValue(undefined);
+      const lifecycle = new TaskLifecycle({
+        stateManager,
+        llmClient: taskGenerationLlm(),
+        sessionManager: sessionManager(),
+        trustManager: { requiresApproval: vi.fn().mockResolvedValue(false) } as never,
+        strategyManager: { getActiveStrategy: vi.fn().mockResolvedValue({ id: "strategy-1" }) } as never,
+        stallDetector: {} as never,
+        options: { personalAgentRuntime: { recordTrace: taskRecordTrace } },
+      });
+
+      const generatedTask = await lifecycle.generateTask(
+        "goal-product-completion",
+        "claim_truth",
+        "strategy-1",
+        undefined,
+        "product-completion-adapter",
+      );
+
+      expect(generatedTask?.id).toMatch(/^task:tool:task_create:/);
+      expect(recordedTraces(taskRecordTrace)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "goal_gap_task_generation",
+            source_kind: "goal_gap",
+          }),
+          task_candidates: [expect.objectContaining({
+            target_kind: "tool_call",
+            desired_effect: "execute_tool",
+          })],
+          capability_decisions: [expect.objectContaining({
+            capability_refs: expect.arrayContaining([
+              { kind: "tool", ref: "task_create" },
+            ]),
+          })],
+          intervention_decisions: [expect.objectContaining({
+            decision: "allow",
+            target_effect: "execute_tool",
+          })],
+        }),
+      ]));
+
+      const knowledgeRecordTrace = vi.fn().mockResolvedValue(undefined);
+      const knowledgeManager = new KnowledgeManager(
+        stateManager,
+        knowledgeAcquisitionLlm(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { recordTrace: knowledgeRecordTrace },
+      );
+      const acquisitionTask = await knowledgeManager.generateAcquisitionTask({
+        signal_type: "stall_information_deficit",
+        missing_knowledge: "Need durable trace evidence before continuing.",
+        source_step: "task_generation",
+        related_dimension: "claim_truth",
+      }, "goal-product-completion");
+
+      expect(acquisitionTask.id).toMatch(/^task:tool:task_create:/);
+      expect(recordedTraces(knowledgeRecordTrace)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "goal_gap_task_generation",
+            source_kind: "goal_gap",
+          }),
+          task_candidates: [expect.objectContaining({
+            target_kind: "tool_call",
+            desired_effect: "execute_tool",
+          })],
+          capability_decisions: [expect.objectContaining({
+            capability_refs: expect.arrayContaining([
+              { kind: "tool", ref: "task_create" },
+            ]),
+          })],
+        }),
+      ]));
+
+      const pipelineRecordTrace = vi.fn().mockResolvedValue(undefined);
+      const adapter = mockAdapter("pipeline-product-completion");
+      const adapterRegistry = new AdapterRegistry();
+      adapterRegistry.register(adapter);
+      const pipeline = new PipelineExecutor({
+        stateManager,
+        adapterRegistry,
+        personalAgentRuntime: { recordTrace: pipelineRecordTrace },
+      });
+      const pipelineRun = await pipeline.run(
+        "task-product-completion-pipeline",
+        {
+          prompt: "Run the final production path proof.",
+          adapter_type: "pipeline-product-completion",
+          timeout_ms: 1000,
+          cwd: baseDir,
+        },
+        {
+          stages: [{ role: "implementor" }],
+          fail_fast: true,
+        },
+        undefined,
+        undefined,
+        { goalId: "goal-product-completion" },
+      );
+
+      expect(pipelineRun.final_verdict).toBe("pass");
+      expect(adapter.execute).toHaveBeenCalledOnce();
+      expect(recordedTraces(pipelineRecordTrace)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "task_execution",
+            source_kind: "task_execution",
+          }),
+          task_candidates: [expect.objectContaining({
+            target_kind: "tool_call",
+            desired_effect: "execute_tool",
+          })],
+          capability_decisions: [expect.objectContaining({
+            capability_refs: expect.arrayContaining([
+              { kind: "tool", ref: "run-adapter" },
+            ]),
+          })],
+          intervention_decisions: [expect.objectContaining({
+            decision: "allow",
+            target_effect: "execute_tool",
+          })],
+        }),
+      ]));
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the product-completion matrix and existing gauntlet fixtures aligned with acceptance coverage", () => {
     const matrix = readFileSync(path.resolve("docs/product/completion-matrix.md"), "utf8");
     for (const required of [
@@ -333,6 +600,7 @@ describe("product completion gauntlet", () => {
       "restart/replay equivalence",
       "stale target rejection",
       "duplicate queue/schedule prevention",
+      "durable personal-agent runtime spine",
       "first-run/package smoke",
     ]) {
       expect(matrix).toContain(required);

@@ -164,6 +164,21 @@
       ]
     },
     {
+      "id": "operate-runtime-personal-agent-diagnostics",
+      "classification": "operator_debug_behavior",
+      "claim_kind": "operator_surface",
+      "source": {
+        "path": "docs/operate/runtime.md",
+        "text": "The personal-agent diagnostic commands inspect the durable decision trace:"
+      },
+      "claim": "Personal-agent trace inspection commands are diagnostic/operator surfaces, not normal chat/status output.",
+      "evidence_refs": [
+        "src/interface/cli/commands/runtime.ts",
+        "src/runtime/personal-agent/store.ts",
+        "tests/contracts/personal-agent-runtime.test.ts"
+      ]
+    },
+    {
       "id": "operate-runtime-current-gateway-channels",
       "classification": "current_operating_behavior",
       "claim_kind": "current_behavior",
@@ -228,6 +243,35 @@
         "scripts/check-database-first-legacy-stores.mjs",
         "package.json#scripts.check:database-first-legacy-stores",
         "docs/design/infrastructure/platform/database-first-state-ownership.md"
+      ]
+    },
+    {
+      "id": "reference-runtime-state-personal-agent-trace",
+      "classification": "current_operating_behavior",
+      "claim_kind": "current_behavior",
+      "source": {
+        "path": "docs/reference/runtime-state.md",
+        "text": "The current durable personal-agent runtime trace is stored in the control DB,"
+      },
+      "claim": "The control DB stores the current personal-agent SituationFrame, InitiativeEvent, attention, candidate, policy, RuntimeGraph, and memory provenance trace.",
+      "evidence_refs": [
+        "src/runtime/store/control-db/schema.ts",
+        "src/runtime/personal-agent/store.ts",
+        "src/runtime/personal-agent/goal-run-admission-trace.ts",
+        "src/runtime/schedule/personal-agent-trace.ts",
+        "src/runtime/schedule/notification-report.ts",
+        "src/runtime/store/outbox-store.ts",
+        "src/platform/corrections/user-memory-operations.ts",
+        "src/platform/knowledge/knowledge-manager-agent-memory.ts",
+        "src/grounding/providers/soil-provider.ts",
+        "src/tools/executor.ts",
+        "src/tools/personal-agent-tool-trace.ts",
+        "src/platform/drive/drive-system.ts",
+        "src/runtime/daemon/runner-goal-cycle.ts",
+        "src/runtime/daemon/runner-commands.ts",
+        "src/runtime/executor/loop-supervisor.ts",
+        "src/interface/mcp-server/tools.ts",
+        "tests/contracts/personal-agent-runtime.test.ts"
       ]
     },
     {

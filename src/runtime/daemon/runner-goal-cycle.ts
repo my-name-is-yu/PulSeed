@@ -1,9 +1,12 @@
 import * as path from "node:path";
 import type { LoopResult } from "../../orchestrator/loop/durable-loop.js";
 import type { ProgressEvent } from "../../orchestrator/loop/durable-loop.js";
+import type { GoalSchedule } from "../../platform/drive/types/drive.js";
+import type { GoalRunAdmissionTriggerKind, RuntimeGraphRef } from "../personal-agent/index.js";
+import { recordGoalRunAdmissionDecision } from "../personal-agent/index.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import { errorMessage } from "./runner-errors.js";
-import { getDueWaitGoalIds } from "./wait-deadline-resolver.js";
+import { getDueWaitGoalIds, type WaitDeadlineResolution } from "./wait-deadline-resolver.js";
 
 const MAX_IDLE_SLEEP_MS = 5_000;
 
@@ -87,6 +90,140 @@ function buildLoopErrorPayload(goalId: string, error: unknown, context: GoalCycl
   };
 }
 
+function getBaseDirFromGoalCycleContext(context: GoalCycleRunnerContext): string | undefined {
+  if (typeof context.baseDir === "string") return context.baseDir;
+  if (typeof context.stateManager?.getBaseDir === "function") return context.stateManager.getBaseDir();
+  return undefined;
+}
+
+function findCycleSnapshotEntry(
+  cycleSnapshot: unknown,
+  goalId: string,
+): { goalId: string; shouldActivate?: boolean; schedule?: GoalSchedule | null } | null {
+  if (!Array.isArray(cycleSnapshot)) return null;
+  return cycleSnapshot.find((entry): entry is { goalId: string; shouldActivate?: boolean; schedule?: GoalSchedule | null } =>
+    Boolean(entry)
+    && typeof entry === "object"
+    && (entry as { goalId?: unknown }).goalId === goalId
+  ) ?? null;
+}
+
+function findDueWaitGoal(
+  waitDeadlines: WaitDeadlineResolution | null | undefined,
+  goalId: string,
+): WaitDeadlineResolution["waiting_goals"][number] | null {
+  return waitDeadlines?.waiting_goals.find((goal) => goal.goal_id === goalId) ?? null;
+}
+
+function isScheduleDue(schedule: GoalSchedule | null | undefined): boolean {
+  if (!schedule) return false;
+  const dueAt = Date.parse(schedule.next_check_at);
+  return Number.isFinite(dueAt) && dueAt <= Date.now();
+}
+
+function inferGoalRunAdmissionTrigger(input: {
+  dueWaitGoal: WaitDeadlineResolution["waiting_goals"][number] | null;
+  snapshotEntry: { shouldActivate?: boolean; schedule?: GoalSchedule | null } | null;
+}): GoalRunAdmissionTriggerKind {
+  if (input.dueWaitGoal) return "wait_resume";
+  const schedule = input.snapshotEntry?.schedule ?? null;
+  if (isScheduleDue(schedule)) return "schedule_due";
+  if (input.snapshotEntry?.shouldActivate === true && schedule) return "external_signal";
+  return "resident_cycle";
+}
+
+function goalRunAdmissionSourceEpoch(input: {
+  triggerKind: GoalRunAdmissionTriggerKind;
+  dueWaitGoal: WaitDeadlineResolution["waiting_goals"][number] | null;
+  schedule: GoalSchedule | null;
+  loopCount: unknown;
+}): string {
+  if (input.triggerKind === "wait_resume" && input.dueWaitGoal) {
+    return input.dueWaitGoal.next_observe_at;
+  }
+  if (input.triggerKind === "schedule_due" && input.schedule) {
+    return input.schedule.next_check_at;
+  }
+  return `daemon-loop:${String(input.loopCount ?? "unknown")}`;
+}
+
+function goalRunAdmissionRefs(input: {
+  goalId: string;
+  triggerKind: GoalRunAdmissionTriggerKind;
+  dueWaitGoal: WaitDeadlineResolution["waiting_goals"][number] | null;
+  schedule: GoalSchedule | null;
+  loopCount: unknown;
+}): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [
+    { kind: "daemon_state", ref: `loop:${String(input.loopCount ?? "unknown")}` },
+  ];
+  if (input.schedule) {
+    refs.push(
+      { kind: "goal_schedule", ref: input.schedule.goal_id },
+      { kind: "schedule_wake", ref: `${input.goalId}:${input.schedule.next_check_at}` },
+    );
+  }
+  if (input.dueWaitGoal) {
+    refs.push(
+      { kind: "wait_strategy", ref: input.dueWaitGoal.strategy_id },
+      { kind: "schedule_wake", ref: `${input.goalId}:${input.dueWaitGoal.next_observe_at}` },
+    );
+  }
+  if (input.triggerKind === "external_signal") {
+    refs.push({ kind: "drive_event_queue", ref: input.goalId });
+  }
+  return refs;
+}
+
+async function recordDaemonGoalRunAdmission(input: {
+  context: GoalCycleRunnerContext;
+  goalId: string;
+  cycleSnapshot: unknown;
+  waitDeadlines: WaitDeadlineResolution | null | undefined;
+  runPolicy: "bounded" | "resident";
+  maxIterations: number | null;
+}): Promise<void> {
+  const snapshotEntry = findCycleSnapshotEntry(input.cycleSnapshot, input.goalId);
+  const dueWaitGoal = findDueWaitGoal(input.waitDeadlines, input.goalId);
+  const schedule = snapshotEntry?.schedule ?? null;
+  const triggerKind = inferGoalRunAdmissionTrigger({ dueWaitGoal, snapshotEntry });
+  const sourceEpoch = goalRunAdmissionSourceEpoch({
+    triggerKind,
+    dueWaitGoal,
+    schedule,
+    loopCount: input.context.state?.loop_count,
+  });
+  const sourceId = [
+    "daemon-goal-cycle",
+    input.goalId,
+    triggerKind,
+    sourceEpoch,
+  ].join(":");
+  const refs = goalRunAdmissionRefs({
+    goalId: input.goalId,
+    triggerKind,
+    dueWaitGoal,
+    schedule,
+    loopCount: input.context.state?.loop_count,
+  });
+
+  await recordGoalRunAdmissionDecision({
+    personalAgentRuntime: input.context.personalAgentRuntime,
+    baseDir: getBaseDirFromGoalCycleContext(input.context),
+    source: "daemon_goal_cycle",
+    triggerKind,
+    goalId: input.goalId,
+    sourceId,
+    sourceEpoch,
+    highWatermark: sourceEpoch,
+    runPolicy: input.runPolicy,
+    maxIterations: input.maxIterations,
+    decisionReason: `Daemon goal cycle admitted goal ${input.goalId} for DurableLoop execution from ${triggerKind}.`,
+    currentRefs: refs,
+    auditRefs: refs,
+  });
+}
+
 async function broadcastOpenOperatorHandoffs(context: GoalCycleRunnerContext, goalId: string): Promise<void> {
   if (!context.eventServer) return;
   const runtimeRoot = context.runtimeRoot
@@ -125,7 +262,7 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
       const goalIds = [...context.currentGoalIds];
       context.refreshOperationalState();
       const cycleSnapshot = await context.collectGoalCycleSnapshot(goalIds);
-      const waitDeadlines = await context.resolveWaitDeadlines?.(goalIds);
+      const waitDeadlines = await context.resolveWaitDeadlines?.(goalIds) as WaitDeadlineResolution | undefined;
       if (waitDeadlines) {
         applyWaitDeadlineStatus(context, waitDeadlines);
       }
@@ -150,8 +287,17 @@ export async function runDaemonGoalCycleLoop(context: GoalCycleRunnerContext): P
           const iterationsPerCycle = context.config.iterations_per_cycle ?? 1;
           const runPolicy = context.config.run_policy?.mode ?? "resident";
           const boundedMaxIterations = context.config.run_policy?.max_iterations ?? iterationsPerCycle;
+          const maxIterations = runPolicy === "resident" ? null : boundedMaxIterations;
+          await recordDaemonGoalRunAdmission({
+            context,
+            goalId,
+            cycleSnapshot,
+            waitDeadlines,
+            runPolicy,
+            maxIterations,
+          });
           const result: LoopResult = await context.coreLoop.run(goalId, {
-            maxIterations: runPolicy === "resident" ? null : boundedMaxIterations,
+            maxIterations,
             runPolicy,
             onProgress: (event: ProgressEvent) => {
               if (!context.eventServer) return;

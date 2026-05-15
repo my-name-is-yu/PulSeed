@@ -62,8 +62,6 @@ import {
   createNativeCorePhaseRunner,
   createNativeTaskAgentLoopRunner,
   shouldUseNativeTaskAgentLoop,
-  type SoilPrefetchQuery,
-  type SoilPrefetchResult,
 } from "../../orchestrator/execution/agent-loop/index.js";
 import { buildCliDataSourceRegistry } from "./data-source-bootstrap.js";
 export { createCliDataSourceAdapter } from "./data-source-bootstrap.js";
@@ -123,6 +121,7 @@ export async function buildDeps(
     registry: toolRegistry,
     permissionManager,
     concurrency: new ConcurrencyController(),
+    traceBaseDir: stateManager.getBaseDir(),
   });
 
   const dataSourceRegistry = await buildCliDataSourceRegistry(resolvedWorkspacePath, getCliLogger());
@@ -280,20 +279,6 @@ export async function buildDeps(
   });
 
   const providerConfig = await loadProviderConfig();
-  const soilPrefetch = memoryLifecycleManager
-    ? async (query: SoilPrefetchQuery): Promise<SoilPrefetchResult | null> => {
-        const lessons = await memoryLifecycleManager.searchCrossGoalLessons(query.query, query.limit);
-        if (lessons.length === 0) return null;
-        return {
-          content: [
-            "Soil cross-goal lessons:",
-            ...lessons.map((lesson, index) => `${index + 1}. ${lesson.lesson}`),
-          ].join("\n"),
-          soilIds: lessons.map((lesson) => lesson.lesson_id),
-          retrievalSource: vectorIndex ? "index" : "manifest",
-        };
-      }
-    : undefined;
   const agentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
     ? createNativeTaskAgentLoopRunner({
         llmClient,
@@ -303,7 +288,6 @@ export async function buildDeps(
       toolExecutor,
       cwd: resolvedWorkspacePath,
       traceBaseDir: stateManager.getBaseDir(),
-      soilPrefetch,
       defaultWorktreePolicy: providerConfig.agent_loop?.worktree
         ? {
             enabled: providerConfig.agent_loop.worktree.enabled,
@@ -323,7 +307,6 @@ export async function buildDeps(
         toolExecutor,
         cwd: resolvedWorkspacePath,
         traceBaseDir: stateManager.getBaseDir(),
-        soilPrefetch,
       })
     : undefined;
 

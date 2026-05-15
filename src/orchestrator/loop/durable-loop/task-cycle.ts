@@ -336,31 +336,6 @@ export async function runTaskCycleWithContext(
         : relationshipProfileRetrievalBlock;
     }
 
-    if (
-      activationFlags?.crossGoalLessons &&
-      ctx.deps.memoryLifecycleManager &&
-      !activationFlags.verifiedPlannerHintsOnly
-    ) {
-      try {
-        await runPhase("collect-cross-goal-lessons", async () => {
-          const topDimension = driveScores[0]?.dimension_name ?? goal.dimensions[0]?.name ?? "";
-          const lessons = await ctx.deps.memoryLifecycleManager!.searchCrossGoalLessons(
-            `${goal.title} ${goal.description} ${topDimension}`,
-            3
-          );
-          if (lessons.length > 0) {
-            const lessonsBlock = [
-              "Cross-goal lessons:",
-              ...lessons.map((lesson, index) => `${index + 1}. ${lesson.lesson}`),
-            ].join("\n");
-            knowledgeContext = knowledgeContext ? `${knowledgeContext}\n\n${lessonsBlock}` : lessonsBlock;
-          }
-        });
-      } catch {
-        // Non-fatal: proceed without cross-goal lessons.
-      }
-    }
-
     // Tier-aware memory selection: use highDissatisfactionDimensions and dynamic budget
     if (ctx.deps.memoryLifecycleManager) {
       try {

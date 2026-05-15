@@ -12,6 +12,8 @@ import type { ProcessSessionSnapshot } from "../../../tools/system/ProcessSessio
 import { BackgroundRunLedger } from "../../store/background-run-store.js";
 import { SupervisorStateStore } from "../../store/supervisor-state-store.js";
 import { importLegacyChatAgentLoopSessionState } from "../../../interface/chat/chat-agentloop-state-migration.js";
+import { PersonalAgentRuntimeStore } from "../../personal-agent/index.js";
+import { openControlDatabase } from "../../store/control-db/index.js";
 
 describe("RuntimeSessionRegistry", () => {
   let tmpDir: string;
@@ -157,6 +159,92 @@ describe("RuntimeSessionRegistry", () => {
       }),
       resumable: false,
     });
+  });
+
+  it("persists sessions, runs, process sessions, reply targets, artifacts, and lineage as RuntimeGraph source of truth", async () => {
+    await writeJsonFixture("chat/sessions/chat-graph.json", {
+      id: "chat-graph",
+      cwd: "/repo",
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:20:00.000Z",
+      title: "Graph chat",
+      notificationReplyTarget: {
+        channel: "plugin_gateway",
+        target_id: "chat-graph-target",
+        thread_id: "msg-graph",
+      },
+      messages: [],
+    });
+    await stateManager.writeRaw("runtime/process-sessions/proc-graph.json", makeProcessSnapshot({
+      session_id: "proc-graph",
+      artifactRefs: [path.join(tmpDir, "reports", "graph-report.md")],
+    }));
+    await importLegacyChatState();
+
+    const firstSnapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+    const graphStore = new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir });
+
+    expect(firstSnapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:conversation:chat-graph",
+      reply_target: expect.objectContaining({ channel: "plugin_gateway" }),
+    }));
+    expect(firstSnapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:process:proc-graph",
+      process_session_id: "proc-graph",
+    }));
+    await expect(graphStore.loadRuntimeGraphNode("session:conversation:chat-graph"))
+      .resolves.toMatchObject({
+        node_kind: "session",
+        payload: expect.objectContaining({ runtime_graph_role: "source_of_truth" }),
+      });
+    await expect(graphStore.loadRuntimeGraphNode("run:process:proc-graph"))
+      .resolves.toMatchObject({
+        node_kind: "run",
+        payload: expect.objectContaining({ runtime_graph_role: "source_of_truth" }),
+      });
+    await expect(graphStore.loadRuntimeGraphNode("proc-graph"))
+      .resolves.toMatchObject({
+        node_kind: "process_session",
+        payload: expect.objectContaining({ runtime_graph_role: "source_of_truth" }),
+      });
+    await expect(graphStore.listRuntimeGraphSourceNodes("reply_target"))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            reply_target: expect.objectContaining({ target_id: "chat-graph-target" }),
+          }),
+        }),
+      ]));
+    await expect(graphStore.listRuntimeGraphSourceNodes("artifact"))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            artifact: expect.objectContaining({ path: path.join(tmpDir, "reports", "graph-report.md") }),
+          }),
+        }),
+      ]));
+
+    const db = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare("DELETE FROM chat_sessions").run();
+        sqlite.prepare("DELETE FROM agent_loop_session_states").run();
+        sqlite.prepare("DELETE FROM process_session_snapshots").run();
+        sqlite.prepare("DELETE FROM background_runs").run();
+      });
+    } finally {
+      db.close();
+    }
+
+    const graphOnlySnapshot = await new RuntimeSessionRegistry({ stateManager }).snapshot();
+    expect(graphOnlySnapshot.sessions).toContainEqual(expect.objectContaining({
+      id: "session:conversation:chat-graph",
+      reply_target: expect.objectContaining({ channel: "plugin_gateway" }),
+    }));
+    expect(graphOnlySnapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:process:proc-graph",
+      process_session_id: "proc-graph",
+    }));
   });
 
   it("keeps a running process sidecar active when the default pid probe reports EPERM", async () => {

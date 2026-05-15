@@ -125,6 +125,7 @@ import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
 import type { GatewaySetupStatusProvider } from "../../interface/chat/gateway-setup-status.js";
 import type { RuntimeControlService } from "../../runtime/control/index.js";
+import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 import type { IEmbeddingClient } from "../../platform/knowledge/embedding-client.js";
 import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manager.js";
 import type { ObservationEngine } from "../../platform/observation/observation-engine.js";
@@ -166,6 +167,7 @@ export interface BuiltinToolDeps {
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   daemonClient?: Pick<DaemonClient, "startGoal">;
   daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal">>;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   gatewaySetupStatusProvider?: GatewaySetupStatusProvider;
   runtimeControlService?: Pick<RuntimeControlService, "request">;
   llmCall?: (prompt: string) => Promise<string>;
@@ -186,6 +188,7 @@ export interface BuiltinToolDeps {
 
 /** All built-in tools, sorted alphabetically by name. */
 export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
+  const stateManagerBaseDir = deps?.stateManager ? getStateManagerBaseDir(deps.stateManager) : undefined;
   const tools: ITool[] = [
     new EnvTool(),
     new ApplyPatchTool(),
@@ -251,6 +254,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
         llmClient: deps.llmClient,
         daemonClient: deps.daemonClient,
         daemonClientFactory: deps.daemonClientFactory,
+        personalAgentRuntime: deps.personalAgentRuntime,
       }));
     }
     if (deps.gatewaySetupStatusProvider || deps.runtimeControlService) {
@@ -263,7 +267,14 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     tools.push(...createDurableLoopControlTools(
       deps.durableLoopControl
         ?? deps.coreLoopControl
-        ?? createDaemonBackedDurableLoopControlToolset({ stateManager: deps.stateManager }),
+        ?? createDaemonBackedDurableLoopControlToolset({
+          stateManager: deps.stateManager,
+          personalAgentRuntime: deps.personalAgentRuntime,
+        }),
+      {
+        personalAgentRuntime: deps.personalAgentRuntime,
+        baseDir: stateManagerBaseDir,
+      },
     ));
   }
 
@@ -293,14 +304,14 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
 
   if (deps?.stateManager) {
     tools.push(
-      new SetGoalTool(deps.stateManager),
-      new TaskCreateTool(deps.stateManager),
-      new TaskOutputTool(deps.stateManager),
-      new TaskStopTool(deps.stateManager),
-      new TaskUpdateTool(deps.stateManager),
-      new UpdateGoalTool(deps.stateManager),
-      new ArchiveGoalTool(deps.stateManager),
-      new DeleteGoalTool(deps.stateManager),
+      new SetGoalTool(deps.stateManager, deps.personalAgentRuntime),
+      new TaskCreateTool(deps.stateManager, deps.personalAgentRuntime),
+      new TaskOutputTool(deps.stateManager, deps.personalAgentRuntime),
+      new TaskStopTool(deps.stateManager, deps.personalAgentRuntime),
+      new TaskUpdateTool(deps.stateManager, deps.personalAgentRuntime),
+      new UpdateGoalTool(deps.stateManager, deps.personalAgentRuntime),
+      new ArchiveGoalTool(deps.stateManager, deps.personalAgentRuntime),
+      new DeleteGoalTool(deps.stateManager, deps.personalAgentRuntime),
       new SoilRebuildTool(deps.stateManager),
     );
   }
@@ -343,12 +354,12 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     tools.push(
       new ListSchedulesTool(deps.scheduleEngine),
       new GetScheduleTool(deps.scheduleEngine),
-      new CreateScheduleTool(deps.scheduleEngine),
-      new UpdateScheduleTool(deps.scheduleEngine),
-      new RemoveScheduleTool(deps.scheduleEngine),
-      new PauseScheduleTool(deps.scheduleEngine),
-      new ResumeScheduleTool(deps.scheduleEngine),
-      new RunScheduleTool(deps.scheduleEngine),
+      new CreateScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
+      new UpdateScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
+      new RemoveScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
+      new PauseScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
+      new ResumeScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
+      new RunScheduleTool(deps.scheduleEngine, deps.personalAgentRuntime),
     );
   }
 
@@ -410,4 +421,9 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
   );
 
   return tools;
+}
+
+function getStateManagerBaseDir(stateManager: StateManager): string | undefined {
+  const candidate = stateManager as StateManager & { getBaseDir?: unknown };
+  return typeof candidate.getBaseDir === "function" ? candidate.getBaseDir() : undefined;
 }

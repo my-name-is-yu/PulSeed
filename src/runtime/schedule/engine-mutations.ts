@@ -224,6 +224,14 @@ export function addEntryInMemory(
   host: Pick<ScheduleMutationHost, "entries">,
   input: MutableScheduleEntryInput
 ): ScheduleEntry {
+  const replayKey = input.metadata?.personal_agent_replay_key;
+  if (replayKey) {
+    const existing = host.entries.find((entry) =>
+      entry.metadata?.personal_agent_replay_key === replayKey
+    );
+    if (existing) return existing;
+  }
+
   const now = new Date().toISOString();
   const entry = ScheduleEntrySchema.parse({
     ...input,

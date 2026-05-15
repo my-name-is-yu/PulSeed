@@ -1,5 +1,16 @@
 import type { ToolCallContext } from "../../tools/types.js";
 import { SoilQueryTool } from "../../tools/query/SoilQueryTool/SoilQueryTool.js";
+import { TOOL_NAME as SOIL_QUERY_TOOL_NAME } from "../../tools/query/SoilQueryTool/constants.js";
+import { ToolRegistry } from "../../tools/registry.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
+import {
+  stableId,
+  type PersonalAgentCallerPath,
+  type PersonalAgentSourceKind,
+  type RuntimeGraphRef,
+} from "../../runtime/personal-agent/index.js";
 import { SqliteSoilRepository } from "../../platform/soil/sqlite-repository.js";
 import {
   correctionStateForTarget,
@@ -7,17 +18,75 @@ import {
   type MemoryCorrectionTargetState,
 } from "../../platform/corrections/memory-correction-ledger.js";
 import type { SoilRecord, SoilRecordStatus } from "../../platform/soil/contracts.js";
-import type { GroundingProvider, GroundingSoilResult } from "../contracts.js";
+import type {
+  GroundingProvider,
+  GroundingProviderContext,
+  GroundingPurpose,
+  GroundingSoilResult,
+  GroundingSurface,
+} from "../contracts.js";
 import { makeSection, makeSource, soilRootFromHome, resolveHomeDir } from "./helpers.js";
 
-function buildToolContext(cwd: string, goalId?: string): ToolCallContext {
+function buildToolContext(input: {
+  context: GroundingProviderContext;
+  cwd: string;
+  homeDir: string;
+  soilRootDir: string;
+  query: string;
+}): ToolCallContext {
+  const sourceId = input.context.request.goalId
+    ?? input.context.request.taskId
+    ?? `soil-grounding:${stableId(`${input.context.profile.id}:${input.query}`)}`;
+  const groundingRefs: RuntimeGraphRef[] = [
+    { kind: "grounding_profile", ref: input.context.profile.id },
+    { kind: "grounding_surface", ref: input.context.request.surface },
+    { kind: "grounding_purpose", ref: input.context.request.purpose },
+  ];
   return {
-    cwd,
-    goalId: goalId ?? "grounding",
+    cwd: input.cwd,
+    goalId: input.context.request.goalId ?? "grounding",
+    ...(input.context.request.taskId ? { taskId: input.context.request.taskId } : {}),
     trustBalance: 0,
-    preApproved: true,
+    preApproved: false,
     approvalFn: async () => false,
+    providerConfigBaseDir: input.homeDir,
+    callId: `grounding:soil_query:${stableId(`${input.context.profile.id}:${input.soilRootDir}:${input.query}`)}`,
+    personalAgentTrace: {
+      callerPath: callerPathForGrounding(input.context.request.surface, input.context.request.purpose),
+      sourceKind: sourceKindForGrounding(input.context.request.surface, input.context.request.purpose),
+      sourceId,
+      sourceEpoch: input.context.request.goalId ?? input.context.request.taskId ?? input.context.profile.id,
+      highWatermark: input.context.request.workspaceRoot ?? input.homeDir,
+      summary: "Soil grounding query assembled production memory context.",
+      sourceRef: { kind: "grounding_query", ref: sourceId },
+      currentRefs: groundingRefs,
+      auditRefs: [{ kind: "soil_root", ref: input.soilRootDir }],
+    },
   };
+}
+
+function buildSoilQueryExecutor(traceBaseDir: string): ToolExecutor {
+  const registry = new ToolRegistry();
+  registry.register(new SoilQueryTool());
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    traceBaseDir,
+  });
+}
+
+function callerPathForGrounding(surface: GroundingSurface, purpose: GroundingPurpose): PersonalAgentCallerPath {
+  if (surface === "chat") return "chat_gateway_turn";
+  if (purpose === "task_execution") return "task_execution";
+  if (purpose === "verification") return "reflection";
+  return "task_execution";
+}
+
+function sourceKindForGrounding(surface: GroundingSurface, purpose: GroundingPurpose): PersonalAgentSourceKind {
+  if (surface === "chat") return "user_message";
+  if (purpose === "verification") return "reflection_cycle";
+  return "task_execution";
 }
 
 function shouldQuerySoil(query: string | undefined): query is string {
@@ -100,31 +169,28 @@ export const soilKnowledgeProvider: GroundingProvider = {
     const userVisibleSink = context.request.userVisibleSink ?? context.request.surface === "chat";
     const homeDir = resolveHomeDir(context.request.homeDir ?? context.deps.stateManager?.getBaseDir?.());
     const soilRootDir = soilRootFromHome(homeDir);
-    if (context.request.soilQuery) {
-      result = await context.request.soilQuery({
-        query,
-        rootDir: soilRootDir,
-        limit: context.profile.budgets.maxKnowledgeHits,
-      });
-    } else {
-      const tool = new SoilQueryTool();
-      const toolResult = await tool.call({
-        query,
-        rootDir: soilRootDir,
-        limit: context.profile.budgets.maxKnowledgeHits,
-      }, buildToolContext(context.request.workspaceRoot ?? process.cwd(), context.request.goalId));
-      if (toolResult.success) {
-        const data = toolResult.data as {
-          retrievalSource: "sqlite" | "index" | "manifest";
-          warnings: string[];
-          hits: GroundingSoilResult["hits"];
-        };
-        result = {
-          retrievalSource: data.retrievalSource,
-          warnings: data.warnings,
-          hits: data.hits,
-        };
-      }
+    const toolResult = await buildSoilQueryExecutor(homeDir).execute(SOIL_QUERY_TOOL_NAME, {
+      query,
+      rootDir: soilRootDir,
+      limit: context.profile.budgets.maxKnowledgeHits,
+    }, buildToolContext({
+      context,
+      cwd: context.request.workspaceRoot ?? process.cwd(),
+      homeDir,
+      soilRootDir,
+      query,
+    }));
+    if (toolResult.success) {
+      const data = toolResult.data as {
+        retrievalSource: "sqlite" | "index" | "manifest";
+        warnings: string[];
+        hits: GroundingSoilResult["hits"];
+      };
+      result = {
+        retrievalSource: data.retrievalSource,
+        warnings: data.warnings,
+        hits: data.hits,
+      };
     }
 
     const hits = result?.hits ?? [];

@@ -190,6 +190,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import type { Task } from "../../../base/types/task.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { PersonalAgentRuntimeStore, stableId, stableTraceId } from "../../../runtime/personal-agent/index.js";
 
 function makeLoopResult(overrides: Partial<LoopResult> = {}): LoopResult {
   const now = new Date().toISOString();
@@ -678,7 +679,8 @@ describe("run subcommand", async () => {
   });
 
   it("calls CoreLoop.run() with the correct goalId", async () => {
-    await stateManager.saveGoal(makeGoal({ id: "goal-abc" }));
+    const goal = makeGoal({ id: "goal-abc" });
+    await stateManager.saveGoal(goal);
 
     const mockRun = vi.fn().mockResolvedValue(makeLoopResult({ goalId: "goal-abc" }));
     vi.mocked(CoreLoop).mockImplementation(
@@ -689,6 +691,30 @@ describe("run subcommand", async () => {
 
     expect(mockRun).toHaveBeenCalledWith("goal-abc", {
       abortSignal: expect.any(AbortSignal),
+    });
+    const runReplayKey = [
+      "cli_run",
+      "goal-abc",
+      "bounded",
+      100,
+      process.cwd(),
+    ].join(":");
+    const store = new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir });
+    const trace = await store.loadTrace(stableTraceId(runReplayKey));
+    expect(trace).toMatchObject({
+      situation_frame: expect.objectContaining({
+        caller_path: "explicit_user_command",
+        source_kind: "explicit_command",
+      }),
+      task_candidates: [expect.objectContaining({
+        target_kind: "run",
+        target_ref: { kind: "run", ref: `run:cli:${stableId(runReplayKey)}` },
+        desired_effect: "create_run",
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "create_run",
+      })],
     });
   });
 

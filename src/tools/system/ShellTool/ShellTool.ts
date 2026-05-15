@@ -89,6 +89,9 @@ export class ShellTool implements ITool<ShellInput, ShellOutput> {
     );
     if (assessment.status === "allowed") return { status: "allowed" };
     if (assessment.status === "needs_approval") {
+      if (context?.preApproved === true || context?.hostPolicyApproved === true) {
+        return { status: "allowed" };
+      }
       return { status: "needs_approval", reason: assessment.reason ?? "Shell command requires approval" };
     }
     return {

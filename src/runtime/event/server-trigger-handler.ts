@@ -2,7 +2,6 @@ import * as path from "node:path";
 import type * as http from "node:http";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { TriggerEventSchema } from "../../base/types/trigger.js";
-import { writeEventSpoolJson } from "../../base/utils/event-spool.js";
 import type { TriggerMappingsConfig } from "../../base/types/trigger.js";
 import type { Logger } from "../logger.js";
 import type { TriggerMapper } from "../trigger-mapper.js";
@@ -93,13 +92,13 @@ export class EventServerTriggerHandler {
     }
 
     if (action === "create_task") {
-      const payload = {
+      const event = PulSeedEventSchema.parse({
         type: "external",
         source: trigger.source,
         timestamp: new Date().toISOString(),
         data: { ...trigger.data, event_type: trigger.event_type, action: "create_task", goal_id: goalId },
-      };
-      await writeEventSpoolJson(this.eventsDir, payload, { prefix: "trigger" });
+      });
+      await this.dispatchEvent(event as Record<string, unknown>);
       return;
     }
 

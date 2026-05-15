@@ -209,6 +209,7 @@ export async function startDaemonRunner(
           driveSystem: context.driveSystem,
           stateManager: context.stateManager,
           logger: context.logger,
+          personalAgentRuntime: context.personalAgentRuntime,
           backgroundRunLedger: new BackgroundRunLedger(
             context.runtimeRoot ?? undefined,
             { controlBaseDir: context.baseDir },

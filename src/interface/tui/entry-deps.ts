@@ -143,6 +143,7 @@ export async function buildStandaloneTuiDeps() {
     registry: toolRegistry,
     permissionManager,
     concurrency: new ConcurrencyController(),
+    traceBaseDir: stateManager.getBaseDir(),
   });
 
   const approvalQueue = createApprovalQueue();
@@ -175,18 +176,6 @@ export async function buildStandaloneTuiDeps() {
   }
   const knowledgeManager = new KnowledgeManager(stateManager, llmClient);
 
-  const soilPrefetch = memoryLifecycleManager
-    ? async (query: { query: string; rootDir: string; limit: number }) => {
-        const lessons = await memoryLifecycleManager!.searchCrossGoalLessons(query.query, query.limit);
-        if (lessons.length === 0) return null;
-        return {
-          content: ["Soil cross-goal lessons:", ...lessons.map((lesson, index) => `${index + 1}. ${lesson.lesson}`)].join("\n"),
-          soilIds: lessons.map((lesson) => lesson.lesson_id),
-          retrievalSource: "manifest" as const,
-        };
-      }
-    : undefined;
-
   const agentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
     ? createNativeTaskAgentLoopRunner({
         llmClient,
@@ -196,7 +185,6 @@ export async function buildStandaloneTuiDeps() {
         toolExecutor,
         cwd: process.cwd(),
         traceBaseDir: stateManager.getBaseDir(),
-        soilPrefetch,
         defaultWorktreePolicy: providerConfig.agent_loop?.worktree
           ? {
               enabled: providerConfig.agent_loop.worktree.enabled,
@@ -216,7 +204,6 @@ export async function buildStandaloneTuiDeps() {
         toolExecutor,
         cwd: process.cwd(),
         traceBaseDir: stateManager.getBaseDir(),
-        soilPrefetch,
       })
     : undefined;
 
@@ -439,6 +426,7 @@ export async function buildDaemonModeChatSurface(
     registry: toolRegistry,
     permissionManager,
     concurrency: new ConcurrencyController(),
+    traceBaseDir: baseDir,
   });
   const approvalQueue = createApprovalQueue();
   const approvalBroker = createTuiApprovalBroker(stateManager);

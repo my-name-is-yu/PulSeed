@@ -124,6 +124,97 @@ describe("runDaemonGoalCycleLoop", () => {
     );
   });
 
+  it("records a durable goal-run admission trace before daemon CoreLoop execution", async () => {
+    const order: string[] = [];
+    const recordTrace = vi.fn().mockImplementation(async () => {
+      order.push("trace");
+      return {} as never;
+    });
+    const run = vi.fn().mockImplementation(async () => {
+      order.push("run");
+      return makeLoopResult();
+    });
+
+    let context: Record<string, unknown>;
+    context = {
+      running: true,
+      shuttingDown: false,
+      currentGoalIds: ["goal-1"],
+      config: { iterations_per_cycle: 1 },
+      state: {
+        loop_count: 7,
+        last_loop_at: null,
+        status: "running",
+        active_goals: ["goal-1"],
+      },
+      consecutiveIdleCycles: 0,
+      currentLoopIndex: 0,
+      coreLoop: { run },
+      eventServer: null,
+      personalAgentRuntime: { recordTrace },
+      stateManager: {
+        loadGoal: vi.fn().mockResolvedValue({ status: "active" }),
+      },
+      logger: { info: vi.fn() },
+      refreshOperationalState: vi.fn(),
+      collectGoalCycleSnapshot: vi.fn().mockResolvedValue([{
+        goalId: "goal-1",
+        shouldActivate: true,
+        schedule: {
+          goal_id: "goal-1",
+          next_check_at: "2026-05-15T00:00:00.000Z",
+          check_interval_hours: 1,
+          last_triggered_at: null,
+          consecutive_actions: 0,
+          cooldown_until: null,
+          current_interval_hours: 1,
+        },
+      }]),
+      determineActiveGoals: vi.fn().mockResolvedValue(["goal-1"]),
+      maybeRefreshProviderRuntime: vi.fn().mockResolvedValue(undefined),
+      broadcastGoalUpdated: vi.fn().mockResolvedValue(undefined),
+      handleLoopError: vi.fn(),
+      saveDaemonState: vi.fn().mockResolvedValue(undefined),
+      processCronTasks: vi.fn().mockResolvedValue(undefined),
+      processScheduleEntries: vi.fn().mockResolvedValue(undefined),
+      expireCronTasks: vi.fn().mockResolvedValue(undefined),
+      proactiveTick: vi.fn().mockResolvedValue(undefined),
+      runRuntimeStoreMaintenance: vi.fn().mockResolvedValue(undefined),
+      getNextInterval: vi.fn().mockReturnValue(1),
+      getMaxGapScore: vi.fn().mockResolvedValue(0.5),
+      calculateAdaptiveInterval: vi.fn().mockReturnValue(1),
+      sleep: vi.fn().mockImplementation(async () => {
+        context.running = false;
+      }),
+      handleCriticalError: vi.fn(),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T00:00:00.000Z"));
+    try {
+      await runDaemonGoalCycleLoop(context);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(order.slice(0, 2)).toEqual(["trace", "run"]);
+    expect(recordTrace).toHaveBeenCalledOnce();
+    const trace = recordTrace.mock.calls[0]![0] as any;
+    expect(trace.situation_frame).toMatchObject({
+      caller_path: "scheduled_wake",
+      source_kind: "schedule_wake",
+    });
+    expect(trace.task_candidates[0]).toMatchObject({
+      target_kind: "run",
+      desired_effect: "create_run",
+    });
+    expect(trace.intervention_decisions[0]).toMatchObject({
+      decision: "allow",
+      policy_ref: { kind: "intervention_policy", ref: "policy:goal-run-admission-v1" },
+    });
+  });
+
   it("broadcasts newly persisted operator handoffs to live daemon subscribers", async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runner-handoff-"));
     try {

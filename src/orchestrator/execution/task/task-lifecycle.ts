@@ -96,6 +96,13 @@ export type {
 import type { TaskCycleResult } from "./task-execution-types.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { runTaskLifecycleCycle } from "./task-lifecycle-runner.js";
+import { recordTaskPreExecutionPolicyDecision } from "./task-pre-execution-policy-trace.js";
+import type { TaskPreExecutionPolicyDecisionInput } from "./task-pre-execution-policy-trace.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  type RuntimeGraphRef,
+} from "../../../runtime/personal-agent/index.js";
 
 export interface TaskLifecycleCoreDeps {
   stateManager: StateManager;
@@ -141,6 +148,8 @@ export interface TaskLifecycleOptions {
   healthCheckCwd?: string;
   /** Optional durable operator handoff store for approval-required execution gates. */
   operatorHandoffStore?: RuntimeOperatorHandoffStore;
+  /** Durable personal-agent runtime trace recorder. */
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export interface TaskCycleRunOptions {
@@ -187,6 +196,7 @@ export class TaskLifecycle {
   private readonly revertCwd?: string;
   private readonly healthCheckCwd?: string;
   private readonly operatorHandoffStore?: RuntimeOperatorHandoffStore;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private onTaskComplete?: (strategyId: string) => void;
 
   constructor(deps: TaskLifecycleDeps);
@@ -246,6 +256,10 @@ export class TaskLifecycle {
     this.revertCwd = resolvedOptions?.revertCwd;
     this.healthCheckCwd = resolvedOptions?.healthCheckCwd;
     this.operatorHandoffStore = resolvedOptions?.operatorHandoffStore;
+    this.personalAgentRuntime = resolvedOptions?.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+      this.stateManager.getBaseDir(),
+      { controlBaseDir: this.stateManager.getBaseDir() },
+    );
   }
 
   /** Register a callback invoked when a task completes successfully (used by PortfolioManager). */
@@ -353,6 +367,17 @@ export class TaskLifecycle {
       goalId,
       fallbackCwd: this.revertCwd,
     });
+    await this.recordTaskCandidateTrace({
+      goalId,
+      targetDimension,
+      strategyId,
+      adapterType,
+      existingTasks,
+      workspaceContext,
+      executionMode,
+      repoRoot,
+      playbookIdsUsed: [...playbookIdsUsed],
+    });
 
     const generated = await _generateTask(
       {
@@ -363,6 +388,8 @@ export class TaskLifecycle {
         knowledgeManager: this.knowledgeManager,
         memoryLifecycle: this.memoryLifecycle,
         gateway: this.gateway,
+        toolExecutor: this.toolExecutor,
+        personalAgentRuntime: this.personalAgentRuntime,
       },
       goalId,
       targetDimension,
@@ -395,6 +422,33 @@ export class TaskLifecycle {
     }
 
     const handoffId = taskApprovalHandoffId(task);
+    const approvalCapabilityRefs: RuntimeGraphRef[] = [
+      { kind: "approval_gate", ref: "task_execution" },
+      ...(trustNeedsApproval ? [{ kind: "trust_policy", ref: "approval_required" }] : []),
+      ...(externalAction
+        ? [{
+            kind: "external_action",
+            ref: task.risk_profile?.external_action.action_kind ?? "unknown",
+          }]
+        : []),
+    ];
+    const approvalReason = externalAction
+      ? "Task execution requires operator confirmation because the typed risk profile marks it as an external action."
+      : "Task execution requires operator confirmation because reversibility/trust policy requires approval.";
+    await this.recordTaskPreExecutionPolicyDecision(task, {
+      gate: "irreversible_approval",
+      replayStage: "confirm_required",
+      decision: "confirm_required",
+      capabilityDecision: "permission_required",
+      reason: approvalReason,
+      permissionRequired: true,
+      targetEffect: "execute_tool",
+      capabilityRefs: approvalCapabilityRefs,
+      policyRef: { kind: "intervention_policy", ref: "policy:task-irreversible-approval-v1" },
+      currentRefs: [
+        { kind: "operator_handoff", ref: handoffId },
+      ],
+    });
     const recordedHandoffId = await this.recordApprovalHandoff(task, handoffId, {
       trustNeedsApproval,
       externalAction,
@@ -407,7 +461,33 @@ export class TaskLifecycle {
     if (recordedHandoffId) {
       await this.resolveApprovalHandoff(recordedHandoffId, approved);
     }
+    await this.recordTaskPreExecutionPolicyDecision(task, {
+      gate: "irreversible_approval",
+      replayStage: approved ? "approval_granted" : "approval_denied",
+      decision: approved ? "allow" : "block",
+      capabilityDecision: approved ? "available" : "blocked",
+      reason: approved
+        ? "Operator approved task execution at the irreversible/external-action gate."
+        : "Operator denied task execution at the irreversible/external-action gate.",
+      permissionRequired: true,
+      targetEffect: "execute_tool",
+      capabilityRefs: approvalCapabilityRefs,
+      policyRef: { kind: "intervention_policy", ref: "policy:task-irreversible-approval-v1" },
+      currentRefs: [
+        { kind: "operator_handoff", ref: handoffId },
+      ],
+      outcomeSummary: approved
+        ? undefined
+        : "Task execution was blocked because operator confirmation was denied.",
+    });
     return approved;
+  }
+
+  private async recordTaskPreExecutionPolicyDecision(
+    task: Task,
+    decision: TaskPreExecutionPolicyDecisionInput,
+  ): Promise<void> {
+    await recordTaskPreExecutionPolicyDecision(this.personalAgentRuntime, task, decision);
   }
 
   private async recordApprovalHandoff(
@@ -521,6 +601,11 @@ export class TaskLifecycle {
 
   /** Execute a task via the given adapter. */
   async executeTask(task: Task, adapter: IAdapter, workspaceContext?: string): Promise<AgentResult> {
+    await this.recordTaskExecutionTrace(task, {
+      executionSurface: "adapter",
+      capabilityRef: { kind: "adapter", ref: adapter.adapterType },
+      workspaceContext,
+    });
     return executeTaskWithGuards({
       task,
       adapter,
@@ -541,6 +626,11 @@ export class TaskLifecycle {
     }
 
     const runningTask = { ...task, status: "running" as const, started_at: new Date().toISOString() };
+    await this.recordTaskExecutionTrace(runningTask, {
+      executionSurface: "agent_loop",
+      capabilityRef: { kind: "agent_loop_runner", ref: "task-agent-loop" },
+      workspaceContext,
+    });
     await this.stateManager.saveTask(runningTask);
     await appendTaskOutcomeEvent(this.stateManager, {
       task: runningTask,
@@ -734,6 +824,7 @@ export class TaskLifecycle {
         ethicsGate: this.ethicsGate,
         capabilityDetector: this.capabilityDetector,
         approvalFn: this.approvalFn,
+        recordPolicyDecision: (task, decision) => this.recordTaskPreExecutionPolicyDecision(task, decision),
       },
       hasNativeAgentLoop: Boolean(this.agentLoopRunner),
       executeTask: (task, runAdapter, runWorkspaceContext) => this.executeTask(task, runAdapter, runWorkspaceContext),
@@ -764,6 +855,8 @@ export class TaskLifecycle {
         capabilityDetector: this.capabilityDetector,
         approvalFn: this.approvalFn,
         adapterRegistry: this.adapterRegistry,
+        toolExecutor: this.toolExecutor,
+        personalAgentRuntime: this.personalAgentRuntime,
         logger: this.logger,
         knowledgeManager: this.knowledgeManager,
         checkIrreversibleApproval: (t) => this.checkIrreversibleApproval(t),
@@ -809,6 +902,7 @@ export class TaskLifecycle {
       logger: this.logger,
       execFileSyncFn: this.execFileSyncFn,
       fallbackCwd: this.revertCwd,
+      personalAgentRuntime: this.personalAgentRuntime,
     };
   }
 
@@ -859,6 +953,129 @@ export class TaskLifecycle {
     options: { timeout: number; cwd: string }
   ): Promise<{ success: boolean; stdout: string; stderr: string }> {
     return _runShellCommand(argv, options);
+  }
+
+  private async recordTaskCandidateTrace(input: {
+    goalId: string;
+    targetDimension: string;
+    strategyId?: string;
+    adapterType?: string;
+    existingTasks?: string[];
+    workspaceContext?: string;
+    executionMode?: ExecutionModeState;
+    repoRoot?: string | null;
+    playbookIdsUsed: string[];
+  }): Promise<void> {
+    const emittedAt = new Date().toISOString();
+    const currentRefs: RuntimeGraphRef[] = [
+      { kind: "goal", ref: input.goalId },
+      { kind: "goal_dimension", ref: input.targetDimension },
+      ...(input.strategyId ? [{ kind: "strategy", ref: input.strategyId }] : []),
+      ...(input.adapterType ? [{ kind: "adapter", ref: input.adapterType }] : []),
+      ...(input.repoRoot ? [{ kind: "workspace", ref: input.repoRoot }] : []),
+      ...(input.executionMode ? [{ kind: "execution_mode", ref: `${input.executionMode.mode}:${input.executionMode.source}` }] : []),
+      ...(input.existingTasks ?? []).map((taskId) => ({ kind: "task", ref: taskId })),
+      ...input.playbookIdsUsed.map((playbookId) => ({ kind: "dream_playbook", ref: playbookId })),
+    ];
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "goal_gap_task_generation",
+      source: {
+        sourceKind: "goal_gap",
+        sourceId: `${input.goalId}:${input.targetDimension}`,
+        emittedAt,
+        sourceEpoch: input.strategyId ?? input.executionMode?.mode ?? "strategy:none",
+        highWatermark: [
+          input.adapterType ?? "adapter:none",
+          input.executionMode?.mode ?? "mode:none",
+          input.existingTasks?.join(",") ?? "tasks:none",
+        ].join(":"),
+        replayKey: [
+          "goal_gap_task_generation",
+          input.goalId,
+          input.targetDimension,
+          input.strategyId ?? "",
+          input.adapterType ?? "",
+          input.executionMode?.mode ?? "",
+          input.executionMode?.source ?? "",
+          input.existingTasks?.join(",") ?? "",
+        ].join(":"),
+        summary: `Goal gap for dimension "${input.targetDimension}" proposed a task candidate.`,
+        sourceRef: { kind: "goal", ref: input.goalId },
+      },
+      target: {
+        kind: "task",
+        ref: { kind: "goal_gap", ref: `${input.goalId}:${input.targetDimension}` },
+        effect: "create_task",
+        summary: `Task candidate for ${input.targetDimension}`,
+      },
+      decision: "allow",
+      decisionReason: "Task generation may proceed only after the goal gap is represented as a durable TaskCandidate.",
+      capabilityDecision: input.adapterType ? "available" : "not_applicable",
+      capabilityRefs: input.adapterType ? [{ kind: "adapter", ref: input.adapterType }] : [],
+      policyRef: { kind: "intervention_policy", ref: "policy:goal-gap-task-generation-v1" },
+      currentRefs,
+      memoryRefs: input.playbookIdsUsed.map((playbookId) => ({ kind: "dream_playbook", ref: playbookId })),
+    }));
+  }
+
+  private async recordTaskExecutionTrace(
+    task: Task,
+    input: {
+      executionSurface: "adapter" | "agent_loop";
+      capabilityRef: RuntimeGraphRef;
+      workspaceContext?: string;
+    },
+  ): Promise<void> {
+    const emittedAt = task.started_at ?? new Date().toISOString();
+    const permissionRequired = isExternalActionTask(task);
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "task_execution",
+      source: {
+        sourceKind: "task_execution",
+        sourceId: task.id,
+        emittedAt,
+        sourceEpoch: task.status,
+        highWatermark: `${task.consecutive_failure_count}:${task.started_at ?? "not_started"}`,
+        replayKey: [
+          "task_execution",
+          input.executionSurface,
+          task.goal_id,
+          task.id,
+          task.consecutive_failure_count,
+        ].join(":"),
+        summary: `Task ${task.id} entered ${input.executionSurface} execution through Capability Registry.`,
+        sourceRef: { kind: "task", ref: task.id },
+      },
+      target: {
+        kind: "tool_call",
+        ref: { kind: "task", ref: task.id },
+        effect: "execute_tool",
+        summary: task.work_description,
+      },
+      decision: "allow",
+      decisionReason: permissionRequired
+        ? "Task execution is allowed only after the external-action approval boundary has admitted it."
+        : "Task execution is allowed by the task execution policy.",
+      capabilityDecision: permissionRequired ? "permission_required" : "available",
+      capabilityRefs: [
+        input.capabilityRef,
+        ...(permissionRequired ? [{ kind: "external_action", ref: task.risk_profile?.external_action.action_kind ?? "unknown" }] : []),
+      ],
+      policyRef: { kind: "intervention_policy", ref: "policy:task-execution-v1" },
+      permissionRequired,
+      currentRefs: [
+        { kind: "goal", ref: task.goal_id },
+        { kind: "task", ref: task.id },
+        { kind: "task_dimension", ref: task.primary_dimension },
+        ...(task.strategy_id ? [{ kind: "strategy", ref: task.strategy_id }] : []),
+        ...(input.workspaceContext ? [{ kind: "workspace_context", ref: input.workspaceContext }] : []),
+      ],
+      outcomeEvent: {
+        type: "action_outcome",
+        summary: "Task execution trace was recorded before invoking the execution engine.",
+        targetRef: { kind: "task", ref: task.id },
+      },
+    }));
   }
 
   private static isDepsObject(value: StateManager | TaskLifecycleDeps): value is TaskLifecycleDeps {

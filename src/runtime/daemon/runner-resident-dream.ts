@@ -2,11 +2,19 @@ import { lintAgentMemory } from "../../platform/knowledge/knowledge-manager-lint
 import { DreamAnalyzer } from "../../platform/dream/dream-analyzer.js";
 import { DreamConsolidator, type DreamLegacyConsolidationReport } from "../../platform/dream/dream-consolidator.js";
 import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
+import type { CreateScheduleEntryInput, ResolvedScheduleSuggestion } from "../../platform/dream/dream-schedule-suggestions.js";
 import { createRuntimeDreamSoilSyncService } from "../../platform/dream/dream-soil-sync.js";
 import type { DreamReport, DreamRunReport, DreamTier } from "../../platform/dream/dream-types.js";
 import { runDreamConsolidation } from "../../reflection/dream-consolidation.js";
+import type { ScheduleEntry } from "../types/schedule.js";
 import type { DaemonRunnerResidentContext, ResidentActivityMetadata } from "./runner-resident-shared.js";
 import { persistResidentActivity } from "./runner-resident-shared.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ToolRegistry } from "../../tools/registry.js";
+import { CreateScheduleTool } from "../../tools/schedule/CreateScheduleTool/CreateScheduleTool.js";
+import { PersonalAgentRuntimeStore, stableId } from "../personal-agent/index.js";
 
 export async function tryApplyPendingDreamSuggestion(
   context: Pick<DaemonRunnerResidentContext, "baseDir" | "scheduleEngine">,
@@ -21,7 +29,68 @@ export async function tryApplyPendingDreamSuggestion(
     return null;
   }
 
-  return dreamStore.applySuggestion(pendingSuggestion.id, context.scheduleEngine);
+  return dreamStore.applySuggestion(
+    pendingSuggestion.id,
+    context.scheduleEngine,
+    (entryInput, suggestion) => createDreamSuggestionScheduleThroughTool(context, entryInput, suggestion),
+  );
+}
+
+async function createDreamSuggestionScheduleThroughTool(
+  context: Pick<DaemonRunnerResidentContext, "baseDir" | "scheduleEngine">,
+  entryInput: CreateScheduleEntryInput,
+  suggestion: ResolvedScheduleSuggestion,
+): Promise<ScheduleEntry> {
+  if (!context.scheduleEngine) {
+    throw new Error("schedule engine is not available for resident dream suggestion application");
+  }
+  const personalAgentRuntime = new PersonalAgentRuntimeStore(context.baseDir, {
+    controlBaseDir: context.baseDir,
+  });
+  const registry = new ToolRegistry();
+  registry.register(new CreateScheduleTool(context.scheduleEngine, personalAgentRuntime));
+  const executor = new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime,
+    traceBaseDir: context.baseDir,
+  });
+  const replayKey = `resident:dream-suggestion:create_schedule:${stableId(JSON.stringify({
+    suggestion_id: suggestion.id,
+    entry: entryInput,
+  }))}`;
+  const result = await executor.execute("create_schedule", entryInput, {
+    cwd: process.cwd(),
+    goalId: suggestion.goalId ?? "resident-dream",
+    trustBalance: 100,
+    preApproved: true,
+    hostPolicyApproved: true,
+    approvalFn: async () => true,
+    sessionId: "resident:dream",
+    callId: `resident:dream:${suggestion.id}`,
+    providerConfigBaseDir: context.baseDir,
+    personalAgentRuntime,
+    personalAgentTrace: {
+      callerPath: "resident_proactive",
+      sourceKind: "resident_observation",
+      sourceId: suggestion.id,
+      sourceEpoch: "resident-dream-suggestion",
+      highWatermark: suggestion.decided_at ?? suggestion.id,
+      replayKey,
+      summary: `Resident dream suggestion ${suggestion.id} requested schedule creation.`,
+      sourceRef: { kind: "dream_checkpoint", ref: suggestion.id },
+      currentRefs: [
+        { kind: "dream_checkpoint", ref: suggestion.id },
+        ...(suggestion.goalId ? [{ kind: "goal", ref: suggestion.goalId }] : []),
+      ],
+      auditRefs: [{ kind: "dream_checkpoint", ref: suggestion.id }],
+    },
+  });
+  if (!result.success) {
+    throw new Error(result.error ?? result.summary);
+  }
+  return (result.data as { entry: ScheduleEntry }).entry;
 }
 
 export async function runDreamAnalysis(

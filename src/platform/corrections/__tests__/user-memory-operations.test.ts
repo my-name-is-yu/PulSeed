@@ -1,11 +1,13 @@
 import * as fsp from "node:fs/promises";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
 import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
+import { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
 import { runUserMemoryOperation } from "../user-memory-operations.js";
 
 function memoryEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
@@ -33,6 +35,7 @@ describe("user memory correction operations", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -75,6 +78,134 @@ describe("user memory correction operations", () => {
       correction_state: { status: "corrected", active: false, retained_for_audit: true },
     });
     expect(store.corrections).toHaveLength(1);
+  });
+
+  it("records durable admission before committing agent memory correction effects", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const order: string[] = [];
+    const originalRecordTrace = PersonalAgentRuntimeStore.prototype.recordTrace;
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockImplementation(async function (this: PersonalAgentRuntimeStore, trace) {
+        order.push("trace");
+        return originalRecordTrace.call(this, trace);
+      });
+    const originalSave = KnowledgeMemoryStateStore.prototype.saveAgentMemoryStore;
+    vi.spyOn(KnowledgeMemoryStateStore.prototype, "saveAgentMemoryStore")
+      .mockImplementation(async function (this: KnowledgeMemoryStateStore, store) {
+        order.push("save");
+        return originalSave.call(this, store);
+      });
+
+    await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    expect(order.indexOf("trace")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("trace")).toBeLessThan(order.indexOf("save"));
+  });
+
+  it("does not commit agent memory correction when durable admission fails", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockRejectedValueOnce(new Error("trace unavailable"));
+
+    await expect(runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      now: "2026-05-02T01:00:00.000Z",
+    })).rejects.toThrow("trace unavailable");
+
+    const store = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
+    expect(store.entries).toEqual([memoryEntry()]);
+    expect(store.corrections).toEqual([]);
+  });
+
+  it("replays the same agent memory correction input without duplicate correction effects", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const input = {
+      operation: "correct" as const,
+      targetRef: { kind: "agent_memory" as const, id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      now: "2026-05-02T01:00:00.000Z",
+    };
+
+    const first = await runUserMemoryOperation(stateManager, input);
+    const second = await runUserMemoryOperation(stateManager, input);
+
+    expect(second.correction?.correction_id).toBe(first.correction?.correction_id);
+    expect(second.replacement?.ref.id).toBe(first.replacement?.ref.id);
+    const store = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
+    expect(store.corrections).toHaveLength(1);
+    expect(store.entries.filter((entry) => entry.supersedes_memory_id === "memory-old")).toHaveLength(1);
+  });
+
+  it("records durable admission before runtime memory correction ledger effects", async () => {
+    const order: string[] = [];
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function () {
+      order.push("trace");
+      return {} as never;
+    });
+    const originalAppend = RuntimeEvidenceLedger.prototype.appendCorrection;
+    vi.spyOn(RuntimeEvidenceLedger.prototype, "appendCorrection")
+      .mockImplementation(async function (this: RuntimeEvidenceLedger, correction) {
+        order.push("append");
+        return originalAppend.call(this, correction);
+      });
+
+    await runUserMemoryOperation(stateManager, {
+      operation: "forget",
+      targetRef: { kind: "runtime_evidence", id: "evidence-1" },
+      reason: "User invalidated stale evidence.",
+      goalId: "goal-1",
+      now: "2026-05-02T03:00:00.000Z",
+    });
+
+    expect(order).toEqual(["trace", "append"]);
+  });
+
+  it("replays the same runtime memory correction input without duplicate ledger effects", async () => {
+    const input = {
+      operation: "forget" as const,
+      targetRef: { kind: "runtime_evidence" as const, id: "evidence-1" },
+      reason: "User invalidated stale evidence.",
+      goalId: "goal-1",
+      now: "2026-05-02T03:00:00.000Z",
+    };
+
+    const first = await runUserMemoryOperation(stateManager, input);
+    const second = await runUserMemoryOperation(stateManager, input);
+
+    expect(second.correction?.correction_id).toBe(first.correction?.correction_id);
+    const history = await runUserMemoryOperation(stateManager, {
+      operation: "history",
+      targetRef: { kind: "runtime_evidence", id: "evidence-1" },
+      goalId: "goal-1",
+    });
+    expect(history.history.map((entry) => entry.correction_id)).toEqual([
+      first.correction?.correction_id,
+    ]);
   });
 
   it("preserves governance when correcting sensitive user memory", async () => {

@@ -9,6 +9,9 @@ export const RunAdapterInputSchema = z.object({
   task_description: z.string().min(1, "task_description is required"),
   goal_id: z.string().optional(),
   cwd: z.string().optional(),
+  timeout_ms: z.number().finite().int().positive().optional(),
+  allowed_tools: z.array(z.string().min(1)).optional(),
+  system_prompt: z.string().optional(),
 }).strict();
 export type RunAdapterInput = z.infer<typeof RunAdapterInputSchema>;
 
@@ -50,9 +53,11 @@ export class RunAdapterTool implements ITool<RunAdapterInput, unknown> {
       shouldRecordAdapterFailure = true;
       const task: AgentTask = {
         prompt: input.task_description,
-        timeout_ms: 60_000,
+        timeout_ms: input.timeout_ms ?? 60_000,
         adapter_type: input.adapter_id,
+        ...(input.allowed_tools !== undefined ? { allowed_tools: input.allowed_tools } : {}),
         ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.system_prompt !== undefined ? { system_prompt: input.system_prompt } : {}),
       };
       const result = await adapter.execute(task);
       if (result.success) {
@@ -83,7 +88,10 @@ export class RunAdapterTool implements ITool<RunAdapterInput, unknown> {
     }
   }
 
-  async checkPermissions(_input: RunAdapterInput, _context: ToolCallContext): Promise<PermissionCheckResult> {
+  async checkPermissions(_input: RunAdapterInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    if (context.preApproved && context.personalAgentTrace) {
+      return { status: "allowed" };
+    }
     return { status: "needs_approval", reason: "RunAdapterTool executes an external agent process and requires approval." };
   }
 

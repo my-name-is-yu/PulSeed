@@ -35,6 +35,7 @@ import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
 import { AttentionStateStore } from "../store/attention-state-store.js";
 import { DreamScheduleSuggestionStore } from "../../platform/dream/dream-schedule-suggestions.js";
 import type { ResidentOperationBoundaryResult } from "../capability-operation-planner.js";
+import { PersonalAgentRuntimeStore } from "../personal-agent/index.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -1835,7 +1836,7 @@ describe("DaemonRunner durable runtime", () => {
     await startPromise;
   });
 
-  it("does not create goal-targeted resident attention when preemptive target is missing", async () => {
+  it("blocks goal-targeted resident attention when preemptive target is missing", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -1878,21 +1879,45 @@ describe("DaemonRunner durable runtime", () => {
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "skipped",
       goal_id: "missing-resident-goal",
+      attention_input_id: expect.stringContaining("attention-input:resident_proactive_maintenance:"),
+      agenda_item_id: expect.stringContaining("agenda:"),
+      outcome_decision_id: expect.stringContaining("outcome:resident:"),
     }));
-    expect(state.resident_activity?.attention_input_id).toBeUndefined();
-    expect(state.resident_activity?.agenda_item_id).toBeUndefined();
-    expect(state.resident_activity?.outcome_decision_id).toBeUndefined();
     await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list()).resolves.toEqual([]);
     const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
       .loadDecisionChainSnapshot({ includeTerminal: true });
-    expect(snapshot.attention_inputs).toEqual([]);
-    expect(snapshot.outcome_decisions).toEqual([]);
+    expect(snapshot.attention_inputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: expect.objectContaining({
+          source_kind: "resident_proactive_maintenance",
+        }),
+      }),
+    ]));
+    expect(snapshot.outcome_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        requested_outcome: "prepare_action_candidate",
+      }),
+    ]));
+    const concerns = await new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir }).listPendingConcerns();
+    expect(concerns.task_candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target_kind: "attention_only",
+        materialization_state: "blocked",
+        task_created: false,
+      }),
+    ]));
+    expect(concerns.held_or_blocked_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        decision: "block",
+        target_effect: "hold_concern",
+      }),
+    ]));
 
     daemon.stop();
     await startPromise;
   });
 
-  it("does not create goal-targeted resident attention when preemptive target is not current", async () => {
+  it("blocks goal-targeted resident attention when preemptive target is not current", async () => {
     const llmClient = {
       sendMessage: vi.fn().mockResolvedValue({
         content: JSON.stringify({
@@ -1944,15 +1969,39 @@ describe("DaemonRunner durable runtime", () => {
     expect(state.resident_activity).toEqual(expect.objectContaining({
       kind: "skipped",
       goal_id: completedGoal.id,
+      attention_input_id: expect.stringContaining("attention-input:resident_proactive_maintenance:"),
+      agenda_item_id: expect.stringContaining("agenda:"),
+      outcome_decision_id: expect.stringContaining("outcome:resident:"),
     }));
-    expect(state.resident_activity?.attention_input_id).toBeUndefined();
-    expect(state.resident_activity?.agenda_item_id).toBeUndefined();
-    expect(state.resident_activity?.outcome_decision_id).toBeUndefined();
     await expect(new ProactiveInterventionStore(path.join(tmpDir, "runtime")).list()).resolves.toEqual([]);
     const snapshot = await new AttentionStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir })
       .loadDecisionChainSnapshot({ includeTerminal: true });
-    expect(snapshot.attention_inputs).toEqual([]);
-    expect(snapshot.outcome_decisions).toEqual([]);
+    expect(snapshot.attention_inputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: expect.objectContaining({
+          source_kind: "resident_proactive_maintenance",
+        }),
+      }),
+    ]));
+    expect(snapshot.outcome_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        requested_outcome: "prepare_action_candidate",
+      }),
+    ]));
+    const concerns = await new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir }).listPendingConcerns();
+    expect(concerns.task_candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target_kind: "attention_only",
+        materialization_state: "blocked",
+        task_created: false,
+      }),
+    ]));
+    expect(concerns.held_or_blocked_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        decision: "block",
+        target_effect: "hold_concern",
+      }),
+    ]));
 
     daemon.stop();
     await startPromise;
@@ -2950,6 +2999,78 @@ describe("DaemonRunner durable runtime", () => {
     await expect(readRuntimeStatePath(filePath)).resolves.toMatchObject({
       active_goals: ["goal-2"],
       status: "running",
+    });
+  });
+
+  it("records supervisor maintenance run admission before queueing activation", async () => {
+    const state: DaemonState = {
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 11,
+      active_goals: [],
+      interrupted_goals: [],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    };
+    const order: string[] = [];
+    const recordTrace = vi.fn().mockImplementation(async () => {
+      order.push("trace");
+      return {} as never;
+    });
+    const driveSystem = {
+      getGoalActivationSnapshot: vi.fn(async (goalId: string) => ({
+        goalId,
+        shouldActivate: true,
+        schedule: {
+          goal_id: goalId,
+          next_check_at: "2026-05-15T00:00:00.000Z",
+          check_interval_hours: 1,
+          last_triggered_at: null,
+          consecutive_actions: 0,
+          cooldown_until: null,
+          current_interval_hours: 1,
+        },
+      })),
+      shouldActivate: vi.fn().mockResolvedValue(true),
+      getSchedule: vi.fn().mockResolvedValue(null),
+      prioritizeGoals: vi.fn().mockImplementation((ids: string[]) => ids),
+    };
+    const supervisor = {
+      activateGoal: vi.fn(() => {
+        order.push("activate");
+      }),
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T00:00:00.000Z"));
+    try {
+      await runSupervisorMaintenanceCycleForDaemon({
+        currentGoalIds: ["goal-supervisor"],
+        driveSystem: driveSystem as never,
+        supervisor,
+        personalAgentRuntime: { recordTrace },
+        processScheduleEntries: vi.fn().mockResolvedValue(undefined),
+        proactiveTick: vi.fn().mockResolvedValue(undefined),
+        saveDaemonState: vi.fn().mockResolvedValue(undefined),
+        state,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(order).toEqual(["trace", "activate"]);
+    const trace = recordTrace.mock.calls[0]![0] as any;
+    expect(trace.situation_frame).toMatchObject({
+      caller_path: "scheduled_wake",
+      source_kind: "schedule_wake",
+    });
+    expect(trace.task_candidates[0]).toMatchObject({
+      target_kind: "run",
+      desired_effect: "create_run",
     });
   });
 });

@@ -70,7 +70,10 @@ describe("tools builtin index", () => {
     const result = await tool.call({ goalId: "goal-1" }, makeToolContext());
 
     expect(result).toMatchObject({ success: true, data: { source: "durable" } });
-    expect(durableGoalStatus).toHaveBeenCalledWith({ goalId: "goal-1" });
+    expect(durableGoalStatus).toHaveBeenCalledWith(
+      { goalId: "goal-1" },
+      expect.objectContaining({ goalId: "goal-1", preApproved: true }),
+    );
     expect(legacyGoalStatus).not.toHaveBeenCalled();
   });
 
@@ -84,6 +87,9 @@ describe("tools builtin index", () => {
     const result = await tool.call({ goalId: "goal-1" }, makeToolContext());
 
     expect(result).toMatchObject({ success: true, data: { source: "legacy" } });
-    expect(legacyGoalStatus).toHaveBeenCalledWith({ goalId: "goal-1" });
+    expect(legacyGoalStatus).toHaveBeenCalledWith(
+      { goalId: "goal-1" },
+      expect.objectContaining({ goalId: "goal-1", preApproved: true }),
+    );
   });
 });

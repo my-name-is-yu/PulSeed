@@ -30,6 +30,11 @@ import {
   resolveResidentSuggestionSurface,
   resolveResidentWorkspaceDir,
 } from "./runner-resident-shared.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  type RuntimeGraphRef,
+} from "../personal-agent/index.js";
 
 export async function triggerResidentGoalDiscovery(
   context: Pick<
@@ -123,7 +128,7 @@ export async function runResidentCuriosityCycle(
   context: Pick<
     DaemonRunnerResidentContext,
     "curiosityEngine" | "stateManager" | "saveDaemonState" | "state" | "logger" | "baseDir" | "config" | "attentionStateStore" | "residentOperationBoundaryEvaluator" | "feedbackIngestionStore"
-  >,
+  > & { personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace"> },
   options?: {
     activityTrigger?: ResidentActivity["trigger"];
     focus?: string;
@@ -154,6 +159,7 @@ export async function runResidentCuriosityCycle(
     const attentionSummary = options?.reviewLabel
       ? `Resident ${options.reviewLabel} evaluated curiosity triggers.`
       : `Resident curiosity evaluated${focus ? ` ${focus}` : " trigger state"}.`;
+    const cycleObservedAt = new Date().toISOString();
 
     if (triggers.length === 0) {
       if (options?.skipWhenNoTriggers) {
@@ -166,6 +172,15 @@ export async function runResidentCuriosityCycle(
         surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
       });
       const attentionActivityMetadata = residentAttentionActivityMetadata(attentionAdmission);
+      await recordResidentProactiveTrace(context, {
+        attentionAdmission,
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        observedAt: cycleObservedAt,
+        summary: attentionSummary,
+        decision: attentionAdmission.branch_admitted ? "allow" : "hold",
+        decisionReason: attentionAdmission.summary,
+        surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
+      });
       if (!attentionAdmission.branch_admitted) {
         await persistResidentActivity(context, {
           kind: "skipped",
@@ -204,6 +219,23 @@ export async function runResidentCuriosityCycle(
       invalidationEvidence: feedbackDecisionContext.invalidationEvidence,
     });
     const operationActivityMetadata = residentOperationBoundaryActivityMetadata(operationBoundary);
+    const operationAllowed = residentOperationBoundaryAllowsPreparation(operationActivityMetadata);
+    await recordResidentProactiveTrace(context, {
+      attentionAdmission,
+      trigger: options?.activityTrigger ?? "proactive_tick",
+      observedAt: cycleObservedAt,
+      summary: attentionSummary,
+      decision: !attentionAdmission.branch_admitted || !operationAllowed ? "hold" : "allow",
+      decisionReason: !attentionAdmission.branch_admitted
+        ? attentionAdmission.summary
+        : operationAllowed
+          ? "Resident curiosity was admitted by durable attention and operation boundary before proposal generation."
+          : `Resident curiosity held by operation boundary: ${operationActivityMetadata.operation_plan_reason}`,
+      surfaceActivityMetadata: inheritedSurfaceActivityMetadata,
+      operationRefs: operationActivityMetadata.operation_plan_id
+        ? [{ kind: "runtime_control", ref: operationActivityMetadata.operation_plan_id }]
+        : [],
+    });
     if (!attentionAdmission.branch_admitted) {
       await persistResidentActivity(context, {
         kind: "skipped",
@@ -215,7 +247,7 @@ export async function runResidentCuriosityCycle(
       });
       return true;
     }
-    if (!residentOperationBoundaryAllowsPreparation(operationActivityMetadata)) {
+    if (!operationAllowed) {
       await persistResidentActivity(context, {
         kind: "skipped",
         trigger: options?.activityTrigger ?? "proactive_tick",
@@ -240,6 +272,25 @@ export async function runResidentCuriosityCycle(
       requestedUse: "attention_prioritization",
       now: new Date().toISOString(),
     });
+    if (relationshipProfileSurface) {
+      await recordResidentProactiveTrace(context, {
+        attentionAdmission,
+        trigger: options?.activityTrigger ?? "proactive_tick",
+        observedAt: relationshipProfileSurface.created_at,
+        summary: "Resident relationship memory projection was evaluated before proposal generation.",
+        decision: "allow",
+        decisionReason: "Relationship Memory was projected with provenance before influencing resident proposal generation.",
+        surfaceActivityMetadata: residentSurfaceActivityMetadata(relationshipProfileSurface),
+        memoryRefs: relationshipProfileSurface.source_refs.map((source) => ({
+          kind: "memory",
+          ref: source.memory_id,
+        })),
+        operationRefs: operationActivityMetadata.operation_plan_id
+          ? [{ kind: "runtime_control", ref: operationActivityMetadata.operation_plan_id }]
+          : [],
+        replaySuffix: "relationship-memory",
+      });
+    }
     const relationshipProfileSurfaceContext = formatRelationshipProfileSurfaceContext(
       relationshipProfileSurface,
       { title: "Resident relationship profile Surface" },
@@ -290,6 +341,72 @@ export async function runResidentCuriosityCycle(
     });
     return true;
   }
+}
+
+async function recordResidentProactiveTrace(
+  context: Pick<DaemonRunnerResidentContext, "baseDir" | "stateManager" | "config"> & {
+    personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  },
+  input: {
+    attentionAdmission: Awaited<ReturnType<typeof evaluateResidentAttentionAdmission>>;
+    trigger: ResidentActivity["trigger"];
+    observedAt: string;
+    summary: string;
+    decision: "allow" | "hold";
+    decisionReason: string;
+    surfaceActivityMetadata?: ResidentActivityMetadata;
+    operationRefs?: RuntimeGraphRef[];
+    memoryRefs?: RuntimeGraphRef[];
+    replaySuffix?: string;
+  },
+): Promise<void> {
+  const store = context.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+    context.baseDir,
+    { controlBaseDir: context.stateManager.getBaseDir() },
+  );
+  const admission = input.attentionAdmission;
+  const currentRefs: RuntimeGraphRef[] = [
+    { kind: "attention_input", ref: admission.attention_input_id },
+    { kind: "signal_context", ref: admission.signal_context_id },
+    { kind: "urge_candidate", ref: admission.urge_id },
+    { kind: "agent_agenda_item", ref: admission.agenda_item_id },
+    { kind: "inhibition_decision", ref: admission.inhibition_decision_id },
+    { kind: "initiative_gate_decision", ref: admission.initiative_gate_decision_id },
+    ...(admission.outcome_decision_id ? [{ kind: "outcome_decision", ref: admission.outcome_decision_id }] : []),
+    ...(input.surfaceActivityMetadata?.surface_id ? [{ kind: "surface", ref: input.surfaceActivityMetadata.surface_id }] : []),
+    ...(input.operationRefs ?? []),
+  ];
+  await store.recordTrace(buildPersonalAgentDecisionTrace({
+    callerPath: "resident_proactive",
+    source: {
+      sourceKind: "resident_observation",
+      sourceId: admission.attention_input_id,
+      emittedAt: input.observedAt,
+      sourceEpoch: `${admission.source_kind}:${input.trigger}:${admission.replay_disposition}`,
+      highWatermark: admission.signal_context_id,
+      replayKey: [
+        "resident_proactive",
+        admission.attention_input_id,
+        admission.signal_context_id,
+        input.replaySuffix ?? "attention-admission",
+      ].join(":"),
+      summary: input.summary,
+      sourceRef: { kind: "attention_input", ref: admission.attention_input_id },
+    },
+    target: {
+      kind: "attention_only",
+      ref: { kind: "agent_agenda_item", ref: admission.agenda_item_id },
+      effect: input.decision === "allow" ? "hold_concern" : "none",
+      summary: admission.summary,
+    },
+    decision: input.decision,
+    decisionReason: input.decisionReason,
+    capabilityDecision: "not_applicable",
+    policyRef: { kind: "intervention_policy", ref: "policy:resident-proactive-v1" },
+    currentRefs,
+    memoryRefs: input.memoryRefs ?? [],
+    auditRefs: currentRefs,
+  }));
 }
 
 function residentSurfaceActivityMetadata(

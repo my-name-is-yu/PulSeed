@@ -419,7 +419,7 @@ describe("Phase B — Remote Trigger API: POST trigger creates event", () => {
     expect(parsed["goal_id"]).toBe("goal-ci-watch");
   });
 
-  it("POST /triggers with create_task action writes a task event file", async () => {
+  it("POST /triggers with create_task action dispatches a task event through signal ingress", async () => {
     const mappings = {
       mappings: [
         { source: "cron", event_type: "daily", action: "create_task", goal_id: "goal-daily" },
@@ -443,10 +443,21 @@ describe("Phase B — Remote Trigger API: POST trigger creates event", () => {
     expect(parsed["status"]).toBe("ok");
     expect(parsed["action"]).toBe("create_task");
 
-    // A task event file should have been written to the events directory
+    // The trigger no longer writes directly to the event directory; it goes
+    // through the shared signal ingress writer before the queue boundary.
     await new Promise((r) => setTimeout(r, 100));
+    expect(mockDriveSystem.writeEvent).toHaveBeenCalledOnce();
+    expect(mockDriveSystem.writeEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "external",
+      source: "cron",
+      data: expect.objectContaining({
+        action: "create_task",
+        event_type: "daily",
+        goal_id: "goal-daily",
+      }),
+    }));
     const eventsDir = path.join(tmpDir, "events");
-    const files = fs.readdirSync(eventsDir).filter((f) => f.startsWith("trigger_"));
+    const files = fs.readdirSync(eventsDir).filter((f) => f.startsWith("test_"));
     expect(files.length).toBeGreaterThan(0);
   });
 

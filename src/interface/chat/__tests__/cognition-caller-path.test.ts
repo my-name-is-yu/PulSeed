@@ -17,6 +17,7 @@ import {
   createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
 } from "../../../runtime/cognition/index.js";
+import { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 
 vi.mock("../../../platform/observation/context-provider.js", () => ({
   resolveGitRoot: (cwd: string) => cwd,
@@ -55,6 +56,15 @@ describe("chat caller path cognition integration", () => {
       sensitivity: "private",
       now: "2026-05-14T00:00:00.000Z",
     });
+    await upsertRelationshipProfileItem(stateManager.getBaseDir(), {
+      stableKey: "chat.status_boundary",
+      kind: "boundary",
+      value: "Avoid emotionally escalated status language.",
+      source: "cli_update",
+      allowedScopes: ["memory_retrieval"],
+      sensitivity: "private",
+      now: "2026-05-14T00:01:00.000Z",
+    });
     const runner = new ChatRunner({
       stateManager,
       adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
@@ -76,11 +86,13 @@ describe("chat caller path cognition integration", () => {
       caller_path: "chat_user_turn",
       stable_output: {
         relationship_state: {
-          relationship_refs: [{
-            memory_ref: {
-              source_event_type: "preference",
-            },
-          }],
+          relationship_refs: expect.arrayContaining([
+            expect.objectContaining({
+              memory_ref: expect.objectContaining({
+                source_event_type: "preference",
+              }),
+            }),
+          ]),
         },
         response_plan: {
           guidance_kind: "continue_route",
@@ -88,6 +100,27 @@ describe("chat caller path cognition integration", () => {
       },
     });
     expect(JSON.stringify(cognitionRecords[0]?.payload)).not.toContain("Prefer direct implementation progress updates.");
+    expect(JSON.stringify(cognitionRecords[0]?.payload)).not.toContain("Avoid emotionally escalated status language.");
+    const store = new PersonalAgentRuntimeStore(stateManager.getBaseDir(), { controlBaseDir: stateManager.getBaseDir() });
+    const planId = (cognitionRecords[0]?.payload as { stable_output?: { response_plan?: { plan_id?: string } } })
+      .stable_output?.response_plan?.plan_id;
+    expect(planId).toBeDefined();
+    const recorded = await store.loadTrace(planId!);
+    expect(recorded?.situation_frame?.conflict_refs.length).toBeGreaterThan(0);
+    expect(recorded?.memory_audits.some((audit) => audit.conflict_refs.length > 0)).toBe(true);
+    expect(recorded?.memory_audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "read",
+        allowed_uses: ["runtime_grounding"],
+        lifecycle: "active",
+        correction_state: "current",
+        invalidated: false,
+        source_kind: "semantic",
+        relationship_role: expect.stringMatching(/^(preference|boundary)$/),
+        confidence: expect.any(Number),
+        surface_projection_ref: expect.stringContaining("surface:relationship-profile:chat"),
+      }),
+    ]));
   });
 
   it("uses the same cognition contract for gateway model-loop turns", async () => {
@@ -121,6 +154,37 @@ describe("chat caller path cognition integration", () => {
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords).toHaveLength(1);
+  });
+
+  it("fails closed before agent execution when durable personal-agent trace persistence fails", async () => {
+    const stateManager = makeStateManager();
+    const agentLoopRunner = {
+      execute: vi.fn().mockResolvedValue(agentResult()),
+    } as unknown as ChatRunnerDeps["chatAgentLoopRunner"];
+    const recordTrace = vi.fn().mockRejectedValue(new Error("trace store unavailable"));
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      chatAgentLoopRunner: agentLoopRunner,
+      personalAgentRuntime: { recordTrace },
+    });
+
+    const result = await runner.execute("普通の相談です", testHome!, 10_000, {
+      selectedRoute: agentLoopRoute(),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("durable SituationFrame");
+    expect(recordTrace).toHaveBeenCalledOnce();
+    expect(agentLoopRunner?.execute).not.toHaveBeenCalled();
+    const session = await latestSession(stateManager);
+    const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
+    expect(cognitionRecords[0]?.payload).toMatchObject({
+      failure: {
+        message: "trace store unavailable",
+        retryable: true,
+      },
+    });
   });
 
   it("routes gateway reply-target memory through Surface projection on the ChatRunner caller path", async () => {

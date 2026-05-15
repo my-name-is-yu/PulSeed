@@ -1,6 +1,12 @@
 import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -24,7 +30,10 @@ export class DeleteGoalTool implements ITool<DeleteGoalInput, unknown> {
   };
   readonly inputSchema = DeleteGoalInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  constructor(
+    private readonly stateManager: StateManager,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
@@ -33,25 +42,42 @@ export class DeleteGoalTool implements ITool<DeleteGoalInput, unknown> {
   async call(input: DeleteGoalInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      if (!context.preApproved) {
-        const approved = await context.approvalFn({
-          toolName: this.metadata.name,
-          input,
-          reason: "Permanently delete goal: " + input.goalId + ". This cannot be undone.",
-          permissionLevel: "write_local",
-          isDestructive: true,
-          reversibility: "irreversible",
-        });
-        if (!approved) {
-          return {
-            success: false,
-            data: null,
-            summary: "Delete denied by user",
-            error: "User denied delete operation",
-            durationMs: Date.now() - startTime,
-          };
-        }
-      }
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.stateManager),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Delete goal ${input.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:delete_goal" },
+            { kind: "capability", ref: "durable_goal_state_write" },
+          ],
+          currentRefs: [{ kind: "goal", ref: input.goalId }],
+          denialMessage: "delete_goal requires approval before mutating durable goal state.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Delete goal ${input.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:delete_goal" },
+            { kind: "capability", ref: "durable_goal_state_write" },
+          ],
+          currentRefs: [{ kind: "goal", ref: input.goalId }],
+          outcomeSummary: "delete_goal was admitted to mutate durable goal state.",
+        },
+      );
 
       const deleted = await this.stateManager.deleteGoal(input.goalId);
       if (!deleted) {

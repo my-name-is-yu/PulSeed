@@ -1,12 +1,15 @@
 import { parseArgs } from "node:util";
 import type { StateManager } from "../../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../../platform/traits/character-config.js";
-import { DaemonClient, isDaemonRunning } from "../../../../runtime/daemon/client.js";
 import { ScheduleEngine } from "../../../../runtime/schedule/engine.js";
 import type { ScheduleEntry } from "../../../../runtime/types/schedule.js";
 import { buildDeps } from "../../setup.js";
 import { getCliLogger } from "../../cli-logger.js";
 import { getScheduleOrPrintError } from "./shared.js";
+import {
+  executeScheduleCliTool,
+  throwIfScheduleCliToolFailed,
+} from "./tool-execution.js";
 
 async function buildScheduleRunEngine(
   stateManager: StateManager,
@@ -48,32 +51,12 @@ async function buildScheduleRunEngine(
   return engine;
 }
 
-async function requestDaemonRunNow(
-  stateManager: StateManager,
-  entry: ScheduleEntry,
-  allowEscalation: boolean,
-): Promise<boolean> {
-  const daemon = await isDaemonRunning(stateManager.getBaseDir());
-  if (!daemon.running) {
-    return false;
-  }
-
-  const client = new DaemonClient({
-    host: "127.0.0.1",
-    port: daemon.port,
-    authToken: daemon.authToken,
-    baseDir: stateManager.getBaseDir(),
-  });
-  await client.runScheduleNow(entry.id, { allowEscalation });
-  console.log(`Requested daemon schedule run: ${entry.id} (${entry.name})`);
-  return true;
-}
-
 export async function scheduleRunNow(
   stateManager: StateManager,
   characterConfigManager: CharacterConfigManager | undefined,
   fallbackEngine: ScheduleEngine,
   argv: string[],
+  fullArgv: string[] = argv,
 ): Promise<void> {
   let parsed: ReturnType<typeof parseArgs>;
   try {
@@ -96,9 +79,6 @@ export async function scheduleRunNow(
 
   try {
     const allowEscalation = parsed.values["with-escalation"] === true;
-    const daemonAccepted = await requestDaemonRunNow(stateManager, preflightEntry, allowEscalation);
-    if (daemonAccepted) return;
-
     const runEngine = await buildScheduleRunEngine(
       stateManager,
       characterConfigManager,
@@ -108,19 +88,29 @@ export async function scheduleRunNow(
     const entry = getScheduleOrPrintError(runEngine, preflightEntry.id);
     if (!entry) return;
 
-    const result = await runEngine.runEntryNow(entry.id, {
-      allowEscalation,
-      preserveEnabled: true,
-    });
-    if (!result) {
-      console.error(`No schedule entry found matching: ${id}`);
-      return;
+    const result = await executeScheduleCliTool(
+      runEngine,
+      "run_schedule",
+      { schedule_id: entry.id, allow_escalation: allowEscalation },
+      {
+        command: "run",
+        argv: fullArgv,
+        currentRefs: [{ kind: "schedule", ref: entry.id }],
+      },
+    );
+    throwIfScheduleCliToolFailed(result);
+    const data = result.data as {
+      entry: ScheduleEntry | null;
+      result: { status: string; output_summary?: string; error_message?: string };
+    };
+    const outputSummary = data.result.output_summary ? `: ${data.result.output_summary}` : "";
+    if (data.result.output_summary === "Requested daemon-resident schedule run") {
+      console.log(`Requested daemon schedule run: ${entry.id} (${entry.name})`);
+    } else {
+      console.log(`Ran schedule entry: ${entry.id} (${entry.name}) -> ${data.result.status}${outputSummary}`);
     }
-
-    const summary = result.result.output_summary ? `: ${result.result.output_summary}` : "";
-    console.log(`Ran schedule entry: ${entry.id} (${entry.name}) -> ${result.result.status}${summary}`);
-    if (result.result.error_message) {
-      console.error(`Error: ${result.result.error_message}`);
+    if (data.result.error_message) {
+      console.error(`Error: ${data.result.error_message}`);
     }
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);

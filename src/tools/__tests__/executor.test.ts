@@ -203,6 +203,149 @@ describe("ToolExecutor", () => {
     });
 
     describe("Capability verification/audit persistence", () => {
+      it("records durable personal-agent tool admission before tool.call side effects", async () => {
+        const order: string[] = [];
+        const recordTrace = vi.fn(async () => {
+          order.push("trace");
+          return {} as never;
+        });
+        const tool = createMockTool({
+          name: "write-tool-admitted",
+          metadata: {
+            name: "write-tool-admitted",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "file_modify",
+          },
+          call: vi.fn().mockImplementation(async () => {
+            order.push("call");
+            return {
+              success: true,
+              data: null,
+              summary: "wrote file",
+              durationMs: 1,
+            } as ToolResult;
+          }),
+        });
+        const { executor } = createExecutor([tool]);
+
+        await executor.execute("write-tool-admitted", { value: "x" }, createMockContext({
+          personalAgentRuntime: { recordTrace },
+          callId: "call-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+        }));
+
+        expect(order).toEqual(["trace", "call", "trace"]);
+        expect(recordTrace).toHaveBeenCalledWith(expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "explicit_user_command",
+          }),
+          task_candidates: [
+            expect.objectContaining({
+              target_kind: "tool_call",
+              desired_effect: "execute_tool",
+              task_created: false,
+            }),
+          ],
+          intervention_decisions: [
+            expect.objectContaining({
+              decision: "allow",
+              target_effect: "execute_tool",
+            }),
+          ],
+        }));
+        expect(recordTrace).toHaveBeenLastCalledWith(expect.objectContaining({
+          initiative_events: expect.arrayContaining([
+            expect.objectContaining({ event_type: "action_outcome" }),
+          ]),
+        }));
+      });
+
+      it("does not call a tool when durable personal-agent admission fails", async () => {
+        const recordTrace = vi.fn(async () => {
+          throw new Error("trace unavailable");
+        });
+        const tool = createMockTool({
+          name: "write-tool-trace-fails",
+          metadata: {
+            name: "write-tool-trace-fails",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          },
+        });
+        const { executor } = createExecutor([tool]);
+
+        await expect(executor.execute("write-tool-trace-fails", { value: "x" }, createMockContext({
+          personalAgentRuntime: { recordTrace },
+          callId: "call-1",
+        }))).rejects.toThrow("trace unavailable");
+        expect(tool.call).not.toHaveBeenCalled();
+      });
+
+      it("records durable personal-agent policy audit when host policy blocks before tool.call", async () => {
+        const recordTrace = vi.fn(async (_trace: unknown) => ({} as never));
+        const tool = createMockTool({
+          name: "host-blocked-tool",
+          metadata: {
+            name: "host-blocked-tool",
+            aliases: [],
+            permissionLevel: "execute",
+            isReadOnly: false,
+            isDestructive: true,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+        });
+        const { executor } = createExecutor([tool]);
+
+        const result = await executor.execute("host-blocked-tool", { value: "x" }, createMockContext({
+          personalAgentRuntime: { recordTrace },
+          callId: "host-block-call-1",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "untrusted" }),
+        }));
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "escalation_required",
+        });
+        expect(tool.call).not.toHaveBeenCalled();
+        expect(recordTrace).toHaveBeenCalledWith(expect.objectContaining({
+          situation_frame: expect.objectContaining({
+            caller_path: "explicit_user_command",
+          }),
+          capability_decisions: [
+            expect.objectContaining({
+              decision: "blocked",
+            }),
+          ],
+          intervention_decisions: [
+            expect.objectContaining({
+              decision: "block",
+              target_effect: "execute_tool",
+            }),
+          ],
+        }));
+      });
+
       it("persists operation-specific production verification and audit records after successful tool execution", async () => {
         const runtimeRoot = makeTempDir("pulseed-capability-verification-");
         permissionGrantRuntimeRoots.push(runtimeRoot);
@@ -390,6 +533,142 @@ describe("ToolExecutor", () => {
         const ctx = createMockContext();
         const result = await executor.execute("mock-tool", { value: "x" }, ctx);
         expect(result.success).toBe(true);
+      });
+
+      it("does not execute non-automation tools when semantic permission requires approval and approval is denied", async () => {
+        const tool = createMockTool({
+          name: "non-automation-execute-tool",
+          metadata: {
+            name: "non-automation-execute-tool",
+            aliases: [],
+            permissionLevel: "execute",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: ["execution"],
+          } as ITool["metadata"],
+          checkPermissions: vi.fn().mockResolvedValue({
+            status: "needs_approval",
+            reason: "external process execution requires confirmation",
+          } as PermissionCheckResult),
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(false);
+        const recordTrace = vi.fn(async (_trace: unknown) => ({} as never));
+
+        const result = await executor.execute(
+          "non-automation-execute-tool",
+          { value: "x" },
+          createMockContext({
+            approvalFn,
+            personalAgentRuntime: { recordTrace },
+            callId: "denied-non-automation-call",
+            sessionId: "session-denied-tool",
+          }),
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.execution).toMatchObject({
+          status: "not_executed",
+          reason: "approval_denied",
+        });
+        expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
+          toolName: "non-automation-execute-tool",
+          reason: "external process execution requires confirmation",
+        }));
+        expect(tool.call).not.toHaveBeenCalled();
+        const traces = recordTrace.mock.calls.map((call) => call[0] as {
+          intervention_decisions: Array<{ decision: string; target_effect: string }>;
+          initiative_events: Array<{ event_type: string }>;
+          task_candidates: Array<{ materialization_state: string }>;
+        });
+        const confirmTrace = traces.find((trace) =>
+          trace.intervention_decisions.some((decision) => decision.decision === "confirm_required")
+        );
+        const blockTrace = traces.find((trace) =>
+          trace.intervention_decisions.some((decision) => decision.decision === "block")
+        );
+        expect(confirmTrace).toBeDefined();
+        expect(blockTrace).toBeDefined();
+        expect(blockTrace).toMatchObject({
+          task_candidates: [
+            expect.objectContaining({
+              materialization_state: "blocked",
+            }),
+          ],
+          intervention_decisions: [
+            expect.objectContaining({
+              decision: "block",
+              target_effect: "execute_tool",
+            }),
+          ],
+          initiative_events: expect.arrayContaining([
+            expect.objectContaining({ event_type: "policy_decision_recorded" }),
+            expect.objectContaining({ event_type: "action_outcome" }),
+          ]),
+        });
+      });
+
+      it("executes non-automation tools only after semantic approval is granted", async () => {
+        const tool = createMockTool({
+          name: "approved-non-automation-execute-tool",
+          metadata: {
+            name: "approved-non-automation-execute-tool",
+            aliases: [],
+            permissionLevel: "execute",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: ["execution"],
+          } as ITool["metadata"],
+          checkPermissions: vi.fn().mockResolvedValue({
+            status: "needs_approval",
+            reason: "external process execution requires confirmation",
+          } as PermissionCheckResult),
+        });
+        const { executor } = createExecutor([tool]);
+        const approvalFn = vi.fn().mockResolvedValue(true);
+        const recordTrace = vi.fn(async (_trace: unknown) => ({} as never));
+
+        const result = await executor.execute(
+          "approved-non-automation-execute-tool",
+          { value: "x" },
+          createMockContext({
+            approvalFn,
+            personalAgentRuntime: { recordTrace },
+            callId: "approved-non-automation-call",
+            sessionId: "session-approved-tool",
+          }),
+        );
+
+        expect(result.success).toBe(true);
+        expect(approvalFn).toHaveBeenCalled();
+        expect(tool.call).toHaveBeenCalledOnce();
+        const traces = recordTrace.mock.calls.map((call) => call[0] as { trace_id: string; intervention_decisions: Array<{ decision: string }>; initiative_events: Array<{ event_type: string }> });
+        const confirmTrace = traces.find((trace) => trace.intervention_decisions.some((decision) => decision.decision === "confirm_required"));
+        const allowTraces = traces.filter((trace) => trace.intervention_decisions.some((decision) => decision.decision === "allow"));
+        const allowRequestTrace = allowTraces.find((trace) =>
+          trace.initiative_events.some((event) => event.event_type === "action_requested")
+        );
+        const allowOutcomeTrace = allowTraces.find((trace) =>
+          trace.initiative_events.some((event) => event.event_type === "action_outcome")
+        );
+        expect(confirmTrace).toBeDefined();
+        expect(allowRequestTrace).toBeDefined();
+        expect(allowOutcomeTrace).toBeDefined();
+        expect(confirmTrace?.trace_id).not.toBe(allowRequestTrace?.trace_id);
+        expect(allowRequestTrace?.initiative_events).toEqual(expect.arrayContaining([
+          expect.objectContaining({ event_type: "action_requested" }),
+        ]));
+        expect(allowOutcomeTrace?.initiative_events).toEqual(expect.arrayContaining([
+          expect.objectContaining({ event_type: "action_outcome" }),
+        ]));
       });
     });
 

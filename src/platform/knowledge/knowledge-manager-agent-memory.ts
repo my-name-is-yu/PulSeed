@@ -1,5 +1,5 @@
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod/v3";
-import { randomUUID } from "node:crypto";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import {
   MemoryCorrectionEntrySchema,
@@ -307,13 +307,16 @@ export interface AgentMemoryCorrectionInput {
   targetId: string;
   correctionKind: Extract<MemoryCorrectionKind, "corrected" | "forgotten" | "retracted">;
   reason: string;
+  correctionId?: string;
   replacementValue?: string;
+  replacementId?: string;
   replacementKey?: string;
   replacementTags?: string[];
   replacementStatus?: Extract<AgentMemoryStatus, "raw" | "compiled">;
   actor?: MemoryCorrectionEntry["actor"];
   createdAt?: string;
   provenanceRef?: string;
+  beforeCommit?: (result: AgentMemoryCorrectionResult) => Promise<void> | void;
 }
 
 export interface AgentMemoryCorrectionResult {
@@ -352,13 +355,28 @@ export async function applyAgentMemoryCorrection(
 
   const now = input.createdAt ?? new Date().toISOString();
   const target = store.entries[targetIndex]!;
+  const correctionId = input.correctionId ?? deterministicAgentMemoryCorrectionId(input);
+  const replacementId = input.replacementId ?? deterministicAgentMemoryReplacementId(input, correctionId);
+  const existingCorrection = store.corrections.find((correction) => correction.correction_id === correctionId);
+  if (existingCorrection) {
+    const currentTarget = store.entries.find((entry) => entry.id === target.id) ?? target;
+    const existingReplacement = existingCorrection.replacement_ref?.kind === "agent_memory"
+      ? store.entries.find((entry) => entry.id === existingCorrection.replacement_ref?.id) ?? null
+      : null;
+    return {
+      correction: existingCorrection,
+      target: currentTarget,
+      replacement: existingReplacement,
+    };
+  }
+
   let replacement: AgentMemoryEntry | null = null;
   if (input.correctionKind === "corrected") {
     if (!input.replacementValue) {
       throw new Error("replacementValue is required for corrected agent memory");
     }
     replacement = AgentMemoryEntrySchema.parse({
-      id: randomUUID(),
+      id: replacementId,
       key: input.replacementKey ?? `${target.key}.corrected.${now.replace(/[^0-9]/g, "").slice(0, 14)}`,
       value: input.replacementValue,
       tags: input.replacementTags ?? target.tags,
@@ -378,7 +396,7 @@ export async function applyAgentMemoryCorrection(
   }
 
   const correction = MemoryCorrectionEntrySchema.parse({
-    correction_id: `agent-memory-correction-${randomUUID()}`,
+    correction_id: correctionId,
     target_ref: agentMemoryRef(target.id),
     correction_kind: input.correctionKind,
     replacement_ref: replacement ? agentMemoryRef(replacement.id) : null,
@@ -401,8 +419,56 @@ export async function applyAgentMemoryCorrection(
     updated_at: now,
   });
   store.entries[targetIndex] = updatedTarget;
+  await input.beforeCommit?.({ correction, target: updatedTarget, replacement });
   await host.saveAgentMemoryStore(store);
   return { correction, target: updatedTarget, replacement };
+}
+
+function deterministicAgentMemoryCorrectionId(input: AgentMemoryCorrectionInput): string {
+  return `agent-memory-correction-${stableId(stableJson({
+    targetId: input.targetId,
+    correctionKind: input.correctionKind,
+    reason: input.reason,
+    replacementValue: input.replacementValue,
+    replacementKey: input.replacementKey,
+    replacementTags: input.replacementTags,
+    replacementStatus: input.replacementStatus,
+    actor: input.actor ?? "user",
+    provenanceRef: input.provenanceRef,
+  }))}`;
+}
+
+function deterministicAgentMemoryReplacementId(
+  input: AgentMemoryCorrectionInput,
+  correctionId: string,
+): string {
+  return `agent-memory-replacement-${stableId(stableJson({
+    correctionId,
+    targetId: input.targetId,
+    replacementValue: input.replacementValue,
+    replacementKey: input.replacementKey,
+  }))}`;
+}
+
+function stableId(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 20);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(normalizeForStableJson(value));
+}
+
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeForStableJson(item));
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, normalizeForStableJson(record[key])]),
+    );
+  }
+  return value;
 }
 
 export async function listAgentMemoryCorrectionHistory(

@@ -13,26 +13,12 @@ export interface AgentLoopContextBlock {
   priority: number;
 }
 
-export interface SoilPrefetchQuery {
-  query: string;
-  rootDir: string;
-  limit: number;
-}
-
-export interface SoilPrefetchResult {
-  content: string;
-  soilIds?: string[];
-  retrievalSource?: "index" | "manifest";
-  warnings?: string[];
-}
-
 export interface TaskAgentLoopAssemblyInput {
   task: Task;
   cwd?: string;
   workspaceContext?: string;
   knowledgeContext?: string;
   relationshipProfileContext?: RelationshipProfileRetrievalContext;
-  soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   maxProjectDocChars?: number;
   trustProjectInstructions?: boolean;
 }
@@ -62,7 +48,7 @@ function formatSuccessCriteria(task: Task): string {
 
 function sectionToBlock(section: GroundingSection): AgentLoopContextBlock {
   const source = section.sources[0]?.path ?? section.sources[0]?.label ?? section.key;
-  const id = section.key === "soil_knowledge" ? "soil-prefetch" : section.key;
+  const id = section.key === "soil_knowledge" ? "soil-knowledge" : section.key;
   return {
     id,
     source,
@@ -76,36 +62,6 @@ export class AgentLoopContextAssembler {
 
   async assembleTask(input: TaskAgentLoopAssemblyInput): Promise<TaskAgentLoopAssembly> {
     const cwd = resolve(input.cwd ?? process.cwd());
-    const soilQuery = input.soilPrefetch
-      ? async ({ query, rootDir, limit }: { query: string; rootDir: string; limit: number }) => {
-          let soil: SoilPrefetchResult | null;
-          try {
-            soil = await input.soilPrefetch!({ query, rootDir, limit });
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            return {
-              retrievalSource: "prefetch" as const,
-              warnings: [`Soil prefetch failed; continuing without Soil context: ${detail}`],
-              hits: [],
-            };
-          }
-          if (!soil?.content.trim()) {
-            return null;
-          }
-          return {
-            retrievalSource: (soil.retrievalSource ?? "prefetch") as "prefetch" | "index" | "manifest",
-            warnings: soil.warnings ?? [],
-            hits: [
-              {
-                soilId: soil.soilIds?.[0] ?? "soil:prefetch",
-                title: "Prefetched Soil context",
-                summary: soil.content,
-              },
-            ],
-          };
-        }
-      : undefined;
-
     const query = [
       input.task.work_description,
       input.task.approach,
@@ -128,7 +84,6 @@ export class AgentLoopContextAssembler {
       workspaceContext: input.workspaceContext,
       knowledgeContext: input.knowledgeContext,
       relationshipProfileContext: input.relationshipProfileContext,
-      soilQuery,
       include: {
         session_history: false,
         progress_history: false,

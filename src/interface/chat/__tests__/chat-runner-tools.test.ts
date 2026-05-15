@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
@@ -127,6 +128,12 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
 
 const runtimeRoots: string[] = [];
 
+function makeWorkspaceRoot(): string {
+  const runtimeRoot = makeTempDir("pulseed-chat-tools-workspace-");
+  runtimeRoots.push(runtimeRoot);
+  return fs.realpathSync(runtimeRoot);
+}
+
 afterEach(() => {
   for (const runtimeRoot of runtimeRoots.splice(0)) {
     cleanupTempDir(runtimeRoot);
@@ -169,8 +176,9 @@ describe("ChatRunner — production tool caller path", () => {
         toolExecutor: executor,
       });
       const runner = new ChatRunner(deps);
+      const workspaceRoot = makeWorkspaceRoot();
 
-      const result = await runner.execute("test", "/repo");
+      const result = await runner.execute("test", workspaceRoot);
 
       expect((executor.execute as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
       expect(tool.call).not.toHaveBeenCalled();
@@ -295,8 +303,9 @@ describe("ChatRunner — production tool caller path", () => {
       onEvent: (event) => { events.push(event); },
     });
     const runner = new ChatRunner(deps);
+    const workspaceRoot = makeWorkspaceRoot();
 
-    await runner.execute("Could you inspect the workspace surface?", "/repo");
+    await runner.execute("Could you inspect the workspace surface?", workspaceRoot);
 
     const toolEvents = events.filter((event): event is Extract<ChatEvent, { type: "tool_start" | "tool_update" | "tool_end" }> =>
       event.type === "tool_start" || event.type === "tool_update" || event.type === "tool_end"
@@ -375,9 +384,10 @@ describe("ChatRunner — Codex-like model request builder path", () => {
       llmClient,
       registry: makeMockRegistry(tool),
     }));
+    const workspaceRoot = makeWorkspaceRoot();
 
-    await runner.execute("Could you inspect the workspace state?", "/repo");
-    await runner.execute("作業ツリーの状態を確認して", "/repo");
+    await runner.execute("Could you inspect the workspace state?", workspaceRoot);
+    await runner.execute("作業ツリーの状態を確認して", workspaceRoot);
 
     expect(tool.call).toHaveBeenCalledTimes(2);
     expect(capturedToolRequests).toHaveLength(2);

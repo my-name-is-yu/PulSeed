@@ -169,6 +169,41 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("records personal-agent run admission before worker DurableLoop execution", async () => {
+    const order: string[] = [];
+    const recordTrace = vi.fn().mockImplementation(async () => {
+      order.push("trace");
+      return {} as never;
+    });
+    const { supervisor, mockCoreLoop, runtimeRoot } = makeSupervisor(
+      async (goalId: string) => {
+        order.push("run");
+        return makeLoopResult({ goalId });
+      },
+      { personalAgentRuntime: { recordTrace } },
+      { concurrency: 1 }
+    );
+    try {
+      await supervisor.start(["g-admitted"]);
+      await waitFor(() => mockCoreLoop.run.mock.calls.some((call: unknown[]) => call[0] === "g-admitted"));
+      await supervisor.shutdown();
+
+      expect(order.slice(0, 2)).toEqual(["trace", "run"]);
+      expect(recordTrace).toHaveBeenCalledOnce();
+      const trace = recordTrace.mock.calls[0]![0] as any;
+      expect(trace.situation_frame).toMatchObject({
+        caller_path: "task_execution",
+        source_kind: "task_execution",
+      });
+      expect(trace.task_candidates[0]).toMatchObject({
+        target_kind: "run",
+        desired_effect: "create_run",
+      });
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("prefers durableLoopFactory over legacy coreLoopFactory", async () => {
     const durableLoop = {
       run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-durable-factory" })),

@@ -1,10 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod/v3";
 import { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { Logger } from "../../runtime/logger.js";
-import { TaskSchema } from "../../base/types/task.js";
 import type { Task } from "../../base/types/task.js";
 import {
   KnowledgeGapSignalSchema,
@@ -16,6 +14,19 @@ import type {
   ContradictionResult,
 } from "../../base/types/knowledge.js";
 import { loadDomainKnowledge } from "./knowledge-search.js";
+import { TaskCreateTool } from "../../tools/mutation/TaskCreateTool/TaskCreateTool.js";
+import type { TaskCreateInput } from "../../tools/mutation/TaskCreateTool/TaskCreateTool.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolRegistry } from "../../tools/registry.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
+import type { ToolCallContext } from "../../tools/types.js";
+import {
+  PersonalAgentRuntimeStore,
+  stableId,
+  type RuntimeGraphRef,
+} from "../../runtime/personal-agent/index.js";
+import type { PersonalAgentRuntimeStore as PersonalAgentRuntimeStoreType } from "../../runtime/personal-agent/index.js";
 
 // ─── Deps interface ───
 
@@ -24,6 +35,8 @@ export interface KnowledgeQueryDeps {
   gateway?: IPromptGateway;
   stateManager: StateManager;
   logger?: Logger;
+  toolExecutor?: ToolExecutor;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStoreType, "recordTrace">;
 }
 
 // ─── LLM response schemas ───
@@ -219,19 +232,17 @@ Respond with JSON:
   // Clamp questions to 3-5
   const questions = fields.knowledge_questions.slice(0, 5);
 
-  const taskId = randomUUID();
-  const now = new Date().toISOString();
-
   const criteriaDescription = `All ${questions.length} research questions are answered with cited sources: ${questions.join("; ")}`;
+  const primaryDimension = signal.related_dimension ?? "knowledge";
+  const targetDimensions = signal.related_dimension
+    ? [signal.related_dimension]
+    : ["knowledge"];
 
-  const task = TaskSchema.parse({
-    id: taskId,
-    goal_id: goalId,
-    strategy_id: null,
-    target_dimensions: signal.related_dimension
-      ? [signal.related_dimension]
-      : [],
-    primary_dimension: signal.related_dimension ?? "knowledge",
+  const taskCreateInput: TaskCreateInput = {
+    goalId,
+    strategyId: null,
+    targetDimensions,
+    primaryDimension,
     work_description: `Research task: ${fields.knowledge_target}`,
     rationale: `Knowledge gap detected (${signal.signal_type}): ${signal.missing_knowledge}`,
     approach: `Research the following questions using web search and document analysis:
@@ -262,14 +273,106 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
     reversibility: "reversible",
     estimated_duration: { value: 4, unit: "hours" },
     task_category: "knowledge_acquisition",
-    status: "pending",
-    created_at: now,
-  });
+  };
 
-  // Persist through the typed task store.
-  await stateManager.saveTask(task);
+  const taskCreateResult = await executeKnowledgeAcquisitionTaskCreate(
+    deps,
+    taskCreateInput,
+    signal,
+    fields,
+  );
+  if (!taskCreateResult.success) {
+    throw new Error(taskCreateResult.error ?? taskCreateResult.summary);
+  }
+  const taskId = (taskCreateResult.data as { taskId?: string } | null | undefined)?.taskId;
+  const task = taskId ? await stateManager.loadTask(goalId, taskId) : null;
+  if (!task) {
+    throw new Error("Knowledge acquisition task materialization completed without a readable task");
+  }
 
   return task;
+}
+
+async function executeKnowledgeAcquisitionTaskCreate(
+  deps: KnowledgeQueryDeps,
+  input: TaskCreateInput,
+  signal: KnowledgeGapSignal,
+  fields: z.infer<typeof AcquisitionTaskFieldsSchema>,
+) {
+  const baseDir = deps.stateManager.getBaseDir();
+  const replaySeed = stableKnowledgeAcquisitionSeed(input, signal, fields);
+  const eventRef = `knowledge-gap:${stableId(replaySeed)}`;
+  const sourceRef: RuntimeGraphRef = { kind: "task_candidate", ref: eventRef };
+  const toolExecutor = deps.toolExecutor ?? createTaskCreateToolExecutor(deps);
+  const toolContext: ToolCallContext = {
+    cwd: baseDir,
+    goalId: input.goalId,
+    trustBalance: 0,
+    preApproved: true,
+    approvalFn: async () => false,
+    providerConfigBaseDir: baseDir,
+    personalAgentRuntime: deps.personalAgentRuntime,
+    callId: `knowledge-gap-task-create:${stableId(replaySeed)}`,
+    sessionId: `goal:${input.goalId}`,
+    turnId: `knowledge-gap:${stableId([
+      input.goalId,
+      signal.signal_type,
+      signal.source_step,
+      input.primaryDimension,
+    ].join(":"))}`,
+    personalAgentTrace: {
+      callerPath: "goal_gap_task_generation",
+      sourceKind: "goal_gap",
+      sourceId: eventRef,
+      sourceEpoch: signal.source_step,
+      highWatermark: `${input.goalId}:${signal.signal_type}:${signal.source_step}`,
+      replayKey: `knowledge_gap_task_generation:create_task:${stableId(replaySeed)}`,
+      summary: `Knowledge gap ${signal.signal_type} requested a durable knowledge acquisition task.`,
+      sourceRef,
+      currentRefs: [
+        { kind: "goal", ref: input.goalId },
+        sourceRef,
+      ],
+      auditRefs: [
+        { kind: "knowledge_gap", ref: signal.source_step },
+      ],
+    },
+  };
+  return await toolExecutor.execute("task_create", input, toolContext);
+}
+
+function createTaskCreateToolExecutor(deps: KnowledgeQueryDeps): ToolExecutor {
+  const registry = new ToolRegistry();
+  registry.register(new TaskCreateTool(deps.stateManager, deps.personalAgentRuntime));
+  const baseDir = deps.stateManager.getBaseDir();
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir }),
+    traceBaseDir: baseDir,
+  });
+}
+
+function stableKnowledgeAcquisitionSeed(
+  input: TaskCreateInput,
+  signal: KnowledgeGapSignal,
+  fields: z.infer<typeof AcquisitionTaskFieldsSchema>,
+): string {
+  return stableJson({
+    input,
+    signal,
+    fields,
+  });
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 // ─── checkContradiction ───

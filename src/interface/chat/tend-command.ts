@@ -4,7 +4,6 @@
 // Summarizes chat history via LLM, generates a structured goal,
 // confirms with the user, then starts a daemon to work on it autonomously.
 
-import { randomUUID } from "node:crypto";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { GoalNegotiator } from "../../orchestrator/goal/goal-negotiator.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
@@ -18,6 +17,11 @@ import {
 import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime-root.js";
 import type { RuntimeControlReplyTarget } from "../../runtime/store/runtime-operation-schemas.js";
 import type { RuntimeReplyTarget, RuntimeSessionRef } from "../../runtime/session-registry/types.js";
+import {
+  buildPersonalAgentDecisionTrace,
+  PersonalAgentRuntimeStore,
+  stableId,
+} from "../../runtime/personal-agent/index.js";
 
 // --- Types ---
 
@@ -30,7 +34,8 @@ export interface TendDeps {
   sessionId?: string | null;
   workspace?: string | null;
   replyTarget?: RuntimeControlReplyTarget | null;
-  backgroundRunLedger?: Pick<BackgroundRunLedger, "create" | "terminal">;
+  backgroundRunLedger?: Pick<BackgroundRunLedger, "create" | "terminal"> & Partial<Pick<BackgroundRunLedger, "load">>;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export interface TendResult {
@@ -136,10 +141,29 @@ export class TendCommand {
   /**
    * Generate a structured Goal from a plain-text summary via GoalNegotiator.
    */
-  async generateGoal(summary: string, goalNegotiator: GoalNegotiator): Promise<Goal> {
+  async generateGoal(
+    summary: string,
+    goalNegotiator: GoalNegotiator,
+    deps?: Pick<TendDeps, "stateManager" | "sessionId" | "workspace" | "personalAgentRuntime">,
+  ): Promise<Goal> {
+    const goalId = deps ? tendGoalId(summary, deps) : undefined;
+    if (deps && goalId) {
+      await recordTendDecision(deps, {
+        action: "goal_create",
+        replayKey: tendReplayKey("goal_create", summary, deps),
+        sourceId: deps.sessionId ?? goalId,
+        targetRef: { kind: "goal", ref: goalId },
+        targetKind: "goal",
+        targetEffect: "create_goal",
+        summary: "Tend generated a goal candidate from chat history.",
+        decisionReason: "Tend goal creation was allowed by InterventionPolicy before GoalNegotiator persisted durable goal state.",
+        currentRefs: deps.sessionId ? [{ kind: "chat_session", ref: deps.sessionId }] : [],
+      });
+    }
     const result = await goalNegotiator.negotiate(summary, {
       constraints: ["source: tend (auto-generated from chat)"],
       timeoutMs: DEFAULT_TEND_GOAL_NEGOTIATION_TIMEOUT_MS,
+      ...(goalId ? { goalId } : {}),
     });
     return result.goal;
   }
@@ -230,7 +254,7 @@ export class TendCommand {
 
     let goal: Goal;
     try {
-      goal = await this.generateGoal(summary, deps.goalNegotiator);
+      goal = await this.generateGoal(summary, deps.goalNegotiator, deps);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
@@ -256,7 +280,22 @@ export class TendCommand {
     maxIterations: number | undefined,
     deps: TendDeps
   ): Promise<TendResult> {
-    const run = await createDurableLoopBackgroundRun(goal, deps);
+    const backgroundRunId = tendBackgroundRunId(goal, deps);
+    await recordTendDecision(deps, {
+      action: "run_start",
+      replayKey: tendReplayKey("run_start", goal.id, deps),
+      sourceId: deps.sessionId ?? goal.id,
+      targetRef: { kind: "background_run", ref: backgroundRunId },
+      targetKind: "run",
+      targetEffect: "create_run",
+      summary: `Tend requested background execution for "${goal.title}".`,
+      decisionReason: "Tend background run start was allowed by InterventionPolicy before the run ledger and daemon were mutated.",
+      currentRefs: [
+        { kind: "goal", ref: goal.id },
+        ...(deps.sessionId ? [{ kind: "chat_session", ref: deps.sessionId }] : []),
+      ],
+    });
+    const run = await createDurableLoopBackgroundRun(goal, deps, backgroundRunId);
     try {
       await deps.daemonClient.startGoal(goal.id, {
         backgroundRun: {
@@ -298,12 +337,15 @@ export class TendCommand {
   }
 }
 
-async function createDurableLoopBackgroundRun(goal: Goal, deps: TendDeps) {
+async function createDurableLoopBackgroundRun(goal: Goal, deps: TendDeps, backgroundRunId: string) {
   const pinnedReplyTarget = normalizePinnedReplyTarget(deps.replyTarget ?? null);
   const parentSessionId = deps.sessionId ? `session:conversation:${deps.sessionId}` : null;
   const sourceRefs = deps.sessionId ? [chatSessionSourceRef(deps.sessionId)] : [];
+  const ledger = getBackgroundRunLedger(deps);
+  const existing = await ledger.load?.(backgroundRunId).catch(() => null);
+  if (existing) return existing;
   const input: BackgroundRunCreateInput = {
-    id: `${DURABLE_LOOP_BACKGROUND_RUN_ID_PREFIX}${randomUUID()}`,
+    id: backgroundRunId,
     kind: DURABLE_LOOP_BACKGROUND_RUN_KIND,
     goal_id: goal.id,
     parent_session_id: parentSessionId,
@@ -314,10 +356,10 @@ async function createDurableLoopBackgroundRun(goal: Goal, deps: TendDeps) {
     workspace: deps.workspace ?? null,
     source_refs: sourceRefs,
   };
-  return getBackgroundRunLedger(deps).create(input);
+  return ledger.create(input);
 }
 
-function getBackgroundRunLedger(deps: TendDeps): Pick<BackgroundRunLedger, "create" | "terminal"> {
+function getBackgroundRunLedger(deps: TendDeps): Pick<BackgroundRunLedger, "create" | "terminal"> & Partial<Pick<BackgroundRunLedger, "load">> {
   if (deps.backgroundRunLedger) return deps.backgroundRunLedger;
   const baseDir = deps.stateManager.getBaseDir();
   return new BackgroundRunLedger(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
@@ -346,6 +388,88 @@ function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | nul
       ...(replyTarget.metadata ?? {}),
     },
   };
+}
+
+function tendGoalId(
+  summary: string,
+  deps: Pick<TendDeps, "sessionId" | "workspace">,
+): string {
+  return `goal:tend:${stableId(tendReplayKey("goal_create", summary, deps))}`;
+}
+
+function tendBackgroundRunId(
+  goal: Goal,
+  deps: Pick<TendDeps, "sessionId" | "workspace" | "replyTarget">,
+): string {
+  return `${DURABLE_LOOP_BACKGROUND_RUN_ID_PREFIX}${stableId(tendReplayKey("run_start", goal.id, deps))}`;
+}
+
+function tendReplayKey(
+  action: "goal_create" | "run_start",
+  seed: string,
+  deps: Pick<TendDeps, "sessionId" | "workspace">,
+): string {
+  return [
+    "chat:tend",
+    action,
+    seed.trim(),
+    deps.sessionId ?? "session:none",
+    deps.workspace ?? "workspace:none",
+  ].join(":");
+}
+
+async function recordTendDecision(
+  deps: Pick<TendDeps, "stateManager" | "personalAgentRuntime">,
+  input: {
+    action: "goal_create" | "run_start";
+    replayKey: string;
+    sourceId: string;
+    targetRef: { kind: string; ref: string };
+    targetKind: "goal" | "run";
+    targetEffect: "create_goal" | "create_run";
+    summary: string;
+    decisionReason: string;
+    currentRefs: Array<{ kind: string; ref: string }>;
+  },
+): Promise<void> {
+  const store = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+    deps.stateManager.getBaseDir(),
+    { controlBaseDir: deps.stateManager.getBaseDir() },
+  );
+  const now = new Date().toISOString();
+  await store.recordTrace(buildPersonalAgentDecisionTrace({
+    callerPath: "explicit_user_command",
+    source: {
+      sourceKind: "explicit_command",
+      sourceId: input.sourceId,
+      emittedAt: now,
+      sourceEpoch: input.action,
+      highWatermark: input.targetRef.ref,
+      replayKey: input.replayKey,
+      summary: input.summary,
+      sourceRef: { kind: "chat_command", ref: "/tend" },
+    },
+    target: {
+      kind: input.targetKind,
+      ref: input.targetRef,
+      effect: input.targetEffect,
+      summary: input.summary,
+    },
+    decision: "allow",
+    decisionReason: input.decisionReason,
+    capabilityDecision: "available",
+    capabilityRefs: [{ kind: "capability", ref: input.action === "goal_create" ? "durable_goal_state_write" : "daemon_goal_start" }],
+    policyRef: { kind: "intervention_policy", ref: "policy:chat-tend-v1" },
+    currentRefs: input.currentRefs,
+    auditRefs: [{ kind: "chat_command", ref: "/tend" }],
+    outcomeEvent: {
+      type: "action_outcome",
+      summary: input.action === "goal_create"
+        ? "Tend materialized a durable goal."
+        : "Tend materialized a durable background run request.",
+      targetRef: input.targetRef,
+    },
+  }));
 }
 
 // --- Arg parsing ---

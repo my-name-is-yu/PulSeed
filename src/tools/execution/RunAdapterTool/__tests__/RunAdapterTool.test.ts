@@ -47,12 +47,29 @@ describe("RunAdapterTool", () => {
     expect(tool.description()).toContain("adapter");
   });
 
-  it("checkPermissions returns needs_approval", async () => {
+  it("checkPermissions returns needs_approval without durable personal-agent admission", async () => {
     const result = await tool.checkPermissions(
       { adapter_id: "claude", task_description: "do something" },
-      makeContext(),
+      { ...makeContext(), preApproved: true },
     );
     expect(result.status).toBe("needs_approval");
+  });
+
+  it("checkPermissions accepts pre-approved execution only with a durable personal-agent trace", async () => {
+    const result = await tool.checkPermissions(
+      { adapter_id: "claude", task_description: "do something" },
+      {
+        ...makeContext(),
+        preApproved: true,
+        personalAgentTrace: {
+          callerPath: "task_execution",
+          sourceKind: "task_execution",
+          sourceId: "task-1",
+          replayKey: "task-1:run-adapter",
+        },
+      },
+    );
+    expect(result.status).toBe("allowed");
   });
 
   it("isConcurrencySafe returns false", () => {

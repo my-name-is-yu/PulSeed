@@ -104,6 +104,7 @@ export class GoalNegotiator {
       timeHorizonDays?: number;
       workspaceContext?: string;
       timeoutMs?: number;
+      goalId?: string;
     }
   ): Promise<{ goal: Goal; response: NegotiationResponse; log: NegotiationLog }> {
     const timeoutMs = options?.timeoutMs ?? 120_000;
@@ -140,13 +141,14 @@ export class GoalNegotiator {
       constraints?: string[];
       timeHorizonDays?: number;
       workspaceContext?: string;
+      goalId?: string;
     },
     timeoutGuard?: {
       throwIfTimedOut: () => void;
       markCommitStarted: () => void;
     }
   ): Promise<{ goal: Goal; response: NegotiationResponse; log: NegotiationLog }> {
-    const goalId = randomUUID();
+    const goalId = options?.goalId ?? randomUUID();
     const deadline = options?.deadline ?? null;
     const constraints = options?.constraints ?? [];
     const timeHorizonDays = options?.timeHorizonDays ?? DEFAULT_TIME_HORIZON_DAYS;

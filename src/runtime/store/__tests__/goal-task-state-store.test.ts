@@ -110,6 +110,170 @@ describe("GoalTaskStateStore database ownership", () => {
     expect(fs.existsSync(path.join(baseDir, "tasks", "goal-1", "ledger", "task-1.json"))).toBe(false);
   });
 
+  it("uses RuntimeGraph source-of-truth nodes when goal/task projections are missing", async () => {
+    const baseDir = tempHome("pulseed-goal-task-graph-source-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    await stateManager.saveGoal(makeGoal({
+      id: "graph-goal",
+      title: "RuntimeGraph authority",
+      created_at: "2026-05-09T00:00:00.000Z",
+      updated_at: "2026-05-09T00:00:00.000Z",
+    }));
+    await stateManager.saveTask(makeTask({
+      id: "graph-task",
+      goal_id: "graph-goal",
+      created_at: "2026-05-09T00:01:00.000Z",
+    }));
+
+    const db = await openControlDatabase({ baseDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare("DELETE FROM goal_records WHERE goal_id = ?").run("graph-goal");
+        sqlite.prepare("DELETE FROM task_records WHERE goal_id = ?").run("graph-goal");
+      });
+    } finally {
+      db.close();
+    }
+
+    await expect(stateManager.loadGoal("graph-goal")).resolves.toMatchObject({
+      id: "graph-goal",
+      title: "RuntimeGraph authority",
+    });
+    await expect(stateManager.listGoalIds()).resolves.toEqual(["graph-goal"]);
+    await expect(stateManager.listTasks("graph-goal")).resolves.toMatchObject([
+      { id: "graph-task", goal_id: "graph-goal" },
+    ]);
+    await expect(stateManager.listTasksByStatus("pending")).resolves.toMatchObject([
+      { id: "graph-task", goal_id: "graph-goal" },
+    ]);
+
+    await expect(stateManager.archiveGoal("graph-goal")).resolves.toBe(true);
+    await expect(stateManager.listGoalIds()).resolves.toEqual([]);
+    await expect(stateManager.listArchivedGoals()).resolves.toEqual(["graph-goal"]);
+
+    await expect(stateManager.deleteGoal("graph-goal")).resolves.toBe(true);
+    await expect(stateManager.loadGoal("graph-goal")).resolves.toBeNull();
+    await expect(stateManager.loadTask("graph-goal", "graph-task")).resolves.toBeNull();
+    await expect(stateManager.listArchivedGoals()).resolves.toEqual([]);
+  });
+
+  it("backfills legacy goal/task projections into RuntimeGraph without hiding mixed durable work", async () => {
+    const baseDir = tempHome("pulseed-goal-task-graph-mixed-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    await stateManager.saveGoal(makeGoal({
+      id: "legacy-goal",
+      title: "Legacy projection",
+      created_at: "2026-05-09T00:00:00.000Z",
+      updated_at: "2026-05-09T00:00:00.000Z",
+    }));
+    await stateManager.saveTask(makeTask({
+      id: "legacy-task",
+      goal_id: "legacy-goal",
+      created_at: "2026-05-09T00:02:00.000Z",
+    }));
+    await stateManager.saveGoal(makeGoal({
+      id: "graph-goal",
+      title: "Graph projection",
+      created_at: "2026-05-09T00:01:00.000Z",
+      updated_at: "2026-05-09T00:01:00.000Z",
+    }));
+    await stateManager.saveTask(makeTask({
+      id: "graph-task",
+      goal_id: "graph-goal",
+      created_at: "2026-05-09T00:03:00.000Z",
+    }));
+
+    const db = await openControlDatabase({ baseDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id IN (?, ?)").run(
+          "runtime-graph:goal:legacy-goal",
+          "runtime-graph:task:legacy-task",
+        );
+        sqlite.prepare("DELETE FROM goal_records WHERE goal_id = ?").run("graph-goal");
+        sqlite.prepare("DELETE FROM task_records WHERE goal_id = ?").run("graph-goal");
+      });
+    } finally {
+      db.close();
+    }
+
+    await expect(stateManager.listGoalIds()).resolves.toEqual(["legacy-goal", "graph-goal"]);
+    await expect(stateManager.listTasks("legacy-goal")).resolves.toMatchObject([
+      { id: "legacy-task", goal_id: "legacy-goal" },
+    ]);
+    await expect(stateManager.listTasksByStatus("pending")).resolves.toMatchObject([
+      { id: "legacy-task", goal_id: "legacy-goal" },
+      { id: "graph-task", goal_id: "graph-goal" },
+    ]);
+
+    const verifyDb = await openControlDatabase({ baseDir });
+    try {
+      expect(verifyDb.read((sqlite) =>
+        sqlite.prepare("SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?")
+          .get("runtime-graph:goal:legacy-goal")
+      )).toBeTruthy();
+      expect(verifyDb.read((sqlite) =>
+        sqlite.prepare("SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?")
+          .get("runtime-graph:task:legacy-task")
+      )).toBeTruthy();
+    } finally {
+      verifyDb.close();
+    }
+  });
+
+  it("backfills known-id goal/task loads into RuntimeGraph before returning production truth", async () => {
+    const baseDir = tempHome("pulseed-goal-task-graph-known-id-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    await stateManager.saveGoal(makeGoal({
+      id: "legacy-load-goal",
+      title: "Legacy known id",
+      created_at: "2026-05-09T00:00:00.000Z",
+      updated_at: "2026-05-09T00:00:00.000Z",
+    }));
+    await stateManager.saveTask(makeTask({
+      id: "legacy-load-task",
+      goal_id: "legacy-load-goal",
+      created_at: "2026-05-09T00:02:00.000Z",
+    }));
+
+    const db = await openControlDatabase({ baseDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id IN (?, ?)").run(
+          "runtime-graph:goal:legacy-load-goal",
+          "runtime-graph:task:legacy-load-task",
+        );
+      });
+    } finally {
+      db.close();
+    }
+
+    await expect(stateManager.loadGoal("legacy-load-goal")).resolves.toMatchObject({
+      id: "legacy-load-goal",
+    });
+    await expect(stateManager.loadTask("legacy-load-goal", "legacy-load-task")).resolves.toMatchObject({
+      id: "legacy-load-task",
+      goal_id: "legacy-load-goal",
+    });
+
+    const verifyDb = await openControlDatabase({ baseDir });
+    try {
+      expect(verifyDb.read((sqlite) =>
+        sqlite.prepare("SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?")
+          .get("runtime-graph:goal:legacy-load-goal")
+      )).toBeTruthy();
+      expect(verifyDb.read((sqlite) =>
+        sqlite.prepare("SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?")
+          .get("runtime-graph:task:legacy-load-task")
+      )).toBeTruthy();
+    } finally {
+      verifyDb.close();
+    }
+  });
+
   it("imports legacy goal/task/checkpoint files only through the explicit migration boundary", async () => {
     const baseDir = tempHome("pulseed-goal-task-import-");
     fs.mkdirSync(path.join(baseDir, "goals", "goal-1"), { recursive: true });

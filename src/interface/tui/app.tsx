@@ -36,7 +36,7 @@ import {
 } from "./input-action.js";
 import type { Report } from "../../base/types/report.js";
 import type { Goal } from "../../base/types/goal.js";
-import { useLoop } from "./use-loop.js";
+import { recordTuiStopDecision, useLoop } from "./use-loop.js";
 import type { LoopState } from "./use-loop.js";
 import {
   listRunnableStartGoals,
@@ -75,6 +75,7 @@ import { createTextUserInput } from "../chat/user-input.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
 import { defaultExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
+import { recordExplicitCommandDecision, stableId } from "../../runtime/personal-agent/index.js";
 
 const MAX_MESSAGES = 200;
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
@@ -255,15 +256,42 @@ export function App({
 
   const loopState = isDaemonMode ? daemonLoopState : (standaloneHook?.loopState ?? IDLE_LOOP_STATE);
   const startLoop = isDaemonMode
-    ? (goalId: string) => { daemonClient!.startGoal(goalId).catch(() => {}); }
+    ? (goalId: string) => {
+        const replayKey = ["tui_start_goal", "daemon_app", goalId].join(":");
+        recordExplicitCommandDecision({
+          baseDir: stateManager.getBaseDir(),
+          surface: "tui",
+          command: "/start",
+          sourceId: `tui /start:daemon_app:${goalId}`,
+          sourceEpoch: goalId,
+          replayKey,
+          target: {
+            kind: "run",
+            ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
+            effect: "create_run",
+            summary: `Start goal ${goalId} from TUI daemon mode.`,
+          },
+          decisionReason: "Explicit TUI /start was allowed to start daemon-backed durable goal work.",
+          capabilityRefs: [{ kind: "capability", ref: "daemon_goal_start" }],
+          currentRefs: [{ kind: "goal", ref: goalId }],
+          auditRefs: [{ kind: "goal", ref: goalId }],
+        })
+          .then(() => daemonClient!.startGoal(goalId))
+          .catch(() => {});
+      }
     : (standaloneHook?.start ?? (() => {}));
   const stopLoop = isDaemonMode
-    ? () => {
+    ? async () => {
         if (daemonLoopState.goalId) {
-          daemonClient!.stopGoal(daemonLoopState.goalId).catch(() => {});
+          await recordTuiStopDecision({
+            baseDir: stateManager.getBaseDir(),
+            goalId: daemonLoopState.goalId,
+            mode: "daemon_app",
+          });
+          await daemonClient!.stopGoal(daemonLoopState.goalId).catch(() => {});
         }
       }
-    : (standaloneHook?.stop ?? (() => {}));
+    : (standaloneHook?.stop ?? (async () => {}));
 
   // ── Daemon SSE event listeners ──
   useEffect(() => {
@@ -717,7 +745,7 @@ export function App({
             startLoop(result.startLoop.goalId);
           }
           if (result.stopLoop) {
-            stopLoop();
+            await stopLoop();
           }
         } else if (action.kind === "daemon_slash") {
           // Daemon mode: handle basic slash commands locally
@@ -746,7 +774,7 @@ export function App({
               }].slice(-MAX_MESSAGES));
             }
           } else if (trimmed === "/stop") {
-            stopLoop();
+            await stopLoop();
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,
               text: "Stop signal sent to daemon.", timestamp: new Date(), messageType: "info" as const,

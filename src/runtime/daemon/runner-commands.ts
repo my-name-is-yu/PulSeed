@@ -16,9 +16,20 @@ import type { Envelope } from "../types/envelope.js";
 import type { ApprovalBroker } from "../approval-broker.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { JournalBackedQueue, JournalBackedQueueAcceptResult } from "../queue/journal-backed-queue.js";
+import {
+  recordExplicitCommandDecision,
+  stableId,
+  type PersonalAgentRuntimeStore,
+  type RuntimeGraphRef,
+} from "../personal-agent/index.js";
 import { writeChatMessageEvent } from "./maintenance.js";
 import { runCommandWithHealth as runCommandWithHealthFn } from "./runner-errors.js";
 import type { WaitResumeActivation } from "../../base/types/goal-activation.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ToolRegistry } from "../../tools/registry.js";
+import { RunScheduleTool } from "../../tools/schedule/RunScheduleTool/RunScheduleTool.js";
 
 export interface BackgroundRunStartMetadata {
   backgroundRunId: string;
@@ -41,6 +52,7 @@ export interface DaemonRunnerCommandContext {
   state: DaemonState;
   currentGoalIds: string[];
   supervisor?: LoopSupervisor;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   approvalBroker?: ApprovalBroker;
   eventServer?: EventServer;
   journalQueue?: JournalBackedQueue;
@@ -98,11 +110,12 @@ export async function handleInboundEnvelope(
 export async function handleGoalStartCommand(
   context: Pick<
     DaemonRunnerCommandContext,
-    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state"
+    "currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "stateManager" | "personalAgentRuntime"
   >,
   goalId: string,
   metadata?: GoalStartMetadata,
 ): Promise<void> {
+  await recordDaemonGoalRunCommandDecision(context, goalId, "goal_start", metadata);
   if (!context.currentGoalIds.includes(goalId)) {
     context.currentGoalIds.push(goalId);
   }
@@ -111,6 +124,108 @@ export async function handleGoalStartCommand(
   context.supervisor?.activateGoal(goalId, metadata);
   context.abortSleep();
   await context.broadcastGoalUpdated(goalId, "active");
+}
+
+async function recordDaemonGoalRunCommandDecision(
+  context: Pick<DaemonRunnerCommandContext, "state" | "stateManager" | "personalAgentRuntime">,
+  goalId: string,
+  command: "goal_start" | "goal_resume",
+  metadata?: GoalStartMetadata,
+): Promise<void> {
+  const sourceEpoch = metadata?.backgroundRun?.backgroundRunId
+    ?? metadata?.waitResume?.scheduleEntryId
+    ?? metadata?.waitResume?.nextObserveAt
+    ?? `loop:${context.state.loop_count}`;
+  const replayKey = [
+    "daemon_goal_run_command",
+    command,
+    goalId,
+    sourceEpoch,
+  ].join(":");
+  const refs = daemonGoalRunCommandRefs(goalId, metadata);
+  await recordExplicitCommandDecision({
+    baseDir: context.stateManager.getBaseDir(),
+    personalAgentRuntime: context.personalAgentRuntime,
+    surface: "daemon",
+    command,
+    sourceId: `daemon ${command}:${goalId}`,
+    sourceEpoch,
+    replayKey,
+    target: {
+      kind: "run",
+      ref: { kind: "run", ref: `run:daemon:${stableId(replayKey)}` },
+      effect: "create_run",
+      summary: `Start goal ${goalId} from daemon ${command}.`,
+    },
+    decisionReason: `Explicit daemon ${command} command was admitted before queueing DurableLoop goal execution.`,
+    capabilityRefs: [{ kind: "capability", ref: "durable_loop_goal_run" }],
+    currentRefs: [
+      { kind: "goal", ref: goalId },
+      { kind: "daemon_state", ref: `loop:${context.state.loop_count}` },
+      ...refs,
+    ],
+    auditRefs: [
+      { kind: "goal", ref: goalId },
+      ...refs,
+    ],
+  });
+}
+
+function daemonGoalRunCommandRefs(goalId: string, metadata?: GoalStartMetadata): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [];
+  if (metadata?.backgroundRun?.backgroundRunId) {
+    refs.push({ kind: "run", ref: `background_run:${metadata.backgroundRun.backgroundRunId}` });
+  }
+  if (metadata?.waitResume) {
+    refs.push({ kind: "wait_strategy", ref: metadata.waitResume.strategyId });
+    if (metadata.waitResume.scheduleEntryId) {
+      refs.push({ kind: "schedule_entry", ref: metadata.waitResume.scheduleEntryId });
+    }
+    if (metadata.waitResume.nextObserveAt) {
+      refs.push({ kind: "schedule_wake", ref: `${goalId}:${metadata.waitResume.nextObserveAt}` });
+    }
+  }
+  return refs;
+}
+
+async function recordDaemonRuntimeMutationDecision(
+  context: Pick<DaemonRunnerCommandContext, "state" | "stateManager" | "personalAgentRuntime">,
+  goalId: string,
+  command: "goal_stop" | "goal_pause",
+  reason: string,
+): Promise<void> {
+  const sourceEpoch = `loop:${context.state.loop_count}`;
+  const replayKey = [
+    "daemon_runtime_mutation_command",
+    command,
+    goalId,
+    sourceEpoch,
+  ].join(":");
+  await recordExplicitCommandDecision({
+    baseDir: context.stateManager.getBaseDir(),
+    personalAgentRuntime: context.personalAgentRuntime,
+    surface: "daemon",
+    command,
+    sourceId: `daemon ${command}:${goalId}`,
+    sourceEpoch,
+    replayKey,
+    target: {
+      kind: "runtime_control",
+      ref: { kind: "runtime_control", ref: `daemon:${command}:${goalId}` },
+      effect: "mutate_runtime_control",
+      summary: `${command} mutates daemon runtime state for goal ${goalId}.`,
+    },
+    decisionReason: `Explicit daemon ${command} command was admitted before mutating runtime state: ${reason}`,
+    capabilityRefs: [{ kind: "capability", ref: "daemon_goal_lifecycle" }],
+    currentRefs: [
+      { kind: "goal", ref: goalId },
+      { kind: "daemon_state", ref: sourceEpoch },
+    ],
+    auditRefs: [
+      { kind: "goal", ref: goalId },
+      { kind: "daemon_state", ref: sourceEpoch },
+    ],
+  });
 }
 
 export function extractGoalStartMetadata(envelope: Envelope): GoalStartMetadata | undefined {
@@ -176,10 +291,11 @@ function extractWaitResume(payload: unknown): WaitResumeActivation | undefined {
 export async function handleGoalStopCommand(
 	context: Pick<
 		DaemonRunnerCommandContext,
-		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager"
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager" | "personalAgentRuntime"
 	>,
   goalId: string,
 ): Promise<void> {
+  await recordDaemonRuntimeMutationDecision(context, goalId, "goal_stop", "Stop goal execution from daemon command.");
   context.currentGoalIds.splice(0, context.currentGoalIds.length, ...context.currentGoalIds.filter((id) => id !== goalId));
   context.refreshOperationalState();
   if (context.state.interrupted_goals) {
@@ -341,11 +457,12 @@ export async function checkpointPauseIfRequested(
 export async function handleGoalPauseCommand(
 	context: Pick<
 		DaemonRunnerCommandContext,
-		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger" | "stateManager"
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "journalQueue" | "logger" | "stateManager" | "personalAgentRuntime"
 	>,
   goalId: string,
   reason = "safe pause requested",
 ): Promise<void> {
+  await recordDaemonRuntimeMutationDecision(context, goalId, "goal_pause", reason);
   const store = safePauseStore(context);
   const requested = store
     ? await store.requestPause({ goalId, reason, requestedBy: "daemon-command" })
@@ -378,7 +495,7 @@ export async function handleGoalPauseCommand(
 export async function handleGoalResumeCommand(
 	context: Pick<
 		DaemonRunnerCommandContext,
-		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager"
+		"currentGoalIds" | "refreshOperationalState" | "saveDaemonState" | "supervisor" | "abortSleep" | "broadcastGoalUpdated" | "state" | "runtimeRoot" | "stateManager" | "personalAgentRuntime"
 	>,
   goalId: string,
 ): Promise<void> {
@@ -414,6 +531,7 @@ export async function handleGoalResumeCommand(
         },
       }
     : undefined;
+  await recordDaemonGoalRunCommandDecision(context, goalId, "goal_resume", resumeMetadata);
   context.state.safe_pause_goals = {
     ...(context.state.safe_pause_goals ?? {}),
     [goalId]: resumed,
@@ -541,7 +659,7 @@ export async function handleRuntimeControlCommand(
 }
 
 export async function handleScheduleRunNowCommand(
-  context: Pick<DaemonRunnerCommandContext, "scheduleEngine" | "logger">,
+  context: Pick<DaemonRunnerCommandContext, "scheduleEngine" | "logger" | "stateManager" | "personalAgentRuntime">,
   scheduleId: string,
   allowEscalation: boolean,
 ): Promise<void> {
@@ -555,13 +673,60 @@ export async function handleScheduleRunNowCommand(
     throw new Error(`Schedule not found: ${scheduleId}`);
   }
 
-  const run = await context.scheduleEngine.runEntryNow(entry.id, {
-    allowEscalation,
-    preserveEnabled: true,
+  const baseDir = context.stateManager.getBaseDir();
+  const registry = new ToolRegistry();
+  registry.register(new RunScheduleTool(
+    context.scheduleEngine,
+    context.personalAgentRuntime,
+    { preferDaemon: false },
+  ));
+  const executor = new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: context.personalAgentRuntime,
+    traceBaseDir: baseDir,
   });
-  if (!run) {
-    throw new Error(`Schedule not found: ${scheduleId}`);
+  const replayKey = [
+    "daemon",
+    "schedule-run-now",
+    entry.id,
+    allowEscalation ? "with-escalation" : "no-escalation",
+  ].join(":");
+  const result = await executor.execute("run_schedule", {
+    schedule_id: entry.id,
+    allow_escalation: allowEscalation,
+  }, {
+    cwd: process.cwd(),
+    goalId: "daemon:schedule-run-now",
+    trustBalance: 100,
+    preApproved: true,
+    hostPolicyApproved: true,
+    approvalFn: async () => true,
+    sessionId: "daemon:schedule",
+    callId: `daemon:schedule-run-now:${stableId(replayKey)}`,
+    providerConfigBaseDir: baseDir,
+    personalAgentRuntime: context.personalAgentRuntime,
+    personalAgentTrace: {
+      callerPath: "runtime_control",
+      sourceKind: "runtime_control_request",
+      sourceId: `schedule-run-now:${entry.id}`,
+      sourceEpoch: "daemon-command",
+      highWatermark: entry.updated_at,
+      replayKey,
+      summary: `Daemon runtime-control command requested schedule ${entry.id} run-now.`,
+      sourceRef: { kind: "runtime_control", ref: `schedule-run-now:${entry.id}` },
+      currentRefs: [{ kind: "schedule", ref: entry.id }],
+      auditRefs: [{ kind: "runtime_control", ref: `schedule-run-now:${entry.id}` }],
+    },
+  });
+  if (!result.success) {
+    throw new Error(result.error ?? result.summary);
   }
+  const run = result.data as {
+    result: { status: string };
+    reason: string;
+  };
 
   context.logger.info("Schedule run-now completed", {
     schedule_id: entry.id,

@@ -1417,6 +1417,31 @@ describe("snapshot and outbox replay", () => {
     expect(events).toEqual([{ goalId: "goal-1", message: "hello" }]);
   });
 
+  it("replays repeated payload-equal outbox events as distinct sequence entries", async () => {
+    const outboxStore = new OutboxStore(tmpDir);
+    server = new EventServer(mockDriveSystem as never, {
+      port: 0,
+      eventsDir: path.join(tmpDir, "events"),
+      outboxStore,
+    });
+
+    await server.start();
+    await server.broadcast("schedule_run_requested", { scheduleId: "schedule-1", allowEscalation: false });
+    await server.broadcast("schedule_run_requested", { scheduleId: "schedule-1", allowEscalation: false });
+
+    const records = await outboxStore.list();
+    expect(records.map((record) => record.seq)).toEqual([1, 2]);
+
+    const events = await collectSseEvents(
+      server.getPort(),
+      "/stream?after=1",
+      "schedule_run_requested",
+      1
+    );
+
+    expect(events).toEqual([{ scheduleId: "schedule-1", allowEscalation: false }]);
+  });
+
   it("does not partially parse malformed replay cursors", async () => {
     const outboxStore = new OutboxStore(tmpDir);
     server = new EventServer(mockDriveSystem as never, {

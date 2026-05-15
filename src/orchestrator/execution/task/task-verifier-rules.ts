@@ -8,6 +8,16 @@ import { syncTaskOutcomeSummary } from "./task-outcome-ledger.js";
 import { computeActualElapsedMs } from "./task-history-metrics.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
+import type { ToolCallContext } from "../../../tools/types.js";
+import { RunAdapterTool } from "../../../tools/execution/RunAdapterTool/RunAdapterTool.js";
+import {
+  PersonalAgentRuntimeStore,
+  stableId,
+} from "../../../runtime/personal-agent/index.js";
 
 // ─── runMechanicalVerification ───
 
@@ -141,10 +151,17 @@ export async function runMechanicalVerification(
 
     let result: AgentResult;
     try {
-      result = await adapter.execute(agentTask);
+      result = await executeMechanicalVerificationWithRunAdapter({
+        deps,
+        task,
+        adapter,
+        agentTask,
+        verificationCommand,
+        verificationCwd,
+      });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      deps.logger?.error("runMechanicalVerification: adapter.execute() threw", { error: errMsg });
+      deps.logger?.error("runMechanicalVerification: run-adapter execution threw", { error: errMsg });
       return failClosedMechanicalVerification(
         [{ command: verificationCommand, directLocal: false }],
         `adapter execution failed for ${adapterType}: ${errMsg}`,
@@ -176,6 +193,112 @@ export async function runMechanicalVerification(
     passed: true,
     description: `Mechanical verification passed (${passedCommands.length} command(s)): ${passedCommands.join("; ")}`,
   };
+}
+
+async function executeMechanicalVerificationWithRunAdapter(input: {
+  deps: VerifierDeps;
+  task: Task;
+  adapter: IAdapter;
+  agentTask: AgentTask;
+  verificationCommand: string;
+  verificationCwd: string | undefined;
+}): Promise<AgentResult> {
+  const baseDir = input.verificationCwd ?? stateManagerBaseDir(input.deps.stateManager);
+  const traceStore = new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir });
+  const toolExecutor = createRunAdapterToolExecutor({
+    adapterRegistry: input.deps.adapterRegistry,
+    baseDir,
+    personalAgentRuntime: traceStore,
+  });
+  const replayKey = [
+    "task_verification:run_adapter",
+    input.task.goal_id,
+    input.task.id,
+    input.adapter.adapterType,
+    stableId(input.verificationCommand),
+  ].join(":");
+  const context: ToolCallContext = {
+    cwd: baseDir,
+    goalId: input.task.goal_id,
+    taskId: input.task.id,
+    trustBalance: 0,
+    preApproved: true,
+    approvalFn: async () => false,
+    providerConfigBaseDir: baseDir,
+    personalAgentRuntime: traceStore,
+    callId: `task-verification-run-adapter:${stableId(replayKey)}`,
+    sessionId: `goal:${input.task.goal_id}`,
+    turnId: `task-verification:${input.task.id}:${stableId(input.verificationCommand)}`,
+    personalAgentTrace: {
+      callerPath: "task_execution",
+      sourceKind: "task_execution",
+      sourceId: input.task.id,
+      sourceEpoch: input.task.status,
+      highWatermark: `${input.task.goal_id}:${input.task.id}:${input.task.completed_at ?? input.task.started_at ?? input.task.created_at}`,
+      replayKey,
+      summary: `Run mechanical verification for task ${input.task.id} through run-adapter.`,
+      sourceRef: { kind: "task", ref: input.task.id },
+      currentRefs: [
+        { kind: "goal", ref: input.task.goal_id },
+        { kind: "task", ref: input.task.id },
+      ],
+      auditRefs: [
+        { kind: "verification_command", ref: stableId(input.verificationCommand) },
+        { kind: "adapter", ref: input.adapter.adapterType },
+      ],
+    },
+  };
+  const toolResult = await toolExecutor.execute(
+    "run-adapter",
+    {
+      adapter_id: input.adapter.adapterType,
+      task_description: input.agentTask.prompt,
+      goal_id: input.task.goal_id,
+      timeout_ms: input.agentTask.timeout_ms,
+      ...(input.agentTask.cwd !== undefined ? { cwd: input.agentTask.cwd } : {}),
+    },
+    context,
+  );
+  if (toolResult.data != null && isAgentResult(toolResult.data)) return toolResult.data;
+  throw new Error(toolResult.error ?? toolResult.execution?.reason ?? "run_adapter_not_executed");
+}
+
+function createRunAdapterToolExecutor(input: {
+  adapterRegistry: VerifierDeps["adapterRegistry"];
+  baseDir: string;
+  personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+}): ToolExecutor {
+  if (!input.adapterRegistry) {
+    throw new Error("run-adapter execution requires an adapter registry");
+  }
+  const registry = new ToolRegistry();
+  registry.register(new RunAdapterTool(input.adapterRegistry));
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: input.personalAgentRuntime,
+    traceBaseDir: input.baseDir,
+  });
+}
+
+function stateManagerBaseDir(stateManager: VerifierDeps["stateManager"]): string {
+  const candidate = (stateManager as VerifierDeps["stateManager"] & { getBaseDir?: () => string }).getBaseDir?.();
+  return candidate ?? process.cwd();
+}
+
+function isAgentResult(value: unknown): value is AgentResult {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Partial<AgentResult>;
+  return typeof record.success === "boolean"
+    && typeof record.output === "string"
+    && typeof record.elapsed_ms === "number"
+    && (record.stopped_reason === "completed"
+      || record.stopped_reason === "timeout"
+      || record.stopped_reason === "error"
+      || record.stopped_reason === "cancelled"
+      || record.stopped_reason === "blocked"
+      || record.stopped_reason === "policy_blocked");
 }
 
 function failClosedMechanicalVerification(

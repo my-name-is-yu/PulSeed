@@ -67,6 +67,7 @@ import {
 } from "./index.js";
 import type { GoalCycleScheduleSnapshotEntry } from "./maintenance.js";
 import type { ResidentOperationBoundaryEvaluator } from "./runner-resident-shared.js";
+import type { PersonalAgentRuntimeStore } from "../personal-agent/index.js";
 import {
   acceptRuntimeEnvelope as acceptRuntimeEnvelopeFn,
   handleApprovalResponseCommand as handleApprovalResponseCommandFn,
@@ -187,6 +188,8 @@ export interface DaemonDeps {
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
   /** Optional operation boundary evaluator for resident operation-plan tests. */
   residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;
+  /** Optional personal-agent runtime trace store shared by resident production paths. */
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export class DaemonRunner {
@@ -249,6 +252,7 @@ export class DaemonRunner {
   private runtimeOperationStore: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   private feedbackIngestionStore: Pick<FeedbackIngestionStore, "listEffects">;
   private readonly residentOperationBoundaryEvaluator: ResidentOperationBoundaryEvaluator | undefined;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace"> | undefined;
   private runtimeOwnership: RuntimeOwnershipCoordinator;
   private readonly getProviderRuntimeFingerprintFn: () => Promise<string>;
   private readonly refreshResidentDeps: DaemonDeps["refreshResidentDeps"];
@@ -297,6 +301,7 @@ export class DaemonRunner {
       { controlBaseDir: this.baseDir },
     );
     this.residentOperationBoundaryEvaluator = deps.residentOperationBoundaryEvaluator;
+    this.personalAgentRuntime = deps.personalAgentRuntime;
     const runtimeWiring = createRuntimeWiring(
       this.baseDir,
       this.runtimeRoot,
@@ -762,6 +767,8 @@ export class DaemonRunner {
       currentGoalIds: this.currentGoalIds,
       driveSystem: this.driveSystem,
       supervisor: this.supervisor,
+      baseDir: this.baseDir,
+      personalAgentRuntime: this.personalAgentRuntime,
       processScheduleEntries: () => this.processScheduleEntries(),
       proactiveTick: () => this.proactiveTick(),
       saveDaemonState: () => this.saveDaemonState(),

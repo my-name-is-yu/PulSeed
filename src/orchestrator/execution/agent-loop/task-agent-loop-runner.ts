@@ -13,7 +13,7 @@ import { BoundedAgentLoopRunner } from "./bounded-agent-loop-runner.js";
 import { createAgentLoopSession, type AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopCommandResult, AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
-import { AgentLoopContextAssembler, type SoilPrefetchQuery, type SoilPrefetchResult } from "./agent-loop-context-assembler.js";
+import { AgentLoopContextAssembler } from "./agent-loop-context-assembler.js";
 import { buildTaskAgentLoopTurnContext } from "./task-agent-loop-context.js";
 import {
   collectTaskAgentLoopNotExecutedBlockers,
@@ -58,7 +58,6 @@ export interface TaskAgentLoopRunnerDeps {
   defaultExecutionPolicy?: ExecutionPolicy;
   cognitionMemoryBaseDir?: string;
   contextAssembler?: AgentLoopContextAssembler;
-  soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   cwd?: string;
   createSession?: (input: { task: Task }) => AgentLoopSession;
 }
@@ -110,7 +109,6 @@ export class TaskAgentLoopRunner {
         workspaceContext: input.workspaceContext,
         knowledgeContext: input.knowledgeContext,
         cwd: workspace.executionCwd,
-        soilPrefetch: this.deps.soilPrefetch,
         trustProjectInstructions: executionPolicy?.trustProjectInstructions,
       });
       const turn = buildTaskAgentLoopTurnContext({

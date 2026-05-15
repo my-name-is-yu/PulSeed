@@ -35,6 +35,7 @@ import type { ChatHistory } from "./chat-history.js";
 import type { EventSubscriber } from "./event-subscriber.js";
 import type { UserInput } from "./user-input.js";
 import type { CompanionCognitionService } from "../../runtime/cognition/companion-cognition-service.js";
+import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 
 export type ChatRunnerTelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -110,6 +111,7 @@ export interface ChatRunnerDeps {
   runtimeControlActor?: RuntimeControlActor;
   gatewaySetupStatusProvider?: ChatRunnerGatewaySetupStatusProvider;
   companionCognitionService?: Pick<CompanionCognitionService, "evaluateTurn">;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export interface ChatRunResult {
@@ -169,6 +171,7 @@ export interface ChatRunnerCommandHost {
   getRuntimeControlContext(): RuntimeControlChatContext | null;
   getPendingTend(): PendingTendState | null;
   setPendingTend(value: PendingTendState | null): void;
+  getPersonalAgentRuntime(): Pick<PersonalAgentRuntimeStore, "recordTrace">;
   getLastSelectedRoute(): SelectedChatRoute | null;
   getSessionExecutionPolicy(): Promise<ExecutionPolicy>;
   reloadProviderRuntime?(): Promise<void>;
@@ -185,6 +188,8 @@ export interface ChatRunnerRouteHost {
   getNativeAgentLoopStatePath(): string | null;
   getNativeAgentLoopSessionId(): string | null;
   getProviderConfigBaseDir(): string;
+  getPersonalAgentRuntime(): Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  getToolExecutor(): ToolExecutor | undefined;
   getSetupSecretIntake(): SetupSecretIntakeResult | null;
   getTurnLanguageHint(): TurnLanguageHint;
   setPendingSetupDialogue(dialogue: SetupDialogueRuntimeState | null): Promise<void>;

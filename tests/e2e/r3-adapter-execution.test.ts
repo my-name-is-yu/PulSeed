@@ -23,6 +23,9 @@ import { StallDetector } from "../../src/platform/drive/stall-detector.js";
 import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/durable-loop.js";
 import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
+import { ConcurrencyController, ToolExecutor, ToolPermissionManager, ToolRegistry } from "../../src/tools/index.js";
+import { RunAdapterTool } from "../../src/tools/execution/RunAdapterTool/RunAdapterTool.js";
+import { TaskCreateTool } from "../../src/tools/mutation/TaskCreateTool/TaskCreateTool.js";
 import type { Goal } from "../../src/base/types/goal.js";
 import type { GapVector } from "../../src/base/types/gap.js";
 import type { DriveContext } from "../../src/base/types/drive.js";
@@ -201,6 +204,17 @@ function makeAdapterRegistry(adapter: IAdapter): AdapterRegistry {
   return adapterRegistry;
 }
 
+function makeRunAdapterToolExecutor(adapterRegistry: AdapterRegistry, manager: StateManager): ToolExecutor {
+  const toolRegistry = new ToolRegistry();
+  toolRegistry.register(new TaskCreateTool(manager));
+  toolRegistry.register(new RunAdapterTool(adapterRegistry));
+  return new ToolExecutor({
+    registry: toolRegistry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+  });
+}
+
 function expectTaskAndMechanicalAdapterCalls(adapter: TrackingMockAdapter): void {
   expect(adapter.executeCalls).toHaveLength(2);
   expect(adapter.executeCalls[0]!.prompt).toContain("README");
@@ -243,6 +257,7 @@ describe("R3: runTaskCycle generates task, executes via adapter, and verifies", 
 
     const adapter = new TrackingMockAdapter(true);
     const adapterRegistry = makeAdapterRegistry(adapter);
+    const toolExecutor = makeRunAdapterToolExecutor(adapterRegistry, stateManager);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -251,7 +266,7 @@ describe("R3: runTaskCycle generates task, executes via adapter, and verifies", 
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry, toolExecutor }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -307,6 +322,7 @@ describe("R3: runTaskCycle handles adapter execution failure", () => {
     // Adapter that returns failure
     const adapter = new TrackingMockAdapter(false);
     const adapterRegistry = makeAdapterRegistry(adapter);
+    const toolExecutor = makeRunAdapterToolExecutor(adapterRegistry, stateManager);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -315,7 +331,7 @@ describe("R3: runTaskCycle handles adapter execution failure", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry, toolExecutor }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -394,6 +410,7 @@ describe("R3: runTaskCycle passes existingTasks for dedup", () => {
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
     const adapterRegistry = makeAdapterRegistry(adapter);
+    const toolExecutor = makeRunAdapterToolExecutor(adapterRegistry, stateManager);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -402,7 +419,7 @@ describe("R3: runTaskCycle passes existingTasks for dedup", () => {
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry, toolExecutor }
     );
 
     const existingTasks = [
@@ -454,6 +471,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
     const adapterRegistry = makeAdapterRegistry(adapter);
+    const toolExecutor = makeRunAdapterToolExecutor(adapterRegistry, stateManager);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -462,7 +480,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry, toolExecutor }
     );
 
     const gapVector = makeGapVector(goal.id);
@@ -505,6 +523,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
     const stallDetector = new StallDetector(stateManager);
     const adapter = new TrackingMockAdapter(true);
     const adapterRegistry = makeAdapterRegistry(adapter);
+    const toolExecutor = makeRunAdapterToolExecutor(adapterRegistry, stateManager);
 
     const taskLifecycle = new TaskLifecycle(
       stateManager,
@@ -513,7 +532,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
       trustManager,
       strategyManager,
       stallDetector,
-      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry }
+      { approvalFn: async (_task) => true, healthCheckEnabled: false, adapterRegistry, toolExecutor }
     );
 
     // Use mocks for the non-TaskLifecycle CoreLoop deps
@@ -601,6 +620,7 @@ describe("R3: full pipeline with CoreLoop — task results update goal state", (
         shouldActivate: vi.fn().mockReturnValue(true),
       } as unknown as CoreLoopDeps["driveSystem"],
       adapterRegistry,
+      toolExecutor,
     };
 
     const coreLoop = new CoreLoop(deps, { maxIterations: 1, delayBetweenLoopsMs: 0 });

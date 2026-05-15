@@ -167,10 +167,9 @@ function resolveGoalMeasurementCwd(goal: Goal, fallbackCwd = process.cwd()): str
 
 // ─── Phase 2 ───
 
-/** Run observation engine, reload goal after observation.
+/** Run observation through the durable observe-goal tool, then reload goal.
  * Observation failure is non-fatal — returns current goal state.
- * When ctx.toolExecutor is present, routes through the observe-goal tool first
- * and falls back to direct engine.observe() on tool failure. */
+ * Production loops must not fall back to direct observation side effects. */
 export async function observeAndReload(
   ctx: PhaseCtx,
   goalId: string,
@@ -183,7 +182,6 @@ export async function observeAndReload(
     phase: "Observing...",
   });
 
-  // Tool path: route through ToolExecutor when available
   if (ctx.toolExecutor) {
     try {
       const toolCtx = await buildLoopToolContext(ctx, goalId);
@@ -193,27 +191,14 @@ export async function observeAndReload(
         if (reloaded) return reloaded;
         return goal;
       }
-      ctx.logger?.warn(`CoreLoop: observe-goal tool failed: ${toolResult.error}, falling back to direct call`);
+      ctx.logger?.warn(`CoreLoop: observe-goal tool failed: ${toolResult.error}; direct observation fallback is disabled`);
     } catch (err) {
-      ctx.logger?.warn("CoreLoop: observe-goal tool threw (falling back to direct call)", { error: err instanceof Error ? err.message : String(err) });
+      ctx.logger?.warn("CoreLoop: observe-goal tool threw; direct observation fallback is disabled", { error: err instanceof Error ? err.message : String(err) });
     }
+    return goal;
   }
 
-  // Direct path: fallback (or when toolExecutor is absent)
-  try {
-    const engine = ctx.deps.observationEngine;
-
-    ctx.logger?.debug("CoreLoop: engine.getDataSources exists", { exists: true });
-    const dataSources = engine.getDataSources();
-    ctx.logger?.debug("CoreLoop: observation setup", { dataSourceCount: dataSources.length });
-
-    await engine.observe(goalId, []);
-
-    const reloaded = await ctx.deps.stateManager.loadGoal(goalId);
-    if (reloaded) return reloaded;
-  } catch (err) {
-    ctx.logger?.warn("CoreLoop: observation failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
-  }
+  ctx.logger?.warn("CoreLoop: observe-goal skipped because ToolExecutor is unavailable; direct observation fallback is disabled", { goalId });
   return goal;
 }
 

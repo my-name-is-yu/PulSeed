@@ -773,7 +773,11 @@ export class CoreIterationKernel {
         adapter as Parameters<typeof handleCapabilityAcquisition>[2],
         this.deps.deps.capabilityDetector,
         this.deps.capabilityFailures,
-        this.deps.logger
+        this.deps.logger,
+        {
+          toolExecutor: this.deps.deps.toolExecutor,
+          baseDir: this.deps.deps.stateManager.getBaseDir(),
+        },
       ),
       incrementTransferCounter: () => this.deps.incrementTransferCounter(),
       tryGenerateReport: (id, idx, r, g) =>

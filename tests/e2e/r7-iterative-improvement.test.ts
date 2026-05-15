@@ -31,6 +31,11 @@ import { TrustManager } from "../../src/platform/traits/trust-manager.js";
 import { CoreLoop, type CoreLoopDeps } from "../../src/orchestrator/loop/durable-loop.js";
 import { AdapterRegistry } from "../../src/orchestrator/execution/adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../../src/orchestrator/execution/adapter-layer.js";
+import { ToolExecutor } from "../../src/tools/executor.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
+import { ToolPermissionManager } from "../../src/tools/permission.js";
+import { ConcurrencyController } from "../../src/tools/concurrency.js";
+import { ObserveGoalTool } from "../../src/tools/execution/ObserveGoalTool/ObserveGoalTool.js";
 
 // ─── Pure function modules ───
 import * as GapCalculator from "../../src/platform/drive/gap-calculator.js";
@@ -324,6 +329,13 @@ function buildCoreLoop(
 
   const adapterRegistry = new AdapterRegistry();
   adapterRegistry.register(new MockAdapter());
+  const toolRegistry = new ToolRegistry();
+  toolRegistry.register(new ObserveGoalTool(obsEngine));
+  const toolExecutor = new ToolExecutor({
+    registry: toolRegistry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+  });
 
   return new CoreLoop(
     {
@@ -338,6 +350,7 @@ function buildCoreLoop(
       reportingEngine,
       driveSystem,
       adapterRegistry,
+      toolExecutor,
     },
     { maxIterations, delayBetweenLoopsMs: 0 }
   );

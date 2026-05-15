@@ -19,6 +19,7 @@ import type { KnowledgeManager } from "../../platform/knowledge/knowledge-manage
 import { detectChange } from "../change-detector.js";
 import { executeReflectionCronJob, executeSoilPublishCronJob } from "./engine-cron-reflection.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
+import type { PersonalAgentRuntimeStore } from "../personal-agent/index.js";
 import {
   buildSchedulerWakeAttentionInputs,
   buildSignalContextFromAttentionInputs,
@@ -28,6 +29,8 @@ import {
 } from "../attention/index.js";
 import { assembleScheduleOperationPlans } from "../capability-operation-planner.js";
 import type { ScheduleExecutionContext } from "./engine-execution.js";
+import { buildScheduleNotificationReport } from "./notification-report.js";
+import { recordScheduleGoalRunDecision, recordScheduleJobDecision, recordScheduleWaitResumeDecision } from "./personal-agent-trace.js";
 
 interface LayerDeps {
   baseDir?: string;
@@ -41,6 +44,7 @@ interface LayerDeps {
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
   attentionReevaluation?: AttentionReevaluationPort;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   logger: {
     info: (msg: string, ctx?: Record<string, unknown>) => void;
     warn: (msg: string, ctx?: Record<string, unknown>) => void;
@@ -184,6 +188,17 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
   const cfg = entry.cron;
 
   if (!cfg) {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "cron",
+      actionKind: "missing_config",
+      decision: "block",
+      capabilityDecision: "missing",
+      targetEffect: "none",
+      decisionReason: "Cron schedule wake was blocked because no cron config was available.",
+    });
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
       status: "error",
@@ -196,6 +211,18 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
 
   // Check daily budget
   if ((entry.tokens_used_today ?? 0) >= entry.max_tokens_per_day) {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "cron",
+      actionKind: cfg.job_kind,
+      decision: "hold",
+      capabilityDecision: "available",
+      targetEffect: "hold_concern",
+      decisionReason: "Cron schedule wake was held because the daily token budget was exhausted.",
+      capabilityRefs: [{ kind: "budget", ref: `schedule:${entry.id}:daily_tokens` }],
+    });
     deps.logger.info(`Cron "${entry.name}" skipped: daily budget exceeded`);
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
@@ -207,6 +234,25 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
   }
 
   try {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "cron",
+      actionKind: cfg.job_kind,
+      decision: "allow",
+      decisionReason: `Cron schedule wake was admitted for ${cfg.job_kind} execution.`,
+      capabilityRefs: [
+        ...(cfg.context_sources.length > 0 ? [{ kind: "capability", ref: "data_source_query" }] : []),
+        ...(deps.llmClient ? [{ kind: "capability", ref: "llm_schedule_cron" }] : []),
+        ...(deps.reportingEngine ? [{ kind: "capability", ref: "schedule_reporting" }] : []),
+        ...(deps.notificationDispatcher ? [{ kind: "capability", ref: "notification_dispatch" }] : []),
+      ],
+      currentRefs: [
+        ...(cfg.context_sources.map((sourceId) => ({ kind: "data_source", ref: sourceId }))),
+      ],
+    });
+
     if (cfg.job_kind === "reflection") {
       if (!cfg.reflection_kind) {
         return ScheduleResultSchema.parse({
@@ -284,12 +330,13 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
     // Dispatch notification if configured
     if ((cfg.output_format === "notification" || cfg.output_format === "both") && deps.notificationDispatcher) {
       try {
-        await deps.notificationDispatcher.dispatch({
+        await deps.notificationDispatcher.dispatch(buildScheduleNotificationReport({
           report_type: "schedule_report_ready",
           entry_id: entry.id,
           entry_name: entry.name,
           output_summary: outputSummary,
-        });
+          generated_at: firedAt,
+        }));
       } catch (err) {
         deps.logger.warn(`Cron "${entry.name}" notification dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -328,6 +375,17 @@ export async function executeGoalTrigger(
   const cfg = entry.goal_trigger;
 
   if (!cfg) {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "goal_trigger",
+      actionKind: "missing_config",
+      decision: "block",
+      capabilityDecision: "missing",
+      targetEffect: "none",
+      decisionReason: "Goal-trigger schedule wake was blocked because no goal_trigger config was available.",
+    });
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
       status: "error",
@@ -340,6 +398,19 @@ export async function executeGoalTrigger(
 
   // Check daily budget
   if ((entry.tokens_used_today ?? 0) >= entry.max_tokens_per_day) {
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      goalId: cfg.goal_id,
+      firedAt,
+      scheduledFor,
+      reason: context.reason,
+      mode: "goal_trigger",
+      runPolicy: cfg.run_policy,
+      maxIterations: cfg.max_iterations,
+      decision: "hold",
+      decisionReason: "Goal-trigger schedule wake was held because the schedule daily token budget was exhausted.",
+    });
     deps.logger.info(`GoalTrigger "${entry.name}" skipped: daily budget exceeded`);
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
@@ -355,6 +426,19 @@ export async function executeGoalTrigger(
     try {
       const goal = await deps.stateManager.loadGoal(cfg.goal_id);
       if (goal && goal.status === "active") {
+        await recordScheduleGoalRunDecision({
+          personalAgentRuntime: deps.personalAgentRuntime,
+          entry,
+          goalId: cfg.goal_id,
+          firedAt,
+          scheduledFor,
+          reason: context.reason,
+          mode: "goal_trigger",
+          runPolicy: cfg.run_policy,
+          maxIterations: cfg.max_iterations,
+          decision: "hold",
+          decisionReason: "Goal-trigger schedule wake was held because the target goal was already active.",
+        });
         deps.logger.info(`GoalTrigger "${entry.name}" skipped: goal ${cfg.goal_id} is already active`);
         return ScheduleResultSchema.parse({
           entry_id: entry.id,
@@ -389,6 +473,23 @@ export async function executeGoalTrigger(
         scheduledFor,
       });
 
+      await recordScheduleWaitResumeDecision({
+        personalAgentRuntime: deps.personalAgentRuntime,
+        entry,
+        goalId: cfg.goal_id,
+        firedAt,
+        scheduledFor,
+        signalContextId: signalContext.signal_context_id,
+        decision: signalContext.safety_context.hard_blocked ? "block" : "hold",
+        capabilityDecision: signalContext.safety_context.hard_blocked ? "blocked" : "available",
+        decisionReason: signalContext.safety_context.hard_blocked
+          ? signalContext.safety_context.reason ?? "Wait-resume schedule wake was blocked by signal safety context."
+          : "Wait-resume schedule wake was durably admitted as an attention concern before re-evaluation.",
+        currentRefs: signalContextRuntimeRefs(signalContext),
+        staleRefs: signalContext.stale_target_context.stale_refs.map(autonomyRefToRuntimeRef),
+        auditRefs: signalContext.audit_refs.map(autonomyRefToRuntimeRef),
+      });
+
       const reevaluation = await deps.attentionReevaluation.reevaluate(signalContext, {
         entry_id: entry.id,
         entry_name: entry.name,
@@ -417,6 +518,20 @@ export async function executeGoalTrigger(
     }
 
     if (!deps.coreLoop) {
+      await recordScheduleGoalRunDecision({
+        personalAgentRuntime: deps.personalAgentRuntime,
+        entry,
+        goalId: cfg.goal_id,
+        firedAt,
+        scheduledFor,
+        reason: context.reason,
+        mode: "goal_trigger",
+        runPolicy: cfg.run_policy,
+        maxIterations: cfg.max_iterations,
+        decision: "block",
+        capabilityDecision: "missing",
+        decisionReason: "Goal-trigger schedule wake was blocked because no DurableLoop capability was available.",
+      });
       return ScheduleResultSchema.parse({
         entry_id: entry.id,
         status: "error",
@@ -427,6 +542,19 @@ export async function executeGoalTrigger(
       });
     }
 
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      goalId: cfg.goal_id,
+      firedAt,
+      scheduledFor,
+      reason: context.reason,
+      mode: "goal_trigger",
+      runPolicy: cfg.run_policy,
+      maxIterations: cfg.max_iterations,
+      decision: "allow",
+      decisionReason: "Goal-trigger schedule wake was allowed to start a DurableLoop goal run.",
+    });
     const result = cfg.run_policy === "resident"
       ? await deps.coreLoop.run(cfg.goal_id, { maxIterations: null, runPolicy: "resident" })
       : await deps.coreLoop.run(cfg.goal_id, { maxIterations: cfg.max_iterations ?? 10, runPolicy: "bounded" });
@@ -457,12 +585,59 @@ export async function executeGoalTrigger(
   }
 }
 
+function autonomyRefToRuntimeRef(ref: { kind: string; id: string }): { kind: string; ref: string } {
+  return { kind: ref.kind, ref: ref.id };
+}
+
+function signalContextRuntimeRefs(signalContext: {
+  signal_refs: Array<{ ref: { kind: string; id: string } }>;
+  current_session_refs: Array<{ kind: string; id: string }>;
+  current_goal_refs: Array<{ kind: string; id: string }>;
+  runtime_state_refs: Array<{ kind: string; id: string }>;
+  relationship_permission_refs: Array<{ kind: string; id: string }>;
+  user_activity_refs: Array<{ kind: string; id: string }>;
+  timing_context: {
+    due_refs: Array<{ kind: string; id: string }>;
+    cooldown_refs: Array<{ kind: string; id: string }>;
+  };
+  safety_context: {
+    safety_refs: Array<{ kind: string; id: string }>;
+    guardrail_refs: Array<{ kind: string; id: string }>;
+    backpressure_refs: Array<{ kind: string; id: string }>;
+  };
+}): Array<{ kind: string; ref: string }> {
+  return [
+    ...signalContext.signal_refs.map((source) => autonomyRefToRuntimeRef(source.ref)),
+    ...signalContext.current_session_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.current_goal_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.runtime_state_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.relationship_permission_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.user_activity_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.timing_context.due_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.timing_context.cooldown_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.safety_context.safety_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.safety_context.guardrail_refs.map(autonomyRefToRuntimeRef),
+    ...signalContext.safety_context.backpressure_refs.map(autonomyRefToRuntimeRef),
+  ];
+}
+
 export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promise<ScheduleResult> {
   const firedAt = new Date().toISOString();
   const start = Date.now();
   const cfg = entry.probe;
 
   if (!cfg) {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "probe",
+      actionKind: "missing_config",
+      decision: "block",
+      capabilityDecision: "missing",
+      targetEffect: "none",
+      decisionReason: "Probe schedule wake was blocked because no probe config was available.",
+    });
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
       status: "error",
@@ -476,6 +651,18 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
   // Look up data source adapter
   const adapter = await getAdapter(cfg.data_source_id, deps.dataSourceRegistry);
   if (!adapter) {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "probe",
+      actionKind: "query",
+      decision: "block",
+      capabilityDecision: "missing",
+      targetEffect: "none",
+      decisionReason: `Probe schedule wake was blocked because data source ${cfg.data_source_id} was not available.`,
+      currentRefs: [{ kind: "data_source", ref: cfg.data_source_id }],
+    });
     return ScheduleResultSchema.parse({
       entry_id: entry.id,
       status: "error",
@@ -487,6 +674,22 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
   }
 
   try {
+    await recordScheduleJobDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      firedAt,
+      jobKind: "probe",
+      actionKind: "query",
+      decision: "allow",
+      decisionReason: "Probe schedule wake was admitted for data-source query and change evaluation.",
+      capabilityRefs: [
+        { kind: "capability", ref: "data_source_query" },
+        ...(cfg.llm_on_change && deps.llmClient ? [{ kind: "capability", ref: "llm_schedule_probe" }] : []),
+        ...(deps.notificationDispatcher ? [{ kind: "capability", ref: "notification_dispatch" }] : []),
+      ],
+      currentRefs: [{ kind: "data_source", ref: cfg.data_source_id }],
+    });
+
     const dimensionName = cfg.probe_dimension
       ?? (typeof cfg.query_params.dimension_name === "string" ? cfg.query_params.dimension_name : undefined)
       ?? cfg.data_source_id;
@@ -539,13 +742,14 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
     // Dispatch change notification
     if (changed && deps.notificationDispatcher) {
       try {
-        await deps.notificationDispatcher.dispatch({
+        await deps.notificationDispatcher.dispatch(buildScheduleNotificationReport({
           report_type: "schedule_change",
           entry_id: entry.id,
           entry_name: entry.name,
           details,
           output_summary: outputSummary,
-        });
+          generated_at: firedAt,
+        }));
       } catch (err) {
         deps.logger.warn(`Probe "${entry.name}" notification dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
       }

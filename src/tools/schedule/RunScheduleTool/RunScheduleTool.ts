@@ -11,6 +11,12 @@ import type { ScheduleEngine, RunScheduleNowResult } from "../../../runtime/sche
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import { DaemonClient, isDaemonRunning } from "../../../runtime/daemon/client.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -42,16 +48,57 @@ export class RunScheduleTool implements ITool<RunScheduleInput, RunScheduleOutpu
 
   readonly inputSchema = RunScheduleInputSchema;
 
-  constructor(private readonly scheduleEngine: ScheduleEngine) {}
+  constructor(
+    private readonly scheduleEngine: ScheduleEngine,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+    private readonly options: { preferDaemon?: boolean } = {},
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
   }
 
-  async call(input: RunScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: RunScheduleInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.scheduleEngine),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Run schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:run_schedule" },
+            { kind: "capability", ref: "durable_schedule_execution" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          denialMessage: "run_schedule requires approval before executing durable schedule automation.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Run schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:run_schedule" },
+            { kind: "capability", ref: "durable_schedule_execution" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          outcomeSummary: "run_schedule was admitted to execute durable schedule automation.",
+        },
+      );
+
       const existingEntry = resolveScheduleEntry(this.scheduleEngine.getEntries(), input.schedule_id);
       if (!existingEntry) {
         return {
@@ -64,7 +111,7 @@ export class RunScheduleTool implements ITool<RunScheduleInput, RunScheduleOutpu
       }
 
       const getBaseDir = this.scheduleEngine.getBaseDir;
-      if (typeof getBaseDir === "function") {
+      if (this.options.preferDaemon !== false && typeof getBaseDir === "function") {
         const baseDir = getBaseDir.call(this.scheduleEngine);
         const daemon = await isDaemonRunning(baseDir);
         if (daemon.running) {

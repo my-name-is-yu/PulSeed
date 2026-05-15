@@ -18,6 +18,12 @@ import {
   DriveGoalScheduleStateStore,
   type DriveGoalScheduleStateStoreOptions,
 } from "./drive-schedule-state-store.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  stableId,
+  type RuntimeGraphRef,
+} from "../../runtime/personal-agent/index.js";
 
 export interface GoalActivationSnapshot {
   goalId: string;
@@ -46,15 +52,22 @@ export class DriveSystem {
   private onEventCallback: ((event: PulSeedEvent) => void) | null = null;
   private readonly initPromise: Promise<void>;
   private readonly scheduleStore: DriveGoalScheduleStateStore;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 
   constructor(
     stateManager: StateManager,
-    options?: { baseDir?: string; logger?: Logger } & DriveGoalScheduleStateStoreOptions,
+    options?: {
+      baseDir?: string;
+      logger?: Logger;
+      personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+    } & DriveGoalScheduleStateStoreOptions,
   ) {
     this.stateManager = stateManager;
     this.baseDir = options?.baseDir ?? stateManager.getBaseDir();
     this.logger = options?.logger;
     this.scheduleStore = new DriveGoalScheduleStateStore(this.baseDir, options);
+    this.personalAgentRuntime = options?.personalAgentRuntime
+      ?? new PersonalAgentRuntimeStore(this.baseDir, { controlBaseDir: this.baseDir });
     this.watcher = null;
     this.inMemoryQueue = [];
     this.onEventCallback = null;
@@ -326,8 +339,50 @@ export class DriveSystem {
    */
   async writeEvent(event: PulSeedEvent): Promise<void> {
     await this.initPromise;
+    await this.recordExternalEventDecision(event);
     const eventsDir = path.join(this.baseDir, "events");
     await writeEventSpoolJson(eventsDir, event, { prefix: "event" });
+  }
+
+  private async recordExternalEventDecision(event: PulSeedEvent): Promise<void> {
+    const eventRef = externalEventRef(event);
+    const eventTypeRef: RuntimeGraphRef = { kind: "external_event_type", ref: event.type };
+    const sourceRef: RuntimeGraphRef = { kind: "external_event_source", ref: event.source };
+    const goalRefs = extractEventGoalRefs(event);
+    const replayKey = [
+      "drive_event_ingress",
+      event.type,
+      event.source,
+      event.timestamp,
+      stableId(stableJson(event.data)),
+    ].join(":");
+
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "external_signal",
+      source: {
+        sourceKind: "external_signal",
+        sourceId: eventRef.ref,
+        emittedAt: event.timestamp,
+        sourceEpoch: event.timestamp,
+        highWatermark: event.timestamp,
+        replayKey,
+        summary: `External ${event.type} event from ${event.source} entered PulSeed runtime ingress.`,
+        sourceRef: eventRef,
+      },
+      target: {
+        kind: "attention_only",
+        ref: { kind: "event_spool", ref: `event:${stableId(replayKey)}` },
+        effect: "continue_route",
+        summary: `Queue external ${event.type} event for runtime processing.`,
+      },
+      decision: "allow",
+      decisionReason: "External event ingress was allowed by InterventionPolicy after Capability Registry evaluation.",
+      capabilityDecision: "available",
+      capabilityRefs: [{ kind: "capability", ref: "event_spool_ingress" }],
+      policyRef: { kind: "intervention_policy", ref: "policy:external-event-ingress-v1" },
+      currentRefs: [eventRef, eventTypeRef, sourceRef, ...goalRefs],
+      auditRefs: [eventRef, sourceRef, ...goalRefs],
+    }));
   }
 
   /**
@@ -409,4 +464,41 @@ function listenableEventFile(fileName: string): boolean {
   } catch {
     return false;
   }
+}
+
+function externalEventRef(event: PulSeedEvent): RuntimeGraphRef {
+  return {
+    kind: "external_event",
+    ref: `${event.source}:${event.type}:${event.timestamp}:${stableId(stableJson(event.data))}`,
+  };
+}
+
+function extractEventGoalRefs(event: PulSeedEvent): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [];
+  const goalId = event.data["goal_id"];
+  if (typeof goalId === "string" && goalId.length > 0) {
+    refs.push({ kind: "goal", ref: goalId });
+  }
+  const targetGoalId = event.data["target_goal_id"];
+  if (typeof targetGoalId === "string" && targetGoalId.length > 0 && targetGoalId !== goalId) {
+    refs.push({ kind: "goal", ref: targetGoalId });
+  }
+  return refs;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(normalizeForStableJson(value));
+}
+
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeForStableJson(item));
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, normalizeForStableJson(record[key])]),
+    );
+  }
+  return value;
 }

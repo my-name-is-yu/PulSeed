@@ -132,7 +132,7 @@ export interface GroundingSoilHit {
 }
 
 export interface GroundingSoilResult {
-  retrievalSource: "sqlite" | "index" | "manifest" | "prefetch";
+  retrievalSource: "sqlite" | "index" | "manifest";
   warnings: string[];
   hits: GroundingSoilHit[];
 }
@@ -173,7 +173,6 @@ export interface GroundingRequest {
   relationshipProfileContext?: RelationshipProfileRetrievalContext;
   recentMessages?: GroundingMessage[];
   compactionSummary?: string;
-  soilQuery?: (input: { query: string; rootDir: string; limit: number }) => Promise<GroundingSoilResult | null>;
   knowledgeQuery?: (input: {
     query: string;
     goalId?: string;

@@ -46,6 +46,7 @@ import {
 } from "../../runtime/control/index.js";
 import { createCapabilityExecutionResolver } from "../../runtime/capability-execution-resolver.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
+import { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 import {
   ApprovalStore,
   CapabilityVerificationStore,
@@ -1456,6 +1457,9 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const permissionWaitPlanStore = new PermissionWaitPlanStore(runtimeStorePaths, controlDbOptions);
   const capabilityVerificationStore = new CapabilityVerificationStore(runtimeStorePaths, controlDbOptions);
   const capabilityExecutionResolver = createCapabilityExecutionResolver({ stateManager });
+  const personalAgentRuntime = new PersonalAgentRuntimeStore(stateManager.getBaseDir(), {
+    controlBaseDir: stateManager.getBaseDir(),
+  });
   const runtimeControlService = new RuntimeControlService({
     runtimeRoot,
     stateManager,
@@ -1477,6 +1481,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     sessionManager,
     scheduleEngine,
     pluginLoader,
+    personalAgentRuntime,
   })) {
     toolRegistry.register(tool);
   }
@@ -1485,6 +1490,8 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     registry: toolRegistry,
     permissionManager: new ToolPermissionManager({ trustManager }),
     concurrency: new ConcurrencyController(),
+    personalAgentRuntime,
+    traceBaseDir: stateManager.getBaseDir(),
   });
 
   const chatAgentLoopRunner = shouldUseNativeTaskAgentLoop(providerConfig, llmClient)
@@ -1526,6 +1533,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     capabilityVerificationStore,
     capabilityExecutionResolver,
     runtimeControlService,
+    personalAgentRuntime,
   });
 }
 

@@ -148,7 +148,7 @@ describe("RunScheduleTool", () => {
         schedule_id: "aaaaaaaa",
         allow_escalation: true,
       }),
-      makeContext({ approvalFn }),
+      makeContext({ approvalFn, preApproved: true }),
     );
 
     expect(approvalFn).not.toHaveBeenCalled();

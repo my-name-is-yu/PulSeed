@@ -26,6 +26,11 @@ import {
   buildProgressHandler,
   runLoopWithSignals,
 } from "../utils/loop-runner.js";
+import { recordExplicitCommandDecision, stableId } from "../../../runtime/personal-agent/index.js";
+import {
+  allocateCliGoalId,
+  recordCliGoalCommandDecision,
+} from "./goal-personal-agent-trace.js";
 
 // ─── Shared setup helper ───
 
@@ -270,9 +275,28 @@ export async function cmdImprove(
   let goal: Awaited<ReturnType<typeof deps.goalNegotiator.negotiate>>["goal"];
   let response: Awaited<ReturnType<typeof deps.goalNegotiator.negotiate>>["response"];
   try {
+    const goalId = await allocateCliGoalId(stateManager, {
+      command: "pulseed improve",
+      selectedTitle: selected.title,
+      selectedDescription,
+      maxSuggestions,
+    });
+    if (!(await recordCliGoalCommandDecision(stateManager, {
+      command: "pulseed improve goal",
+      goalId,
+      effect: "create_goal",
+      targetSummary: `Create improvement goal "${selected.title}".`,
+      sourceId: `pulseed improve goal:${goalId}`,
+      sourceEpoch: goalId,
+      decisionReason: "Explicit CLI improve command was allowed to create a durable improvement goal.",
+      currentRefs: [{ kind: "suggestion", ref: selected.title }],
+    }))) {
+      return 1;
+    }
     ({ goal, response } = await deps.goalNegotiator.negotiate(selectedDescription, {
       constraints: [],
       timeoutMs: 120_000,
+      goalId,
     }));
   } catch (err) {
     const isTimeout = err instanceof Error && err.message.includes("timed out");
@@ -306,6 +330,28 @@ export async function cmdImprove(
       buildProgressHandler()
     );
     try {
+      const runReplayKey = [
+        "cli_improve_run",
+        goal.id,
+        maxSuggestions,
+      ].join(":");
+      await recordExplicitCommandDecision({
+        baseDir: stateManager.getBaseDir(),
+        surface: "cli",
+        command: "pulseed improve --auto",
+        sourceId: `pulseed improve --auto:${goal.id}`,
+        sourceEpoch: goal.updated_at,
+        replayKey: runReplayKey,
+        target: {
+          kind: "run",
+          ref: { kind: "run", ref: `run:cli:${stableId(runReplayKey)}` },
+          effect: "create_run",
+          summary: `Run improvement goal "${goal.title}" from CLI.`,
+        },
+        decisionReason: "Explicit CLI improve auto-run was allowed to start durable goal work.",
+        capabilityRefs: [{ kind: "capability", ref: "durable_loop_goal_run" }],
+        currentRefs: [{ kind: "goal", ref: goal.id }],
+      });
       const result = await runLoopWithSignals(loopDeps.coreLoop, goal.id);
       console.log(`[PulSeed Improve] Loop completed for goal ${goal.id}`);
       if (result.finalStatus === "stalled") {

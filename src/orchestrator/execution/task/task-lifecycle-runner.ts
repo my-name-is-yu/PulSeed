@@ -14,6 +14,7 @@ import type { CapabilityDetector } from "../../../platform/observation/capabilit
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
 import type { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { VerifierDeps, VerdictResult, VerdictHandlingContext } from "./task-verifier-types.js";
+import type { TaskPreExecutionPolicyRecorder } from "./task-pre-execution-policy-trace.js";
 import { _verifyTask as verifyTaskWithDeps } from "./task-verifier-internal.js";
 import { buildEnrichedKnowledgeContext } from "./task-context-enricher.js";
 import { runPreExecutionChecks } from "./task-approval.js";
@@ -91,6 +92,7 @@ export interface TaskLifecycleTaskCycleContext {
     ethicsGate?: EthicsGate;
     capabilityDetector?: CapabilityDetector;
     approvalFn: (task: Task) => Promise<boolean>;
+    recordPolicyDecision: TaskPreExecutionPolicyRecorder;
   };
   hasNativeAgentLoop: boolean;
   executeTask: (task: Task, adapter: IAdapter, workspaceContext?: string) => Promise<AgentResult>;
@@ -242,6 +244,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
         capabilityDetector: context.preExecution.capabilityDetector,
         approvalFn: context.preExecution.approvalFn,
         checkIrreversibleApproval: (t) => context.checkIrreversibleApproval(t),
+        recordPolicyDecision: context.preExecution.recordPolicyDecision,
       },
       task
     )

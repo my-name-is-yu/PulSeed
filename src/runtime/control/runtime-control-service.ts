@@ -55,6 +55,13 @@ import {
   permissionGrantMatchesRequest,
   replacementGrantInput,
 } from "./runtime-control-permission-grants.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  type CapabilityRegistryDecisionKind,
+  type InterventionDecisionKind,
+  type RuntimeGraphRef,
+} from "../personal-agent/index.js";
 
 export interface RuntimeControlRequest {
   intent: RuntimeControlIntent;
@@ -147,12 +154,23 @@ export interface RuntimeControlServiceOptions {
   guardrailStore?: GuardrailStore;
   attentionStore?: Pick<AttentionStateStore, "listRuntimeItems" | "suppressAgendaForControl">;
   executor?: RuntimeControlExecutor;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   now?: () => Date;
 }
 
 type RuntimeControlStep =
   | { ok: true; operation: RuntimeControlOperation }
   | { ok: false; result: RuntimeControlResult };
+
+interface RuntimeControlTraceOptions {
+  operation?: RuntimeControlOperation;
+  decision?: InterventionDecisionKind;
+  capabilityDecision?: CapabilityRegistryDecisionKind;
+  permissionRequired?: boolean;
+  decisionReason?: string;
+  replayStage?: string;
+  outcomeSummary?: string;
+}
 
 type TargetResolution =
   | { ok: true; run?: BackgroundRun; goalId?: string | null }
@@ -194,6 +212,7 @@ export class RuntimeControlService {
   private readonly guardrailStore: GuardrailStore;
   private readonly attentionStore?: Pick<AttentionStateStore, "listRuntimeItems" | "suppressAgendaForControl">;
   private readonly executor?: RuntimeControlExecutor;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private readonly now: () => Date;
 
   constructor(options: RuntimeControlServiceOptions = {}) {
@@ -216,40 +235,61 @@ export class RuntimeControlService {
     this.guardrailStore = options.guardrailStore ?? new GuardrailStore(runtimeRoot, controlDbOptions);
     this.attentionStore = options.attentionStore ?? (runtimeRoot ? new AttentionStateStore(runtimeRoot, controlDbOptions) : undefined);
     this.executor = options.executor;
+    this.personalAgentRuntime = options.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+      runtimeRoot ?? this.operationStore.runtimeRootDir(),
+      controlDbOptions,
+    );
     this.now = options.now ?? (() => new Date());
   }
 
   async request(request: RuntimeControlRequest): Promise<RuntimeControlResult> {
+    await this.recordRuntimeControlTrace(request);
+    let result: RuntimeControlResult;
     if (isCompanionWideControlKind(request.intent.kind)) {
-      return this.handleCompanionWideControl(request);
+      result = await this.handleCompanionWideControl(request);
+      await this.recordRuntimeControlResultTrace(request, result);
+      return result;
     }
 
     if (isSessionControlKind(request.intent.kind)) {
-      return this.handleSessionControl(request);
+      result = await this.handleSessionControl(request);
+      await this.recordRuntimeControlResultTrace(request, result);
+      return result;
     }
 
     if (isPermissionControlKind(request.intent.kind)) {
-      return this.handlePermissionControl(request);
+      result = await this.handlePermissionControl(request);
+      await this.recordRuntimeControlResultTrace(request, result);
+      return result;
     }
 
     if (isRunControlKind(request.intent.kind)) {
-      return this.handleRunControl(request);
+      result = await this.handleRunControl(request);
+      await this.recordRuntimeControlResultTrace(request, result);
+      return result;
     }
 
     if (!isExecutableRuntimeControlKind(request.intent.kind)) {
-      return {
+      result = {
         success: false,
         message: `Runtime control operation ${request.intent.kind} is not supported by the production executor.`,
         state: "failed",
       };
+      await this.recordRuntimeControlResultTrace(request, result);
+      return result;
     }
 
     const initial = await this.createInitialOperation(request);
-    const approved = await this.approveIfRequired(initial, request.approvalFn);
-    if (!approved.ok) return approved.result;
+    const approved = await this.approveIfRequired(initial, request.approvalFn, request);
+    if (!approved.ok) {
+      await this.recordRuntimeControlResultTrace(request, approved.result);
+      return approved.result;
+    }
 
     const acknowledged = await this.acknowledge(approved.operation);
-    return this.executeAcknowledgedOperation(acknowledged, request);
+    result = await this.executeAcknowledgedOperation(acknowledged, request);
+    await this.recordRuntimeControlResultTrace(request, result);
+    return result;
   }
 
   inspectRun(request: RuntimeRunControlRequestBase): Promise<RuntimeControlResult> {
@@ -283,23 +323,37 @@ export class RuntimeControlService {
 
   async controlAutomation(request: RuntimeAutomationControlRequest): Promise<RuntimeControlResult> {
     const mutation = request.action !== "inspect";
+    await this.recordAutomationControlTrace(request, mutation);
     if (mutation && !request.approvalFn) {
-      return this.recordAutomationOperation(request, "blocked", false, "Runtime automation mutation requires an approval surface.");
+      const result = await this.recordAutomationOperation(request, "blocked", false, "Runtime automation mutation requires an approval surface.");
+      await this.recordAutomationResultTrace(request, result);
+      return result;
     }
     if (mutation) {
       const approved = await request.approvalFn?.(`Runtime automation ${request.domain}.${request.action}: ${request.reason}`);
       if (!approved) {
-        return this.recordAutomationOperation(request, "cancelled", false, "Runtime automation operation was not approved.");
+        const result = await this.recordAutomationOperation(request, "cancelled", false, "Runtime automation operation was not approved.");
+        await this.recordAutomationResultTrace(request, result);
+        return result;
       }
+      await this.recordAutomationControlTrace(request, mutation, {
+        decision: "allow",
+        capabilityDecision: "available",
+        permissionRequired: false,
+        replayStage: "approved",
+        decisionReason: `Runtime automation ${request.domain}.${request.action} was approved by policy confirmation before execution.`,
+      });
     }
 
     const result = await this.applyAutomationControl(request);
-    return this.recordAutomationOperation(
+    const operationResult = await this.recordAutomationOperation(
       request,
       result.success ? "verified" : "blocked",
       result.success,
       result.message,
     );
+    await this.recordAutomationResultTrace(request, operationResult);
+    return operationResult;
   }
 
   async assembleCompanionStateInput(
@@ -464,7 +518,7 @@ export class RuntimeControlService {
       return quietWorkStopResult(item.item_id, operation);
     }
 
-    const approved = await this.approveIfRequired(operation, request.approvalFn);
+    const approved = await this.approveIfRequired(operation, request.approvalFn, request);
     if (!approved.ok) {
       const saved = approved.result.operationId
         ? await this.operationStore.load(approved.result.operationId)
@@ -627,7 +681,7 @@ export class RuntimeControlService {
           return this.toResult(blocked);
         }
         const approval = request.intent.kind === "extend_permission"
-          ? await this.approveIfRequired(initial, request.approvalFn)
+          ? await this.approveIfRequired(initial, request.approvalFn, request)
           : { ok: true as const, operation: initial };
         if (!approval.ok) return approval.result;
 
@@ -788,7 +842,7 @@ export class RuntimeControlService {
       }
     }
 
-    const approved = await this.approveIfRequired(initial, request.approvalFn);
+    const approved = await this.approveIfRequired(initial, request.approvalFn, request);
     if (!approved.ok) return approved.result;
 
     const acknowledged = await this.acknowledge(approved.operation);
@@ -1079,6 +1133,22 @@ export class RuntimeControlService {
     return { success: ok, message, operationId: operation.operation_id, state };
   }
 
+  private async recordAutomationResultTrace(
+    request: RuntimeAutomationControlRequest,
+    result: RuntimeControlResult,
+  ): Promise<void> {
+    const operation = result.operationId ? await this.operationStore.load(result.operationId) : null;
+    await this.recordAutomationControlTrace(request, request.action !== "inspect", {
+      ...(operation ? { operation } : {}),
+      decision: result.success ? "allow" : "block",
+      capabilityDecision: result.success ? "available" : "blocked",
+      permissionRequired: false,
+      replayStage: `outcome:${operation?.state ?? result.state ?? (result.success ? "success" : "failed")}`,
+      decisionReason: result.message,
+      outcomeSummary: result.message,
+    });
+  }
+
   private async resolveTarget(request: RuntimeControlRequest): Promise<TargetResolution> {
     if (!isRunControlKind(request.intent.kind)) return { ok: true };
     if (!this.sessionRegistry) {
@@ -1110,7 +1180,7 @@ export class RuntimeControlService {
     operation: RuntimeControlOperation,
     request: RuntimeControlRequest
   ): Promise<RuntimeControlOperation> {
-    const approved = await this.approveIfRequired(operation, request.approvalFn);
+    const approved = await this.approveIfRequired(operation, request.approvalFn, request);
     if (!approved.ok) return this.operationStore.load(operation.operation_id).then((saved) => saved ?? operation);
 
     const handoff = await this.operatorHandoffStore?.create({
@@ -1186,7 +1256,8 @@ export class RuntimeControlService {
 
   private async approveIfRequired(
     operation: RuntimeControlOperation,
-    approvalFn: RuntimeControlRequest["approvalFn"]
+    approvalFn: RuntimeControlRequest["approvalFn"],
+    request?: RuntimeControlRequest,
   ): Promise<RuntimeControlStep> {
     if (!requiresApproval(operation.kind)) {
       return { ok: true, operation };
@@ -1220,6 +1291,16 @@ export class RuntimeControlService {
       state: "approved",
       updated_at: this.nowIso(),
     });
+    if (request) {
+      await this.recordRuntimeControlTrace(request, {
+        operation: updated,
+        decision: "allow",
+        capabilityDecision: "available",
+        permissionRequired: false,
+        replayStage: "approved",
+        decisionReason: `Runtime control ${updated.kind} was approved by policy confirmation before execution.`,
+      });
+    }
     return { ok: true, operation: updated };
   }
 
@@ -1314,6 +1395,161 @@ export class RuntimeControlService {
   private nowIso(): string {
     return this.now().toISOString();
   }
+
+  private async recordRuntimeControlResultTrace(
+    request: RuntimeControlRequest,
+    result: RuntimeControlResult,
+  ): Promise<void> {
+    const operation = result.operationId ? await this.operationStore.load(result.operationId) : null;
+    await this.recordRuntimeControlTrace(request, {
+      ...(operation ? { operation } : {}),
+      decision: result.success ? "allow" : "block",
+      capabilityDecision: result.success ? "available" : "blocked",
+      permissionRequired: false,
+      replayStage: `outcome:${operation?.state ?? result.state ?? (result.success ? "success" : "failed")}`,
+      decisionReason: result.message,
+      outcomeSummary: result.message,
+    });
+  }
+
+  private async recordRuntimeControlTrace(
+    request: RuntimeControlRequest,
+    options: RuntimeControlTraceOptions = {},
+  ): Promise<void> {
+    const operation = options.operation;
+    const kind = operation?.kind ?? request.intent.kind;
+    const permissionRequired = options.permissionRequired ?? requiresApproval(kind);
+    const supported = isSupportedRuntimeControlKind(kind);
+    const targetRef = operation
+      ? runtimeControlOperationTargetRef(operation)
+      : runtimeControlTargetRef(request.intent);
+    const decision = options.decision ?? (!supported
+      ? "block"
+      : permissionRequired
+        ? "confirm_required"
+        : "allow");
+    const capabilityDecision = options.capabilityDecision ?? (!supported
+      ? "blocked"
+      : permissionRequired
+        ? "permission_required"
+        : "available");
+    const decisionReason = options.decisionReason ?? (!supported
+      ? `Runtime control operation ${kind} is not supported by the production executor.`
+      : permissionRequired
+        ? `Runtime control ${kind} requires policy confirmation before execution.`
+        : `Runtime control ${kind} is allowed by the typed control policy.`);
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "runtime_control",
+      source: {
+        sourceKind: "runtime_control_request",
+        sourceId: operation ? runtimeControlOperationSourceId(operation) : runtimeControlSourceId(request),
+        emittedAt: this.nowIso(),
+        sourceEpoch: kind,
+        highWatermark: operation ? runtimeControlOperationHighWatermark(operation) : runtimeControlHighWatermark(request),
+        replayKey: operation
+          ? runtimeControlOperationReplayKey(request, operation, options.replayStage ?? decision)
+          : runtimeControlReplayKey(request, options.replayStage),
+        summary: operation
+          ? `Runtime-control operation "${operation.operation_id}" entered InterventionPolicy as ${kind}.`
+          : `Runtime-control request "${kind}" entered InterventionPolicy.`,
+        sourceRef: operation
+          ? { kind: "runtime_control_operation", ref: operation.operation_id }
+          : { kind: "runtime_control_intent", ref: kind },
+      },
+      target: {
+        kind: "runtime_control",
+        ref: targetRef,
+        effect: runtimeControlEffectFor(kind),
+        summary: `Runtime-control ${kind}`,
+      },
+      decision,
+      decisionReason,
+      capabilityDecision,
+      capabilityRefs: operation
+        ? runtimeControlOperationCapabilityRefs(operation, request)
+        : runtimeControlCapabilityRefs(request),
+      policyRef: { kind: "runtime_control_policy", ref: "policy:runtime-control-v1" },
+      permissionRequired,
+      currentRefs: [
+        ...runtimeControlCurrentRefs(request),
+        ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+      ],
+      ...(options.outcomeSummary
+        ? {
+            outcomeEvent: {
+              type: "action_outcome" as const,
+              summary: options.outcomeSummary,
+              targetRef,
+            },
+          }
+        : {}),
+    }));
+  }
+
+  private async recordAutomationControlTrace(
+    request: RuntimeAutomationControlRequest,
+    mutation: boolean,
+    options: RuntimeControlTraceOptions = {},
+  ): Promise<void> {
+    const operation = options.operation;
+    const permissionRequired = options.permissionRequired ?? mutation;
+    const decision = options.decision ?? (mutation ? "confirm_required" : "allow");
+    const capabilityDecision = options.capabilityDecision ?? (mutation ? "permission_required" : "available");
+    const decisionReason = options.decisionReason ?? (mutation
+      ? "Runtime automation mutation requires policy confirmation before execution."
+      : "Runtime automation inspection is allowed by the typed control policy.");
+    const targetRef = operation
+      ? runtimeControlOperationTargetRef(operation)
+      : { kind: "runtime_automation" as const, ref: `${request.domain}:${request.action}` };
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "runtime_control",
+      source: {
+        sourceKind: "runtime_control_request",
+        sourceId: operation
+          ? runtimeControlOperationSourceId(operation)
+          : runtimeAutomationSourceId(request),
+        emittedAt: this.nowIso(),
+        sourceEpoch: request.domain,
+        highWatermark: operation ? runtimeControlOperationHighWatermark(operation) : request.action,
+        replayKey: operation
+          ? runtimeControlOperationReplayKey(automationAsRuntimeControlRequest(request), operation, options.replayStage ?? decision)
+          : runtimeAutomationReplayKey(request, options.replayStage),
+        summary: operation
+          ? `Runtime automation operation "${operation.operation_id}" entered InterventionPolicy as ${request.domain}.${request.action}.`
+          : `Runtime automation control ${request.domain}.${request.action} entered InterventionPolicy.`,
+        sourceRef: operation
+          ? { kind: "runtime_control_operation", ref: operation.operation_id }
+          : { kind: "runtime_control_intent", ref: `automation:${request.domain}:${request.action}` },
+      },
+      target: {
+        kind: "runtime_control",
+        ref: targetRef,
+        effect: mutation ? "mutate_runtime_control" : "continue_route",
+        summary: `Runtime automation ${request.domain}.${request.action}`,
+      },
+      decision,
+      decisionReason,
+      capabilityDecision,
+      capabilityRefs: [{ kind: "runtime_automation_domain", ref: request.domain }],
+      policyRef: { kind: "runtime_control_policy", ref: "policy:runtime-automation-v1" },
+      permissionRequired,
+      currentRefs: [
+        ...(request.handoffId ? [{ kind: "auth_handoff", ref: request.handoffId }] : []),
+        ...(request.sessionId ? [{ kind: "browser_session", ref: request.sessionId }] : []),
+        ...(request.providerId ? [{ kind: "provider", ref: request.providerId }] : []),
+        ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+      ],
+      ...(options.outcomeSummary
+        ? {
+            outcomeEvent: {
+              type: "action_outcome" as const,
+              summary: options.outcomeSummary,
+              targetRef,
+            },
+          }
+        : {}),
+    }));
+  }
 }
 
 export function isExecutableRuntimeControlKind(
@@ -1326,6 +1562,216 @@ export function isExecutableRuntimeControlKind(
     || kind === "pause_run"
     || kind === "resume_run"
     || kind === "cancel_run";
+}
+
+function isSupportedRuntimeControlKind(kind: RuntimeControlOperationKind): boolean {
+  return isExecutableRuntimeControlKind(kind)
+    || isPermissionControlKind(kind)
+    || isCompanionWideControlKind(kind)
+    || isSessionControlKind(kind)
+    || isRunControlKind(kind);
+}
+
+function runtimeControlEffectFor(kind: RuntimeControlOperationKind) {
+  if (kind === "inspect_run"
+    || kind === "inspect_session"
+    || kind === "inspect_companion_state"
+    || kind === "summarize_session_without_resuming"
+    || kind === "inspect_permission_boundary"
+    || kind === "audit_permission_check") {
+    return "continue_route" as const;
+  }
+  return "mutate_runtime_control" as const;
+}
+
+function runtimeControlTargetRef(intent: RuntimeControlIntent): RuntimeGraphRef {
+  const target = intent.target;
+  if (target?.runId) return { kind: "run", ref: target.runId };
+  if (target?.sessionId) return { kind: "session", ref: target.sessionId };
+  if (target?.grantId) return { kind: "permission_grant", ref: target.grantId };
+  if (intent.targetSelector) {
+    return {
+      kind: `${intent.targetSelector.scope}_selector`,
+      ref: `${intent.targetSelector.reference}:${intent.targetSelector.sourceText}`,
+    };
+  }
+  return { kind: "runtime_control_intent", ref: intent.kind };
+}
+
+function runtimeControlCapabilityRefs(request: RuntimeControlRequest): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [
+    { kind: "runtime_control_capability", ref: request.intent.kind },
+  ];
+  for (const capability of request.intent.permissionCapabilities ?? []) {
+    refs.push({ kind: "permission_capability", ref: capability });
+  }
+  for (const capability of request.intent.permissionExcludedCapabilities ?? []) {
+    refs.push({ kind: "permission_excluded_capability", ref: capability });
+  }
+  for (const action of request.intent.externalActions ?? []) {
+    refs.push({ kind: "external_action", ref: action });
+  }
+  return refs;
+}
+
+function runtimeControlCurrentRefs(request: RuntimeControlRequest): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [];
+  if (request.intent.target?.runId) refs.push({ kind: "run", ref: request.intent.target.runId });
+  if (request.intent.target?.sessionId) refs.push({ kind: "session", ref: request.intent.target.sessionId });
+  if (request.intent.target?.grantId) refs.push({ kind: "permission_grant", ref: request.intent.target.grantId });
+  if (request.replyTarget) {
+    refs.push({
+      kind: "reply_target",
+      ref: [
+        request.replyTarget.surface,
+        request.replyTarget.channel ?? "",
+        request.replyTarget.conversation_id ?? request.replyTarget.identity_key ?? request.replyTarget.response_channel ?? "",
+      ].join(":"),
+    });
+  }
+  if (request.requestedBy) {
+    refs.push({
+      kind: "runtime_control_actor",
+      ref: [
+        request.requestedBy.surface ?? "",
+        request.requestedBy.identity_key ?? request.requestedBy.user_id ?? request.requestedBy.conversation_id ?? "",
+      ].join(":"),
+    });
+  }
+  return refs;
+}
+
+function runtimeControlSourceId(request: RuntimeControlRequest): string {
+  const target = request.intent.target;
+  return [
+    request.intent.kind,
+    target?.runId ?? "",
+    target?.sessionId ?? "",
+    target?.grantId ?? "",
+    request.intent.targetSelector?.scope ?? "",
+    request.intent.targetSelector?.reference ?? "",
+    request.intent.reason,
+  ].join(":");
+}
+
+function runtimeControlReplayKey(request: RuntimeControlRequest, stage?: string): string {
+  const parts = [
+    "runtime_control",
+    runtimeControlSourceId(request),
+    ...(stage ? [stage] : []),
+    request.cwd,
+    request.requestedBy?.identity_key ?? request.requestedBy?.user_id ?? request.requestedBy?.conversation_id ?? "",
+  ];
+  return parts.join(":");
+}
+
+function runtimeAutomationSourceId(request: RuntimeAutomationControlRequest): string {
+  return `automation:${request.domain}:${request.action}:${request.handoffId ?? request.sessionId ?? request.providerId ?? "target:none"}`;
+}
+
+function runtimeAutomationReplayKey(request: RuntimeAutomationControlRequest, stage?: string): string {
+  return [
+    "runtime_control",
+    "automation",
+    request.domain,
+    request.action,
+    ...(stage ? [stage] : []),
+    request.handoffId ?? "",
+    request.sessionId ?? "",
+    request.providerId ?? "",
+    request.serviceKey ?? "",
+  ].join(":");
+}
+
+function automationAsRuntimeControlRequest(request: RuntimeAutomationControlRequest): RuntimeControlRequest {
+  return {
+    intent: {
+      kind: "automation_control",
+      reason: request.reason,
+    },
+    cwd: request.cwd,
+    ...(request.requestedBy ? { requestedBy: request.requestedBy } : {}),
+    ...(request.replyTarget ? { replyTarget: request.replyTarget } : {}),
+  };
+}
+
+function runtimeControlOperationSourceId(operation: RuntimeControlOperation): string {
+  return [
+    "operation",
+    operation.operation_id,
+    operation.kind,
+    operation.target?.run_id ?? "",
+    operation.target?.session_id ?? "",
+    operation.target?.grant_id ?? "",
+  ].join(":");
+}
+
+function runtimeControlOperationReplayKey(
+  request: RuntimeControlRequest,
+  operation: RuntimeControlOperation,
+  stage: string,
+): string {
+  return [
+    "runtime_control",
+    runtimeControlOperationSourceId(operation),
+    stage,
+    request.cwd,
+    request.requestedBy?.identity_key ?? request.requestedBy?.user_id ?? request.requestedBy?.conversation_id ?? "",
+  ].join(":");
+}
+
+function runtimeControlOperationHighWatermark(operation: RuntimeControlOperation): string {
+  return [
+    operation.kind,
+    operation.operation_id,
+    operation.state,
+    operation.updated_at,
+  ].join(":");
+}
+
+function runtimeControlOperationTargetRef(operation: RuntimeControlOperation): RuntimeGraphRef {
+  if (operation.target?.run_id) return { kind: "run", ref: operation.target.run_id };
+  if (operation.target?.session_id) return { kind: "session", ref: operation.target.session_id };
+  if (operation.target?.goal_id) return { kind: "goal", ref: operation.target.goal_id };
+  if (operation.target?.grant_id) return { kind: "permission_grant", ref: operation.target.grant_id };
+  if (operation.target?.handoff_id) return { kind: "auth_handoff", ref: operation.target.handoff_id };
+  if (operation.target?.provider_id) return { kind: "automation_provider", ref: operation.target.provider_id };
+  if (operation.target?.service_key) return { kind: "runtime_service", ref: operation.target.service_key };
+  return { kind: "runtime_control_operation", ref: operation.operation_id };
+}
+
+function runtimeControlOperationCapabilityRefs(
+  operation: RuntimeControlOperation,
+  request: RuntimeControlRequest,
+): RuntimeGraphRef[] {
+  if (operation.kind !== request.intent.kind) {
+    return [{ kind: "runtime_control_capability", ref: operation.kind }];
+  }
+  return runtimeControlCapabilityRefs(request);
+}
+
+function runtimeControlOperationCurrentRefs(operation: RuntimeControlOperation): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [
+    { kind: "runtime_control_operation", ref: operation.operation_id },
+  ];
+  if (operation.target?.run_id) refs.push({ kind: "run", ref: operation.target.run_id });
+  if (operation.target?.session_id) refs.push({ kind: "session", ref: operation.target.session_id });
+  if (operation.target?.goal_id) refs.push({ kind: "goal", ref: operation.target.goal_id });
+  if (operation.target?.grant_id) refs.push({ kind: "permission_grant", ref: operation.target.grant_id });
+  if (operation.target?.handoff_id) refs.push({ kind: "auth_handoff", ref: operation.target.handoff_id });
+  if (operation.target?.provider_id) refs.push({ kind: "automation_provider", ref: operation.target.provider_id });
+  if (operation.target?.service_key) refs.push({ kind: "runtime_service", ref: operation.target.service_key });
+  return refs;
+}
+
+function runtimeControlHighWatermark(request: RuntimeControlRequest): string {
+  return [
+    request.intent.kind,
+    request.intent.target?.runId ?? "",
+    request.intent.target?.sessionId ?? "",
+    request.intent.target?.grantId ?? "",
+    request.intent.targetSelector?.sourceText ?? "",
+  ].join(":");
 }
 
 function isPermissionControlKind(

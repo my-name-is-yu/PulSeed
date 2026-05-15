@@ -13,14 +13,21 @@ import type {
 } from "../../../runtime/schedule/engine.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 import {
   ScheduleToolCronConfigInputSchema,
   ScheduleToolEscalationConfigInputSchema,
   ScheduleToolGoalTriggerConfigInputSchema,
   ScheduleToolHeartbeatConfigInputSchema,
   ScheduleToolProbeConfigInputSchema,
+  ScheduleToolRetryPolicyInputSchema,
   ScheduleToolTriggerInputSchema,
 } from "../schedule-tool-input-schemas.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -34,7 +41,8 @@ const hasAtLeastOnePatchField = (
   input.probe !== undefined ||
   input.cron !== undefined ||
   input.goal_trigger !== undefined ||
-  input.escalation !== undefined;
+  input.escalation !== undefined ||
+  input.retry_policy !== undefined;
 
 const UpdateScheduleInputSchemaBase = z.object({
   schedule_id: z.string().min(1),
@@ -46,6 +54,7 @@ const UpdateScheduleInputSchemaBase = z.object({
   cron: ScheduleToolCronConfigInputSchema.optional(),
   goal_trigger: ScheduleToolGoalTriggerConfigInputSchema.optional(),
   escalation: ScheduleToolEscalationConfigInputSchema.nullish(),
+  retry_policy: ScheduleToolRetryPolicyInputSchema.optional(),
 }).strict();
 
 export const UpdateScheduleInputSchema = UpdateScheduleInputSchemaBase.refine(
@@ -77,16 +86,56 @@ export class UpdateScheduleTool implements ITool<UpdateScheduleInput, UpdateSche
 
   readonly inputSchema = UpdateScheduleInputSchema;
 
-  constructor(private readonly scheduleEngine: ScheduleEngine) {}
+  constructor(
+    private readonly scheduleEngine: ScheduleEngine,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
   }
 
-  async call(input: UpdateScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: UpdateScheduleInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.scheduleEngine),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Update schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:update_schedule" },
+            { kind: "capability", ref: "durable_schedule_state_write" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          denialMessage: "update_schedule requires approval before mutating durable schedule state.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Update schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:update_schedule" },
+            { kind: "capability", ref: "durable_schedule_state_write" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          outcomeSummary: "update_schedule was admitted to mutate durable schedule state.",
+        },
+      );
+
       const existingEntry = resolveScheduleEntry(this.scheduleEngine.getEntries(), input.schedule_id);
       if (!existingEntry) {
         return {
@@ -107,6 +156,7 @@ export class UpdateScheduleTool implements ITool<UpdateScheduleInput, UpdateSche
       if (input.cron !== undefined) patch.cron = input.cron;
       if (input.goal_trigger !== undefined) patch.goal_trigger = input.goal_trigger;
       if (input.escalation !== undefined) patch.escalation = input.escalation;
+      if (input.retry_policy !== undefined) patch.retry_policy = input.retry_policy;
 
       const entry = await this.scheduleEngine.updateEntry(existingEntry.id, patch);
       if (!entry) {

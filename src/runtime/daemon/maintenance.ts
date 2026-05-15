@@ -21,6 +21,12 @@ import type { Envelope } from "../types/envelope.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
 import type { Logger } from "../logger.js";
 import { ApprovalStore, OutboxStore, RuntimeHealthStore, ProactiveInterventionStore, createRuntimeStorePaths } from "../store/index.js";
+import type {
+  GoalRunAdmissionTriggerKind,
+  PersonalAgentRuntimeStore,
+  RuntimeGraphRef,
+} from "../personal-agent/index.js";
+import { recordGoalRunAdmissionDecision } from "../personal-agent/index.js";
 
 export interface RuntimeMaintenanceLogger {
   debug(message: string, context?: Record<string, unknown>): void;
@@ -481,6 +487,8 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   currentGoalIds: string[];
   driveSystem: DriveSystem;
   supervisor: { activateGoal(goalId: string): void } | null;
+  baseDir?: string;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   processScheduleEntries: () => Promise<void>;
   proactiveTick: () => Promise<void>;
   runRuntimeStoreMaintenance?: () => Promise<void>;
@@ -499,6 +507,32 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   );
   const stateBeforeMaintenance = getPersistedDaemonStateSnapshot(params.state);
   for (const goalId of activeGoals) {
+    const snapshotEntry = snapshot.find((entry) => entry.goalId === goalId) ?? null;
+    const triggerKind = inferSupervisorMaintenanceTrigger(snapshotEntry);
+    const sourceEpoch = snapshotEntry?.schedule?.next_check_at
+      ?? `supervisor-maintenance:${params.state.loop_count}`;
+    const sourceId = [
+      "supervisor-maintenance",
+      goalId,
+      triggerKind,
+      sourceEpoch,
+    ].join(":");
+    const refs = supervisorMaintenanceAdmissionRefs(goalId, triggerKind, snapshotEntry, params.state.loop_count);
+    await recordGoalRunAdmissionDecision({
+      personalAgentRuntime: params.personalAgentRuntime,
+      baseDir: params.baseDir,
+      source: "supervisor_maintenance",
+      triggerKind,
+      goalId,
+      sourceId,
+      sourceEpoch,
+      highWatermark: sourceEpoch,
+      runPolicy: "resident",
+      maxIterations: null,
+      decisionReason: `Supervisor maintenance admitted goal ${goalId} for durable queued execution from ${triggerKind}.`,
+      currentRefs: refs,
+      auditRefs: refs,
+    });
     params.supervisor?.activateGoal(goalId);
   }
 
@@ -517,6 +551,44 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
       lastLoopAt: params.state.last_loop_at,
     });
   }
+}
+
+function inferSupervisorMaintenanceTrigger(
+  snapshotEntry: GoalCycleScheduleSnapshotEntry | null,
+): GoalRunAdmissionTriggerKind {
+  const schedule = snapshotEntry?.schedule ?? null;
+  if (schedule) {
+    const nextCheckAt = Date.parse(schedule.next_check_at);
+    if (Number.isFinite(nextCheckAt) && nextCheckAt <= Date.now()) {
+      return "schedule_due";
+    }
+    if (snapshotEntry?.shouldActivate === true) {
+      return "external_signal";
+    }
+  }
+  return "resident_cycle";
+}
+
+function supervisorMaintenanceAdmissionRefs(
+  goalId: string,
+  triggerKind: GoalRunAdmissionTriggerKind,
+  snapshotEntry: GoalCycleScheduleSnapshotEntry | null,
+  loopCount: number,
+): RuntimeGraphRef[] {
+  const refs: RuntimeGraphRef[] = [
+    { kind: "daemon_state", ref: `loop:${loopCount}` },
+  ];
+  const schedule = snapshotEntry?.schedule ?? null;
+  if (schedule) {
+    refs.push(
+      { kind: "goal_schedule", ref: schedule.goal_id },
+      { kind: "schedule_wake", ref: `${goalId}:${schedule.next_check_at}` },
+    );
+  }
+  if (triggerKind === "external_signal") {
+    refs.push({ kind: "drive_event_queue", ref: goalId });
+  }
+  return refs;
 }
 
 export async function writeChatMessageEvent(

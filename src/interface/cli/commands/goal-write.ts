@@ -22,6 +22,10 @@ import {
 } from "./goal-utils.js";
 import { cmdDatasourceDedup } from "./config.js";
 import type { RefineResult } from "../../../base/types/goal-refiner.js";
+import {
+  allocateCliGoalId,
+  recordCliGoalCommandDecision,
+} from "./goal-personal-agent-trace.js";
 
 const DatasourceCleanupMetadataSchema = z.object({
   scope_goal_id: z.string().optional(),
@@ -97,7 +101,13 @@ export async function cmdGoalAdd(
 
   // Build a stub goal so refiner has something to work with
   const now = new Date().toISOString();
-  const goalId = `goal_${Date.now()}`;
+  const goalId = await allocateCliGoalId(stateManager, {
+    command: "pulseed goal add",
+    mode: "refine",
+    description,
+    deadline: opts.deadline ?? null,
+    constraints: opts.constraints ?? [],
+  });
   const stubGoal = {
     id: goalId,
     parent_id: null,
@@ -124,6 +134,21 @@ export async function cmdGoalAdd(
     created_at: now,
     updated_at: now,
   };
+  if (!(await recordCliGoalCommandDecision(stateManager, {
+    command: "pulseed goal add",
+    goalId,
+    effect: "create_goal",
+    targetSummary: `Create goal "${stubGoal.title}" for refinement.`,
+    sourceId: `pulseed goal add:${goalId}`,
+    sourceEpoch: goalId,
+    decisionReason: "Explicit CLI goal add was allowed to create a durable goal before refinement.",
+    currentRefs: [
+      ...(opts.deadline ? [{ kind: "deadline", ref: opts.deadline }] : []),
+      ...stubGoal.constraints.map((constraint) => ({ kind: "constraint", ref: constraint })),
+    ],
+  }))) {
+    return 1;
+  }
   await stateManager.saveGoal(stubGoal);
 
   const { goalRefiner: refiner } = deps;
@@ -135,6 +160,18 @@ export async function cmdGoalAdd(
     if (err instanceof EthicsRejectedError) {
       getCliLogger().error(formatOperationError(`refine goal "${description}" via ethics gate`, err));
       getCliLogger().error(`Ethics gate reasoning: ${err.verdict.reasoning}`);
+      if (!(await recordCliGoalCommandDecision(stateManager, {
+        command: "pulseed goal add ethics rollback",
+        goalId,
+        effect: "mutate_runtime_control",
+        targetSummary: `Delete rejected goal stub "${stubGoal.title}".`,
+        sourceId: `pulseed goal add ethics rollback:${goalId}`,
+        sourceEpoch: goalId,
+        decisionReason: "Ethics rejection rollback was allowed to remove the unrefined durable goal stub.",
+        currentRefs: [{ kind: "goal", ref: goalId }],
+      }))) {
+        return 1;
+      }
       await stateManager.deleteGoal(goalId).catch(() => {});
       return 1;
     }
@@ -186,10 +223,34 @@ async function cmdGoalAddWithoutRefinement(
 
   try {
     const workspaceContext = await gatherNegotiationContext(description, process.cwd());
+    const goalId = await allocateCliGoalId(stateManager, {
+      command: "pulseed goal add",
+      mode: "no-refine",
+      description,
+      deadline: opts.deadline ?? null,
+      constraints: opts.constraints ?? [],
+      workspaceContext: workspaceContext ?? null,
+    });
+    if (!(await recordCliGoalCommandDecision(stateManager, {
+      command: "pulseed goal add --no-refine",
+      goalId,
+      effect: "create_goal",
+      targetSummary: `Create negotiated goal "${description.slice(0, 120)}".`,
+      sourceId: `pulseed goal add --no-refine:${goalId}`,
+      sourceEpoch: goalId,
+      decisionReason: "Explicit CLI no-refine goal add was allowed to negotiate and create a durable goal.",
+      currentRefs: [
+        ...(opts.deadline ? [{ kind: "deadline", ref: opts.deadline }] : []),
+        ...(opts.constraints ?? []).map((constraint) => ({ kind: "constraint", ref: constraint })),
+      ],
+    }))) {
+      return 1;
+    }
     const { goal, response } = await goalNegotiator.negotiate(description, {
       deadline: opts.deadline,
       constraints: opts.constraints,
       workspaceContext: workspaceContext || undefined,
+      goalId,
     });
 
     if (response.type === "counter_propose") {
@@ -209,6 +270,18 @@ async function cmdGoalAddWithoutRefinement(
       }
 
       if (!accepted) {
+        if (!(await recordCliGoalCommandDecision(stateManager, {
+          command: "pulseed goal add counterproposal rollback",
+          goalId: goal.id,
+          effect: "mutate_runtime_control",
+          targetSummary: `Delete declined counter-proposal goal "${goal.title}".`,
+          sourceId: `pulseed goal add counterproposal rollback:${goal.id}`,
+          sourceEpoch: goal.updated_at,
+          decisionReason: "Counter-proposal rejection rollback was allowed to remove the negotiated durable goal.",
+          currentRefs: [{ kind: "goal", ref: goal.id }],
+        }))) {
+          return 1;
+        }
         await stateManager.deleteGoal(goal.id);
         console.log("Goal not registered.");
         return 0;
@@ -269,6 +342,18 @@ export async function cmdGoalReset(stateManager: StateManager, goalId: string): 
     updated_at: now,
   };
 
+  if (!(await recordCliGoalCommandDecision(stateManager, {
+    command: "pulseed goal reset",
+    goalId,
+    effect: "mutate_runtime_control",
+    targetSummary: `Reset goal "${goal.title}" to active.`,
+    sourceId: `pulseed goal reset:${goalId}`,
+    sourceEpoch: goal.updated_at,
+    decisionReason: "Explicit CLI goal reset was allowed to mutate durable goal state.",
+    currentRefs: [{ kind: "goal", ref: goalId }],
+  }))) {
+    return 1;
+  }
   await stateManager.saveGoal(resetGoal);
 
   console.log(`Goal "${goalId}" reset to active.`);
@@ -291,8 +376,35 @@ export async function cmdGoalArchive(
   }
 
   if (goal.status !== "completed" && !opts.force && !opts.yes) {
+    if (!(await recordCliGoalCommandDecision(stateManager, {
+      command: "pulseed goal archive",
+      goalId,
+      effect: "mutate_runtime_control",
+      targetSummary: `Archive goal "${goal.title}".`,
+      sourceId: `pulseed goal archive:${goalId}:confirm_required`,
+      sourceEpoch: goal.updated_at,
+      decision: "confirm_required",
+      capabilityDecision: "permission_required",
+      decisionReason: "Archiving an incomplete goal requires explicit confirmation.",
+      currentRefs: [{ kind: "goal", ref: goalId }],
+    }))) {
+      return 1;
+    }
     getCliLogger().warn(`Warning: Goal "${goalId}" is not completed (status: ${goal.status}).`);
     getCliLogger().warn("Archive anyway? Use --yes or --force to skip this check.");
+    return 1;
+  }
+
+  if (!(await recordCliGoalCommandDecision(stateManager, {
+    command: "pulseed goal archive",
+    goalId,
+    effect: "mutate_runtime_control",
+    targetSummary: `Archive goal "${goal.title}".`,
+    sourceId: `pulseed goal archive:${goalId}`,
+    sourceEpoch: goal.updated_at,
+    decisionReason: "Explicit CLI goal archive was allowed to mutate durable goal state.",
+    currentRefs: [{ kind: "goal", ref: goalId }],
+  }))) {
     return 1;
   }
 
@@ -331,6 +443,19 @@ export async function cmdCleanup(stateManager: StateManager): Promise<number> {
     console.log("No completed goals to archive.");
   } else {
     for (const goalId of completed) {
+      const goal = await stateManager.loadGoal(goalId);
+      if (goal && !(await recordCliGoalCommandDecision(stateManager, {
+        command: "pulseed goal cleanup",
+        goalId,
+        effect: "mutate_runtime_control",
+        targetSummary: `Archive completed goal "${goal.title}" during cleanup.`,
+        sourceId: `pulseed goal cleanup:${goalId}`,
+        sourceEpoch: goal.updated_at,
+        decisionReason: "Explicit CLI cleanup was allowed to archive completed durable goal state.",
+        currentRefs: [{ kind: "goal", ref: goalId }],
+      }))) {
+        return 1;
+      }
       await stateManager.archiveGoal(goalId);
     }
     console.log(`Archived ${completed.length} completed goal(s).`);

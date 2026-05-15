@@ -59,7 +59,11 @@ describe("DreamScheduleSuggestionStore", () => {
     const engine = new ScheduleEngine({ baseDir: tempDir });
     await engine.loadEntries();
 
-    const result = await store.applySuggestion("dream-1", engine);
+    const result = await store.applySuggestion(
+      "dream-1",
+      engine,
+      (entryInput) => engine.addEntry(entryInput),
+    );
 
     expect(result.duplicate).toBe(false);
     expect(result.entry.layer).toBe("goal_trigger");
@@ -111,7 +115,11 @@ describe("DreamScheduleSuggestionStore", () => {
     });
 
     const store = new DreamScheduleSuggestionStore(tempDir);
-    const result = await store.applySuggestion("dream-dup", engine);
+    const result = await store.applySuggestion(
+      "dream-dup",
+      engine,
+      (entryInput) => engine.addEntry(entryInput),
+    );
 
     expect(result.duplicate).toBe(true);
     expect(result.entry.id).toBe(existing.id);

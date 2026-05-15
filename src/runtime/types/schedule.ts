@@ -144,6 +144,7 @@ export const ScheduleEntryMetadataSchema = z.object({
   goal_id: z.string().optional(),
   strategy_id: z.string().optional(),
   wait_strategy_id: z.string().optional(),
+  personal_agent_replay_key: z.string().optional(),
 });
 
 export type ScheduleEntryMetadata = z.infer<typeof ScheduleEntryMetadataSchema>;

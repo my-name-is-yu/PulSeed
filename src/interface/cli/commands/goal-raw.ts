@@ -10,6 +10,10 @@ import {
   autoRegisterFileExistenceDataSources,
   autoRegisterShellDataSources,
 } from "./goal-utils.js";
+import {
+  allocateCliGoalId,
+  recordCliGoalCommandDecision,
+} from "./goal-personal-agent-trace.js";
 
 const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T.+/;
@@ -62,7 +66,16 @@ export async function cmdGoalAddRaw(
   }
 
   const now = new Date().toISOString();
-  const goalId = `goal_${Date.now()}`;
+  const goalId = await allocateCliGoalId(stateManager, {
+    command: "pulseed goal add",
+    mode: "raw",
+    title,
+    description: opts.description ?? null,
+    rawDimensions: opts.rawDimensions,
+    parent_id: opts.parent_id ?? null,
+    constraints: opts.constraints ?? [],
+    deadline: opts.deadline ?? null,
+  });
   let deadline: string | null;
   try {
     deadline = normalizeDeadlineOption(opts.deadline);
@@ -122,11 +135,41 @@ export async function cmdGoalAddRaw(
     updated_at: now,
   };
 
+  if (!(await recordCliGoalCommandDecision(stateManager, {
+    command: "pulseed goal add --dim",
+    goalId,
+    effect: "create_goal",
+    targetSummary: `Create raw CLI goal "${title}".`,
+    sourceId: `pulseed goal add --dim:${goalId}`,
+    sourceEpoch: goalId,
+    decisionReason: "Explicit CLI raw goal add was allowed to create a durable goal.",
+    currentRefs: [
+      ...(opts.parent_id ? [{ kind: "goal", ref: opts.parent_id }] : []),
+      ...goal.constraints.map((constraint) => ({ kind: "constraint", ref: constraint })),
+    ],
+  }))) {
+    return 1;
+  }
   await stateManager.saveGoal(goal);
 
   if (opts.parent_id) {
     const parent = await stateManager.loadGoal(opts.parent_id);
     if (parent) {
+      if (!(await recordCliGoalCommandDecision(stateManager, {
+        command: "pulseed goal add --dim parent-link",
+        goalId: parent.id,
+        effect: "mutate_runtime_control",
+        targetSummary: `Link raw CLI goal "${title}" under parent "${parent.title}".`,
+        sourceId: `pulseed goal add --dim parent-link:${parent.id}:${goalId}`,
+        sourceEpoch: goalId,
+        decisionReason: "Explicit CLI raw goal add was allowed to update the parent goal lineage.",
+        currentRefs: [
+          { kind: "goal", ref: parent.id },
+          { kind: "goal", ref: goalId },
+        ],
+      }))) {
+        return 1;
+      }
       await stateManager.saveGoal({
         ...parent,
         children_ids: [...parent.children_ids, goalId],

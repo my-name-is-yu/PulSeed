@@ -10,6 +10,7 @@ import type { TaskCycleResult } from "./task-execution-types.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import { PipelineExecutor } from "../pipeline-executor.js";
 import { runPreExecutionChecks } from "./task-approval.js";
+import { recordTaskPreExecutionPolicyDecision } from "./task-pre-execution-policy-trace.js";
 import { durationToMs } from "./task-executor.js";
 import { generateReflection, saveReflectionAsKnowledge } from "../reflection-generator.js";
 import type {
@@ -91,6 +92,8 @@ export async function runPipelineTaskCycle(
       capabilityDetector: deps.capabilityDetector,
       approvalFn: deps.approvalFn,
       checkIrreversibleApproval: deps.checkIrreversibleApproval,
+      recordPolicyDecision: (policyTask, decision) =>
+        recordTaskPreExecutionPolicyDecision(deps.personalAgentRuntime, policyTask, decision),
     },
     task
   );
@@ -110,13 +113,17 @@ export async function runPipelineTaskCycle(
   const pipelineExecutor = new PipelineExecutor({
     stateManager: deps.stateManager,
     adapterRegistry: registry,
+    toolExecutor: deps.toolExecutor,
+    personalAgentRuntime: deps.personalAgentRuntime,
     logger: deps.logger,
   });
   const pipelineResult = await pipelineExecutor.run(
     task.id,
     agentTask,
     pipeline,
-    observationContext?.context
+    observationContext?.context,
+    undefined,
+    { goalId },
   );
 
   // 8. Map final_verdict to action

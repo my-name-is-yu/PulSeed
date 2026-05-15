@@ -125,6 +125,14 @@ import {
 } from "../../runtime/cognition/index.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
 import { createCompanionCharacterPolicyProjection } from "../../runtime/decision/companion-character-policy-projection.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  buildPersonalAgentTraceFromCognition,
+} from "../../runtime/personal-agent/index.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
 
 export type {
   ChatRunResult,
@@ -173,8 +181,13 @@ function cognitionReplyTargetRef(
     ?? replyTarget.user_id
     ?? replyTarget.message_id
     ?? "unknown_target";
+  const kind = surface === "gateway"
+    ? "gateway_reply_target"
+    : surface === "tui"
+      ? "tui_reply_target"
+      : "reply_target";
   return {
-    kind: surface === "gateway" ? "gateway_reply_target" : "reply_target",
+    kind,
     ref: [
       surface,
       replyTarget.platform ?? "unknown_platform",
@@ -213,6 +226,8 @@ export class ChatRunner {
   private eventJournalDirty = false;
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
   private readonly companionCognitionService: Pick<CompanionCognitionService, "evaluateTurn">;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  private readonly toolExecutor?: ToolExecutor;
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.feedbackIngestionStore = deps.feedbackIngestionStore ?? createDefaultChatFeedbackIngestionStore(deps.stateManager);
@@ -221,6 +236,13 @@ export class ChatRunner {
         baseDir: this.providerConfigBaseDir(),
       }),
     });
+    this.personalAgentRuntime = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(this.providerConfigBaseDir(), {
+      controlBaseDir: this.providerConfigBaseDir(),
+    });
+    this.toolExecutor = deps.toolExecutor ?? this.createDefaultToolExecutor();
+    if (!this.deps.toolExecutor && this.toolExecutor) {
+      this.deps.toolExecutor = this.toolExecutor;
+    }
     this.groundingGateway = createChatGroundingGateway({
       stateManager: deps.stateManager,
       pluginLoader: deps.pluginLoader,
@@ -241,6 +263,7 @@ export class ChatRunner {
       getRuntimeControlContext: () => this.runtimeControlContext,
       getPendingTend: () => this.pendingTend,
       setPendingTend: (value) => { this.pendingTend = value; },
+      getPersonalAgentRuntime: () => this.personalAgentRuntime,
       getLastSelectedRoute: () => this.lastSelectedRoute,
       getSessionExecutionPolicy: () => this.getSessionExecutionPolicy(),
       reloadProviderRuntime: () => this.reloadProviderRuntime(),
@@ -592,21 +615,59 @@ export class ChatRunner {
 
     const pendingTelegramSetupResult = await this.handlePendingSetupConfirmation(safeInput, runtimeControlContext);
     if (pendingTelegramSetupResult !== null) {
+      await this.recordExplicitUserCommandTrace({
+        eventContext,
+        commandKind: "setup_confirmation",
+        result: pendingTelegramSetupResult,
+        target: {
+          kind: "runtime_control",
+          ref: { kind: "setup_dialogue", ref: eventContext.turnId },
+          effect: "mutate_runtime_control",
+          summary: "Setup confirmation handled on the explicit command path.",
+        },
+      });
       return this.finalizeNonPersistentResult(pendingTelegramSetupResult, eventContext);
     }
 
     const pendingRunSpecConfirmationResult = await this.handlePendingRunSpecConfirmation(safeInput);
     if (pendingRunSpecConfirmationResult !== null) {
+      await this.recordExplicitUserCommandTrace({
+        eventContext,
+        commandKind: "run_spec_confirmation",
+        result: pendingRunSpecConfirmationResult,
+        target: {
+          kind: "run",
+          ref: { kind: "chat_turn", ref: eventContext.turnId },
+          effect: pendingRunSpecConfirmationResult.success ? "create_run" : "hold_concern",
+          summary: "Pending RunSpec confirmation was handled before the normal chat route.",
+        },
+      });
       return this.finalizeNonPersistentResult(pendingRunSpecConfirmationResult, eventContext);
     }
 
     const commandResult = resumeOnly ? null : await this.commandHandler.handleCommand(safeInput, resolvedCwd);
     if (commandResult !== null) {
+      await this.recordExplicitUserCommandTrace({
+        eventContext,
+        commandKind: "slash_command",
+        result: commandResult,
+      });
       return this.finalizeNonPersistentResult(commandResult, eventContext);
     }
 
     if (this.pendingTend !== null && !resumeOnly) {
       const confirmationResult = await this.commandHandler.handleTendConfirmation(safeInput.trim(), Date.now());
+      await this.recordExplicitUserCommandTrace({
+        eventContext,
+        commandKind: "tend_confirmation",
+        result: confirmationResult,
+        target: {
+          kind: "task",
+          ref: { kind: "chat_turn", ref: eventContext.turnId },
+          effect: confirmationResult.success ? "create_task" : "hold_concern",
+          summary: "Pending tend confirmation was handled before the normal chat route.",
+        },
+      });
       return this.finalizeNonPersistentResult(confirmationResult, eventContext);
     }
 
@@ -614,6 +675,11 @@ export class ChatRunner {
       ? await this.resolvePendingResumeSelection(safeInput)
       : null;
     if (pendingResumeSelection?.result) {
+      await this.recordExplicitUserCommandTrace({
+        eventContext,
+        commandKind: "resume_selection",
+        result: pendingResumeSelection.result,
+      });
       return this.finalizeNonPersistentResult(pendingResumeSelection.result, eventContext);
     }
     if (pendingResumeSelection?.session) {
@@ -625,6 +691,11 @@ export class ChatRunner {
       try {
         const selectedChoice = await this.resolveResumeSelectorChoice(resumeCommand.selector);
         if (selectedChoice?.result) {
+          await this.recordExplicitUserCommandTrace({
+            eventContext,
+            commandKind: "resume_selector",
+            result: selectedChoice.result,
+          });
           return this.finalizeNonPersistentResult(selectedChoice.result, eventContext);
         }
         if (selectedChoice?.session) {
@@ -632,26 +703,44 @@ export class ChatRunner {
         } else {
           const selectorResolution = await resolveChatResumeSelector(resumeCommand.selector, this.deps);
           if (selectorResolution.nonResumableMessage) {
-            return this.finalizeNonPersistentResult({
+            const result = {
               success: false,
               output: selectorResolution.nonResumableMessage,
               elapsed_ms: 0,
-            }, eventContext);
+            };
+            await this.recordExplicitUserCommandTrace({
+              eventContext,
+              commandKind: "resume_selector",
+              result,
+            });
+            return this.finalizeNonPersistentResult(result, eventContext);
           }
           const catalog = new ChatSessionCatalog(this.deps.stateManager);
           const session = await catalog.loadSessionBySelector(selectorResolution.chatSelector);
           if (!session) {
-            return this.finalizeNonPersistentResult({
+            const result = {
               success: false,
               output: `No chat session matched selector "${selectorResolution.chatSelector}".`,
               elapsed_ms: 0,
-            }, eventContext);
+            };
+            await this.recordExplicitUserCommandTrace({
+              eventContext,
+              commandKind: "resume_selector",
+              result,
+            });
+            return this.finalizeNonPersistentResult(result, eventContext);
           }
           this.startSessionFromLoadedSession(session);
         }
       } catch (err) {
         const output = err instanceof ChatSessionSelectorError ? err.message : `Failed to load chat session: ${err instanceof Error ? err.message : String(err)}`;
-        return this.finalizeNonPersistentResult({ success: false, output, elapsed_ms: 0 }, eventContext);
+        const result = { success: false, output, elapsed_ms: 0 };
+        await this.recordExplicitUserCommandTrace({
+          eventContext,
+          commandKind: "resume_selector",
+          result,
+        });
+        return this.finalizeNonPersistentResult(result, eventContext);
       }
     }
 
@@ -671,6 +760,11 @@ export class ChatRunner {
     if (!resumeOnly && pendingResumeSelection === null && shouldResolveNaturalRecovery) {
       const naturalRecovery = await this.resolveNaturalRecoveryResume(safeInput);
       if (naturalRecovery?.result) {
+        await this.recordExplicitUserCommandTrace({
+          eventContext,
+          commandKind: "natural_recovery_resume",
+          result: naturalRecovery.result,
+        });
         return this.finalizeNonPersistentResult(naturalRecovery.result, eventContext);
       }
       if (naturalRecovery?.session) {
@@ -682,10 +776,12 @@ export class ChatRunner {
     if (!this.sessionActive) {
       const sessionId = crypto.randomUUID();
       this.history = new ChatHistory(this.deps.stateManager, sessionId, resolvedCwd);
+      this.sessionCwd = resolvedCwd;
       this.nativeAgentLoopStatePath = null;
       this.nativeAgentLoopSessionId = sessionId;
       this.history.resetAgentLoopState(null);
       this.history.setAgentLoopSessionIdentity({ sessionId, traceId: null });
+      this.sessionExecutionPolicy = null;
     }
     const executionCwd = this.sessionCwd ?? resolvedCwd;
     const gitRoot = this.sessionCwd ?? resolvedCwd;
@@ -943,7 +1039,24 @@ export class ChatRunner {
     });
     await history.recordTurnContext(toTurnContextSnapshot(turnContext));
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
-      await this.recordShadowCognition(turnContext, history);
+      try {
+        await this.recordShadowCognition(turnContext, history);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const elapsed_ms = Date.now() - start;
+        const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
+          `Could not record durable SituationFrame for this turn: ${message}`,
+          assistantBuffer.text,
+          eventContext,
+          {
+            code: "personal_agent_trace_unavailable",
+            stoppedReason: "personal_agent_trace_unavailable",
+          },
+          this.deps.llmClient
+        );
+        this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+        return this.flushAndReturn({ success: false, output, elapsed_ms });
+      }
     }
 
     if (resumeOnly && !this.deps.chatAgentLoopRunner) {
@@ -1009,6 +1122,7 @@ export class ChatRunner {
     const createdAt = new Date().toISOString();
     try {
       const output = await this.companionCognitionService.evaluateTurn(input);
+      await this.personalAgentRuntime.recordTrace(buildPersonalAgentTraceFromCognition(input, output));
       await history.recordCognitionAudit(createCognitionReplayRecord({
         recordId: `${input.cognition_id}:chat-history-record`,
         createdAt,
@@ -1026,7 +1140,57 @@ export class ChatRunner {
           retryable: true,
         },
       }));
+      throw err;
     }
+  }
+
+  private async recordExplicitUserCommandTrace(input: {
+    eventContext: ChatEventContext;
+    commandKind: string;
+    result: ChatRunResult;
+    target?: {
+      kind: "task" | "run" | "runtime_control" | "attention_only";
+      ref: { kind: string; ref: string };
+      effect: "continue_route" | "create_task" | "create_run" | "mutate_runtime_control" | "hold_concern";
+      summary: string;
+    };
+  }): Promise<void> {
+    const emittedAt = new Date().toISOString();
+    const target = input.target ?? {
+      kind: "attention_only" as const,
+      ref: { kind: "chat_turn", ref: input.eventContext.turnId },
+      effect: input.result.success ? "continue_route" as const : "hold_concern" as const,
+      summary: "Explicit chat command was handled before the normal chat route.",
+    };
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "explicit_user_command",
+      source: {
+        sourceKind: "explicit_command",
+        sourceId: `${input.eventContext.turnId}:${input.commandKind}`,
+        emittedAt,
+        sourceEpoch: input.eventContext.turnId,
+        highWatermark: input.eventContext.runId,
+        replayKey: `chat:${input.eventContext.turnId}:${input.commandKind}`,
+        summary: `Explicit chat command path handled ${input.commandKind}.`,
+        sourceRef: { kind: "chat_turn", ref: input.eventContext.turnId },
+      },
+      target,
+      decision: input.result.success ? "allow" : "hold",
+      decisionReason: input.result.success
+        ? "The exact command or pending confirmation was admitted by the typed chat command path."
+        : "The exact command or pending confirmation was held by the typed chat command path.",
+      capabilityDecision: "not_applicable",
+      policyRef: { kind: "intervention_policy", ref: "policy:explicit-chat-command-v1" },
+      currentRefs: [{ kind: "chat_run", ref: input.eventContext.runId }],
+      auditRefs: [{ kind: "chat_turn", ref: input.eventContext.turnId }],
+      outcomeEvent: {
+        type: "action_outcome",
+        summary: input.result.success
+          ? "Explicit command returned a successful chat result."
+          : "Explicit command returned a held or failed chat result.",
+        targetRef: target.ref,
+      },
+    }));
   }
 
   private buildChatCognitionInput(turnContext: ChatTurnContext): CompanionCognitionInput {
@@ -1269,6 +1433,8 @@ export class ChatRunner {
       getNativeAgentLoopStatePath: () => this.nativeAgentLoopStatePath,
       getNativeAgentLoopSessionId: () => this.nativeAgentLoopSessionId,
       getProviderConfigBaseDir: () => this.providerConfigBaseDir(),
+      getPersonalAgentRuntime: () => this.personalAgentRuntime,
+      getToolExecutor: () => this.toolExecutor,
       getSetupSecretIntake: () => this.setupSecretIntake,
       getTurnLanguageHint: () => this.turnLanguageHint,
       setPendingSetupDialogue: async (dialogue: SetupDialogueRuntimeState | null) => {
@@ -1290,6 +1456,19 @@ export class ChatRunner {
   private providerConfigBaseDir(): string {
     const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
     return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+  }
+
+  private createDefaultToolExecutor(): ToolExecutor | undefined {
+    if (!this.deps.registry) return undefined;
+    return new ToolExecutor({
+      registry: this.deps.registry,
+      permissionManager: new ToolPermissionManager({
+        trustManager: this.deps.trustManager,
+      }),
+      concurrency: new ConcurrencyController(),
+      personalAgentRuntime: this.personalAgentRuntime,
+      traceBaseDir: this.providerConfigBaseDir(),
+    });
   }
 
   private async reloadProviderRuntime(): Promise<void> {
@@ -1449,6 +1628,7 @@ export class ChatRunner {
         ?? this.deps.runtimeReplyTarget
         ?? spec.origin.reply_target
         ?? null) as Record<string, unknown> | null,
+      personalAgentRuntime: this.personalAgentRuntime,
     }).startConfirmed(spec);
     return {
       success: result.success,

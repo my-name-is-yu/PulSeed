@@ -12,6 +12,8 @@ import type { TaskDomain } from "../../../base/types/pipeline.js";
 import type { AdapterRegistry } from "../adapter-layer.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
 import type { Logger } from "../../../runtime/logger.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 
 export type SelectTargetDimensionFn = (
   gapVector: GapVector,
@@ -46,6 +48,8 @@ export interface PipelineCycleDeps {
   capabilityDetector?: CapabilityDetector;
   approvalFn: (task: Task) => Promise<boolean>;
   adapterRegistry?: AdapterRegistry;
+  toolExecutor?: ToolExecutor;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   logger?: Logger;
   knowledgeManager?: KnowledgeManager;
   checkIrreversibleApproval: (task: Task) => Promise<boolean>;

@@ -10,6 +10,10 @@ import {
   formatPlainGoalState,
   isCurrentGoalCandidate,
 } from "../current-goal-summary.js";
+import {
+  allocateDeterministicGoalId,
+  recordExplicitCommandDecision,
+} from "../../runtime/personal-agent/index.js";
 
 // ─── Types ───
 
@@ -318,7 +322,26 @@ export class ActionHandler {
     }
 
     try {
-      const result = await this.deps.goalNegotiator.negotiate(description);
+      const goalId = await allocateDeterministicGoalId({
+        command: "tui_goal_create",
+        description,
+      }, async (candidate) => (await this.deps.stateManager.loadGoal(candidate)) !== null);
+      await recordExplicitCommandDecision({
+        baseDir: this.deps.stateManager.getBaseDir(),
+        surface: "tui",
+        command: "goal create",
+        sourceId: `tui goal create:${goalId}`,
+        sourceEpoch: goalId,
+        target: {
+          kind: "goal",
+          ref: { kind: "goal", ref: goalId },
+          effect: "create_goal",
+          summary: `Create TUI goal "${description.slice(0, 120)}".`,
+        },
+        decisionReason: "Explicit TUI goal creation was allowed to create a durable goal.",
+        capabilityRefs: [{ kind: "capability", ref: "tui:goal_create" }],
+      });
+      const result = await this.deps.goalNegotiator.negotiate(description, { goalId });
       const { goal, response } = result;
 
       const messages: string[] = [
