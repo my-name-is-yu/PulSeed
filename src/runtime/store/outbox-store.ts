@@ -22,6 +22,7 @@ export class OutboxStore {
   private readonly paths: RuntimeStorePaths;
   private readonly dbOptions: RuntimeControlDbStoreOptions;
   private dbPromise: Promise<ControlDatabase> | null = null;
+  private appendChain: Promise<void> = Promise.resolve();
 
   constructor(
     runtimeRootOrPaths?: string | RuntimeStorePaths,
@@ -94,13 +95,27 @@ export class OutboxStore {
   }
 
   async append(record: Omit<OutboxRecord, "seq">): Promise<OutboxRecord> {
-    const candidate = OutboxRecordSchema.parse({ ...record, seq: 1 });
-    await this.recordOutboxAdmission(candidate);
+    const run = this.appendChain.then(
+      () => this.appendInternal(record),
+      () => this.appendInternal(record)
+    );
+    this.appendChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async appendInternal(record: Omit<OutboxRecord, "seq">): Promise<OutboxRecord> {
     const db = await this.database();
+    const candidate = db.read((sqlite) => OutboxRecordSchema.parse({
+      ...record,
+      seq: nextOutboxSeq(sqlite),
+    }));
+    await this.recordOutboxAdmission(candidate);
     return db.transaction((sqlite) => {
       const dedupeKey = outboxDedupeKey(candidate);
-      const existing = readOutboxByDedupeKey(sqlite, dedupeKey);
-      if (existing) return existing;
+      if (dedupeKey) {
+        const existing = readOutboxByDedupeKey(sqlite, dedupeKey);
+        if (existing) return existing;
+      }
       const parsed = OutboxRecordSchema.parse({ ...record, seq: nextOutboxSeq(sqlite) });
       upsertOutbox(sqlite, parsed);
       return parsed;
@@ -163,7 +178,7 @@ export class OutboxStore {
         highWatermark: record.correlation_id ?? eventRef.ref,
         replayKey: [
           "outbox_enqueue",
-          outboxDedupeKey(record),
+          outboxAdmissionKey(record),
         ].join(":"),
         summary: `Outbox event "${record.event_type}" requested delivery or replay enqueue.`,
         sourceRef: eventRef,
@@ -230,11 +245,21 @@ function outboxKind(record: OutboxRecord): string {
 function outboxAdmissionRef(record: OutboxRecord): { kind: string; ref: string } {
   return {
     kind: "outbox_record",
-    ref: `outbox:${stableId(outboxDedupeKey(record))}`,
+    ref: `outbox:${stableId(outboxAdmissionKey(record))}`,
   };
 }
 
-function outboxDedupeKey(record: Pick<OutboxRecord, "event_type" | "goal_id" | "correlation_id" | "payload">): string {
+function outboxAdmissionKey(record: Pick<OutboxRecord, "seq" | "event_type" | "goal_id" | "correlation_id" | "payload">): string {
+  return outboxDedupeKey(record) ?? [
+    record.event_type,
+    record.goal_id ?? "",
+    record.seq,
+    stableId(stableJson(record.payload)),
+  ].join(":");
+}
+
+function outboxDedupeKey(record: Pick<OutboxRecord, "event_type" | "goal_id" | "correlation_id" | "payload">): string | null {
+  if (!record.correlation_id) return null;
   return [
     record.event_type,
     record.goal_id ?? "",
@@ -254,6 +279,7 @@ function backfillOutboxDedupeKeys(sqlite: SqliteDatabase): void {
   for (const row of rows) {
     const record = parseOutboxJson(row.record_json);
     const dedupeKey = outboxDedupeKey(record);
+    if (!dedupeKey) continue;
     if (seen.has(dedupeKey) || readOutboxByNonNullDedupeKey(sqlite, dedupeKey)) {
       continue;
     }
@@ -314,6 +340,7 @@ function normalizeForStableJson(value: unknown): unknown {
 }
 
 function upsertOutbox(sqlite: SqliteDatabase, record: OutboxRecord): void {
+  const dedupeKey = outboxDedupeKey(record);
   sqlite.prepare(`
     INSERT INTO outbox_records (seq, dedupe_key, created_at, kind, record_json)
     VALUES (?, ?, ?, ?, json(?))
@@ -322,5 +349,5 @@ function upsertOutbox(sqlite: SqliteDatabase, record: OutboxRecord): void {
       created_at = excluded.created_at,
       kind = excluded.kind,
       record_json = excluded.record_json
-  `).run(record.seq, outboxDedupeKey(record), record.created_at, outboxKind(record), JSON.stringify(record));
+  `).run(record.seq, dedupeKey, record.created_at, outboxKind(record), JSON.stringify(record));
 }

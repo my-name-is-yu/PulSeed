@@ -180,6 +180,47 @@ describe("OutboxStore", () => {
     expect(await store.list()).toHaveLength(1);
   });
 
+  it("appends repeated payload-equal events when no explicit correlation id is present", async () => {
+    const input = {
+      event_type: "schedule_run_requested",
+      created_at: 1,
+      payload: { scheduleId: "schedule-1", allowEscalation: false },
+    };
+
+    const first = await store.append(input);
+    const second = await store.append({
+      ...input,
+      created_at: 2,
+    });
+
+    expect(second.seq).toBe(first.seq + 1);
+    expect(await store.list()).toHaveLength(2);
+  });
+
+  it("records distinct admissions for repeated payload-equal events without correlation ids", async () => {
+    const captured: PersonalAgentDecisionTrace[] = [];
+    const originalRecordTrace = PersonalAgentRuntimeStore.prototype.recordTrace;
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockImplementation(async function (this: PersonalAgentRuntimeStore, trace) {
+        captured.push(trace);
+        return originalRecordTrace.call(this, trace);
+      });
+
+    const input = {
+      event_type: "schedule_run_requested",
+      created_at: 1,
+      payload: { scheduleId: "schedule-1", allowEscalation: false },
+    };
+
+    const first = await store.append(input);
+    const second = await store.append(input);
+
+    expect(first.seq).toBe(1);
+    expect(second.seq).toBe(2);
+    expect(captured).toHaveLength(2);
+    expect(new Set(captured.map((trace) => trace.trace_id)).size).toBe(2);
+  });
+
   it("deduplicates replayed notifications against pre-v33 outbox rows without dedupe keys", async () => {
     const legacyRecord = OutboxRecordSchema.parse({
       seq: 1,
