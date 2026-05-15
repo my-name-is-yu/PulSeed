@@ -418,32 +418,60 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         await this.recordTiming();
         backoffIndex = 0;
         for (const update of updates) {
-          this.offset = update.update_id + 1;
-          const callbackQuery = update.callback_query;
-          if (callbackQuery?.data) {
-            await this.processCallbackQuery(callbackQuery, update.update_id);
-            continue;
-          }
-          const msg = update.message;
-          if (!msg?.text) continue;
-          const fromId = msg.from?.id;
-          const chatId = msg.chat?.id;
-          if (!Number.isInteger(fromId) || !Number.isInteger(chatId)) continue;
-          if (this.config.denied_user_ids.includes(fromId)) continue;
-          if (this.config.denied_chat_ids.includes(chatId)) continue;
-          if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) continue;
-          this.handlingUpdate = true;
+          const nextOffset = update.update_id + 1;
+          let shouldAdvanceOffset = false;
           try {
-            if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
-              await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-              await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+            const callbackQuery = update.callback_query;
+            if (callbackQuery?.data) {
+              await this.processCallbackQuery(callbackQuery, update.update_id);
+              shouldAdvanceOffset = true;
               continue;
             }
-            if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) continue;
-            await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-            await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+            const msg = update.message;
+            if (!msg?.text) {
+              shouldAdvanceOffset = true;
+              continue;
+            }
+            const fromId = msg.from?.id;
+            const chatId = msg.chat?.id;
+            if (!Number.isInteger(fromId) || !Number.isInteger(chatId)) {
+              shouldAdvanceOffset = true;
+              continue;
+            }
+            if (this.config.denied_user_ids.includes(fromId)) {
+              shouldAdvanceOffset = true;
+              continue;
+            }
+            if (this.config.denied_chat_ids.includes(chatId)) {
+              shouldAdvanceOffset = true;
+              continue;
+            }
+            if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) {
+              shouldAdvanceOffset = true;
+              continue;
+            }
+            this.handlingUpdate = true;
+            try {
+              if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
+                await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+                await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+                shouldAdvanceOffset = true;
+                continue;
+              }
+              if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) {
+                shouldAdvanceOffset = true;
+                continue;
+              }
+              await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+              await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+              shouldAdvanceOffset = true;
+            } finally {
+              this.handlingUpdate = false;
+            }
           } finally {
-            this.handlingUpdate = false;
+            if (shouldAdvanceOffset) {
+              this.offset = nextOffset;
+            }
           }
         }
       } catch (err) {
