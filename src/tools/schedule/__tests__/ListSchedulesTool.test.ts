@@ -1,55 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ListSchedulesTool } from "../ListSchedulesTool/ListSchedulesTool.js";
-import type { ToolCallContext } from "../../types.js";
-import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
 import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
+import { makeToolCallContext } from "../../../../tests/helpers/tool-call-context.js";
+import { makeScheduleEntry } from "../../../../tests/helpers/schedule-fixtures.js";
 
-function makeContext(): ToolCallContext {
-  return {
-    cwd: "/tmp",
-    goalId: "test-goal",
-    trustBalance: 50,
-    preApproved: false,
-    approvalFn: async () => false,
-  };
-}
-
-function makeEntry(
-  id: string,
-  overrides: Partial<ScheduleEntry> = {},
-): ScheduleEntry {
-  return {
-    id,
-    name: `Schedule ${id}`,
-    layer: "heartbeat",
-    trigger: { type: "interval", seconds: 60, jitter_factor: 0 },
-    enabled: true,
-    heartbeat: {
-      check_type: "http",
-      check_config: { url: "https://example.com" },
-      failure_threshold: 3,
-      timeout_ms: 5000,
-    },
-    probe: undefined,
-    escalation: undefined,
-    baseline_results: [],
-    created_at: "2026-01-01T00:00:00.000Z",
-    updated_at: "2026-01-01T00:00:00.000Z",
-    last_fired_at: null,
-    next_fire_at: "2026-01-01T01:00:00.000Z",
-    consecutive_failures: 0,
-    last_escalation_at: null,
-    escalation_timestamps: [],
-    total_executions: 0,
-    total_tokens_used: 0,
-    max_tokens_per_day: 100000,
-    tokens_used_today: 0,
-    budget_reset_at: null,
-    cron: undefined,
-    goal_trigger: undefined,
-    ...overrides,
-  };
-}
+const makeContext = makeToolCallContext;
+const makeEntry = makeScheduleEntry;
 
 describe("ListSchedulesTool", () => {
   let scheduleEngine: ScheduleEngine;

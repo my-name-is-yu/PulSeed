@@ -1,3 +1,4 @@
+import { TaskSchema } from "../../src/base/types/task.js";
 export function makeDimension(overrides = {}) {
     const now = new Date().toISOString();
     return {
@@ -51,5 +52,27 @@ export function makeGoal(overrides = {}) {
         updated_at: now,
         ...overrides,
     };
+}
+export function makeTask(overrides = {}) {
+    const now = new Date().toISOString();
+    return TaskSchema.parse({
+        id: "task-1",
+        goal_id: "goal-1",
+        strategy_id: null,
+        target_dimensions: ["dim1"],
+        primary_dimension: "dim1",
+        work_description: "Implement the test task safely",
+        rationale: "Exercise the production-shaped task path",
+        approach: "Use the focused test harness",
+        success_criteria: [],
+        scope_boundary: {
+            in_scope: ["test behavior"],
+            out_of_scope: ["external side effects"],
+            blast_radius: "test-only",
+        },
+        constraints: [],
+        created_at: now,
+        ...overrides,
+    });
 }
 //# sourceMappingURL=fixtures.js.map

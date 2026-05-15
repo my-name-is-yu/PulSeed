@@ -14,7 +14,6 @@ import {
   ToolExecutorAgentLoopToolRuntime,
   ToolRegistryAgentLoopToolRouter,
   createAgentLoopSession,
-  defaultAgentLoopCapabilities,
   withDefaultBudget,
   type AgentLoopCompletionValidationResult,
   type AgentLoopModelClient,
@@ -23,6 +22,7 @@ import {
   type AgentLoopModelResponse,
   type AgentLoopToolPolicy,
 } from "../index.js";
+import { makeAgentLoopModelInfo } from "../../../../../tests/helpers/agent-loop-fixtures.js";
 
 const PROVIDER_ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -60,11 +60,9 @@ class ScriptedModelClient implements AgentLoopModelClient {
 }
 
 function makeModelInfo(): AgentLoopModelInfo {
-  return {
+  return makeAgentLoopModelInfo({
     ref: { providerId: "scripted-product-completion", modelId: "model" },
-    displayName: "scripted-product-completion/model",
-    capabilities: { ...defaultAgentLoopCapabilities },
-  };
+  });
 }
 
 function makeRuntime(registry = new ToolRegistry()) {

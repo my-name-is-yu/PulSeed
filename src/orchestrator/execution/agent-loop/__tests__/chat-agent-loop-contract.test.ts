@@ -5,25 +5,11 @@ import { ChatAgentLoopRunner } from "../chat-agent-loop-runner.js";
 import { buildAgentLoopBaseInstructions, buildChatStructuredOutputInstructions } from "../agent-loop-prompts.js";
 import type {
   AgentLoopModelClient,
-  AgentLoopModelInfo,
   AgentLoopModelRegistry,
-  AgentLoopModelRef,
 } from "../agent-loop-model.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
-import { defaultAgentLoopCapabilities } from "../index.js";
 import type { AgentLoopCommandResult, AgentLoopToolResultSummary } from "../agent-loop-result.js";
-
-function makeModelRef(): AgentLoopModelRef {
-  return { providerId: "test", modelId: "model" };
-}
-
-function makeModelInfo(): AgentLoopModelInfo {
-  return {
-    ref: makeModelRef(),
-    displayName: "test/model",
-    capabilities: { ...defaultAgentLoopCapabilities },
-  };
-}
+import { makeAgentLoopModelInfo } from "../../../../../tests/helpers/agent-loop-fixtures.js";
 
 function makeRunner(
   returnOutput: unknown,
@@ -37,7 +23,7 @@ function makeRunner(
     durationMs: entry.durationMs,
   })),
 ) {
-  const modelInfo = makeModelInfo();
+  const modelInfo = makeAgentLoopModelInfo();
   const boundedRunner = {
     run: vi.fn().mockResolvedValue({
       success: true,
@@ -229,7 +215,7 @@ describe("chat agentloop final-answer contract", () => {
   });
 
   it("unwraps finalText finalAnswer.summary objects before display", async () => {
-    const modelInfo = makeModelInfo();
+    const modelInfo = makeAgentLoopModelInfo();
     const boundedRunner = {
       run: vi.fn().mockResolvedValue({
         success: true,
@@ -402,7 +388,7 @@ describe("chat agentloop final-answer contract", () => {
   });
 
   it("forwards typed bounded-runner failure reasons through native chat results", async () => {
-    const modelInfo = makeModelInfo();
+    const modelInfo = makeAgentLoopModelInfo();
     const boundedRunner = {
       run: vi.fn().mockResolvedValue({
         success: false,
@@ -439,7 +425,7 @@ describe("chat agentloop final-answer contract", () => {
   });
 
   it("keeps setup error text display-only unless structured timeout fields are present", async () => {
-    const modelInfo = makeModelInfo();
+    const modelInfo = makeAgentLoopModelInfo();
     const boundedRunner = {
       run: vi.fn(),
     } as unknown as BoundedAgentLoopRunner;
@@ -462,7 +448,7 @@ describe("chat agentloop final-answer contract", () => {
   });
 
   it("maps structured setup timeout fields to typed timeout failure", async () => {
-    const modelInfo = makeModelInfo();
+    const modelInfo = makeAgentLoopModelInfo();
     const timeoutError = new Error("provider response did not arrive");
     timeoutError.name = "TimeoutError";
     const boundedRunner = {

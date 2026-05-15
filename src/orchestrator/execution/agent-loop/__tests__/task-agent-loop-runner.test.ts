@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
+import { makeTask as makeFixtureTask } from "../../../../../tests/helpers/fixtures.js";
 import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
 import {
   FileCognitionAuditSink,
@@ -25,13 +26,13 @@ vi.mock("../task-agent-loop-worktree.js", () => ({
 }));
 
 function makeTask(): Task {
-  return {
+  return makeFixtureTask({
     id: "task-1",
     goal_id: "goal-1",
     work_description: "Implement grounding safely",
     approach: "Make the minimal code change",
     success_criteria: [],
-  } as unknown as Task;
+  });
 }
 
 function makeArtifactTask(): Task {
