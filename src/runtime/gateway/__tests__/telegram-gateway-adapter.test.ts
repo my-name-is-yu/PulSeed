@@ -116,7 +116,7 @@ describe("TelegramGatewayAdapter", () => {
     );
   });
 
-  it("keeps callback update offsets retryable when callback handling fails", async () => {
+  it("advances callback update offsets after isolating callback handling failure", async () => {
     vi.useFakeTimers();
     try {
       const configDir = await writeConfig({
@@ -175,7 +175,7 @@ describe("TelegramGatewayAdapter", () => {
         expect(pollOffsets.length).toBeGreaterThanOrEqual(2);
       });
 
-      expect(pollOffsets.slice(0, 2)).toEqual([0, 0]);
+      expect(pollOffsets.slice(0, 2)).toEqual([0, 101]);
       await adapter.stop();
     } finally {
       vi.useRealTimers();
