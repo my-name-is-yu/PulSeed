@@ -293,10 +293,16 @@ describe("CreateScheduleTool", () => {
       },
     });
 
-    const result = await tool.call(input, makeContext({ approvalFn }));
+    const result = await tool.call(input, makeContext({ approvalFn, preApproved: true }));
 
     expect(addEntry).toHaveBeenCalledTimes(1);
-    expect(addEntry).toHaveBeenCalledWith(input);
+    expect(addEntry).toHaveBeenCalledWith({
+      ...input,
+      metadata: expect.objectContaining({
+        source: "manual",
+        personal_agent_replay_key: expect.stringMatching(/^create_schedule:/),
+      }),
+    });
     expect(approvalFn).not.toHaveBeenCalled();
     expect(result.success).toBe(true);
     expect(result.summary).toContain("daily digest");
@@ -311,7 +317,7 @@ describe("CreateScheduleTool", () => {
       preset: "daily_brief",
     });
 
-    const result = await tool.call(input, makeContext());
+    const result = await tool.call(input, makeContext({ preApproved: true }));
 
     expect(addEntry).toHaveBeenCalledTimes(1);
     expect(addEntry).toHaveBeenCalledWith(expect.objectContaining({
@@ -344,7 +350,7 @@ describe("CreateScheduleTool", () => {
       },
     });
 
-    const result = await tool.call(input, makeContext());
+    const result = await tool.call(input, makeContext({ preApproved: true }));
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("disk full");

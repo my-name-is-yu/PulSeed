@@ -129,7 +129,7 @@ describe("ResumeScheduleTool", () => {
       ResumeScheduleInputSchema.parse({
         schedule_id: "aaaaaaaa",
       }),
-      makeContext({ approvalFn }),
+      makeContext({ approvalFn, preApproved: true }),
     );
 
     expect(approvalFn).not.toHaveBeenCalled();

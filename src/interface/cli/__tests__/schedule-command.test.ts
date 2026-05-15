@@ -8,6 +8,13 @@ import { importLegacyQueueDaemonScheduleState } from "../../../runtime/store/que
 import { DreamScheduleSuggestionStore } from "../../../platform/dream/dream-schedule-suggestions.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import {
+  PersonalAgentRuntimeStore,
+  stableTraceId,
+} from "../../../runtime/personal-agent/index.js";
+import {
+  buildScheduleCliToolReplayKey,
+} from "../commands/schedule/tool-execution.js";
 
 function makeStateManager(baseDir: string): StateManager {
   return {
@@ -38,6 +45,60 @@ describe("cmdSchedule", () => {
         source: "preset",
         preset_key: "daily_brief",
       }));
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  it("routes CLI schedule creation through personal-agent tool admission and replays idempotently", async () => {
+    const tempDir = makeTempDir("schedule-command-personal-agent-");
+    try {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const addArgs = [
+        "--name",
+        "custom-check",
+        "--type",
+        "custom",
+        "--command",
+        "echo ok",
+        "--interval",
+        "60",
+      ];
+      const toolInput = {
+        name: "custom-check",
+        layer: "heartbeat",
+        trigger: { type: "interval" as const, seconds: 60, jitter_factor: 0 },
+        enabled: true,
+        metadata: {
+          source: "manual" as const,
+          dependency_hints: [],
+        },
+        heartbeat: {
+          check_type: "custom" as const,
+          check_config: { command: "echo ok" },
+          failure_threshold: 3,
+          timeout_ms: 5000,
+        },
+      };
+
+      await cmdSchedule(makeStateManager(tempDir), ["add", ...addArgs]);
+      await cmdSchedule(makeStateManager(tempDir), ["add", ...addArgs]);
+
+      const engine = new ScheduleEngine({ baseDir: tempDir });
+      await engine.loadEntries();
+      expect(engine.getEntries()).toHaveLength(1);
+      expect(engine.getEntries()[0]?.metadata?.personal_agent_replay_key).toBeTruthy();
+
+      const replayKey = buildScheduleCliToolReplayKey("create_schedule", toolInput, {
+        command: "add",
+        argv: addArgs,
+      });
+      const trace = await new PersonalAgentRuntimeStore(tempDir, {
+        controlBaseDir: tempDir,
+      }).loadTrace(stableTraceId(`${replayKey}:decision:allow:available`));
+      expect(trace?.situation_frame?.caller_path).toBe("explicit_user_command");
+      expect(trace?.intervention_decisions.some((decision) => decision.decision === "allow")).toBe(true);
+      expect(trace?.capability_decisions.some((decision) => decision.decision === "available")).toBe(true);
     } finally {
       cleanupTempDir(tempDir);
     }

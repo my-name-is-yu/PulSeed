@@ -3,15 +3,31 @@
  */
 
 import type { Logger } from "../../../runtime/logger.js";
-import type { IAdapter } from "../../execution/adapter-layer.js";
+import type { AgentResult, IAdapter } from "../../execution/adapter-layer.js";
+import { AdapterRegistry } from "../../execution/adapter-layer.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import type { CapabilityAcquisitionTask } from "../../../base/types/capability.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
+import type { ToolCallContext } from "../../../tools/types.js";
+import { RunAdapterTool } from "../../../tools/execution/RunAdapterTool/RunAdapterTool.js";
+import {
+  PersonalAgentRuntimeStore,
+  stableId,
+} from "../../../runtime/personal-agent/index.js";
 
 export interface CapabilityAcquisitionOutcome {
   capabilityName: string;
   replanRequired: boolean;
   recommendationSource?: string;
   recommendedPlugin?: string;
+}
+
+export interface CapabilityAcquisitionExecutionOptions {
+  toolExecutor?: ToolExecutor;
+  baseDir?: string;
 }
 
 /** Handle the "capability_acquiring" action from TaskLifecycle.
@@ -23,7 +39,8 @@ export async function handleCapabilityAcquisition(
   adapter: IAdapter,
   capabilityDetector: CapabilityDetector | undefined,
   capabilityAcquisitionFailures: Map<string, number>,
-  logger: Logger | undefined
+  logger: Logger | undefined,
+  options: CapabilityAcquisitionExecutionOptions = {},
 ): Promise<CapabilityAcquisitionOutcome> {
   const capName = acquisitionTask.gap.missing_capability.name;
   const capType = acquisitionTask.gap.missing_capability.type;
@@ -62,7 +79,13 @@ export async function handleCapabilityAcquisition(
   let agentResult;
   try {
     await capabilityDetector.setCapabilityStatus(capName, capType, "acquiring");
-    agentResult = await adapter.execute({ prompt, timeout_ms: 120000, adapter_type: adapter.adapterType });
+    agentResult = await executeCapabilityAcquisitionAdapter({
+      acquisitionTask,
+      goalId,
+      adapter,
+      prompt,
+      options,
+    });
   } catch (err) {
     logger?.error("CoreLoop: adapter execution failed during capability acquisition", {
       capName,
@@ -151,6 +174,103 @@ export async function handleCapabilityAcquisition(
     recommendationSource: recommendation?.installSource,
     recommendedPlugin: recommendation?.pluginName,
   };
+}
+
+async function executeCapabilityAcquisitionAdapter(input: {
+  acquisitionTask: CapabilityAcquisitionTask;
+  goalId: string;
+  adapter: IAdapter;
+  prompt: string;
+  options: CapabilityAcquisitionExecutionOptions;
+}): Promise<AgentResult> {
+  const baseDir = input.options.baseDir ?? process.cwd();
+  const toolExecutor = input.options.toolExecutor ?? createRunAdapterToolExecutor(input.adapter, baseDir);
+  const replayKey = [
+    "capability_acquisition:run_adapter",
+    input.goalId,
+    input.acquisitionTask.gap.related_task_id ?? "task:none",
+    input.acquisitionTask.gap.missing_capability.name,
+    input.acquisitionTask.method,
+    stableId(input.prompt),
+  ].join(":");
+  const toolContext: ToolCallContext = {
+    cwd: baseDir,
+    goalId: input.goalId,
+    taskId: input.acquisitionTask.gap.related_task_id,
+    trustBalance: 0,
+    preApproved: true,
+    approvalFn: async () => false,
+    providerConfigBaseDir: baseDir,
+    personalAgentRuntime: new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir }),
+    callId: `capability-acquisition-run-adapter:${stableId(replayKey)}`,
+    sessionId: `goal:${input.goalId}`,
+    turnId: `capability-acquisition:${stableId([
+      input.goalId,
+      input.acquisitionTask.gap.missing_capability.name,
+      input.acquisitionTask.method,
+    ].join(":"))}`,
+    personalAgentTrace: {
+      callerPath: "task_execution",
+      sourceKind: "task_execution",
+      sourceId: input.acquisitionTask.gap.related_task_id ?? input.acquisitionTask.gap.missing_capability.name,
+      sourceEpoch: input.acquisitionTask.method,
+      highWatermark: `${input.goalId}:${input.acquisitionTask.gap.missing_capability.name}:${input.acquisitionTask.verification_attempts}`,
+      replayKey,
+      summary: `Acquire capability ${input.acquisitionTask.gap.missing_capability.name} through run-adapter.`,
+      sourceRef: {
+        kind: input.acquisitionTask.gap.related_task_id ? "task" : "capability_gap",
+        ref: input.acquisitionTask.gap.related_task_id ?? input.acquisitionTask.gap.missing_capability.name,
+      },
+      currentRefs: [
+        { kind: "goal", ref: input.goalId },
+        { kind: "capability", ref: input.acquisitionTask.gap.missing_capability.name },
+      ],
+      auditRefs: [
+        { kind: "capability_acquisition_method", ref: input.acquisitionTask.method },
+        { kind: "adapter", ref: input.adapter.adapterType },
+      ],
+    },
+  };
+  const result = await toolExecutor.execute(
+    "run-adapter",
+    {
+      adapter_id: input.adapter.adapterType,
+      task_description: input.prompt,
+      goal_id: input.goalId,
+      timeout_ms: 120_000,
+    },
+    toolContext,
+  );
+  if (result.data != null && isAgentResult(result.data)) return result.data;
+  throw new Error(result.error ?? result.execution?.reason ?? "run_adapter_not_executed");
+}
+
+function createRunAdapterToolExecutor(adapter: IAdapter, baseDir: string): ToolExecutor {
+  const adapterRegistry = new AdapterRegistry();
+  adapterRegistry.register(adapter);
+  const registry = new ToolRegistry();
+  registry.register(new RunAdapterTool(adapterRegistry));
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir }),
+    traceBaseDir: baseDir,
+  });
+}
+
+function isAgentResult(value: unknown): value is AgentResult {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Partial<AgentResult>;
+  return typeof record.success === "boolean"
+    && typeof record.output === "string"
+    && typeof record.elapsed_ms === "number"
+    && (record.stopped_reason === "completed"
+      || record.stopped_reason === "timeout"
+      || record.stopped_reason === "error"
+      || record.stopped_reason === "cancelled"
+      || record.stopped_reason === "blocked"
+      || record.stopped_reason === "policy_blocked");
 }
 
 /** Records a capability acquisition failure and escalates after 3 consecutive failures. */

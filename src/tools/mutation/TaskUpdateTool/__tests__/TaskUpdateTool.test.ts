@@ -34,7 +34,7 @@ function makeContext(): ToolCallContext {
     cwd: "/tmp",
     goalId: "goal-1",
     trustBalance: 50,
-    preApproved: false,
+    preApproved: true,
     approvalFn: async () => false,
   };
 }
@@ -163,7 +163,7 @@ describe("TaskUpdateTool", () => {
     const tasksDir = path.join(tmpDir, "tasks", "goal-1");
     fs.mkdirSync(tasksDir, { recursive: true });
     fs.writeFileSync(path.join(tasksDir, "task-1.json"), JSON.stringify(makeTaskJson("task-1", "goal-1")));
-    const context = { ...makeContext(), taskId: "task-1" };
+    const context = { ...makeContext(), preApproved: false, taskId: "task-1" };
     const input = {
       goalId: "goal-1",
       taskId: "task-1",

@@ -5,6 +5,8 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
+import { createGroundingGateway } from "../../../../grounding/gateway.js";
+import { SqliteSoilRepository } from "../../../../platform/soil/sqlite-repository.js";
 import { ToolRegistry } from "../../../../tools/registry.js";
 import { ToolExecutor } from "../../../../tools/executor.js";
 import { ToolPermissionManager } from "../../../../tools/permission.js";
@@ -403,23 +405,89 @@ describe("agentloop phase 4 context injection", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
-  it("loads project instructions and injects Soil prefetch blocks", async () => {
-    const assembler = new AgentLoopContextAssembler();
+  it("loads project instructions and injects canonical Soil knowledge blocks", async () => {
+    const rootDir = path.join(tmpDir, "soil");
+    const repository = await SqliteSoilRepository.create({ rootDir });
+    try {
+      await repository.applyMutation({
+        records: [{
+          record_id: "rec-agentloop-soil",
+          record_key: "fact.agentloop-soil",
+          version: 1,
+          record_type: "fact",
+          soil_id: "knowledge/agentloop-soil",
+          title: "Agent loop Soil result",
+          summary: "Soil result for agent-loop grounding",
+          canonical_text: "test task test approach done Workspace block Soil result for agent-loop grounding",
+          goal_id: null,
+          task_id: null,
+          status: "active",
+          confidence: 0.9,
+          importance: 0.7,
+          source_reliability: 0.8,
+          valid_from: null,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: "test",
+          source_id: "agentloop-soil-source",
+          metadata_json: {},
+          created_at: "2026-05-02T00:00:00.000Z",
+          updated_at: "2026-05-02T00:00:00.000Z",
+        }],
+        chunks: [{
+          chunk_id: "chunk-agentloop-soil",
+          record_id: "rec-agentloop-soil",
+          soil_id: "knowledge/agentloop-soil",
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: ["Knowledge"],
+          chunk_text: "test task test approach done Workspace block Soil result for agent-loop grounding",
+          token_count: 8,
+          checksum: "agentloop-soil-chunk",
+          created_at: "2026-05-02T00:00:00.000Z",
+        }],
+        pages: [{
+          page_id: "page-agentloop-soil",
+          soil_id: "knowledge/agentloop-soil",
+          relative_path: "knowledge/agentloop-soil.md",
+          route: "knowledge",
+          kind: "knowledge",
+          status: "confirmed",
+          markdown: "# Agent loop Soil result\n\ntest task test approach done Workspace block Soil result for agent-loop grounding",
+          checksum: "agentloop-soil-page",
+          projected_at: "2026-05-02T00:00:00.000Z",
+        }],
+        page_members: [{
+          page_id: "page-agentloop-soil",
+          record_id: "rec-agentloop-soil",
+          ordinal: 0,
+          role: "primary",
+          confidence: 0.9,
+        }],
+      });
+    } finally {
+      repository.close();
+    }
+    const assembler = new AgentLoopContextAssembler(createGroundingGateway({
+      stateManager: {
+        getBaseDir: () => tmpDir,
+        listGoalIds: async () => [],
+        listTasks: async () => [],
+        readRaw: async () => null,
+        loadGapHistory: async () => [],
+      } as never,
+    }));
     const assembled = await assembler.assembleTask({
       task: makeTask(),
       cwd: tmpDir,
       workspaceContext: "Workspace block",
-      soilPrefetch: async (query) => ({
-        content: `Soil result for ${query.rootDir}`,
-        soilIds: ["soil:1"],
-        retrievalSource: "manifest",
-      }),
     });
 
     expect(assembled.userPrompt).toContain("Root instruction");
     expect(assembled.userPrompt).toContain("Workspace block");
     expect(assembled.userPrompt).toContain("Soil result");
-    expect(assembled.contextBlocks.map((b) => b.id)).toContain("soil-prefetch");
+    expect(assembled.contextBlocks.map((b) => b.id)).toContain("soil-knowledge");
   });
 });
 
@@ -936,7 +1004,8 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
     expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_goal_status")).toBe(true);
   });
 
-	  it("lets chat hand long-running work off to daemon-backed CoreLoop with one tool call", async () => {
+  it("lets chat hand long-running work off to daemon-backed CoreLoop with one tool call", async () => {
+    const stateDir = makeTempDir();
     const modelInfo = makeModelInfo();
     const modelClient = new ScriptedModelClient(modelInfo, [
       {
@@ -957,7 +1026,7 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
       backgroundRunId: (options as { backgroundRun?: { backgroundRunId?: string } }).backgroundRun?.backgroundRunId,
     });
     const stateManager = {
-      getBaseDir: () => "/tmp/pulseed-test",
+      getBaseDir: () => stateDir,
       saveGoal: async (goal: { id: string; title: string }) => {
         savedGoal = goal;
       },
@@ -988,43 +1057,47 @@ describe("agentloop phase 7 ChatAgentLoopRunner and CoreLoopControlTools", () =>
       defaultToolPolicy: { allowedTools: ["core_tend_goal"] },
     });
 
-    const result = await chat.execute({ message: "coreloopで0.98を超えるまでやってほしい" });
+    try {
+      const result = await chat.execute({ message: "coreloopで0.98を超えるまでやってほしい" });
 
-    expect(result.success).toBe(true);
-    expect(result.output.startsWith("CoreLoop started")).toBe(true);
-    expect(savedGoal).toMatchObject({ title: "Improve Kaggle score beyond 0.98" });
-	    expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_tend_goal")).toBe(true);
-	  });
+      expect(result.success).toBe(true);
+      expect(result.output.startsWith("CoreLoop started")).toBe(true);
+      expect(savedGoal).toMatchObject({ title: "Improve Kaggle score beyond 0.98" });
+      expect(modelClient.calls[1].messages.some((m) => m.role === "tool" && m.toolName === "core_tend_goal")).toBe(true);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 
-	  it("does not register daemon-backed CoreLoop control tools without real handlers", () => {
-	    const stateManager = {
-	      getBaseDir: () => "/tmp/pulseed-test",
-	    };
+  it("does not register daemon-backed CoreLoop control tools without real handlers", () => {
+    const stateManager = {
+      getBaseDir: () => "/tmp/pulseed-test",
+    };
 
-	    const toolNames = createCoreLoopControlTools(createDaemonBackedCoreLoopControlToolset({
-	      stateManager: stateManager as never,
-	      daemonClientFactory: async () => ({
-	        startGoal: async () => ({ ok: true }),
-	        stopGoal: async () => ({ ok: true }),
-	        getSnapshot: async () => ({ active_workers: [] }),
-	      }) as never,
-	    })).map((tool) => tool.metadata.name);
+    const toolNames = createCoreLoopControlTools(createDaemonBackedCoreLoopControlToolset({
+      stateManager: stateManager as never,
+      daemonClientFactory: async () => ({
+        startGoal: async () => ({ ok: true }),
+        stopGoal: async () => ({ ok: true }),
+        getSnapshot: async () => ({ active_workers: [] }),
+      }) as never,
+    })).map((tool) => tool.metadata.name);
 
-	    expect(toolNames).toEqual(expect.arrayContaining([
-	      "core_goal_status",
-	      "core_goal_create",
-	      "core_tend_goal",
-	      "core_goal_start",
-	      "core_goal_pause",
-	      "core_goal_resume",
-	      "core_goal_cancel",
-	      "core_task_status",
-	    ]));
-	    expect(toolNames).not.toContain("core_task_prioritize");
-	    expect(toolNames).not.toContain("core_run_cycle");
-	  });
+    expect(toolNames).toEqual(expect.arrayContaining([
+      "core_goal_status",
+      "core_goal_create",
+      "core_tend_goal",
+      "core_goal_start",
+      "core_goal_pause",
+      "core_goal_resume",
+      "core_goal_cancel",
+      "core_task_status",
+    ]));
+    expect(toolNames).not.toContain("core_task_prioritize");
+    expect(toolNames).not.toContain("core_run_cycle");
+  });
 
-	  it("emits approval_request and continues when chat approval is granted", async () => {
+  it("emits approval_request and continues when chat approval is granted", async () => {
     const modelInfo = makeModelInfo();
     const modelClient = new ScriptedModelClient(modelInfo, [
       {

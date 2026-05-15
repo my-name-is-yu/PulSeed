@@ -123,7 +123,7 @@ describe("RemoveScheduleTool", () => {
       RemoveScheduleInputSchema.parse({
         schedule_id: "aaaaaaaa",
       }),
-      makeContext({ approvalFn }),
+      makeContext({ approvalFn, preApproved: true }),
     );
 
     expect(approvalFn).not.toHaveBeenCalled();

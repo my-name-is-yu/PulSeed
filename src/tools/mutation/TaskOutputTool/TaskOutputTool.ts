@@ -9,6 +9,12 @@ import type {
 } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { TaskSchema } from "../../../base/types/task.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -36,15 +42,61 @@ export class TaskOutputTool implements ITool<TaskOutputInput, unknown> {
 
   readonly inputSchema = TaskOutputInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  constructor(
+    private readonly stateManager: StateManager,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
   }
 
-  async call(input: TaskOutputInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: TaskOutputInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.stateManager),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Write task output for ${input.taskId} (${input.mode})`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:task_output" },
+            { kind: "capability", ref: "durable_task_state_write" },
+          ],
+          currentRefs: [
+            { kind: "goal", ref: input.goalId },
+            { kind: "task", ref: input.taskId },
+          ],
+          denialMessage: "task_output requires approval before mutating durable task output.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Write task output for ${input.taskId} (${input.mode})`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:task_output" },
+            { kind: "capability", ref: "durable_task_state_write" },
+          ],
+          currentRefs: [
+            { kind: "goal", ref: input.goalId },
+            { kind: "task", ref: input.taskId },
+          ],
+          outcomeSummary: "task_output was admitted to mutate durable task output.",
+        },
+      );
+
       const raw = await this.stateManager.loadTask(input.goalId, input.taskId);
       if (raw == null) {
         return {
@@ -103,8 +155,10 @@ export class TaskOutputTool implements ITool<TaskOutputInput, unknown> {
     }
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
-    return { status: "allowed" };
+  async checkPermissions(_input: TaskOutputInput, context: ToolCallContext): Promise<PermissionCheckResult> {
+    return context.preApproved
+      ? { status: "allowed" }
+      : { status: "needs_approval", reason: "task_output mutates durable task output" };
   }
 
   isConcurrencySafe(): boolean {

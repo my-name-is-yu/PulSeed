@@ -19,6 +19,7 @@ import {
   runLoopWithSignals,
 } from "../utils/loop-runner.js";
 import { formatWholeMinuteDurationMs } from "./display-format.js";
+import { recordExplicitCommandDecision, stableId } from "../../../runtime/personal-agent/index.js";
 
 function buildApprovalFn(rl: readline.Interface): (task: Task) => Promise<boolean> {
   return (task: Task): Promise<boolean> => {
@@ -122,6 +123,34 @@ export async function cmdRun(
 
   let result: Awaited<ReturnType<typeof durableLoop.run>>;
   try {
+    const runReplayKey = [
+      "cli_run",
+      goalId,
+      runPolicy.mode,
+      runPolicy.mode === "bounded" ? runPolicy.maxIterations : "resident",
+      workspacePath ?? "workspace:none",
+    ].join(":");
+    await recordExplicitCommandDecision({
+      baseDir: stateManager.getBaseDir(),
+      surface: "cli",
+      command: "pulseed run",
+      sourceId: `pulseed run:${goalId}`,
+      sourceEpoch: goal.updated_at,
+      replayKey: runReplayKey,
+      target: {
+        kind: "run",
+        ref: { kind: "run", ref: `run:cli:${stableId(runReplayKey)}` },
+        effect: "create_run",
+        summary: `Run goal "${goal.title}" from CLI.`,
+      },
+      decisionReason: "Explicit CLI run was allowed to start durable goal work.",
+      capabilityRefs: [{ kind: "capability", ref: "durable_loop_goal_run" }],
+      currentRefs: [
+        { kind: "goal", ref: goalId },
+        ...(workspacePath ? [{ kind: "workspace", ref: workspacePath }] : []),
+      ],
+      auditRefs: [{ kind: "goal", ref: goalId }],
+    });
     result = await runLoopWithSignals(durableLoop, goalId);
   } catch (err) {
     if (runPolicy.mode === "resident") {

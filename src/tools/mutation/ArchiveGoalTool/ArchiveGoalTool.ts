@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -25,7 +31,10 @@ export class ArchiveGoalTool implements ITool<ArchiveGoalInput, unknown> {
   };
   readonly inputSchema = ArchiveGoalInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  constructor(
+    private readonly stateManager: StateManager,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
@@ -34,25 +43,42 @@ export class ArchiveGoalTool implements ITool<ArchiveGoalInput, unknown> {
   async call(input: ArchiveGoalInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     try {
-      if (!context.preApproved) {
-        const approved = await context.approvalFn({
-          toolName: this.metadata.name,
-          input,
-          reason: "Archiving goal: " + input.goalId + (input.reason ? " — " + input.reason : ""),
-          permissionLevel: "write_local",
-          isDestructive: false,
-          reversibility: "reversible",
-        });
-        if (!approved) {
-          return {
-            success: false,
-            data: null,
-            summary: "Archive denied by user",
-            error: "User denied archive operation",
-            durationMs: Date.now() - startTime,
-          };
-        }
-      }
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.stateManager),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Archive goal ${input.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:archive_goal" },
+            { kind: "capability", ref: "durable_goal_state_write" },
+          ],
+          currentRefs: [{ kind: "goal", ref: input.goalId }],
+          denialMessage: "archive_goal requires approval before mutating durable goal state.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Archive goal ${input.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:archive_goal" },
+            { kind: "capability", ref: "durable_goal_state_write" },
+          ],
+          currentRefs: [{ kind: "goal", ref: input.goalId }],
+          outcomeSummary: "archive_goal was admitted to mutate durable goal state.",
+        },
+      );
 
       const archived = await this.stateManager.archiveGoal(input.goalId);
       if (!archived) {

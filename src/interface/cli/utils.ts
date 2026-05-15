@@ -54,6 +54,13 @@ Usage:
   pulseed runtime evidence <goal-id|run-id> [--json]  Summarize runtime evidence ledger
   pulseed runtime dream-review <run-id> [--json]  Read-only Dream sidecar review for active run
   pulseed runtime cognition-replay [--view normal|operator|internal] [--json]  Read-only cognition replay refs inspection
+  pulseed runtime situation-frame <id> [--json]  Diagnostic SituationFrame inspection
+  pulseed runtime initiative-trace <ref> [--json]  Diagnostic InitiativeEvent trace inspection
+  pulseed runtime attention-state [--json]  Diagnostic pending concern inspection
+  pulseed runtime intervention-decision <id> [--json]  Diagnostic InterventionPolicy inspection
+  pulseed runtime capability-decision <id> [--json]  Diagnostic Capability Registry inspection
+  pulseed runtime runtime-graph <id> [--json]  Diagnostic RuntimeGraph node and lineage inspection
+  pulseed runtime memory-provenance [--json]  Diagnostic memory provenance/correction audit inspection
   pulseed log --goal <id>              View observation and gap history log
   pulseed tui                          Launch the interactive TUI
   pulseed start --goal <id>            Start daemon mode for one or more goals

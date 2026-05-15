@@ -1,9 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { OutboxStore } from "../store/outbox-store.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import { OutboxRecordSchema } from "../store/runtime-schemas.js";
+import {
+  PersonalAgentRuntimeStore,
+  type PersonalAgentDecisionTrace,
+} from "../personal-agent/index.js";
+import {
+  CONTROL_DB_MIGRATIONS,
+  openControlDatabase,
+} from "../store/control-db/index.js";
 
 describe("OutboxStore", () => {
   let tmpDir: string;
@@ -15,6 +23,7 @@ describe("OutboxStore", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     cleanupTempDir(tmpDir);
   });
 
@@ -45,6 +54,66 @@ describe("OutboxStore", () => {
     expect(await store.load(1)).toMatchObject({ event_type: "goal_activated" });
   });
 
+  it("records notification admission before appending outbox entries", async () => {
+    const order: string[] = [];
+    const captured: PersonalAgentDecisionTrace[] = [];
+    const originalRecordTrace = PersonalAgentRuntimeStore.prototype.recordTrace;
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockImplementation(async function (this: PersonalAgentRuntimeStore, trace) {
+        order.push("trace");
+        captured.push(trace);
+        expect(await store.list()).toEqual([]);
+        return originalRecordTrace.call(this, trace);
+      });
+
+    const first = await store.append({
+      event_type: "goal_activated",
+      goal_id: "goal-1",
+      correlation_id: "corr-1",
+      created_at: 1,
+      payload: { kind: "first" },
+    });
+    order.push("append");
+
+    expect(first.seq).toBe(1);
+    expect(order).toEqual(["trace", "append"]);
+    const trace = captured[0];
+    expect(trace).toBeDefined();
+    expect(trace?.situation_frame.caller_path).toBe("notification_interruption");
+    expect(trace?.task_candidates[0]).toMatchObject({
+      target_kind: "notification",
+      desired_effect: "send_notification",
+      task_created: false,
+    });
+    expect(trace?.intervention_decisions[0]).toMatchObject({
+      decision: "allow",
+      target_effect: "send_notification",
+      policy_ref: { kind: "intervention_policy", ref: "policy:notification-interruption-v1" },
+    });
+  });
+
+  it("does not append outbox entries when notification admission fails", async () => {
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockRejectedValueOnce(new Error("trace unavailable"));
+
+    await expect(store.append({
+      event_type: "goal_activated",
+      goal_id: "goal-1",
+      correlation_id: "corr-1",
+      created_at: 1,
+      payload: { kind: "first" },
+    })).rejects.toThrow("trace unavailable");
+
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("restricts direct save to explicit migration/import/debug seeding boundaries", async () => {
+    await expect(store.save(makeRecord(1, "direct"))).rejects.toThrow("restricted");
+
+    await expect(store.save(makeRecord(1, "debug"), { boundary: "test_seed" }))
+      .resolves.toMatchObject({ seq: 1, event_type: "debug" });
+  });
+
   it("rejects unsafe outbox sequence and timestamp values", async () => {
     const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
 
@@ -53,7 +122,7 @@ describe("OutboxStore", () => {
       event_type: "unsafe_seq",
       created_at: 1,
       payload: {},
-    })).rejects.toThrow();
+    }, { boundary: "test_seed" })).rejects.toThrow();
 
     await expect(store.append({
       event_type: "unsafe_created_at",
@@ -77,8 +146,8 @@ describe("OutboxStore", () => {
   });
 
   it("loads and filters records in sequence order", async () => {
-    await store.save(makeRecord(2, "second"));
-    await store.save(makeRecord(1, "first"));
+    await store.save(makeRecord(2, "second"), { boundary: "test_seed" });
+    await store.save(makeRecord(1, "first"), { boundary: "test_seed" });
 
     const all = await store.list();
     expect(all.map((record) => record.seq)).toEqual([1, 2]);
@@ -87,8 +156,78 @@ describe("OutboxStore", () => {
   });
 
   it("returns the next sequence after the highest existing entry", async () => {
-    await store.save(makeRecord(4, "fourth"));
+    await store.save(makeRecord(4, "fourth"), { boundary: "test_seed" });
     expect(await store.nextSeq()).toBe(5);
+  });
+
+  it("returns the existing outbox record when append replays the same notification input", async () => {
+    const input = {
+      event_type: "goal_activated",
+      goal_id: "goal-1",
+      correlation_id: "corr-1",
+      created_at: 1,
+      payload: { kind: "first", nested: { b: 2, a: 1 } },
+    };
+
+    const first = await store.append(input);
+    const replay = await store.append({
+      ...input,
+      created_at: 2,
+      payload: { nested: { a: 1, b: 2 }, kind: "first" },
+    });
+
+    expect(replay.seq).toBe(first.seq);
+    expect(await store.list()).toHaveLength(1);
+  });
+
+  it("deduplicates replayed notifications against pre-v33 outbox rows without dedupe keys", async () => {
+    const legacyRecord = OutboxRecordSchema.parse({
+      seq: 1,
+      event_type: "goal_activated",
+      goal_id: "goal-legacy",
+      correlation_id: "corr-legacy",
+      created_at: 1,
+      payload: { kind: "legacy", nested: { b: 2, a: 1 } },
+    });
+    const legacyDb = await openControlDatabase({
+      baseDir: tmpDir,
+      migrations: CONTROL_DB_MIGRATIONS.filter((migration) => migration.version < 33),
+    });
+    try {
+      legacyDb.transaction((sqlite) => {
+        sqlite.prepare(`
+          INSERT INTO outbox_records (seq, created_at, kind, record_json)
+          VALUES (?, ?, ?, json(?))
+        `).run(
+          legacyRecord.seq,
+          legacyRecord.created_at,
+          legacyRecord.event_type,
+          JSON.stringify(legacyRecord),
+        );
+      });
+    } finally {
+      legacyDb.close();
+    }
+
+    const replay = await new OutboxStore(tmpDir).append({
+      event_type: legacyRecord.event_type,
+      goal_id: legacyRecord.goal_id,
+      correlation_id: legacyRecord.correlation_id,
+      created_at: 2,
+      payload: { nested: { a: 1, b: 2 }, kind: "legacy" },
+    });
+
+    expect(replay.seq).toBe(legacyRecord.seq);
+    expect(await new OutboxStore(tmpDir).list()).toHaveLength(1);
+    const upgradedDb = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      const row = upgradedDb.read((sqlite) =>
+        sqlite.prepare("SELECT dedupe_key FROM outbox_records WHERE seq = 1").get() as { dedupe_key: string | null }
+      );
+      expect(row.dedupe_key).toEqual(expect.stringContaining("goal_activated:goal-legacy:corr-legacy:"));
+    } finally {
+      upgradedDb.close();
+    }
   });
 
   it("two store instances append distinct seq values without overwriting", async () => {

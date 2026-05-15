@@ -208,7 +208,9 @@ export class ParallelExecutor {
         taskId,
         agentTask,
         pipeline,
-        undefined
+        undefined,
+        undefined,
+        { goalId: context.goalId },
       );
 
       const verdict = result.final_verdict as "pass" | "partial" | "fail";

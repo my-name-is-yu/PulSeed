@@ -269,6 +269,12 @@ describe("cmdStart", () => {
         },
       }),
       expect.any(Object),
+      expect.objectContaining({
+        info: expect.any(Function),
+        warn: expect.any(Function),
+        error: expect.any(Function),
+      }),
+      expect.any(Object),
     ]);
     const realtimeSink = setRealtimeSinkMock.mock.calls[0]?.[0] as ((report: unknown) => Promise<void>) | undefined;
     expect(realtimeSink).toBeTypeOf("function");
@@ -296,6 +302,7 @@ describe("cmdStart", () => {
         hookManager: { id: "hook-manager" },
         memoryLifecycle: { id: "memory" },
         knowledgeManager: { id: "knowledge" },
+        personalAgentRuntime: expect.any(Object),
       })
     );
 

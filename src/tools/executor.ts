@@ -8,6 +8,7 @@ import type {
   ITool,
   ToolResult,
   ToolCallContext,
+  PermissionCheckResult,
 } from "./types.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ToolPermissionManager } from "./permission.js";
@@ -21,6 +22,15 @@ import { persistCapabilityExecutionRecords } from "./capability-execution-record
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
 import { resolveWorkspaceCwd } from "./workspace-scope.js";
 import type { PermissionWaitCanonicalPlan } from "../runtime/store/permission-wait-plan-store.js";
+import {
+  recordPersonalAgentToolDecision,
+} from "./personal-agent-tool-trace.js";
+import type {
+  CapabilityRegistryDecisionKind,
+  InterventionDecisionKind,
+  InterventionTargetEffect,
+} from "../runtime/personal-agent/index.js";
+import type { PersonalAgentRuntimeStore } from "../runtime/personal-agent/index.js";
 
 /**
  * 5-gate execution pipeline for tool invocations.
@@ -35,11 +45,15 @@ export class ToolExecutor {
   private readonly registry: ToolRegistry;
   private readonly permissionManager: ToolPermissionManager;
   private readonly concurrency: ConcurrencyController;
+  private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  private readonly traceBaseDir?: string | null;
 
   constructor(deps: ToolExecutorDeps) {
     this.registry = deps.registry;
     this.permissionManager = deps.permissionManager;
     this.concurrency = deps.concurrency;
+    this.personalAgentRuntime = deps.personalAgentRuntime;
+    this.traceBaseDir = deps.traceBaseDir ?? null;
   }
 
   async execute(
@@ -72,33 +86,86 @@ export class ToolExecutor {
     }
     const input = parseResult.data;
 
-    const hostPreflightResult = this.checkHostPolicyPreflight(tool, input, context, startTime);
+    const hostPreflightResult = await this.checkHostPolicyPreflight(tool, input, context, startTime);
     if (hostPreflightResult) return hostPreflightResult;
+
+    let precheckedPermissionResult: Awaited<ReturnType<ToolPermissionManager["check"]>> | null = null;
 
     // --- Gate 2: Semantic Validation (tool-specific) ---
     const semanticResult = await tool.checkPermissions(input, context);
     if (semanticResult.status === "denied") {
+      await this.recordToolPolicyDecision(tool, input, context, {
+        decision: "block",
+        capabilityDecision: "blocked",
+        decisionReason: `Tool-specific permission check blocked ${tool.metadata.name}: ${semanticResult.reason}`,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution was blocked before side effects.`,
+      });
       return this.failResult(
         `Permission denied: ${semanticResult.reason}`,
         Date.now() - startTime,
         { status: "not_executed", reason: semanticResult.executionReason ?? "permission_denied", message: semanticResult.reason },
       );
     }
-    if (semanticResult.status === "needs_approval" && tool.metadata.tags.includes("automation")) {
-      const approvalResult = await this.requestPermissionApproval({
-        tool,
-        input,
-        context,
-        startTime,
-        reason: semanticResult.reason,
-        reversibility: "unknown",
-      });
-      if (approvalResult) return approvalResult;
+    if (semanticResult.status === "needs_approval") {
+      const grantBackedPermissionResult = await this.permissionManager.check(tool, input, context);
+      if (this.isAllowedByPermissionGrant(grantBackedPermissionResult)) {
+        precheckedPermissionResult = grantBackedPermissionResult;
+      } else {
+        if (grantBackedPermissionResult.status === "denied") {
+          await this.recordToolPolicyDecision(tool, input, context, {
+            decision: "block",
+            capabilityDecision: "blocked",
+            decisionReason: `Permission policy blocked ${tool.metadata.name}: ${grantBackedPermissionResult.reason}`,
+            targetEffect: "execute_tool",
+            targetSummary: `${tool.metadata.name} tool execution was blocked before side effects.`,
+          });
+          return this.failResult(
+            `Permission denied by policy: ${grantBackedPermissionResult.reason}`,
+            Date.now() - startTime,
+            {
+              status: "not_executed",
+              reason: grantBackedPermissionResult.executionReason ?? "policy_blocked",
+              message: grantBackedPermissionResult.reason,
+            },
+          );
+        }
+        const approvalReason = tool.metadata.tags.includes("automation")
+          ? semanticResult.reason
+          : grantBackedPermissionResult.status === "needs_approval"
+            ? grantBackedPermissionResult.reason
+            : semanticResult.reason;
+        await this.recordToolPolicyDecision(tool, input, context, {
+          decision: "confirm_required",
+          capabilityDecision: "permission_required",
+          decisionReason: `Tool-specific permission check requires confirmation for ${tool.metadata.name}: ${approvalReason}`,
+          targetEffect: "execute_tool",
+          targetSummary: `${tool.metadata.name} tool execution requires confirmation before side effects.`,
+        });
+        const approvalResult = await this.requestPermissionApproval({
+          tool,
+          input,
+          context,
+          startTime,
+          reason: approvalReason,
+          reversibility: "unknown",
+          permissionGrantDecision: grantBackedPermissionResult.permissionGrantDecision,
+        });
+        if (approvalResult) return approvalResult;
+        precheckedPermissionResult = { status: "allowed" };
+      }
     }
 
     // --- Gate 3: Permission Manager (3-layer) ---
-    const permResult = await this.permissionManager.check(tool, input, context);
+    const permResult = precheckedPermissionResult ?? await this.permissionManager.check(tool, input, context);
     if (permResult.status === "denied") {
+      await this.recordToolPolicyDecision(tool, input, context, {
+        decision: "block",
+        capabilityDecision: "blocked",
+        decisionReason: `Permission policy blocked ${tool.metadata.name}: ${permResult.reason}`,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution was blocked before side effects.`,
+      });
       return this.failResult(
         `Permission denied by policy: ${permResult.reason}`,
         Date.now() - startTime,
@@ -106,6 +173,13 @@ export class ToolExecutor {
       );
     }
     if (permResult.status === "needs_approval") {
+      await this.recordToolPolicyDecision(tool, input, context, {
+        decision: "confirm_required",
+        capabilityDecision: "permission_required",
+        decisionReason: `Permission policy requires confirmation for ${tool.metadata.name}: ${permResult.reason}`,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution requires confirmation before side effects.`,
+      });
       const approvalResult = await this.requestPermissionApproval({
         tool,
         input,
@@ -122,12 +196,27 @@ export class ToolExecutor {
     // --- Gate 4: Input Sanitization ---
     const sanitizeError = this.sanitizeInput(tool, input, context);
     if (sanitizeError) {
+      await this.recordToolPolicyDecision(tool, input, context, {
+        decision: "block",
+        capabilityDecision: "blocked",
+        decisionReason: `Input sanitizer blocked ${tool.metadata.name}: ${sanitizeError}`,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution was blocked before side effects.`,
+      });
       return this.failResult(
         `Input sanitization failed: ${sanitizeError}`,
         Date.now() - startTime,
         { status: "not_executed", reason: "policy_blocked", message: sanitizeError },
       );
     }
+
+    await this.recordToolPolicyDecision(tool, input, context, {
+      decision: "allow",
+      capabilityDecision: "available",
+      decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
+      targetEffect: "execute_tool",
+      targetSummary: `${tool.metadata.name} tool execution was admitted before side effects.`,
+    });
 
     // --- Gate 5: Concurrency Control ---
     let result: ToolResult;
@@ -164,6 +253,14 @@ export class ToolExecutor {
         Date.now() - startTime,
         this.executionForFailure(err, context) ?? { status: "executed", reason: "tool_error", message: error },
       );
+      await this.recordToolPolicyDecision(tool, input, context, {
+        decision: "allow",
+        capabilityDecision: "available",
+        decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution was admitted before side effects.`,
+        outcomeSummary: toolOutcomeSummary(tool.metadata.name, failure),
+      });
       try {
         await persistCapabilityExecutionRecords({ tool, rawInput: input, result: failure, context });
       } catch (persistErr) {
@@ -188,6 +285,15 @@ export class ToolExecutor {
         result.truncated = { originalChars: originalLength, overflowPath };
       }
     }
+
+    await this.recordToolPolicyDecision(tool, input, context, {
+      decision: "allow",
+      capabilityDecision: "available",
+      decisionReason: `${tool.metadata.name} was admitted by Capability Registry and InterventionPolicy before tool.call().`,
+      targetEffect: "execute_tool",
+      targetSummary: `${tool.metadata.name} tool execution was admitted before side effects.`,
+      outcomeSummary: toolOutcomeSummary(tool.metadata.name, result),
+    });
 
     try {
       await persistCapabilityExecutionRecords({ tool, rawInput: input, result, context });
@@ -283,12 +389,24 @@ export class ToolExecutor {
         reason: "approval_denied",
         audit_refs: [auditRef],
       });
-      return this.failResult(
+      const denied = this.failResult(
         `User denied approval: ${input.reason}`,
         Date.now() - input.startTime,
         { status: "not_executed", reason: "approval_denied", message: input.reason },
       );
+      await this.recordToolPolicyDecision(input.tool, input.input, input.context, {
+        decision: "block",
+        capabilityDecision: "blocked",
+        decisionReason: `Operator denied confirmation for ${input.tool.metadata.name}: ${input.reason}`,
+        targetEffect: "execute_tool",
+        targetSummary: `${input.tool.metadata.name} tool execution was blocked after confirmation was denied.`,
+        outcomeSummary: toolOutcomeSummary(input.tool.metadata.name, denied),
+      });
+      return denied;
     }
+
+    input.context.preApproved = true;
+    input.context.hostPolicyApproved = true;
 
     if (!input.context.permissionWaitPlanStore) return null;
 
@@ -297,7 +415,7 @@ export class ToolExecutor {
     });
     const resumePlan = this.buildCanonicalPermissionWaitPlan({
       ...input,
-      policyDecision: decideHostToolExecution({
+      policyDecision: input.policyDecision ?? decideHostToolExecution({
         tool: input.tool,
         input: input.input,
         context: input.context,
@@ -312,13 +430,70 @@ export class ToolExecutor {
     const message = resumeResult.status === "mismatch_rejected"
       ? `Approval mismatch: ${resumeResult.mismatch_reasons.join(", ")}`
       : `Approval could not resume stored plan: ${resumeResult.status}`;
-    return this.failResult(
+    const blocked = this.failResult(
       message,
       Date.now() - input.startTime,
       {
         status: "not_executed",
         reason: resumeResult.status === "mismatch_rejected" ? "stale_state" : "approval_denied",
         message,
+      },
+    );
+    await this.recordToolPolicyDecision(input.tool, input.input, input.context, {
+      decision: "block",
+      capabilityDecision: "blocked",
+      decisionReason: `Approval resume blocked ${input.tool.metadata.name}: ${message}`,
+      targetEffect: "execute_tool",
+      targetSummary: `${input.tool.metadata.name} tool execution was blocked because approval could not resume safely.`,
+      outcomeSummary: toolOutcomeSummary(input.tool.metadata.name, blocked),
+    });
+    return blocked;
+  }
+
+  private isAllowedByPermissionGrant(result: PermissionCheckResult): boolean {
+    if (result.status !== "allowed") return false;
+    const grantDecision = result.permissionGrantDecision;
+    return Boolean(
+      grantDecision
+      && typeof grantDecision === "object"
+      && "allowed" in grantDecision
+      && grantDecision.allowed === true
+    );
+  }
+
+  private async recordToolPolicyDecision(
+    tool: ITool,
+    input: unknown,
+    context: ToolCallContext,
+    options: {
+      decision: InterventionDecisionKind;
+      capabilityDecision: CapabilityRegistryDecisionKind;
+      decisionReason: string;
+      targetEffect: InterventionTargetEffect;
+      targetSummary: string;
+      outcomeSummary?: string;
+    },
+  ): Promise<void> {
+    await recordPersonalAgentToolDecision(
+      {
+        personalAgentRuntime: context.personalAgentRuntime ?? this.personalAgentRuntime,
+        baseDir: context.providerConfigBaseDir ?? this.traceBaseDir ?? null,
+      },
+      tool.metadata.name,
+      input,
+      context,
+      {
+        decision: options.decision,
+        capabilityDecision: options.capabilityDecision,
+        decisionReason: options.decisionReason,
+        targetEffect: options.targetEffect,
+        targetSummary: options.targetSummary,
+        capabilityRefs: [
+          { kind: "tool", ref: tool.metadata.name },
+          { kind: "tool_permission", ref: tool.metadata.permissionLevel },
+          ...(tool.metadata.activityCategory ? [{ kind: "tool_activity", ref: tool.metadata.activityCategory }] : []),
+        ],
+        ...(options.outcomeSummary ? { outcomeSummary: options.outcomeSummary } : {}),
       },
     );
   }
@@ -381,12 +556,12 @@ export class ToolExecutor {
     };
   }
 
-  private checkHostPolicyPreflight(
+  private async checkHostPolicyPreflight(
     tool: ITool,
     input: unknown,
     context: ToolCallContext,
     startTime: number,
-  ): ToolResult | null {
+  ): Promise<ToolResult | null> {
     const decision = decideHostToolExecution({ tool, input, context });
     if (decision.status === "allowed" || decision.status === "needs_permission") {
       return null;
@@ -396,6 +571,14 @@ export class ToolExecutor {
     if (policyResult.status !== "denied") {
       return null;
     }
+
+    await this.recordToolPolicyDecision(tool, input, context, {
+      decision: "block",
+      capabilityDecision: "blocked",
+      decisionReason: `Host execution policy blocked ${tool.metadata.name}: ${policyResult.reason}`,
+      targetEffect: "execute_tool",
+      targetSummary: `${tool.metadata.name} tool execution was blocked by host policy before side effects.`,
+    });
 
     return this.failResult(
       `Permission denied by host policy: ${policyResult.reason}`,
@@ -540,8 +723,17 @@ function summarizePermissionGrantDecision(value: unknown): { status?: string; re
   };
 }
 
+function toolOutcomeSummary(toolName: string, result: ToolResult): string {
+  const status = result.execution?.status ?? (result.success ? "executed" : "failed");
+  const reason = result.execution?.reason ? ` reason=${result.execution.reason}` : "";
+  const summary = result.summary ? ` ${result.summary}` : "";
+  return `${toolName} action outcome: ${status}${reason}.${summary}`.trim();
+}
+
 export interface ToolExecutorDeps {
   registry: ToolRegistry;
   permissionManager: ToolPermissionManager;
   concurrency: ConcurrencyController;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  traceBaseDir?: string | null;
 }

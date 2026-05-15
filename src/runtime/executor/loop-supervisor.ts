@@ -15,6 +15,13 @@ import type { WaitResumeActivation } from '../../base/types/goal-activation.js';
 import type { LoopRunPolicyMode } from '../../orchestrator/loop/durable-loop.js';
 import { createDaemonShutdownAbortReason } from '../../base/utils/abort-reason.js';
 import { SupervisorStateStore } from '../store/supervisor-state-store.js';
+import {
+  recordGoalRunAdmissionDecision,
+  stableId,
+  type GoalRunAdmissionTriggerKind,
+  type PersonalAgentRuntimeStore,
+  type RuntimeGraphRef,
+} from '../personal-agent/index.js';
 
 export interface SupervisorConfig {
   concurrency: number;
@@ -41,6 +48,7 @@ export interface SupervisorDeps {
   stateManager: StateManager;
   logger?: Logger;
   backgroundRunLedger?: Pick<BackgroundRunLedger, 'load' | 'link' | 'started' | 'terminal'>;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   onCycleComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
   onGoalComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
   onBackgroundRunTerminal?: (run: BackgroundRun, result: WorkerResult) => Promise<void> | void;
@@ -517,6 +525,7 @@ export class LoopSupervisor {
       ownershipLost = true;
     });
     this.setActiveBackgroundRun(worker, activation);
+    await this.recordGoalRunAdmission(worker, activation);
     await this.markBackgroundRunStarted(activation, worker);
 
     try {
@@ -634,6 +643,81 @@ export class LoopSupervisor {
 
   private coreLoopSessionId(worker: GoalWorker): string {
     return `session:coreloop:${worker.id}`;
+  }
+
+  private async recordGoalRunAdmission(worker: GoalWorker, activation: GoalActivation): Promise<void> {
+    const envelope = activation.claim.envelope;
+    const triggerKind = this.goalRunAdmissionTriggerKind(activation);
+    const sourceEpoch = String(envelope.created_at);
+    const sourceId = [
+      "supervisor-worker",
+      activation.goalId,
+      envelope.id,
+      activation.claim.attempt,
+    ].join(":");
+    const runRef = activation.backgroundRun?.backgroundRunId
+      ? {
+          kind: "run",
+          ref: `background_run:${activation.backgroundRun.backgroundRunId}`,
+        }
+      : {
+          kind: "run",
+          ref: `supervisor_run:${stableId(sourceId)}`,
+        };
+    const refs = this.goalRunAdmissionRefs(worker, activation, triggerKind);
+    await recordGoalRunAdmissionDecision({
+      personalAgentRuntime: this.deps.personalAgentRuntime,
+      baseDir: this.config.controlBaseDir ?? this.deps.stateManager.getBaseDir?.() ?? this.config.runtimeRoot,
+      source: "supervisor_worker",
+      triggerKind,
+      goalId: activation.goalId,
+      sourceId,
+      emittedAt: new Date(envelope.created_at).toISOString(),
+      sourceEpoch,
+      highWatermark: sourceEpoch,
+      runPolicy: this.config.runPolicy,
+      maxIterations: this.config.runPolicy === "resident"
+        ? null
+        : this.config.maxIterations ?? this.config.iterationsPerCycle,
+      targetRunRef: runRef,
+      decisionReason: `Supervisor worker admitted durable queue activation for goal ${activation.goalId} before DurableLoop execution.`,
+      currentRefs: refs,
+      auditRefs: refs,
+    });
+  }
+
+  private goalRunAdmissionTriggerKind(activation: GoalActivation): GoalRunAdmissionTriggerKind {
+    if (activation.waitResume) return "wait_resume";
+    return "manual_or_queued_activation";
+  }
+
+  private goalRunAdmissionRefs(
+    worker: GoalWorker,
+    activation: GoalActivation,
+    triggerKind: GoalRunAdmissionTriggerKind,
+  ): RuntimeGraphRef[] {
+    const refs: RuntimeGraphRef[] = [
+      { kind: "journal_queue_message", ref: activation.claim.messageId },
+      { kind: "journal_queue_claim", ref: activation.claim.claimToken },
+      { kind: "supervisor_worker", ref: worker.id },
+      { kind: "supervisor_state", ref: "current" },
+    ];
+    if (activation.claim.envelope.dedupe_key) {
+      refs.push({ kind: "journal_queue_dedupe_key", ref: activation.claim.envelope.dedupe_key });
+    }
+    if (activation.backgroundRun?.backgroundRunId) {
+      refs.push({ kind: "run", ref: `background_run:${activation.backgroundRun.backgroundRunId}` });
+    }
+    if (activation.waitResume) {
+      refs.push(
+        { kind: "wait_strategy", ref: activation.waitResume.strategyId },
+        { kind: "goal_run_admission_trigger", ref: triggerKind },
+      );
+      if (activation.waitResume.scheduleEntryId) {
+        refs.push({ kind: "schedule_entry", ref: activation.waitResume.scheduleEntryId });
+      }
+    }
+    return refs;
   }
 
   private setActiveBackgroundRun(worker: GoalWorker, activation: GoalActivation): void {

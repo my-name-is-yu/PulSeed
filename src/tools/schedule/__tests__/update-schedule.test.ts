@@ -173,7 +173,7 @@ describe("UpdateScheduleTool", () => {
       escalation: null,
     });
 
-    const result = await tool.call(input, makeContext({ approvalFn }));
+    const result = await tool.call(input, makeContext({ approvalFn, preApproved: true }));
 
     expect(approvalFn).not.toHaveBeenCalled();
     expect(scheduleEngine.updateEntry).toHaveBeenCalledTimes(1);

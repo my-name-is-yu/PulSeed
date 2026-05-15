@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import type { ScheduleEntryUpdateInput, ScheduleEngine } from "../../../../runtime/schedule/engine.js";
+import type { ScheduleEntry } from "../../../../runtime/types/schedule.js";
 import {
   CronConfigSchema,
   EscalationConfigSchema,
@@ -9,8 +10,12 @@ import {
   ScheduleRetryPolicySchema,
 } from "../../../../runtime/types/schedule.js";
 import { getScheduleOrPrintError, parseJsonConfig, resolveTriggerPatch } from "./shared.js";
+import {
+  executeScheduleCliTool,
+  throwIfScheduleCliToolFailed,
+} from "./tool-execution.js";
 
-export async function scheduleEdit(engine: ScheduleEngine, argv: string[]): Promise<void> {
+export async function scheduleEdit(engine: ScheduleEngine, argv: string[], fullArgv: string[] = argv): Promise<void> {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({
@@ -44,11 +49,18 @@ export async function scheduleEdit(engine: ScheduleEngine, argv: string[]): Prom
 
   try {
     const patch = buildScheduleEditPatch(parsed.values as Record<string, unknown>);
-    const updated = await engine.updateEntry(entry.id, patch);
-    if (!updated) {
-      console.error(`No schedule entry found matching: ${id}`);
-      return;
-    }
+    const result = await executeScheduleCliTool(
+      engine,
+      "update_schedule",
+      { schedule_id: entry.id, ...patch },
+      {
+        command: "edit",
+        argv: fullArgv,
+        currentRefs: [{ kind: "schedule", ref: entry.id }],
+      },
+    );
+    throwIfScheduleCliToolFailed(result);
+    const updated = (result.data as { entry: ScheduleEntry }).entry;
     console.log(`Updated schedule entry: ${updated.id} (${updated.name})`);
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);

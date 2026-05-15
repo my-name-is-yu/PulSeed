@@ -24,7 +24,6 @@ import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import { AgentLoopContextAssembler } from "./agent-loop-context-assembler.js";
 import { resolveAgentLoopDefaultProfileFromProviderConfig } from "./agent-loop-default-profile.js";
 import type { AgentLoopToolPolicy } from "./agent-loop-turn-context.js";
-import type { SoilPrefetchQuery, SoilPrefetchResult } from "./agent-loop-context-assembler.js";
 import { createPersistentAgentLoopSessionFactory } from "./agent-loop-session-factory.js";
 import type { AgentLoopWorktreePolicy } from "./task-agent-loop-worktree.js";
 
@@ -35,7 +34,6 @@ export interface NativeTaskAgentLoopRuntimeDeps {
   toolRegistry: ToolRegistry;
   toolExecutor: ToolExecutor;
   cwd?: string;
-  soilPrefetch?: (query: SoilPrefetchQuery) => Promise<SoilPrefetchResult | null>;
   defaultBudget?: Partial<AgentLoopBudget>;
   defaultToolPolicy?: AgentLoopToolPolicy;
   defaultWorktreePolicy?: AgentLoopWorktreePolicy;
@@ -70,7 +68,10 @@ export function createNativeTaskAgentLoopRunner(
     defaultModel: runtime.modelInfo.ref,
     defaultBudget: profile.budget,
     defaultToolPolicy: profile.toolPolicy,
-    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultToolCallContext: {
+      ...(profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : {}),
+      ...(deps.traceBaseDir ? { providerConfigBaseDir: deps.traceBaseDir } : {}),
+    },
     defaultWorktreePolicy: profile.worktreePolicy,
     defaultReasoningEffort: profile.reasoningEffort,
     defaultProfileName: profile.name,
@@ -78,7 +79,6 @@ export function createNativeTaskAgentLoopRunner(
     contextAssembler: new AgentLoopContextAssembler(createGroundingGateway({
       ...(deps.stateManager ? { stateManager: deps.stateManager } : {}),
     })),
-    soilPrefetch: deps.soilPrefetch,
     cwd: deps.cwd,
     createSession: deps.traceBaseDir
       ? (() => {
@@ -120,7 +120,10 @@ export function createNativeChatAgentLoopRunner(
     defaultModel: runtime.modelInfo.ref,
     defaultBudget: profile.budget,
     defaultToolPolicy: profile.toolPolicy,
-    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultToolCallContext: {
+      ...(profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : {}),
+      ...(deps.traceBaseDir ? { providerConfigBaseDir: deps.traceBaseDir } : {}),
+    },
     defaultReasoningEffort: profile.reasoningEffort,
     defaultProfileName: profile.name,
     defaultExecutionPolicy: profile.executionPolicy,
@@ -150,7 +153,10 @@ export function createNativeReviewAgentLoopRunner(
     defaultModel: runtime.modelInfo.ref,
     defaultBudget: profile.budget,
     defaultToolPolicy: profile.toolPolicy,
-    defaultToolCallContext: profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : undefined,
+    defaultToolCallContext: {
+      ...(profile.executionPolicy ? { executionPolicy: profile.executionPolicy } : {}),
+      ...(deps.traceBaseDir ? { providerConfigBaseDir: deps.traceBaseDir } : {}),
+    },
     defaultReasoningEffort: profile.reasoningEffort,
     defaultExecutionPolicy: profile.executionPolicy,
     profile,

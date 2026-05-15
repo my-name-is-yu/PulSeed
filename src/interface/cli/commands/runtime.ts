@@ -47,6 +47,14 @@ import { formatOperationError } from "../utils.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./operator-binding-status.js";
 import { cmdRuntimeCognitionReplay } from "./cognition-replay.js";
+import {
+  PersonalAgentRuntimeStore,
+  type CapabilityRegistryDecision,
+  type InterventionDecision,
+  type PersonalAgentTraceSnapshot,
+  type RuntimeGraphNode,
+  type SituationFrame,
+} from "../../../runtime/personal-agent/index.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -344,6 +352,71 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function personalAgentStore(stateManager: StateManager): PersonalAgentRuntimeStore {
+  const baseDir = stateManager.getBaseDir();
+  return new PersonalAgentRuntimeStore(resolveConfiguredDaemonRuntimeRoot(baseDir), {
+    controlBaseDir: baseDir,
+  });
+}
+
+function printSituationFrame(frame: SituationFrame): void {
+  console.log(`SituationFrame: ${frame.frame_id}`);
+  console.log(`  Caller:      ${frame.caller_path}`);
+  console.log(`  Source:      ${frame.source_kind}:${frame.source_ref.ref}`);
+  console.log(`  Assembled:   ${frame.assembled_at}`);
+  console.log(`  Replay key:  ${frame.replay_key}`);
+  console.log(`  Summary:     ${frame.summary}`);
+  console.log(`  Current refs:${frame.current_refs.length}`);
+  console.log(`  Memory refs: ${frame.memory_refs.length} included, ${frame.withheld_memory_refs.length} withheld, ${frame.stale_refs.length} stale`);
+  console.log(`  Trace visible on normal surface: ${frame.normal_surface_trace_visible ? "yes" : "no"}`);
+}
+
+function printTraceSummary(trace: PersonalAgentTraceSnapshot): void {
+  console.log(`Initiative trace: ${trace.trace_id}`);
+  console.log(`  Replay key:     ${trace.replay_key}`);
+  console.log(`  Situation:      ${trace.situation_frame?.frame_id ?? "-"}`);
+  console.log(`  Events:         ${trace.initiative_events.length}`);
+  console.log(`  Attention:      ${trace.attention_transitions.length}`);
+  console.log(`  Candidates:     ${trace.task_candidates.length}`);
+  console.log(`  Capability:     ${trace.capability_decisions.length}`);
+  console.log(`  Intervention:   ${trace.intervention_decisions.length}`);
+  console.log(`  Runtime graph:  ${trace.runtime_graph_nodes.length} node(s), ${trace.runtime_graph_edges.length} edge(s)`);
+  console.log(`  Memory audits:  ${trace.memory_audits.length}`);
+  for (const event of trace.initiative_events.slice(0, 8)) {
+    console.log(`    - #${event.sequence} ${event.event_type}: ${formatCell(event.summary, 96)}`);
+  }
+}
+
+function printInterventionDecision(decision: InterventionDecision): void {
+  console.log(`InterventionPolicy decision: ${decision.decision_id}`);
+  console.log(`  Decision:    ${decision.decision}`);
+  console.log(`  Effect:      ${decision.target_effect}`);
+  console.log(`  Permission:  ${decision.permission_required ? "required" : "-"}`);
+  console.log(`  Candidate:   ${decision.candidate_id}`);
+  console.log(`  Capability:  ${decision.capability_decision_id}`);
+  console.log(`  Policy:      ${decision.policy_ref.kind}:${decision.policy_ref.ref}`);
+  console.log(`  Reason:      ${decision.reason}`);
+}
+
+function printCapabilityDecision(decision: CapabilityRegistryDecision): void {
+  console.log(`Capability Registry decision: ${decision.decision_id}`);
+  console.log(`  Decision:    ${decision.decision}`);
+  console.log(`  Candidate:   ${decision.candidate_id}`);
+  console.log(`  Registry:    ${decision.registry_epoch}`);
+  console.log(`  Capabilities:${decision.capability_refs.map((ref) => `${ref.kind}:${ref.ref}`).join(", ") || "-"}`);
+  console.log(`  Reason:      ${decision.reason}`);
+}
+
+function printRuntimeGraphNode(node: RuntimeGraphNode): void {
+  console.log(`RuntimeGraph node: ${node.node_id}`);
+  console.log(`  Kind:        ${node.node_kind}`);
+  console.log(`  Ref:         ${node.ref.kind}:${node.ref.ref}`);
+  console.log(`  Label:       ${node.label}`);
+  console.log(`  Created:     ${node.created_at}`);
+  console.log(`  Updated:     ${node.updated_at}`);
+  console.log(`  Provenance:  ${node.provenance_refs.map((ref) => `${ref.kind}:${ref.ref}`).join(", ") || "-"}`);
+}
+
 function parseListArgs(args: string[], command: string): RuntimeListValues {
   const logger = getCliLogger();
   try {
@@ -454,7 +527,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
     return 1;
   }
 
@@ -679,6 +752,105 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return await cmdRuntimeCognitionReplay(stateManager, args.slice(1));
   }
 
+  if (runtimeSubcommand === "situation-frame") {
+    const values = parseDetailArgs(args.slice(1), "situation-frame");
+    if (!values.id) {
+      logger.error("Error: frame ID is required. Usage: pulseed runtime situation-frame <frame-id> [--json]");
+      return 1;
+    }
+    const frame = await personalAgentStore(stateManager).loadSituationFrame(values.id);
+    if (!frame) {
+      console.error(`SituationFrame not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(frame) : printSituationFrame(frame);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "initiative-trace") {
+    const values = parseDetailArgs(args.slice(1), "initiative-trace");
+    if (!values.id) {
+      logger.error("Error: trace/task/run/action ref is required. Usage: pulseed runtime initiative-trace <ref> [--json]");
+      return 1;
+    }
+    const trace = await personalAgentStore(stateManager).loadTrace(values.id);
+    if (!trace) {
+      console.error(`Initiative trace not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(trace) : printTraceSummary(trace);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "attention-state") {
+    const values = parseListArgs(args.slice(1), "attention-state");
+    const pending = await personalAgentStore(stateManager).listPendingConcerns();
+    values.json ? printJson(pending) : printJson(pending);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "intervention-decision") {
+    const values = parseDetailArgs(args.slice(1), "intervention-decision");
+    if (!values.id) {
+      logger.error("Error: decision ID is required. Usage: pulseed runtime intervention-decision <decision-id> [--json]");
+      return 1;
+    }
+    const decision = await personalAgentStore(stateManager).loadInterventionDecision(values.id);
+    if (!decision) {
+      console.error(`InterventionPolicy decision not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(decision) : printInterventionDecision(decision);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "capability-decision") {
+    const values = parseDetailArgs(args.slice(1), "capability-decision");
+    if (!values.id) {
+      logger.error("Error: decision ID is required. Usage: pulseed runtime capability-decision <decision-id> [--json]");
+      return 1;
+    }
+    const decision = await personalAgentStore(stateManager).loadCapabilityDecision(values.id);
+    if (!decision) {
+      console.error(`Capability Registry decision not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(decision) : printCapabilityDecision(decision);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "runtime-graph") {
+    const values = parseDetailArgs(args.slice(1), "runtime-graph");
+    if (!values.id) {
+      logger.error("Error: node ID or ref is required. Usage: pulseed runtime runtime-graph <node-id|ref> [--json]");
+      return 1;
+    }
+    const store = personalAgentStore(stateManager);
+    const node = await store.loadRuntimeGraphNode(values.id);
+    const trace = await store.loadTrace(values.id);
+    if (!node && !trace) {
+      console.error(`RuntimeGraph node or lineage trace not found: ${values.id}`);
+      return 1;
+    }
+    if (values.json) {
+      printJson({ node, trace });
+    } else {
+      if (node) printRuntimeGraphNode(node);
+      if (trace) {
+        if (node) console.log("");
+        printTraceSummary(trace);
+      }
+    }
+    return 0;
+  }
+
+  if (runtimeSubcommand === "memory-provenance") {
+    const values = parseListArgs(args.slice(1), "memory-provenance");
+    const audits = await personalAgentStore(stateManager).listMemoryAudits();
+    values.json ? printJson({ memory_audits: audits }) : printJson({ memory_audits: audits });
+    return 0;
+  }
+
   if (runtimeSubcommand === "proactive-feedback") {
     const values = parseProactiveFeedbackArgs(args.slice(1));
     if (!values.interventionId || !values.outcome) {
@@ -742,7 +914,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
   return 1;
 }
 

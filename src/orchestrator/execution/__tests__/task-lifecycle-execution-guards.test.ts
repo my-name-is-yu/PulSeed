@@ -15,6 +15,7 @@ import { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import type { Task } from "../../../base/types/task.js";
 import type { IGuardrailHook } from "../../../base/types/guardrail.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
+import type { PersonalAgentDecisionTrace, PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -125,6 +126,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
       approvalFn?: (task: Task) => Promise<boolean>;
       guardrailRunner?: GuardrailRunner;
       toolExecutor?: ToolExecutor;
+      personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
       execFileSyncFn?: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
       revertCwd?: string;
     }
@@ -147,6 +149,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
   }
 
   it("blocks execution when the before_tool guardrail denies the call", async () => {
+    const recordTrace = vi.fn(async (_trace: PersonalAgentDecisionTrace) => ({} as never));
     const guardrailRunner = new GuardrailRunner();
     const blockingHook: IGuardrailHook = {
       name: "block-all",
@@ -164,7 +167,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     };
     guardrailRunner.register(blockingHook);
 
-    const lifecycle = createLifecycle(createMockLLMClient([]), { guardrailRunner });
+    const lifecycle = createLifecycle(createMockLLMClient([]), { guardrailRunner, personalAgentRuntime: { recordTrace } });
     const adapter = createMockAdapter();
     const task = makeTask();
 
@@ -174,6 +177,31 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     expect(result.error).toBe("guardrail_rejected");
     expect(result.output).toContain("Blocked by policy");
     expect(result.elapsed_ms).toBe(0);
+    const blockTrace = recordTrace.mock.calls
+      .map((call) => call[0])
+      .find((trace) => trace.replay_key.includes("guardrail_before"));
+    expect(blockTrace).toMatchObject({
+      situation_frame: {
+        caller_path: "task_execution",
+        source_kind: "task_execution",
+      },
+      initiative_events: expect.arrayContaining([
+        expect.objectContaining({ event_type: "policy_decision_recorded" }),
+        expect.objectContaining({ event_type: "action_outcome" }),
+      ]),
+      task_candidates: [
+        expect.objectContaining({
+          materialization_state: "blocked",
+          task_created: false,
+        }),
+      ],
+      intervention_decisions: [
+        expect.objectContaining({
+          decision: "block",
+          target_effect: "execute_tool",
+        }),
+      ],
+    });
   });
 
   it("lets execution pass through when the after_tool guardrail allows the result", async () => {
@@ -327,7 +355,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     expect(execFileSyncFn).toHaveBeenCalled();
   });
 
-  it("preserves run-adapter fallback baseline after a first attempt writes files", async () => {
+  it("preserves run-adapter failure baseline without direct adapter rerun", async () => {
     const repo = path.join(tmpDir, "fallback-baseline-repo");
     fs.mkdirSync(repo, { recursive: true });
     runGit(repo, ["init"]);
@@ -348,19 +376,20 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
         durationMs: 1,
       };
     });
+    const directExecute = vi.fn(async (): Promise<import("../task/task-lifecycle.js").AgentResult> => {
+      fs.writeFileSync(path.join(repo, "second-attempt.txt"), "second attempt\n", "utf-8");
+      return {
+        success: false,
+        output: "direct fallback failed",
+        error: "direct fallback failed",
+        exit_code: 1,
+        elapsed_ms: 10,
+        stopped_reason: "error",
+      };
+    });
     const adapter = {
       adapterType: "mock",
-      async execute(): Promise<import("../task/task-lifecycle.js").AgentResult> {
-        fs.writeFileSync(path.join(repo, "second-attempt.txt"), "second attempt\n", "utf-8");
-        return {
-          success: false,
-          output: "direct fallback failed",
-          error: "direct fallback failed",
-          exit_code: 1,
-          elapsed_ms: 10,
-          stopped_reason: "error",
-        };
-      },
+      execute: directExecute,
     };
     const lifecycle = createLifecycle(createMockLLMClient([]), {
       toolExecutor: { execute } as unknown as ToolExecutor,
@@ -376,15 +405,15 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     );
 
     expect(execute).toHaveBeenCalledOnce();
+    expect(directExecute).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
-    expect(new Set(result.filesChangedPaths)).toEqual(new Set(["first-attempt.txt", "second-attempt.txt"]));
-    expect(new Set(result.fileDiffs?.map((diff) => diff.path))).toEqual(
-      new Set(["first-attempt.txt", "second-attempt.txt"]),
-    );
+    expect(new Set(result.filesChangedPaths)).toEqual(new Set(["first-attempt.txt"]));
+    expect(new Set(result.fileDiffs?.map((diff) => diff.path))).toEqual(new Set(["first-attempt.txt"]));
     expect(result.filesChangedPaths).not.toContain("preexisting.txt");
   });
 
   it("preserves elapsed_ms when the after_tool guardrail rejects", async () => {
+    const recordTrace = vi.fn(async (_trace: PersonalAgentDecisionTrace) => ({} as never));
     const guardrailRunner = new GuardrailRunner();
     const afterHook: IGuardrailHook = {
       name: "block-after",
@@ -402,7 +431,7 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     };
     guardrailRunner.register(afterHook);
 
-    const lifecycle = createLifecycle(createMockLLMClient([]), { guardrailRunner });
+    const lifecycle = createLifecycle(createMockLLMClient([]), { guardrailRunner, personalAgentRuntime: { recordTrace } });
     const adapter = createMockAdapter("done", 250);
 
     const result = await lifecycle.executeTask(makeTask(), adapter);
@@ -411,5 +440,26 @@ describe("TaskLifecycle — executeTask guardrail behavior", () => {
     expect(result.error).toBe("guardrail_rejected");
     expect(result.output).toContain("Rejected after execution");
     expect(result.elapsed_ms).toBe(250);
+    const blockTrace = recordTrace.mock.calls
+      .map((call) => call[0])
+      .find((trace) => trace.replay_key.includes("guardrail_after"));
+    expect(blockTrace).toMatchObject({
+      initiative_events: expect.arrayContaining([
+        expect.objectContaining({ event_type: "policy_decision_recorded" }),
+        expect.objectContaining({ event_type: "action_outcome" }),
+      ]),
+      task_candidates: [
+        expect.objectContaining({
+          materialization_state: "blocked",
+          task_created: false,
+        }),
+      ],
+      intervention_decisions: [
+        expect.objectContaining({
+          decision: "block",
+          target_effect: "execute_tool",
+        }),
+      ],
+    });
   });
 });

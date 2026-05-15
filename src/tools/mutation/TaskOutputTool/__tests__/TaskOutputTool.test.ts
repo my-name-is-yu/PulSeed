@@ -33,7 +33,7 @@ function makeContext(): ToolCallContext {
     cwd: "/tmp",
     goalId: "goal-1",
     trustBalance: 50,
-    preApproved: false,
+    preApproved: true,
     approvalFn: async () => false,
   };
 }

@@ -3,7 +3,6 @@
 // Executes a TaskPipeline sequentially with persistence and idempotency.
 // Phase 2: Plan Approval Gate, 3-stage escalation, strategy feedback.
 
-import { randomUUID } from "node:crypto";
 import type { Logger } from "../../runtime/logger.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { AgentTask, AgentResult, IAdapter } from "./adapter-layer.js";
@@ -11,6 +10,21 @@ import { AdapterRegistry } from "./adapter-layer.js";
 import type { TaskPipeline, PipelineStage, PipelineState, StageResult } from "../../base/types/pipeline.js";
 import { PipelineStateSchema } from "../../base/types/pipeline.js";
 import type { Verdict } from "../../base/types/core.js";
+import { ToolExecutor } from "../../tools/executor.js";
+import { ToolRegistry } from "../../tools/registry.js";
+import { ToolPermissionManager } from "../../tools/permission.js";
+import { ConcurrencyController } from "../../tools/concurrency.js";
+import type { ToolCallContext } from "../../tools/types.js";
+import { RunAdapterTool } from "../../tools/execution/RunAdapterTool/RunAdapterTool.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  stableId,
+  type CapabilityRegistryDecisionKind,
+  type InterventionDecisionKind,
+  type PersonalAgentRuntimeStore as PersonalAgentRuntimeStoreType,
+  type RuntimeGraphRef,
+} from "../../runtime/personal-agent/index.js";
 
 // ─── Types ───
 
@@ -24,6 +38,10 @@ export interface PipelineExecutorDeps {
   stateManager: StateManager;
   adapterRegistry: AdapterRegistry;
   logger?: Logger;
+  /** Optional ToolExecutor. Pipeline adapter execution is admitted through run-adapter when supplied. */
+  toolExecutor?: ToolExecutor;
+  /** Durable personal-agent runtime trace recorder for pipeline execution admission. */
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStoreType, "recordTrace">;
   /** Plan gate: called when plan_required=true and trust < HIGH_TRUST_THRESHOLD */
   approvalFn?: (plan: string) => Promise<boolean>;
   /** Strategy feedback: called at pipeline completion when strategy_id is set */
@@ -41,7 +59,24 @@ export interface PipelineRunResult {
   status: PipelineState["status"];
 }
 
+export interface PipelineRunContext {
+  goalId?: string;
+}
+
 type TaskPipelineExt = TaskPipeline & { plan_required?: boolean };
+type PipelineAdapterExecutionPurpose = "plan" | "stage";
+
+interface PipelineAdapterExecutionContext {
+  goalId: string;
+  taskId: string;
+  pipelineId: string;
+  stageIndex: number;
+  stageRole: PipelineStage["role"];
+  purpose: PipelineAdapterExecutionPurpose;
+  idempotencyKey?: string;
+}
+
+type PipelineApprovalGate = "plan_approval" | "final_retry_approval";
 
 const HIGH_TRUST_THRESHOLD = 20;
 const PLAN_MODE_PREFIX = "Generate a plan for the following task. Do NOT execute — output the plan only.\n\n";
@@ -52,6 +87,9 @@ export class PipelineExecutor {
   private readonly stateManager: StateManager;
   private readonly adapterRegistry: AdapterRegistry;
   private readonly logger?: Logger;
+  private readonly toolExecutor: ToolExecutor;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStoreType, "recordTrace">;
+  private readonly traceBaseDir: string;
   private readonly approvalFn?: (plan: string) => Promise<boolean>;
   private readonly strategyFeedbackFn?: (strategyId: string, verdict: string) => void;
   private readonly findAlternativeAdapter?: (domain: string, excludeAdapter: string) => string | null;
@@ -61,6 +99,14 @@ export class PipelineExecutor {
     this.stateManager = deps.stateManager;
     this.adapterRegistry = deps.adapterRegistry;
     this.logger = deps.logger;
+    this.traceBaseDir = stateManagerBaseDir(deps.stateManager);
+    this.personalAgentRuntime = deps.personalAgentRuntime
+      ?? new PersonalAgentRuntimeStore(this.traceBaseDir, { controlBaseDir: this.traceBaseDir });
+    this.toolExecutor = deps.toolExecutor ?? createRunAdapterToolExecutor({
+      adapterRegistry: this.adapterRegistry,
+      baseDir: this.traceBaseDir,
+      personalAgentRuntime: this.personalAgentRuntime,
+    });
     this.approvalFn = deps.approvalFn;
     this.strategyFeedbackFn = deps.strategyFeedbackFn;
     this.findAlternativeAdapter = deps.findAlternativeAdapter;
@@ -72,15 +118,17 @@ export class PipelineExecutor {
     task: AgentTask,
     pipeline: TaskPipelineExt,
     observationContext?: string,
-    trustScore?: number
+    trustScore?: number,
+    runContext?: PipelineRunContext
   ): Promise<PipelineRunResult> {
     let state = await this.restoreState(taskId);
     const isResume = state !== null && state.status === "interrupted";
+    const goalId = runContext?.goalId ?? `pipeline:${taskId}`;
 
     if (!isResume) {
       const now = new Date().toISOString();
       state = {
-        pipeline_id: randomUUID(),
+        pipeline_id: deterministicPipelineId(taskId, pipeline),
         task_id: taskId,
         current_stage_index: 0,
         completed_stages: [],
@@ -108,7 +156,21 @@ export class PipelineExecutor {
 
       // Plan Approval Gate
       if (stage.role === "implementor" && pipeline.plan_required) {
-        const gate = await this.runPlanApprovalGate(stage, task, pipeline, observationContext, trustScore);
+        const gate = await this.runPlanApprovalGate(
+          stage,
+          task,
+          pipeline,
+          observationContext,
+          trustScore,
+          {
+            goalId,
+            taskId,
+            pipelineId: state!.pipeline_id,
+            stageIndex: i,
+            stageRole: stage.role,
+            purpose: "plan",
+          },
+        );
         if (!gate.approved) {
           this.logger?.info("[PipelineExecutor] Plan not approved — aborting", { stage: i });
           state = { ...state!, status: "failed", updated_at: new Date().toISOString() };
@@ -120,7 +182,23 @@ export class PipelineExecutor {
         }
       }
 
-      const stageResult = await this.executeWithEscalation(i, stage, task, pipeline, observationContext, idempotencyKey);
+      const stageResult = await this.executeWithEscalation(
+        i,
+        stage,
+        task,
+        pipeline,
+        observationContext,
+        idempotencyKey,
+        {
+          goalId,
+          taskId,
+          pipelineId: state!.pipeline_id,
+          stageIndex: i,
+          stageRole: stage.role,
+          purpose: "stage",
+          idempotencyKey,
+        },
+      );
 
       state = {
         ...state!,
@@ -166,7 +244,8 @@ export class PipelineExecutor {
     task: AgentTask,
     pipeline: TaskPipeline,
     observationContext: string | undefined,
-    trustScore: number | undefined
+    trustScore: number | undefined,
+    executionContext: PipelineAdapterExecutionContext
   ): Promise<PlanApprovalResult> {
     const planTask = this.buildStagePrompt(
       { ...stage, prompt_override: PLAN_MODE_PREFIX },
@@ -176,7 +255,7 @@ export class PipelineExecutor {
     let plan = "";
     try {
       const adapter = this.selectAdapter(stage);
-      const result = await this.executeAdapterWithCircuitBreaker(adapter, planTask);
+      const result = await this.executeAdapterWithCircuitBreaker(adapter, planTask, executionContext);
       if (!result.success) {
         this.logger?.warn("[PipelineExecutor] Plan generation failed", { error: result.error ?? "unknown failure" });
         return { approved: false, plan: "" };
@@ -189,14 +268,58 @@ export class PipelineExecutor {
 
     if (trustScore !== undefined && trustScore >= HIGH_TRUST_THRESHOLD) {
       this.logger?.info("[PipelineExecutor] Plan auto-approved (high trust)", { trustScore });
+      await this.recordPipelineApprovalDecision(executionContext, {
+        gate: "plan_approval",
+        replayStage: "high_trust_auto_approved",
+        decision: "allow",
+        capabilityDecision: "available",
+        reason: `Pipeline plan was auto-approved because trust score ${trustScore} meets the high-trust threshold.`,
+        targetSummary: "Pipeline plan approval gate was admitted by trust policy.",
+      });
       return { approved: true, plan };
     }
 
     if (this.approvalFn) {
-      return { approved: await this.approvalFn(plan), plan };
+      await this.recordPipelineApprovalDecision(executionContext, {
+        gate: "plan_approval",
+        replayStage: "confirm_required",
+        decision: "confirm_required",
+        capabilityDecision: "permission_required",
+        reason: "Pipeline plan requires operator confirmation before implementor execution.",
+        targetSummary: "Pipeline plan approval requires confirmation before execution continues.",
+        permissionRequired: true,
+      });
+      const approved = await this.approvalFn(plan);
+      await this.recordPipelineApprovalDecision(executionContext, {
+        gate: "plan_approval",
+        replayStage: approved ? "approval_granted" : "approval_denied",
+        decision: approved ? "allow" : "block",
+        capabilityDecision: approved ? "available" : "blocked",
+        reason: approved
+          ? "Operator approved the pipeline plan."
+          : "Operator denied the pipeline plan.",
+        targetSummary: approved
+          ? "Pipeline plan approval gate was admitted by operator confirmation."
+          : "Pipeline plan approval gate was blocked by operator denial.",
+        permissionRequired: true,
+        outcomeSummary: approved
+          ? undefined
+          : "Pipeline execution was blocked because the plan approval was denied.",
+      });
+      return { approved, plan };
     }
 
     this.logger?.warn("[PipelineExecutor] No approvalFn configured — plan denied");
+    await this.recordPipelineApprovalDecision(executionContext, {
+      gate: "plan_approval",
+      replayStage: "approval_unavailable",
+      decision: "block",
+      capabilityDecision: "blocked",
+      reason: "Pipeline plan requires confirmation, but no approval function is configured.",
+      targetSummary: "Pipeline plan approval gate was blocked because confirmation was unavailable.",
+      permissionRequired: true,
+      outcomeSummary: "Pipeline execution was blocked because no approval function was configured.",
+    });
     return { approved: false, plan };
   }
 
@@ -208,7 +331,8 @@ export class PipelineExecutor {
     task: AgentTask,
     pipeline: TaskPipeline,
     observationContext: string | undefined,
-    idempotencyKey: string
+    idempotencyKey: string,
+    executionContext: PipelineAdapterExecutionContext
   ): Promise<StageResult> {
     // Without escalation deps, run a single attempt (backward-compatible).
     const maxAttempts = (this.approvalFn ?? this.findAlternativeAdapter) ? this.maxRetries : 1;
@@ -234,9 +358,33 @@ export class PipelineExecutor {
       // Strike 3: human escalation
       if (attempt === this.maxRetries - 1 && this.approvalFn) {
         this.logger?.warn("[PipelineExecutor] Escalation: requesting human approval", { stage: stageIndex });
-        const ok = await this.approvalFn(
-          `Stage ${stageIndex} (${stage.role}) failed ${attempt} time(s).\nLast error: ${lastError}\n\nApprove to attempt final retry?`
-        );
+        const approvalPrompt = `Stage ${stageIndex} (${stage.role}) failed ${attempt} time(s).\nLast error: ${lastError}\n\nApprove to attempt final retry?`;
+        await this.recordPipelineApprovalDecision(executionContext, {
+          gate: "final_retry_approval",
+          replayStage: "confirm_required",
+          decision: "confirm_required",
+          capabilityDecision: "permission_required",
+          reason: "Pipeline final retry requires operator confirmation after repeated stage failures.",
+          targetSummary: "Pipeline final retry approval requires confirmation before execution continues.",
+          permissionRequired: true,
+        });
+        const ok = await this.approvalFn(approvalPrompt);
+        await this.recordPipelineApprovalDecision(executionContext, {
+          gate: "final_retry_approval",
+          replayStage: ok ? "approval_granted" : "approval_denied",
+          decision: ok ? "allow" : "block",
+          capabilityDecision: ok ? "available" : "blocked",
+          reason: ok
+            ? "Operator approved the pipeline final retry."
+            : "Operator denied the pipeline final retry.",
+          targetSummary: ok
+            ? "Pipeline final retry was admitted by operator confirmation."
+            : "Pipeline final retry was blocked by operator denial.",
+          permissionRequired: true,
+          outcomeSummary: ok
+            ? undefined
+            : "Pipeline stage execution was blocked because final retry approval was denied.",
+        });
         if (!ok) {
           return this.makeStageResult(stageIndex, stage, idempotencyKey, false, "", "Human escalation rejected");
         }
@@ -247,7 +395,10 @@ export class PipelineExecutor {
         : { ...baseTask, prompt: `${baseTask.prompt}\n\nPREVIOUS ATTEMPT FAILED: ${lastError}\nPlease try again.` };
 
       let result: AgentResult;
-      result = await this.executeAdapterWithCircuitBreaker(currentAdapter, retryTask);
+      result = await this.executeAdapterWithCircuitBreaker(currentAdapter, retryTask, {
+        ...executionContext,
+        idempotencyKey: `${idempotencyKey}:${attempt}`,
+      });
 
       if (this.mapResultToVerdict(result) !== "fail") {
         return this.makeStageResult(stageIndex, stage, idempotencyKey, result.success, result.output);
@@ -262,7 +413,11 @@ export class PipelineExecutor {
 
   // ─── Private helpers ───
 
-  private async executeAdapterWithCircuitBreaker(adapter: IAdapter, task: AgentTask): Promise<AgentResult> {
+  private async executeAdapterWithCircuitBreaker(
+    adapter: IAdapter,
+    task: AgentTask,
+    executionContext: PipelineAdapterExecutionContext
+  ): Promise<AgentResult> {
     if (!this.adapterRegistry.isAvailable(adapter.adapterType)) {
       return {
         success: false,
@@ -274,26 +429,161 @@ export class PipelineExecutor {
       };
     }
 
-    let result: AgentResult;
     try {
-      result = await adapter.execute(task);
+      const result = await this.toolExecutor.execute(
+        "run-adapter",
+        {
+          adapter_id: adapter.adapterType,
+          task_description: task.prompt,
+          goal_id: executionContext.goalId,
+          timeout_ms: task.timeout_ms,
+          ...(task.cwd !== undefined ? { cwd: task.cwd } : {}),
+          ...(task.allowed_tools !== undefined ? { allowed_tools: [...task.allowed_tools] } : {}),
+          ...(task.system_prompt !== undefined ? { system_prompt: task.system_prompt } : {}),
+        },
+        this.buildToolCallContext(adapter, task, executionContext),
+      );
+      if (result.data != null) {
+        if (isAgentResult(result.data)) return result.data;
+        return buildNotExecutedAdapterResult(
+          "run_adapter_invalid_result",
+          "run-adapter returned an invalid adapter result.",
+        );
+      }
+      return buildNotExecutedAdapterResult(
+        result.execution?.reason ?? (result.error ? "run_adapter_tool_error" : "run_adapter_tool_blocked"),
+        `run-adapter was not executed: ${result.error ?? result.summary}`,
+        result.execution?.reason ? undefined : result.error,
+      );
     } catch (err) {
-      result = {
-        success: false,
-        output: "",
-        error: err instanceof Error ? err.message : String(err),
-        exit_code: null,
-        elapsed_ms: 0,
-        stopped_reason: "error",
-      };
+      return buildNotExecutedAdapterResult(
+        "run_adapter_tool_error",
+        "run-adapter admission failed.",
+        err instanceof Error ? err.message : String(err),
+      );
     }
+  }
 
-    if (result.success) {
-      this.adapterRegistry.recordSuccess(adapter.adapterType);
-    } else {
-      this.adapterRegistry.recordFailure(adapter.adapterType);
+  private async recordPipelineApprovalDecision(
+    executionContext: PipelineAdapterExecutionContext,
+    input: {
+      gate: PipelineApprovalGate;
+      replayStage: string;
+      decision: InterventionDecisionKind;
+      capabilityDecision: CapabilityRegistryDecisionKind;
+      reason: string;
+      targetSummary: string;
+      permissionRequired?: boolean;
+      outcomeSummary?: string;
     }
-    return result;
+  ): Promise<void> {
+    const sourceRef: RuntimeGraphRef = {
+      kind: "pipeline_approval_gate",
+      ref: `${executionContext.pipelineId}:${executionContext.stageIndex}:${input.gate}`,
+    };
+    const targetRef: RuntimeGraphRef = {
+      kind: "pipeline_stage",
+      ref: `${executionContext.pipelineId}:${executionContext.stageIndex}`,
+    };
+    const replayKey = [
+      "pipeline_approval",
+      input.gate,
+      input.replayStage,
+      input.decision,
+      executionContext.goalId,
+      executionContext.taskId,
+      executionContext.pipelineId,
+      executionContext.stageIndex,
+    ].join(":");
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "task_execution",
+      source: {
+        sourceKind: "task_execution",
+        sourceId: sourceRef.ref,
+        emittedAt: new Date().toISOString(),
+        sourceEpoch: `${executionContext.stageRole}:${input.gate}:${input.replayStage}`,
+        highWatermark: executionContext.idempotencyKey ?? `${executionContext.pipelineId}:${executionContext.stageIndex}`,
+        replayKey,
+        summary: `Pipeline ${executionContext.pipelineId} reached ${input.gate}.`,
+        sourceRef,
+      },
+      target: {
+        kind: "tool_call",
+        ref: targetRef,
+        effect: "execute_tool",
+        summary: input.targetSummary,
+      },
+      decision: input.decision,
+      decisionReason: input.reason,
+      capabilityDecision: input.capabilityDecision,
+      capabilityRefs: [
+        { kind: "pipeline", ref: executionContext.pipelineId },
+        { kind: "pipeline_stage", ref: String(executionContext.stageIndex) },
+        { kind: "pipeline_gate", ref: input.gate },
+      ],
+      policyRef: { kind: "intervention_policy", ref: "policy:pipeline-approval-v1" },
+      permissionRequired: input.permissionRequired ?? input.decision === "confirm_required",
+      currentRefs: [
+        { kind: "goal", ref: executionContext.goalId },
+        { kind: "task", ref: executionContext.taskId },
+        { kind: "pipeline", ref: executionContext.pipelineId },
+        { kind: "pipeline_stage", ref: String(executionContext.stageIndex) },
+        { kind: "pipeline_role", ref: executionContext.stageRole },
+      ],
+      ...(input.outcomeSummary
+        ? {
+            outcomeEvent: {
+              type: "action_outcome" as const,
+              summary: input.outcomeSummary,
+              targetRef,
+            },
+          }
+        : {}),
+    }));
+  }
+
+  private buildToolCallContext(
+    adapter: IAdapter,
+    task: AgentTask,
+    executionContext: PipelineAdapterExecutionContext,
+  ): ToolCallContext {
+    const replayKey = pipelineRunAdapterReplayKey(adapter, task, executionContext);
+    return {
+      cwd: task.cwd ?? this.traceBaseDir,
+      goalId: executionContext.goalId,
+      taskId: executionContext.taskId,
+      trustBalance: 0,
+      preApproved: true,
+      approvalFn: async () => false,
+      providerConfigBaseDir: this.traceBaseDir,
+      personalAgentRuntime: this.personalAgentRuntime,
+      callId: `pipeline-run-adapter:${stableId(replayKey)}`,
+      sessionId: `goal:${executionContext.goalId}`,
+      turnId: `pipeline:${executionContext.pipelineId}:${executionContext.stageIndex}:${executionContext.purpose}`,
+      personalAgentTrace: {
+        callerPath: "task_execution",
+        sourceKind: "task_execution",
+        sourceId: executionContext.taskId,
+        sourceEpoch: executionContext.pipelineId,
+        highWatermark: [
+          executionContext.goalId,
+          executionContext.taskId,
+          executionContext.pipelineId,
+          executionContext.idempotencyKey ?? executionContext.purpose,
+        ].join(":"),
+        replayKey,
+        summary: `Execute pipeline ${executionContext.pipelineId} stage ${executionContext.stageIndex} through run-adapter.`,
+        sourceRef: { kind: "task", ref: executionContext.taskId },
+        currentRefs: [
+          { kind: "goal", ref: executionContext.goalId },
+          { kind: "task", ref: executionContext.taskId },
+        ],
+        auditRefs: [
+          { kind: "pipeline", ref: executionContext.pipelineId },
+          { kind: "pipeline_stage", ref: `${executionContext.stageIndex}:${executionContext.stageRole}` },
+        ],
+      },
+    };
   }
 
   private makeStageResult(
@@ -381,4 +671,95 @@ export class PipelineExecutor {
     if (result.success) return "pass";
     return "partial";
   }
+}
+
+function createRunAdapterToolExecutor(input: {
+  adapterRegistry: AdapterRegistry;
+  baseDir: string;
+  personalAgentRuntime: Pick<PersonalAgentRuntimeStoreType, "recordTrace">;
+}): ToolExecutor {
+  const registry = new ToolRegistry();
+  registry.register(new RunAdapterTool(input.adapterRegistry));
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: input.personalAgentRuntime,
+    traceBaseDir: input.baseDir,
+  });
+}
+
+function stateManagerBaseDir(stateManager: StateManager): string {
+  const candidate = (stateManager as StateManager & { getBaseDir?: () => string }).getBaseDir?.();
+  return candidate ?? process.cwd();
+}
+
+function deterministicPipelineId(taskId: string, pipeline: TaskPipelineExt): string {
+  return `pipeline:${stableId(stableJson({
+    taskId,
+    stages: pipeline.stages,
+    failFast: pipeline.fail_fast ?? null,
+    sharedContext: pipeline.shared_context ?? null,
+    strategyId: pipeline.strategy_id ?? null,
+    planRequired: pipeline.plan_required ?? null,
+  }))}`;
+}
+
+function pipelineRunAdapterReplayKey(
+  adapter: IAdapter,
+  task: AgentTask,
+  executionContext: PipelineAdapterExecutionContext,
+): string {
+  return [
+    "pipeline_task_execution:run_adapter",
+    executionContext.goalId,
+    executionContext.taskId,
+    executionContext.pipelineId,
+    String(executionContext.stageIndex),
+    executionContext.purpose,
+    executionContext.idempotencyKey ?? "",
+    adapter.adapterType,
+    stableId(stableJson({
+      prompt: task.prompt,
+      timeoutMs: task.timeout_ms ?? null,
+      cwd: task.cwd ?? null,
+      allowedTools: task.allowed_tools ?? null,
+      systemPrompt: task.system_prompt ?? null,
+    })),
+  ].join(":");
+}
+
+function buildNotExecutedAdapterResult(reason: string, output: string, errorOverride?: string): AgentResult {
+  return {
+    success: false,
+    output,
+    error: errorOverride ?? reason,
+    exit_code: null,
+    elapsed_ms: 0,
+    stopped_reason: "error",
+  };
+}
+
+function isAgentResult(value: unknown): value is AgentResult {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Partial<AgentResult>;
+  return typeof record.success === "boolean"
+    && typeof record.output === "string"
+    && (typeof record.elapsed_ms === "number" || record.elapsed_ms === undefined)
+    && (record.stopped_reason === "completed"
+      || record.stopped_reason === "timeout"
+      || record.stopped_reason === "error"
+      || record.stopped_reason === "cancelled"
+      || record.stopped_reason === "blocked"
+      || record.stopped_reason === "policy_blocked"
+      || record.stopped_reason === undefined);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

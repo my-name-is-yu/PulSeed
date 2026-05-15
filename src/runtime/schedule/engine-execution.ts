@@ -11,6 +11,8 @@ import {
 import type { ScheduleRunHistoryInput, ScheduleRunReason } from "./history.js";
 import { executeHeartbeatEntry } from "./engine-heartbeat.js";
 import { computeNextFireAt } from "./engine-mutations.js";
+import type { PersonalAgentRuntimeStore } from "../personal-agent/index.js";
+import { recordScheduleGoalRunDecision } from "./personal-agent-trace.js";
 
 const DEFAULT_RETRY_POLICY: ScheduleRetryPolicy = {
   enabled: true,
@@ -45,6 +47,11 @@ export interface RunScheduleNowResult {
   reason: ScheduleRunReason;
 }
 
+export interface ScheduleEscalationGoalContext {
+  sourceEntry: ScheduleEntry;
+  sourceResult: ScheduleResult;
+}
+
 export interface ScheduleExecutionHost {
   entries: ScheduleEntry[];
   logger: {
@@ -63,7 +70,7 @@ export interface ScheduleExecutionHost {
   executeCron(entry: ScheduleEntry): Promise<ScheduleResult>;
   executeGoalTrigger(entry: ScheduleEntry, context?: ScheduleExecutionContext): Promise<ScheduleResult>;
   checkEscalation(entry: ScheduleEntry, result: ScheduleResult): Promise<ScheduleResult | null>;
-  executeEscalationTargetGoal(goalId: string): Promise<ScheduleResult>;
+  executeEscalationTargetGoal(goalId: string, context?: ScheduleEscalationGoalContext): Promise<ScheduleResult>;
   executeEscalationTargetEntry(entryId: string): Promise<ScheduleResult | null>;
   dispatchNotification(payload: Record<string, unknown>): Promise<void>;
 }
@@ -277,11 +284,35 @@ export async function executeEscalationTargetEntryForEngine(
 }
 
 export async function executeEscalationTargetGoalForEngine(
-  host: Pick<ScheduleExecutionHost, "logger"> & { coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident" }): Promise<any> } },
-  goalId: string
+  host: Pick<ScheduleExecutionHost, "logger"> & {
+    coreLoop?: { run(goalId: string, options?: { maxIterations?: number | null; runPolicy?: "bounded" | "resident" }): Promise<any> };
+    personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  },
+  goalId: string,
+  context?: ScheduleEscalationGoalContext,
 ): Promise<ScheduleResult> {
   const now = new Date().toISOString();
+  const sourceEntry = context?.sourceEntry ?? {
+    id: `schedule-escalation:${goalId}`,
+    name: "Schedule escalation target goal",
+    layer: "escalation" as const,
+    metadata: undefined,
+  };
   if (!host.coreLoop) {
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: host.personalAgentRuntime,
+      entry: sourceEntry,
+      goalId,
+      firedAt: context?.sourceResult.fired_at ?? now,
+      scheduledFor: context?.sourceResult.fired_at ?? now,
+      reason: "escalation_goal",
+      mode: "escalation_goal",
+      runPolicy: "bounded",
+      maxIterations: 10,
+      decision: "block",
+      capabilityDecision: "missing",
+      decisionReason: "Schedule escalation target goal was blocked because no DurableLoop capability was available.",
+    });
     return ScheduleResultSchema.parse({
       entry_id: randomUUID(),
       status: "error",
@@ -295,6 +326,19 @@ export async function executeEscalationTargetGoalForEngine(
 
   const startedAt = Date.now();
   try {
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: host.personalAgentRuntime,
+      entry: sourceEntry,
+      goalId,
+      firedAt: context?.sourceResult.fired_at ?? now,
+      scheduledFor: context?.sourceResult.fired_at ?? now,
+      reason: "escalation_goal",
+      mode: "escalation_goal",
+      runPolicy: "bounded",
+      maxIterations: 10,
+      decision: "allow",
+      decisionReason: "Schedule escalation target goal was allowed to start a DurableLoop goal run.",
+    });
     const result = await host.coreLoop.run(goalId, { maxIterations: 10, runPolicy: "bounded" });
     return ScheduleResultSchema.parse({
       entry_id: randomUUID(),
@@ -381,7 +425,12 @@ export async function checkEscalationForEngine(
     `Escalating "${escalationEntry.name}" to ${esc.target_layer ?? "unknown"} (failures=${escalationEntry.consecutive_failures})`
   );
 
-  if (esc.target_goal_id) await host.executeEscalationTargetGoal(esc.target_goal_id);
+  if (esc.target_goal_id) {
+    await host.executeEscalationTargetGoal(esc.target_goal_id, {
+      sourceEntry: escalationEntry,
+      sourceResult: result,
+    });
+  }
   if (esc.target_entry_id) await host.executeEscalationTargetEntry(esc.target_entry_id);
 
   return ScheduleResultSchema.parse({

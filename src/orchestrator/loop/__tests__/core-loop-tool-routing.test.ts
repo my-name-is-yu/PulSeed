@@ -212,7 +212,7 @@ describe("CoreLoop Phase B — ToolExecutor routing", () => {
       expect(result.title).toBe("Updated After Observation");
     });
 
-    it("falls back to direct engine.observe() when tool returns failure", async () => {
+    it("does not fall back to direct engine.observe() when tool returns failure", async () => {
       const goal = makeGoal();
       const observationEngine = makeObservationEngine();
       const stateManager = makeStateManager(goal);
@@ -225,13 +225,11 @@ describe("CoreLoop Phase B — ToolExecutor routing", () => {
 
       await observeAndReload(ctx, "goal-routing-1", goal, 0);
 
-      // Tool was tried first
       expect(toolExecutor.execute).toHaveBeenCalledTimes(1);
-      // Direct engine.observe() was called as fallback
-      expect(observationEngine.observe).toHaveBeenCalledWith("goal-routing-1", []);
+      expect(observationEngine.observe).not.toHaveBeenCalled();
     });
 
-    it("falls back to direct engine.observe() when toolExecutor is absent", async () => {
+    it("does not use direct engine.observe() when toolExecutor is absent", async () => {
       const goal = makeGoal();
       const observationEngine = makeObservationEngine();
       const ctx = makePhaseCtx({
@@ -242,7 +240,7 @@ describe("CoreLoop Phase B — ToolExecutor routing", () => {
 
       await observeAndReload(ctx, "goal-routing-1", goal, 0);
 
-      expect(observationEngine.observe).toHaveBeenCalledWith("goal-routing-1", []);
+      expect(observationEngine.observe).not.toHaveBeenCalled();
     });
 
     it("returns original goal when reloaded goal is null after tool success", async () => {
@@ -260,7 +258,7 @@ describe("CoreLoop Phase B — ToolExecutor routing", () => {
       expect(result).toBe(goal);
     });
 
-    it("falls back to direct path when toolExecutor.execute throws", async () => {
+    it("returns the current goal without direct observation when toolExecutor.execute throws", async () => {
       const goal = makeGoal();
       const observationEngine = makeObservationEngine();
       const throwingExecutor = {
@@ -272,9 +270,8 @@ describe("CoreLoop Phase B — ToolExecutor routing", () => {
         stateManagerOverrides: { loadGoal: vi.fn().mockResolvedValue(goal) },
       });
 
-      // Should not throw — falls back gracefully
       await expect(observeAndReload(ctx, "goal-routing-1", goal, 0)).resolves.toBeDefined();
-      expect(observationEngine.observe).toHaveBeenCalledWith("goal-routing-1", []);
+      expect(observationEngine.observe).not.toHaveBeenCalled();
     });
   });
 

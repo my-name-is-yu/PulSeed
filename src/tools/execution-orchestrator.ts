@@ -62,6 +62,10 @@ export function decideHostToolExecution(
     };
   }
 
+  if (request.context.hostPolicyApproved === true) {
+    return { status: "allowed", reason: "This exact tool request was already approved for execution." };
+  }
+
   if (
     request.tool.metadata.permissionLevel === "write_local"
     || request.tool.metadata.permissionLevel === "execute"
@@ -136,6 +140,9 @@ function decideShellExecution(
     return { status: "allowed", reason: "Shell command is allowed by host policy." };
   }
   if (assessment.status === "needs_approval") {
+    if (request.context.hostPolicyApproved === true) {
+      return { status: "allowed", reason: "This exact shell request was already approved for execution." };
+    }
     return {
       status: "needs_permission",
       reason: assessment.reason ?? "Shell command requires permission.",

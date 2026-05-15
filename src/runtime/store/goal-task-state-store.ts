@@ -11,6 +11,12 @@ import { GapHistoryEntrySchema, type GapHistoryEntry } from "../../base/types/ga
 import { TaskSchema, type Task } from "../../base/types/task.js";
 import { CheckpointSchema, LoopCheckpointSchema, type Checkpoint, type LoopCheckpoint } from "../../base/types/checkpoint.js";
 import { PipelineStateSchema, type PipelineState } from "../../base/types/pipeline.js";
+import {
+  RuntimeGraphEdgeSchema,
+  RuntimeGraphNodeSchema,
+  type RuntimeGraphEdge,
+  type RuntimeGraphNode,
+} from "../personal-agent/contracts.js";
 
 export interface RawStateStoreResult {
   handled: boolean;
@@ -56,6 +62,14 @@ interface RawPathMatch {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function validDateTimeOrNow(value: string | null | undefined): string {
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  return nowIso();
 }
 
 const GOAL_STATE_WRITE_LOCK_TIMEOUT_MS = 5_000;
@@ -218,72 +232,87 @@ export class GoalTaskStateStore {
 
   async loadGoal(goalId: string, options: { includeArchived?: boolean } = {}): Promise<Goal | null> {
     const db = await this.database();
-    return db.read((sqlite) => {
+    return db.transaction((sqlite) => {
+      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, options);
+      if (graphGoal) return graphGoal;
       const row = sqlite.prepare(`
-        SELECT goal_json
+        SELECT goal_json, archived
         FROM goal_records
         WHERE goal_id = ?
           AND (? = 1 OR archived = 0)
-      `).get(goalId, options.includeArchived === false ? 0 : 1) as { goal_json: string } | undefined;
-      return row ? GoalSchema.parse(parseJson(row.goal_json)) : null;
+      `).get(goalId, options.includeArchived === false ? 0 : 1) as { goal_json: string; archived: 0 | 1 } | undefined;
+      if (!row) return null;
+      const goal = GoalSchema.parse(parseJson(row.goal_json));
+      upsertGoal(sqlite, goal, row.archived);
+      return readGoalFromRuntimeGraph(sqlite, goalId, options) ?? goal;
     });
   }
 
   async goalExists(goalId: string): Promise<boolean> {
     const db = await this.database();
-    return db.read((sqlite) => {
+    return db.transaction((sqlite) => {
+      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, { includeArchived: false });
+      if (graphGoal) return true;
       const row = sqlite.prepare(`
-        SELECT 1 AS exists_flag
+        SELECT goal_json
         FROM goal_records
         WHERE goal_id = ? AND archived = 0
-      `).get(goalId) as { exists_flag: number } | undefined;
-      return row !== undefined;
+      `).get(goalId) as { goal_json: string } | undefined;
+      if (!row) return false;
+      upsertGoal(sqlite, GoalSchema.parse(parseJson(row.goal_json)), 0);
+      return true;
     });
   }
 
   async listGoalIds(options: { archived?: boolean } = {}): Promise<string[]> {
     const archived = options.archived === true ? 1 : 0;
     const db = await this.database();
-    return db.read((sqlite) => {
+    return db.transaction((sqlite) => {
       const rows = sqlite.prepare(`
-        SELECT goal_id
+        SELECT goal_json
         FROM goal_records
         WHERE archived = ?
         ORDER BY updated_at ASC, goal_id ASC
-      `).all(archived) as Array<{ goal_id: string }>;
-      return rows.map((row) => row.goal_id);
+      `).all(archived) as Array<{ goal_json: string }>;
+      for (const row of rows) {
+        upsertGoal(sqlite, GoalSchema.parse(parseJson(row.goal_json)), archived);
+      }
+      return listGoalIdsFromRuntimeGraph(sqlite, archived);
     });
   }
 
   async markGoalArchived(goalId: string): Promise<boolean> {
     const db = await this.database();
     return db.transaction((sqlite) => {
+      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, { includeArchived: false });
       const row = sqlite.prepare(`
         SELECT goal_json
         FROM goal_records
         WHERE goal_id = ? AND archived = 0
       `).get(goalId) as { goal_json: string } | undefined;
-      if (!row) {
+      const goal = graphGoal ?? (row ? GoalSchema.parse(parseJson(row.goal_json)) : null);
+      if (!goal) {
         return false;
       }
       const timestamp = nowIso();
-      const goal = GoalSchema.parse(parseJson(row.goal_json));
       const archivedGoal = GoalSchema.parse({ ...goal, status: "archived", updated_at: timestamp });
-      const result = sqlite.prepare(`
-        UPDATE goal_records
-        SET archived = 1,
-            status = 'archived',
-            updated_at = ?,
-            goal_json = json(?)
-        WHERE goal_id = ? AND archived = 0
-      `).run(timestamp, JSON.stringify(archivedGoal), goalId);
-      return result.changes > 0;
+      upsertGoal(sqlite, archivedGoal, 1);
+      return true;
     });
   }
 
   async deleteGoal(goalId: string): Promise<boolean> {
     const db = await this.database();
     return db.transaction((sqlite) => {
+      const graphGoal = readRuntimeGraphNodeByKindRef(sqlite, "goal", goalId);
+      const graphTaskIds = listTaskIdsFromRuntimeGraph(sqlite, goalId);
+      const taskRows = sqlite.prepare("SELECT task_id FROM task_records WHERE goal_id = ?").all(goalId) as Array<{ task_id: string }>;
+      const taskIds = new Set([...graphTaskIds, ...taskRows.map((row) => row.task_id)]);
+      for (const taskId of taskIds) {
+        sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskRuntimeGraphNodeId(taskId));
+      }
+      sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(milestoneRuntimeGraphNodeId(goalId));
+      const graphResult = sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(goalRuntimeGraphNodeId(goalId));
       const result = sqlite.prepare("DELETE FROM goal_records WHERE goal_id = ?").run(goalId);
       sqlite.prepare("DELETE FROM goal_observation_logs WHERE goal_id = ?").run(goalId);
       sqlite.prepare("DELETE FROM goal_gap_histories WHERE goal_id = ?").run(goalId);
@@ -295,7 +324,7 @@ export class GoalTaskStateStore {
       sqlite.prepare("DELETE FROM task_outcome_summaries WHERE goal_id = ?").run(goalId);
       sqlite.prepare("DELETE FROM task_failure_contexts WHERE goal_id = ?").run(goalId);
       sqlite.prepare("DELETE FROM task_checkpoints WHERE goal_id = ?").run(goalId);
-      return result.changes > 0;
+      return result.changes > 0 || graphResult.changes > 0 || graphGoal !== null || taskIds.size > 0;
     });
   }
 
@@ -397,43 +426,51 @@ export class GoalTaskStateStore {
 
   async loadTask(goalId: string, taskId: string): Promise<Task | null> {
     const db = await this.database();
-    return db.read((sqlite) => readTask(sqlite, goalId, taskId));
+    return db.transaction((sqlite) => readTask(sqlite, goalId, taskId));
   }
 
   async listTasks(goalId: string): Promise<Task[]> {
     const db = await this.database();
-    return db.read((sqlite) => {
+    return db.transaction((sqlite) => {
       const rows = sqlite.prepare(`
         SELECT task_json
         FROM task_records
         WHERE goal_id = ?
         ORDER BY created_at DESC, task_id ASC
       `).all(goalId) as Array<{ task_json: string }>;
-      return rows.map((row) => TaskSchema.parse(parseJson(row.task_json)));
+      for (const row of rows) {
+        upsertTask(sqlite, TaskSchema.parse(parseJson(row.task_json)));
+      }
+      return listTasksFromRuntimeGraph(sqlite, { goalId });
     });
   }
 
   async listTasksByStatus(status: Task["status"]): Promise<Task[]> {
     const db = await this.database();
-    return db.read((sqlite) => {
+    return db.transaction((sqlite) => {
       const rows = sqlite.prepare(`
         SELECT task_json
         FROM task_records
         WHERE status = ?
         ORDER BY updated_at ASC, goal_id ASC, task_id ASC
       `).all(status) as Array<{ task_json: string }>;
-      return rows.map((row) => TaskSchema.parse(parseJson(row.task_json)));
+      for (const row of rows) {
+        upsertTask(sqlite, TaskSchema.parse(parseJson(row.task_json)));
+      }
+      return listTasksFromRuntimeGraph(sqlite, { status });
     });
   }
 
   async deleteTask(goalId: string, taskId: string): Promise<boolean> {
     const db = await this.database();
     return db.transaction((sqlite) => {
+      const graphTask = readTaskFromRuntimeGraph(sqlite, goalId, taskId);
+      const graphResult = sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskRuntimeGraphNodeId(taskId));
       const result = sqlite.prepare("DELETE FROM task_records WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
       sqlite.prepare("DELETE FROM task_outcome_events WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
       sqlite.prepare("DELETE FROM task_outcome_summaries WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
       sqlite.prepare("DELETE FROM task_checkpoints WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
-      return result.changes > 0;
+      return result.changes > 0 || graphResult.changes > 0 || graphTask !== null;
     });
   }
 
@@ -995,6 +1032,30 @@ export class GoalTaskStateStore {
 }
 
 function upsertGoal(sqlite: SqliteDatabase, goal: Goal, archived: 0 | 1): void {
+  upsertRuntimeGraphNode(sqlite, buildGoalRuntimeGraphNode(goal, archived));
+  if (goal.node_type === "milestone") {
+    upsertRuntimeGraphNode(sqlite, buildMilestoneRuntimeGraphNode(goal, archived));
+    insertRuntimeGraphEdgeIfNodesExist(sqlite, {
+      schema_version: "runtime-graph-edge/v1",
+      edge_id: `runtime-graph:edge:goal-milestone:${goal.id}`,
+      edge_kind: "produced",
+      from_node_id: goalRuntimeGraphNodeId(goal.id),
+      to_node_id: milestoneRuntimeGraphNodeId(goal.id),
+      created_at: validDateTimeOrNow(goal.updated_at),
+      provenance_refs: [{ kind: "goal", ref: goal.id }],
+    });
+  }
+  if (goal.parent_id) {
+    insertRuntimeGraphEdgeIfNodesExist(sqlite, {
+      schema_version: "runtime-graph-edge/v1",
+      edge_id: `runtime-graph:edge:goal-parent:${goal.parent_id}:${goal.id}`,
+      edge_kind: "parent_of",
+      from_node_id: goalRuntimeGraphNodeId(goal.parent_id),
+      to_node_id: goalRuntimeGraphNodeId(goal.id),
+      created_at: validDateTimeOrNow(goal.updated_at),
+      provenance_refs: [{ kind: "goal", ref: goal.id }],
+    });
+  }
   sqlite.prepare(`
     INSERT INTO goal_records (goal_id, parent_goal_id, status, updated_at, archived, goal_json)
     VALUES (?, ?, ?, ?, ?, json(?))
@@ -1005,6 +1066,221 @@ function upsertGoal(sqlite: SqliteDatabase, goal: Goal, archived: 0 | 1): void {
       archived = excluded.archived,
       goal_json = excluded.goal_json
   `).run(goal.id, goal.parent_id ?? null, goal.status, goal.updated_at, archived, JSON.stringify(goal));
+}
+
+function goalRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:goal:${goalId}`;
+}
+
+function milestoneRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:milestone:${goalId}`;
+}
+
+function taskRuntimeGraphNodeId(taskId: string): string {
+  return `runtime-graph:task:${taskId}`;
+}
+
+function buildGoalRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: goalRuntimeGraphNodeId(goal.id),
+    node_kind: "goal",
+    ref: { kind: "goal", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validDateTimeOrNow(goal.created_at),
+    updated_at: validDateTimeOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "goal",
+      storage_projection: "goal_records",
+      archived: archived === 1,
+      goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+      child_refs: goal.children_ids.map((childId) => ({ kind: "goal", ref: childId })),
+    },
+  });
+}
+
+function buildMilestoneRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: milestoneRuntimeGraphNodeId(goal.id),
+    node_kind: "milestone",
+    ref: { kind: "milestone", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validDateTimeOrNow(goal.created_at),
+    updated_at: validDateTimeOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "milestone",
+      storage_projection: "goal_records",
+      goal_ref: { kind: "goal", ref: goal.id },
+      archived: archived === 1,
+      milestone: goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+    },
+  });
+}
+
+function buildTaskRuntimeGraphNode(task: Task, updatedAt: string): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: taskRuntimeGraphNodeId(task.id),
+    node_kind: "task",
+    ref: { kind: "task", ref: task.id },
+    label: task.work_description || task.id,
+    created_at: validDateTimeOrNow(task.created_at),
+    updated_at: validDateTimeOrNow(updatedAt),
+    provenance_refs: [{ kind: "goal_state_store", ref: "task_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "task",
+      storage_projection: "task_records",
+      task,
+      parent_ref: { kind: "goal", ref: task.goal_id },
+      strategy_ref: task.strategy_id ? { kind: "strategy", ref: task.strategy_id } : null,
+    },
+  });
+}
+
+function upsertRuntimeGraphNode(sqlite: SqliteDatabase, node: RuntimeGraphNode): void {
+  const parsed = RuntimeGraphNodeSchema.parse(node);
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_nodes (
+      node_id, node_kind, ref, created_at, updated_at, node_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(node_id) DO UPDATE SET
+      node_kind = excluded.node_kind,
+      ref = excluded.ref,
+      updated_at = excluded.updated_at,
+      node_json = excluded.node_json
+  `).run(
+    parsed.node_id,
+    parsed.node_kind,
+    parsed.ref.ref,
+    parsed.created_at,
+    parsed.updated_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function insertRuntimeGraphEdgeIfNodesExist(sqlite: SqliteDatabase, edge: RuntimeGraphEdge): void {
+  const parsed = RuntimeGraphEdgeSchema.parse(edge);
+  const nodesExist = sqlite.prepare(`
+    SELECT 1 AS ok
+    WHERE EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+      AND EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+  `).get(parsed.from_node_id, parsed.to_node_id) as { ok: number } | undefined;
+  if (!nodesExist) return;
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_edges (
+      edge_id, edge_kind, from_node_id, to_node_id, created_at, edge_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(edge_id) DO NOTHING
+  `).run(
+    parsed.edge_id,
+    parsed.edge_kind,
+    parsed.from_node_id,
+    parsed.to_node_id,
+    parsed.created_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function readRuntimeGraphNodeByKindRef(
+  sqlite: SqliteDatabase,
+  nodeKind: "goal" | "task",
+  ref: string,
+): RuntimeGraphNode | null {
+  const row = sqlite.prepare(`
+    SELECT node_json
+    FROM personal_agent_runtime_graph_nodes
+    WHERE node_kind = ? AND ref = ?
+    ORDER BY
+      CASE
+        WHEN json_extract(node_json, '$.payload.runtime_graph_role') = 'source_of_truth' THEN 0
+        ELSE 1
+      END,
+      updated_at DESC,
+      node_id DESC
+    LIMIT 1
+  `).get(nodeKind, ref) as { node_json: string } | undefined;
+  return row ? RuntimeGraphNodeSchema.parse(parseJson(row.node_json)) : null;
+}
+
+function readGoalFromRuntimeGraph(
+  sqlite: SqliteDatabase,
+  goalId: string,
+  options: { includeArchived?: boolean } = {},
+): Goal | null {
+  const node = readRuntimeGraphNodeByKindRef(sqlite, "goal", goalId);
+  if (!node) return null;
+  if (node.payload["runtime_graph_role"] !== "source_of_truth") return null;
+  if (options.includeArchived === false && node.payload["archived"] === true) return null;
+  const goal = node.payload["goal"];
+  return GoalSchema.parse(goal);
+}
+
+function listGoalIdsFromRuntimeGraph(sqlite: SqliteDatabase, archived: 0 | 1): string[] {
+  const rows = sqlite.prepare(`
+    SELECT ref
+    FROM personal_agent_runtime_graph_nodes
+    WHERE node_kind = 'goal'
+      AND json_extract(node_json, '$.payload.runtime_graph_role') = 'source_of_truth'
+      AND json_extract(node_json, '$.payload.entity_kind') = 'goal'
+      AND json_extract(node_json, '$.payload.archived') = ?
+    ORDER BY updated_at ASC, ref ASC
+  `).all(archived) as Array<{ ref: string }>;
+  return rows.map((row) => row.ref);
+}
+
+function readTaskFromRuntimeGraph(sqlite: SqliteDatabase, goalId: string, taskId: string): Task | null {
+  const node = readRuntimeGraphNodeByKindRef(sqlite, "task", taskId);
+  if (!node) return null;
+  if (node.payload["runtime_graph_role"] !== "source_of_truth") return null;
+  const task = TaskSchema.parse(node.payload["task"]);
+  return task.goal_id === goalId ? task : null;
+}
+
+function listTasksFromRuntimeGraph(
+  sqlite: SqliteDatabase,
+  filter: { goalId: string; status?: never } | { goalId?: never; status: Task["status"] },
+): Task[] {
+  const predicate = filter.goalId
+    ? "AND json_extract(node_json, '$.payload.task.goal_id') = ?"
+    : "AND json_extract(node_json, '$.payload.task.status') = ?";
+  const value = filter.goalId ?? filter.status;
+  const rows = sqlite.prepare(`
+    SELECT node_json
+    FROM personal_agent_runtime_graph_nodes
+    WHERE node_kind = 'task'
+      AND json_extract(node_json, '$.payload.runtime_graph_role') = 'source_of_truth'
+      AND json_extract(node_json, '$.payload.entity_kind') = 'task'
+      ${predicate}
+    ORDER BY
+      CASE
+        WHEN ? = 'goal' THEN json_extract(node_json, '$.payload.task.created_at')
+        ELSE updated_at
+      END DESC,
+      ref ASC
+  `).all(value, filter.goalId ? "goal" : "status") as Array<{ node_json: string }>;
+  const tasks = rows.map((row) => TaskSchema.parse(RuntimeGraphNodeSchema.parse(parseJson(row.node_json)).payload["task"]));
+  if (filter.goalId) return tasks;
+  return tasks.sort((left, right) => {
+    const leftUpdated = validDateTimeOrNow(left.completed_at ?? left.started_at ?? left.created_at);
+    const rightUpdated = validDateTimeOrNow(right.completed_at ?? right.started_at ?? right.created_at);
+    return leftUpdated.localeCompare(rightUpdated)
+      || left.goal_id.localeCompare(right.goal_id)
+      || left.id.localeCompare(right.id);
+  });
+}
+
+function listTaskIdsFromRuntimeGraph(sqlite: SqliteDatabase, goalId: string): string[] {
+  return listTasksFromRuntimeGraph(sqlite, { goalId }).map((task) => task.id);
 }
 
 function readObservationLog(sqlite: SqliteDatabase, goalId: string): ObservationLog | null {
@@ -1050,6 +1326,20 @@ function upsertGapHistory(sqlite: SqliteDatabase, goalId: string, history: GapHi
 }
 
 function upsertTask(sqlite: SqliteDatabase, task: Task): void {
+  const updatedAt = validDateTimeOrNow(task.completed_at ?? task.started_at ?? task.created_at);
+  upsertRuntimeGraphNode(sqlite, buildTaskRuntimeGraphNode(task, updatedAt));
+  insertRuntimeGraphEdgeIfNodesExist(sqlite, {
+    schema_version: "runtime-graph-edge/v1",
+    edge_id: `runtime-graph:edge:goal-task:${task.goal_id}:${task.id}`,
+    edge_kind: "parent_of",
+    from_node_id: goalRuntimeGraphNodeId(task.goal_id),
+    to_node_id: taskRuntimeGraphNodeId(task.id),
+    created_at: updatedAt,
+    provenance_refs: [
+      { kind: "goal", ref: task.goal_id },
+      { kind: "task", ref: task.id },
+    ],
+  });
   sqlite.prepare(`
     INSERT INTO task_records (
       goal_id, task_id, status, primary_dimension, strategy_id,
@@ -1077,18 +1367,23 @@ function upsertTask(sqlite: SqliteDatabase, task: Task): void {
     created_at: task.created_at,
     started_at: task.started_at ?? null,
     completed_at: task.completed_at ?? null,
-    updated_at: task.completed_at ?? task.started_at ?? task.created_at,
+    updated_at: updatedAt,
     task_json: JSON.stringify(task),
   });
 }
 
 function readTask(sqlite: SqliteDatabase, goalId: string, taskId: string): Task | null {
+  const graphTask = readTaskFromRuntimeGraph(sqlite, goalId, taskId);
+  if (graphTask) return graphTask;
   const row = sqlite.prepare(`
     SELECT task_json
     FROM task_records
     WHERE goal_id = ? AND task_id = ?
   `).get(goalId, taskId) as { task_json: string } | undefined;
-  return row ? TaskSchema.parse(parseJson(row.task_json)) : null;
+  if (!row) return null;
+  const task = TaskSchema.parse(parseJson(row.task_json));
+  upsertTask(sqlite, task);
+  return readTaskFromRuntimeGraph(sqlite, goalId, taskId) ?? task;
 }
 
 function readTaskOutcomeLedger(

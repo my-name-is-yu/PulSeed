@@ -17,6 +17,7 @@ import {
   restoreSafePauseStateFromStore,
 } from "../runner-commands.js";
 import type { DaemonState } from "../../types/daemon.js";
+import type { PersonalAgentDecisionTrace } from "../../personal-agent/index.js";
 
 describe("daemon safe pause commands", () => {
   let tmpDir: string;
@@ -25,6 +26,8 @@ describe("daemon safe pause commands", () => {
   let journalQueue: JournalBackedQueue;
   let saveDaemonState: ReturnType<typeof vi.fn>;
   let broadcastGoalUpdated: ReturnType<typeof vi.fn>;
+  let recordTrace: ReturnType<typeof vi.fn>;
+  let commandOrder: string[];
   let supervisor: {
     getState: ReturnType<typeof vi.fn>;
     deactivateGoal: ReturnType<typeof vi.fn>;
@@ -48,7 +51,12 @@ describe("daemon safe pause commands", () => {
       resident_activity: null,
     };
     journalQueue = new JournalBackedQueue({ journalPath: path.join(tmpDir, "queue.json") });
+    commandOrder = [];
+    recordTrace = vi.fn(async () => {
+      commandOrder.push("trace");
+    });
     saveDaemonState = vi.fn(async () => {
+      commandOrder.push("save");
       await new DaemonStateStore(tmpDir).save(state);
     });
     broadcastGoalUpdated = vi.fn();
@@ -67,8 +75,12 @@ describe("daemon safe pause commands", () => {
         suspendedGoals: [],
         updatedAt: Date.now(),
       })),
-      deactivateGoal: vi.fn(),
-      activateGoal: vi.fn(),
+      deactivateGoal: vi.fn(() => {
+        commandOrder.push("deactivate");
+      }),
+      activateGoal: vi.fn(() => {
+        commandOrder.push("activate");
+      }),
     };
   });
 
@@ -80,6 +92,7 @@ describe("daemon safe pause commands", () => {
     return {
       runtimeRoot: tmpDir,
       stateManager: { getBaseDir: () => tmpDir },
+      personalAgentRuntime: { recordTrace },
       currentGoalIds,
       state,
       journalQueue,
@@ -110,6 +123,24 @@ describe("daemon safe pause commands", () => {
     await handleGoalPauseCommand(context(), "goal-1");
 
     expect(state.safe_pause_goals?.["goal-1"]?.state).toBe("pause_requested");
+    expect(commandOrder[0]).toBe("trace");
+    expect(commandOrder.indexOf("trace")).toBeLessThan(commandOrder.indexOf("save"));
+    const trace = recordTrace.mock.calls[0][0] as PersonalAgentDecisionTrace;
+    expect(trace).toMatchObject({
+      situation_frame: expect.objectContaining({
+        caller_path: "explicit_user_command",
+        source_kind: "explicit_command",
+      }),
+      task_candidates: [expect.objectContaining({
+        target_kind: "runtime_control",
+        desired_effect: "mutate_runtime_control",
+        task_created: false,
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "mutate_runtime_control",
+      })],
+    });
     expect(currentGoalIds).toEqual(["goal-1"]);
     expect(supervisor.deactivateGoal).toHaveBeenCalledWith("goal-1");
     expect(broadcastGoalUpdated).toHaveBeenCalledWith("goal-1", "pause_requested");
@@ -354,6 +385,24 @@ describe("daemon safe pause commands", () => {
   it("keeps emergency stop separate from safe pause", async () => {
     await handleGoalStopCommand(context(), "goal-1");
 
+    expect(commandOrder[0]).toBe("trace");
+    expect(commandOrder.indexOf("trace")).toBeLessThan(commandOrder.indexOf("save"));
+    expect(commandOrder.indexOf("trace")).toBeLessThan(commandOrder.indexOf("deactivate"));
+    const trace = recordTrace.mock.calls[0][0] as PersonalAgentDecisionTrace;
+    expect(trace).toMatchObject({
+      situation_frame: expect.objectContaining({
+        caller_path: "explicit_user_command",
+        source_kind: "explicit_command",
+      }),
+      task_candidates: [expect.objectContaining({
+        target_kind: "runtime_control",
+        desired_effect: "mutate_runtime_control",
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "mutate_runtime_control",
+      })],
+    });
     const stored = await new RuntimeSafePauseStore(tmpDir).load("goal-1");
     expect(stored?.state).toBe("emergency_stopped");
     expect(currentGoalIds).toEqual([]);

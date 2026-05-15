@@ -4,6 +4,8 @@ import type { PipelineExecutorDeps } from "../pipeline-executor.js";
 import { AdapterRegistry } from "../adapter-layer.js";
 import type { IAdapter, AgentTask, AgentResult } from "../adapter-layer.js";
 import type { PipelineState, TaskPipeline } from "../../../base/types/pipeline.js";
+import type { ToolExecutor } from "../../../tools/executor.js";
+import type { PersonalAgentDecisionTrace } from "../../../runtime/personal-agent/index.js";
 
 // ─── Helpers ───
 
@@ -211,6 +213,142 @@ describe("PipelineExecutor", () => {
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(result.status).toBe("failed");
     expect(result.final_verdict).toBe("fail");
+  });
+
+  it("does not call adapters directly when run-adapter policy blocks execution", async () => {
+    const deniedToolExecutor = {
+      execute: vi.fn(async () => ({
+        success: false,
+        data: null,
+        summary: "run-adapter blocked by policy",
+        error: "blocked",
+        execution: {
+          status: "not_executed" as const,
+          reason: "policy_blocked" as const,
+          message: "blocked",
+        },
+        durationMs: 1,
+      })),
+    } as unknown as ToolExecutor;
+    const executor = new PipelineExecutor({
+      ...deps,
+      toolExecutor: deniedToolExecutor,
+    });
+
+    const result = await executor.run(
+      "task-policy-block",
+      makeAgentTask(),
+      { stages: [{ role: "implementor" }], fail_fast: true },
+      undefined,
+      undefined,
+      { goalId: "goal-1" },
+    );
+
+    expect(deniedToolExecutor.execute).toHaveBeenCalledWith(
+      "run-adapter",
+      expect.objectContaining({ adapter_id: "mock", goal_id: "goal-1" }),
+      expect.objectContaining({
+        goalId: "goal-1",
+        taskId: "task-policy-block",
+        personalAgentTrace: expect.objectContaining({
+          callerPath: "task_execution",
+          sourceKind: "task_execution",
+        }),
+      }),
+    );
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect(result.status).toBe("failed");
+    expect(result.final_verdict).toBe("fail");
+  });
+
+  it("records plan approval denial as durable personal-agent policy history", async () => {
+    const recordTrace = vi.fn(async (_trace: PersonalAgentDecisionTrace) => ({} as never));
+    const approvalFn = vi.fn().mockResolvedValue(false);
+    const executor = new PipelineExecutor({
+      ...deps,
+      approvalFn,
+      personalAgentRuntime: { recordTrace },
+    });
+
+    const result = await executor.run(
+      "task-plan-denied",
+      makeAgentTask(),
+      {
+        stages: [{ role: "implementor" }],
+        fail_fast: true,
+        plan_required: true,
+      } as TaskPipeline & { plan_required: true },
+      undefined,
+      0,
+      { goalId: "goal-1" },
+    );
+
+    expect(result.status).toBe("failed");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    const approvalTraces = recordTrace.mock.calls
+      .map((call) => call[0])
+      .filter((trace) => trace.replay_key.startsWith("pipeline_approval:plan_approval"));
+    expect(approvalTraces.map((trace) => trace.intervention_decisions[0]?.decision))
+      .toEqual(["confirm_required", "block"]);
+    expect(approvalTraces[1]).toMatchObject({
+      initiative_events: expect.arrayContaining([
+        expect.objectContaining({ event_type: "policy_decision_recorded" }),
+        expect.objectContaining({ event_type: "action_outcome" }),
+      ]),
+      task_candidates: [
+        expect.objectContaining({
+          materialization_state: "blocked",
+          task_created: false,
+        }),
+      ],
+      intervention_decisions: [
+        expect.objectContaining({
+          decision: "block",
+          target_effect: "execute_tool",
+        }),
+      ],
+    });
+  });
+
+  it("records final retry approval denial as durable personal-agent policy history", async () => {
+    const failingAdapter = makeAdapter("mock", {
+      success: false,
+      output: "failed",
+      error: "stage failed",
+      exit_code: 1,
+      stopped_reason: "error",
+    });
+    const reg = new AdapterRegistry();
+    reg.register(failingAdapter);
+    const recordTrace = vi.fn(async (_trace: PersonalAgentDecisionTrace) => ({} as never));
+    const approvalFn = vi.fn().mockResolvedValue(false);
+    const executor = new PipelineExecutor({
+      stateManager: stateManager as unknown as PipelineExecutorDeps["stateManager"],
+      adapterRegistry: reg,
+      approvalFn,
+      personalAgentRuntime: { recordTrace },
+    });
+
+    const result = await executor.run(
+      "task-final-retry-denied",
+      makeAgentTask(),
+      { stages: [{ role: "implementor" }], fail_fast: true },
+      undefined,
+      undefined,
+      { goalId: "goal-1" },
+    );
+
+    expect(result.status).toBe("failed");
+    expect(approvalFn).toHaveBeenCalledOnce();
+    expect(failingAdapter.execute).toHaveBeenCalledTimes(2);
+    const approvalTraces = recordTrace.mock.calls
+      .map((call) => call[0])
+      .filter((trace) => trace.replay_key.startsWith("pipeline_approval:final_retry_approval"));
+    expect(approvalTraces.map((trace) => trace.intervention_decisions[0]?.decision))
+      .toEqual(["confirm_required", "block"]);
+    expect(approvalTraces[1]?.initiative_events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event_type: "action_outcome" }),
+    ]));
   });
 
   it("records adapter failures when stage execution throws", async () => {

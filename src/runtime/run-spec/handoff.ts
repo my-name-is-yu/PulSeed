@@ -1,11 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import type { StateManager } from "../../base/state/state-manager.js";
 import { GoalSchema, type Goal } from "../../base/types/goal.js";
 import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { validateProtectedPath } from "../../tools/fs/FileValidationTool/protected-path-policy.js";
-import { BackgroundRunLedger, type BackgroundRunCreateInput } from "../store/background-run-store.js";
-import type { RuntimeReplyTarget } from "../session-registry/types.js";
+import {
+  BackgroundRunLedger,
+  type BackgroundRunCreateInput,
+} from "../store/background-run-store.js";
+import type { BackgroundRun, RuntimeReplyTarget } from "../session-registry/types.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../daemon/runtime-root.js";
 import { DaemonClient, isDaemonRunning, type DaemonStartGoalOptions } from "../daemon/client.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
@@ -18,6 +21,12 @@ import {
 import { createRunSpecStore } from "./store.js";
 import { deriveRunSpecFromText } from "./derive.js";
 import { RunSpecSchema, type RunSpec } from "./types.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+  type CapabilityRegistryDecisionKind,
+  type InterventionDecisionKind,
+} from "../personal-agent/index.js";
 
 export interface RunSpecConfirmationSnapshot {
   state: "pending" | "confirmed" | "cancelled";
@@ -39,6 +48,7 @@ export interface RunSpecHandoffDeps {
   sessionCwd?: string | null;
   replyTarget?: Record<string, unknown> | null;
   currentTurnStartedAt?: string | null;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export interface DraftRunSpecInput {
@@ -75,7 +85,14 @@ export interface RunSpecHandoffResult {
 }
 
 export class RunSpecHandoffService {
-  constructor(private readonly deps: RunSpecHandoffDeps) {}
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+
+  constructor(private readonly deps: RunSpecHandoffDeps) {
+    this.personalAgentRuntime = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+      deps.stateManager.getBaseDir(),
+      { controlBaseDir: deps.stateManager.getBaseDir() },
+    );
+  }
 
   async draft(input: DraftRunSpecInput): Promise<RunSpecHandoffResult> {
     const spec = await deriveRunSpecFromText(input.text, {
@@ -247,6 +264,11 @@ export class RunSpecHandoffService {
   async startConfirmed(spec: RunSpec): Promise<RunSpecHandoffResult> {
     const safetyBlock = validateRunSpecStartSafety(spec);
     if (safetyBlock) {
+      await this.recordRunSpecStartDecision(spec, {
+        decision: "block",
+        capabilityDecision: "blocked",
+        reason: safetyBlock,
+      });
       return {
         success: false,
         message: safetyBlock,
@@ -256,6 +278,11 @@ export class RunSpecHandoffService {
     }
     const client = await this.getDaemonClient();
     if (!client) {
+      await this.recordRunSpecStartDecision(spec, {
+        decision: "hold",
+        capabilityDecision: "missing",
+        reason: "Daemon start capability was unavailable, so the confirmed RunSpec was held before background work.",
+      });
       return {
         success: false,
         message: [
@@ -267,6 +294,11 @@ export class RunSpecHandoffService {
         spec,
       };
     }
+    await this.recordRunSpecStartDecision(spec, {
+      decision: "allow",
+      capabilityDecision: "available",
+      reason: "Confirmed RunSpec passed start safety and daemon capability checks before creating durable background work.",
+    });
     const goal = await this.createGoalFromRunSpec(spec);
     const run = await this.createRunSpecBackgroundRun(spec, goal);
     try {
@@ -279,6 +311,15 @@ export class RunSpecHandoffService {
           pinnedReplyTarget: run.pinned_reply_target,
         },
       } satisfies DaemonStartGoalOptions);
+      await this.recordRunSpecStartDecision(spec, {
+        decision: "allow",
+        capabilityDecision: "available",
+        reason: "Confirmed RunSpec passed start safety and daemon capability checks before creating durable background work.",
+        outcome: {
+          summary: "RunSpec background run was handed to the daemon with a deterministic background run id.",
+          targetRef: { kind: "background_run", ref: run.id },
+        },
+      });
       return {
         success: true,
         message: [
@@ -367,9 +408,19 @@ export class RunSpecHandoffService {
       const existing = await this.deps.stateManager.loadGoal(spec.links.goal_id);
       if (existing) return existing;
     }
+    const deterministicGoalId = runSpecGoalId(spec);
+    const existingDeterministicGoal = await this.deps.stateManager.loadGoal(deterministicGoalId);
+    if (existingDeterministicGoal) {
+      await createRunSpecStore(this.deps.stateManager).save({
+        ...spec,
+        links: { ...spec.links, goal_id: existingDeterministicGoal.id },
+        updated_at: new Date().toISOString(),
+      });
+      return existingDeterministicGoal;
+    }
     const now = new Date().toISOString();
     const goal = GoalSchema.parse({
-      id: `goal-runspec-${randomUUID()}`,
+      id: deterministicGoalId,
       parent_id: null,
       node_type: "goal",
       title: spec.objective,
@@ -405,15 +456,19 @@ export class RunSpecHandoffService {
     return goal;
   }
 
-  private async createRunSpecBackgroundRun(spec: RunSpec, goal: Goal) {
+  private async createRunSpecBackgroundRun(spec: RunSpec, goal: Goal): Promise<BackgroundRun> {
     const sessionId = this.deps.conversationSessionId ?? spec.origin.session_id;
     const pinnedReplyTarget = normalizePinnedReplyTargetForRunSpec(
       spec.origin.reply_target
       ?? this.deps.replyTarget
       ?? null,
     );
+    const [primary, ...mirrors] = this.getBackgroundRunLedgers();
+    const deterministicRunId = runSpecBackgroundRunId(spec);
+    const existing = await primary.load(deterministicRunId);
+    if (existing) return existing;
     const input: BackgroundRunCreateInput = {
-      id: `run:coreloop:${randomUUID()}`,
+      id: deterministicRunId,
       kind: "coreloop_run",
       goal_id: goal.id,
       parent_session_id: sessionId ? `session:conversation:${sessionId}` : null,
@@ -444,10 +499,67 @@ export class RunSpecHandoffService {
         source_text: spec.source_text,
       },
     };
-    const [primary, ...mirrors] = this.getBackgroundRunLedgers();
     const run = await primary.create(input);
     await Promise.all(mirrors.map((ledger) => ledger.create(input).catch(() => undefined)));
     return run;
+  }
+
+  private async recordRunSpecStartDecision(
+    spec: RunSpec,
+    input: {
+      decision: InterventionDecisionKind;
+      capabilityDecision: CapabilityRegistryDecisionKind;
+      reason: string;
+      outcome?: {
+        summary: string;
+        targetRef: { kind: string; ref: string };
+      };
+    },
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const goalId = spec.links.goal_id ?? runSpecGoalId(spec);
+    const runId = runSpecBackgroundRunId(spec);
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "explicit_user_command",
+      source: {
+        sourceKind: "explicit_command",
+        sourceId: `run_spec:${spec.id}:start`,
+        emittedAt: now,
+        sourceEpoch: spec.updated_at,
+        highWatermark: spec.updated_at,
+        replayKey: `run_spec:start:${spec.id}:${spec.updated_at}`,
+        summary: "Confirmed RunSpec requested durable background work.",
+        sourceRef: { kind: "run_spec", ref: spec.id },
+      },
+      target: {
+        kind: "run",
+        ref: { kind: "background_run", ref: runId },
+        effect: "create_run",
+        summary: spec.objective,
+      },
+      decision: input.decision,
+      decisionReason: input.reason,
+      capabilityDecision: input.capabilityDecision,
+      capabilityRefs: [
+        { kind: "daemon_client", ref: "goal_start" },
+        { kind: "background_run_ledger", ref: "control_db" },
+      ],
+      policyRef: { kind: "intervention_policy", ref: "policy:runspec-start-v1" },
+      currentRefs: [
+        { kind: "run_spec", ref: spec.id },
+        { kind: "goal", ref: goalId },
+      ],
+      auditRefs: [{ kind: "run_spec", ref: spec.id }],
+      ...(input.outcome
+        ? {
+            outcomeEvent: {
+              type: "action_outcome" as const,
+              summary: input.outcome.summary,
+              targetRef: input.outcome.targetRef,
+            },
+          }
+        : {}),
+    }));
   }
 
   private getBackgroundRunLedgers(): BackgroundRunLedger[] {
@@ -463,6 +575,18 @@ export class RunSpecHandoffService {
     if (!Number.isFinite(turnStarted) || !Number.isFinite(draftCreated)) return false;
     return draftCreated >= turnStarted;
   }
+}
+
+function runSpecGoalId(spec: RunSpec): string {
+  return `goal-runspec-${stableRunSpecId(spec.id)}`;
+}
+
+function runSpecBackgroundRunId(spec: RunSpec): string {
+  return `run:coreloop:runspec:${stableRunSpecId(spec.id)}`;
+}
+
+function stableRunSpecId(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 20);
 }
 
 export function validateRunSpecStartSafety(spec: RunSpec): string | null {

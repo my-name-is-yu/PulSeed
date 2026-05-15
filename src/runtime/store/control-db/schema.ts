@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 30;
+export const CONTROL_DB_SCHEMA_VERSION = 33;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -578,6 +578,192 @@ CREATE TABLE IF NOT EXISTS attention_admission_proposals (
 
 CREATE INDEX IF NOT EXISTS attention_admission_proposals_state_idx
   ON attention_admission_proposals(state, updated_at, proposal_id);
+`.trim();
+
+export const CONTROL_DB_PERSONAL_AGENT_RUNTIME_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS personal_agent_situation_frames (
+  frame_id TEXT PRIMARY KEY,
+  caller_path TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  replay_key TEXT NOT NULL,
+  assembled_at TEXT NOT NULL,
+  frame_json TEXT NOT NULL CHECK (json_valid(frame_json))
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_situation_frames_replay_idx
+  ON personal_agent_situation_frames(replay_key, assembled_at, frame_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_situation_frames_caller_idx
+  ON personal_agent_situation_frames(caller_path, source_kind, assembled_at, frame_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_initiative_events (
+  event_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'signal_received',
+    'scheduler_wake',
+    'resident_observation',
+    'user_follow_up',
+    'task_candidate_proposed',
+    'policy_decision_recorded',
+    'action_requested',
+    'action_outcome',
+    'reflection_recorded',
+    'memory_updated',
+    'runtime_resumed'
+  )),
+  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  occurred_at TEXT NOT NULL,
+  situation_frame_id TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+  FOREIGN KEY (situation_frame_id) REFERENCES personal_agent_situation_frames(frame_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_initiative_events_trace_idx
+  ON personal_agent_initiative_events(trace_id, sequence, event_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_initiative_events_type_idx
+  ON personal_agent_initiative_events(event_type, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_attention_transitions (
+  transition_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  to_state TEXT NOT NULL CHECK (to_state IN ('observed', 'warming', 'held', 'blocked', 'suppressed', 'admitted', 'terminal')),
+  occurred_at TEXT NOT NULL,
+  situation_frame_id TEXT NOT NULL,
+  initiative_event_id TEXT NOT NULL,
+  transition_json TEXT NOT NULL CHECK (json_valid(transition_json)),
+  FOREIGN KEY (situation_frame_id) REFERENCES personal_agent_situation_frames(frame_id) ON DELETE CASCADE,
+  FOREIGN KEY (initiative_event_id) REFERENCES personal_agent_initiative_events(event_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_attention_transitions_trace_idx
+  ON personal_agent_attention_transitions(trace_id, occurred_at, transition_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_attention_transitions_state_idx
+  ON personal_agent_attention_transitions(to_state, occurred_at, transition_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_task_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'task',
+    'run',
+    'tool_call',
+    'notification',
+    'runtime_control',
+    'memory_update',
+    'reflection',
+    'attention_only'
+  )),
+  target_ref TEXT NOT NULL,
+  materialization_state TEXT NOT NULL CHECK (materialization_state IN ('candidate', 'held', 'blocked', 'materialized', 'suppressed')),
+  desired_effect TEXT NOT NULL,
+  proposed_at TEXT NOT NULL,
+  situation_frame_id TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  candidate_json TEXT NOT NULL CHECK (json_valid(candidate_json)),
+  FOREIGN KEY (situation_frame_id) REFERENCES personal_agent_situation_frames(frame_id) ON DELETE CASCADE,
+  FOREIGN KEY (source_event_id) REFERENCES personal_agent_initiative_events(event_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_task_candidates_trace_idx
+  ON personal_agent_task_candidates(trace_id, proposed_at, candidate_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_task_candidates_state_idx
+  ON personal_agent_task_candidates(materialization_state, proposed_at, candidate_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_task_candidates_target_idx
+  ON personal_agent_task_candidates(target_kind, target_ref, proposed_at, candidate_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_capability_decisions (
+  decision_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('available', 'missing', 'permission_required', 'blocked', 'not_applicable')),
+  decided_at TEXT NOT NULL,
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json)),
+  FOREIGN KEY (candidate_id) REFERENCES personal_agent_task_candidates(candidate_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_capability_decisions_trace_idx
+  ON personal_agent_capability_decisions(trace_id, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_capability_decisions_candidate_idx
+  ON personal_agent_capability_decisions(candidate_id, decided_at, decision_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_intervention_decisions (
+  decision_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  capability_decision_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('allow', 'hold', 'block', 'suppress', 'confirm_required')),
+  target_effect TEXT NOT NULL,
+  permission_required INTEGER NOT NULL CHECK (permission_required IN (0, 1)),
+  decided_at TEXT NOT NULL,
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json)),
+  FOREIGN KEY (candidate_id) REFERENCES personal_agent_task_candidates(candidate_id) ON DELETE CASCADE,
+  FOREIGN KEY (capability_decision_id) REFERENCES personal_agent_capability_decisions(decision_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_intervention_decisions_trace_idx
+  ON personal_agent_intervention_decisions(trace_id, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_intervention_decisions_candidate_idx
+  ON personal_agent_intervention_decisions(candidate_id, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_intervention_decisions_decision_idx
+  ON personal_agent_intervention_decisions(decision, target_effect, decided_at, decision_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_runtime_graph_nodes (
+  node_id TEXT PRIMARY KEY,
+  node_kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  node_json TEXT NOT NULL CHECK (json_valid(node_json))
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_runtime_graph_nodes_ref_idx
+  ON personal_agent_runtime_graph_nodes(ref, updated_at, node_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_runtime_graph_nodes_kind_idx
+  ON personal_agent_runtime_graph_nodes(node_kind, updated_at, node_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_runtime_graph_edges (
+  edge_id TEXT PRIMARY KEY,
+  edge_kind TEXT NOT NULL,
+  from_node_id TEXT NOT NULL,
+  to_node_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  edge_json TEXT NOT NULL CHECK (json_valid(edge_json)),
+  FOREIGN KEY (from_node_id) REFERENCES personal_agent_runtime_graph_nodes(node_id) ON DELETE CASCADE,
+  FOREIGN KEY (to_node_id) REFERENCES personal_agent_runtime_graph_nodes(node_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_runtime_graph_edges_from_idx
+  ON personal_agent_runtime_graph_edges(from_node_id, edge_kind, to_node_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_runtime_graph_edges_to_idx
+  ON personal_agent_runtime_graph_edges(to_node_id, edge_kind, from_node_id);
+
+CREATE TABLE IF NOT EXISTS personal_agent_relationship_memory_audits (
+  audit_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  memory_ref TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('read', 'write', 'correct', 'invalidate', 'withhold')),
+  correction_state TEXT NOT NULL,
+  invalidated INTEGER NOT NULL CHECK (invalidated IN (0, 1)),
+  recorded_at TEXT NOT NULL,
+  audit_json TEXT NOT NULL CHECK (json_valid(audit_json))
+);
+
+CREATE INDEX IF NOT EXISTS personal_agent_relationship_memory_audits_trace_idx
+  ON personal_agent_relationship_memory_audits(trace_id, recorded_at, audit_id);
+
+CREATE INDEX IF NOT EXISTS personal_agent_relationship_memory_audits_memory_idx
+  ON personal_agent_relationship_memory_audits(memory_ref, correction_state, invalidated, recorded_at);
 `.trim();
 
 export const CONTROL_DB_RUNTIME_STATE_OWNERSHIP_SCHEMA_SQL = `
@@ -2025,6 +2211,171 @@ CREATE INDEX IF NOT EXISTS dream_decision_heuristics_order_idx
   ON dream_decision_heuristics(sort_order, heuristic_id);
 `.trim();
 
+export const CONTROL_DB_PERSONAL_AGENT_GOAL_CANDIDATE_TARGET_SCHEMA_SQL = `
+ALTER TABLE personal_agent_intervention_decisions RENAME TO personal_agent_intervention_decisions_v31;
+ALTER TABLE personal_agent_capability_decisions RENAME TO personal_agent_capability_decisions_v31;
+ALTER TABLE personal_agent_task_candidates RENAME TO personal_agent_task_candidates_v31;
+
+DROP INDEX IF EXISTS personal_agent_task_candidates_trace_idx;
+DROP INDEX IF EXISTS personal_agent_task_candidates_state_idx;
+DROP INDEX IF EXISTS personal_agent_task_candidates_target_idx;
+DROP INDEX IF EXISTS personal_agent_capability_decisions_trace_idx;
+DROP INDEX IF EXISTS personal_agent_capability_decisions_candidate_idx;
+DROP INDEX IF EXISTS personal_agent_intervention_decisions_trace_idx;
+DROP INDEX IF EXISTS personal_agent_intervention_decisions_candidate_idx;
+DROP INDEX IF EXISTS personal_agent_intervention_decisions_decision_idx;
+
+CREATE TABLE personal_agent_task_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'goal',
+    'task',
+    'run',
+    'tool_call',
+    'notification',
+    'runtime_control',
+    'memory_update',
+    'reflection',
+    'attention_only'
+  )),
+  target_ref TEXT NOT NULL,
+  materialization_state TEXT NOT NULL CHECK (materialization_state IN ('candidate', 'held', 'blocked', 'materialized', 'suppressed')),
+  desired_effect TEXT NOT NULL,
+  proposed_at TEXT NOT NULL,
+  situation_frame_id TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  candidate_json TEXT NOT NULL CHECK (json_valid(candidate_json)),
+  FOREIGN KEY (situation_frame_id) REFERENCES personal_agent_situation_frames(frame_id) ON DELETE CASCADE,
+  FOREIGN KEY (source_event_id) REFERENCES personal_agent_initiative_events(event_id) ON DELETE CASCADE
+);
+
+INSERT INTO personal_agent_task_candidates (
+  candidate_id,
+  trace_id,
+  target_kind,
+  target_ref,
+  materialization_state,
+  desired_effect,
+  proposed_at,
+  situation_frame_id,
+  source_event_id,
+  candidate_json
+)
+SELECT
+  candidate_id,
+  trace_id,
+  target_kind,
+  target_ref,
+  materialization_state,
+  desired_effect,
+  proposed_at,
+  situation_frame_id,
+  source_event_id,
+  candidate_json
+FROM personal_agent_task_candidates_v31;
+
+CREATE INDEX personal_agent_task_candidates_trace_idx
+  ON personal_agent_task_candidates(trace_id, proposed_at, candidate_id);
+
+CREATE INDEX personal_agent_task_candidates_state_idx
+  ON personal_agent_task_candidates(materialization_state, proposed_at, candidate_id);
+
+CREATE INDEX personal_agent_task_candidates_target_idx
+  ON personal_agent_task_candidates(target_kind, target_ref, proposed_at, candidate_id);
+
+CREATE TABLE personal_agent_capability_decisions (
+  decision_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('available', 'missing', 'permission_required', 'blocked', 'not_applicable')),
+  decided_at TEXT NOT NULL,
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json)),
+  FOREIGN KEY (candidate_id) REFERENCES personal_agent_task_candidates(candidate_id) ON DELETE CASCADE
+);
+
+INSERT INTO personal_agent_capability_decisions (
+  decision_id,
+  trace_id,
+  candidate_id,
+  decision,
+  decided_at,
+  decision_json
+)
+SELECT
+  decision_id,
+  trace_id,
+  candidate_id,
+  decision,
+  decided_at,
+  decision_json
+FROM personal_agent_capability_decisions_v31;
+
+CREATE INDEX personal_agent_capability_decisions_trace_idx
+  ON personal_agent_capability_decisions(trace_id, decided_at, decision_id);
+
+CREATE INDEX personal_agent_capability_decisions_candidate_idx
+  ON personal_agent_capability_decisions(candidate_id, decided_at, decision_id);
+
+CREATE TABLE personal_agent_intervention_decisions (
+  decision_id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  capability_decision_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('allow', 'hold', 'block', 'suppress', 'confirm_required')),
+  target_effect TEXT NOT NULL,
+  permission_required INTEGER NOT NULL CHECK (permission_required IN (0, 1)),
+  decided_at TEXT NOT NULL,
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json)),
+  FOREIGN KEY (candidate_id) REFERENCES personal_agent_task_candidates(candidate_id) ON DELETE CASCADE,
+  FOREIGN KEY (capability_decision_id) REFERENCES personal_agent_capability_decisions(decision_id) ON DELETE CASCADE
+);
+
+INSERT INTO personal_agent_intervention_decisions (
+  decision_id,
+  trace_id,
+  candidate_id,
+  capability_decision_id,
+  decision,
+  target_effect,
+  permission_required,
+  decided_at,
+  decision_json
+)
+SELECT
+  decision_id,
+  trace_id,
+  candidate_id,
+  capability_decision_id,
+  decision,
+  target_effect,
+  permission_required,
+  decided_at,
+  decision_json
+FROM personal_agent_intervention_decisions_v31;
+
+CREATE INDEX personal_agent_intervention_decisions_trace_idx
+  ON personal_agent_intervention_decisions(trace_id, decided_at, decision_id);
+
+CREATE INDEX personal_agent_intervention_decisions_candidate_idx
+  ON personal_agent_intervention_decisions(candidate_id, decided_at, decision_id);
+
+CREATE INDEX personal_agent_intervention_decisions_decision_idx
+  ON personal_agent_intervention_decisions(decision, target_effect, decided_at, decision_id);
+
+DROP TABLE personal_agent_intervention_decisions_v31;
+DROP TABLE personal_agent_capability_decisions_v31;
+DROP TABLE personal_agent_task_candidates_v31;
+`.trim();
+
+export const CONTROL_DB_OUTBOX_DEDUPE_SCHEMA_SQL = `
+ALTER TABLE outbox_records ADD COLUMN dedupe_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS outbox_records_dedupe_idx
+  ON outbox_records(dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2192,5 +2543,20 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     30,
     "attention-concern-metabolism-runtime-state",
     CONTROL_DB_ATTENTION_METABOLISM_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    31,
+    "personal-agent-runtime-state",
+    CONTROL_DB_PERSONAL_AGENT_RUNTIME_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    32,
+    "personal-agent-goal-candidate-target",
+    CONTROL_DB_PERSONAL_AGENT_GOAL_CANDIDATE_TARGET_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    33,
+    "outbox-dedupe-key",
+    CONTROL_DB_OUTBOX_DEDUPE_SCHEMA_SQL
   ),
 ];

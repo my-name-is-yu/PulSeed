@@ -130,6 +130,17 @@ export const ScheduleToolEscalationConfigInputSchema = z.object({
   circuit_breaker_threshold: ScheduleToolPositiveSafeIntegerSchema.default(10),
 }).strict();
 
+export const ScheduleToolRetryPolicyInputSchema = z.object({
+  enabled: z.boolean().default(true),
+  initial_delay_ms: ScheduleToolNonNegativeSafeIntegerSchema.default(30_000),
+  max_delay_ms: ScheduleToolPositiveSafeIntegerSchema.default(15 * 60 * 1000),
+  multiplier: ScheduleToolFiniteSafeNumberSchema.min(1).max(100).default(2),
+  jitter_factor: ScheduleToolUnitIntervalSchema.default(0.2),
+  max_attempts: ScheduleToolPositiveSafeIntegerSchema.max(100).default(3),
+  max_retry_window_ms: ScheduleToolPositiveSafeIntegerSchema.default(24 * 60 * 60 * 1000),
+  retryable_failure_kinds: z.array(z.enum(["transient", "permanent"])).default(["transient"]),
+}).strict();
+
 const ScheduleToolPresetBaseInputSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().default(true),

@@ -18,6 +18,7 @@ import {
   cmdGoalArchive,
 } from "./goal.js";
 import { cmdGoalAddRaw } from "./goal-raw.js";
+import { recordCliGoalCommandDecision } from "./goal-personal-agent-trace.js";
 
 const logger = getCliLogger();
 
@@ -233,6 +234,19 @@ export async function dispatchGoalCommand(
     const goalId = args[0];
     if (!goalId) {
       logger.error("Error: goal ID is required. Usage: pulseed goal remove <id>");
+      return 1;
+    }
+    const goal = await stateManager.loadGoal(goalId);
+    if (goal && !(await recordCliGoalCommandDecision(stateManager, {
+      command: "pulseed goal remove",
+      goalId,
+      effect: "mutate_runtime_control",
+      targetSummary: `Remove goal "${goal.title}".`,
+      sourceId: `pulseed goal remove:${goalId}`,
+      sourceEpoch: goal.updated_at,
+      decisionReason: "Explicit CLI goal remove was allowed to delete durable goal state.",
+      currentRefs: [{ kind: "goal", ref: goalId }],
+    }))) {
       return 1;
     }
     const deleted = await stateManager.deleteGoal(goalId);

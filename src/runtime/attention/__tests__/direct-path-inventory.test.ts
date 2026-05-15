@@ -55,9 +55,16 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
     expect(nonExceptionPaths.map((entry) => entry.id)).toEqual(expect.arrayContaining([
       "daemon.proactive_tick",
+      "event_server.file_ingestion",
+      "event_server.post_events",
+      "event_server.sse_outbox_broadcast",
+      "event_server.trigger_create_task",
+      "notification.outbox",
       "resident.curiosity",
       "resident.proactive_maintenance",
       "runtime_control.executor",
+      "schedule.cron_probe_notification",
+      "schedule.goal_trigger",
     ]));
     for (const entry of nonExceptionPaths) {
       expect(entry.requiresTypedAdmission, entry.id).toBe(true);
@@ -65,7 +72,7 @@ describe("LivingAutonomyDirectPathInventory", () => {
     }
   });
 
-  it("keeps pre-gate outward effects limited to explicitly user-authorized schedule paths", () => {
+  it("keeps schedule paths from retaining pre-gate outward effects", () => {
     const entriesWithPreGateOutwardEffects = LivingAutonomyDirectPathInventory.filter((entry) =>
       forbiddenPreGateOutwardEffects({
         ...entry,
@@ -73,22 +80,16 @@ describe("LivingAutonomyDirectPathInventory", () => {
       }).length > 0
     );
 
-    expect(entriesWithPreGateOutwardEffects.map((entry) => entry.id).sort()).toEqual([
-      "schedule.cron_probe_notification",
-      "schedule.goal_trigger",
-    ]);
-    for (const entry of entriesWithPreGateOutwardEffects) {
-      expect(entry.classification, entry.id).toBe("already_user_authorized_existing_behavior");
-    }
+    expect(entriesWithPreGateOutwardEffects).toEqual([]);
   });
 
-  it("keeps user-authorized schedule execution separate from internal wake/admission paths", () => {
+  it("keeps user-created schedule execution behind personal-agent admission", () => {
     const byId = directPathInventoryById();
 
     expect(byId.get("schedule.goal_trigger")).toMatchObject({
-      classification: "already_user_authorized_existing_behavior",
-      requiresTypedAdmission: false,
-      preGateAllowedEffects: expect.arrayContaining(["start_work", "execute"]),
+      classification: "convert_to_attention_operationplan_admission",
+      requiresTypedAdmission: true,
+      preGateAllowedEffects: ["quiet_audit"],
     });
     expect(byId.get("schedule.wait_resume")).toMatchObject({
       classification: "convert_to_attention_operationplan_admission",
@@ -104,9 +105,16 @@ describe("LivingAutonomyDirectPathInventory", () => {
 
     expect(pathsWithOutwardPotential.map((entry) => entry.id).sort()).toEqual([
       "daemon.proactive_tick",
+      "event_server.file_ingestion",
+      "event_server.post_events",
+      "event_server.sse_outbox_broadcast",
+      "event_server.trigger_create_task",
+      "notification.outbox",
       "resident.curiosity",
       "resident.proactive_maintenance",
       "runtime_control.executor",
+      "schedule.cron_probe_notification",
+      "schedule.goal_trigger",
     ].sort());
     for (const entry of pathsWithOutwardPotential) {
       expect(entry.requiresTypedAdmission, entry.id).toBe(true);
@@ -131,14 +139,6 @@ describe("LivingAutonomyDirectPathInventory", () => {
       "gateway.outbound",
       "tui_chat_gateway.direct_route",
     ] as const;
-    const outOfScopeTransportIds = [
-      "event_server.file_ingestion",
-      "event_server.post_events",
-      "event_server.sse_outbox_broadcast",
-      "event_server.trigger_create_task",
-      "notification.outbox",
-    ] as const;
-
     for (const id of userAuthorizedCommandIds) {
       expect(byId.get(id)).toMatchObject({
         classification: "already_user_authorized_existing_behavior",
@@ -146,20 +146,13 @@ describe("LivingAutonomyDirectPathInventory", () => {
         exceptionBoundary: expect.any(String),
       });
     }
-    for (const id of outOfScopeTransportIds) {
-      expect(byId.get(id)).toMatchObject({
-        classification: "explicitly_out_of_scope",
-        requiresTypedAdmission: false,
-        exceptionBoundary: expect.any(String),
-      });
-    }
   });
 
-  it("keeps notification/outbox/reporting delivery as an explicit transport exception", () => {
+  it("keeps notification/outbox/reporting delivery behind notification admission", () => {
     const outbox = directPathInventoryById().get("notification.outbox");
 
     expect(outbox).toMatchObject({
-      classification: "explicitly_out_of_scope",
+      classification: "convert_to_attention_operationplan_admission",
       ownerModules: expect.arrayContaining([
         "src/runtime/store/outbox-store.ts",
         "src/runtime/notification-dispatcher.ts",
@@ -167,12 +160,27 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/reporting/reporting-engine.ts",
         "src/interface/cli/commands/daemon.ts",
       ]),
-      currentPreGateEffects: expect.arrayContaining(["notify", "enqueue"]),
-      requiresTypedAdmission: false,
-      exceptionBoundary: expect.any(String),
+      currentPreGateEffects: ["quiet_audit"],
+      preGateAllowedEffects: ["quiet_audit"],
+      requiresTypedAdmission: true,
     });
     expect(outbox?.existingBehavior).toContain("notification dispatcher");
-    expect(outbox?.nextAction).toContain("notification transport hardening");
+    expect(outbox?.existingBehavior).toContain("notification_interruption admission");
+    expect(outbox?.nextAction).toContain("runtime outbox enqueue");
+
+    const sseOutbox = directPathInventoryById().get("event_server.sse_outbox_broadcast");
+    expect(sseOutbox).toMatchObject({
+      classification: "convert_to_attention_operationplan_admission",
+      ownerModules: expect.arrayContaining([
+        "src/runtime/event/server-sse.ts",
+        "src/runtime/store/outbox-store.ts",
+      ]),
+      currentPreGateEffects: ["quiet_audit"],
+      preGateAllowedEffects: ["quiet_audit"],
+      requiresTypedAdmission: true,
+    });
+    expect(sseOutbox?.existingBehavior).toContain("OutboxStore.append");
+    expect(sseOutbox?.existingBehavior).toContain("notification_interruption admission");
   });
 
   it("keeps audited direct-path owner modules represented", () => {
@@ -226,13 +234,13 @@ describe("LivingAutonomyDirectPathInventory", () => {
         "src/runtime/event/dispatcher.ts",
         "src/platform/drive/drive-system.ts",
       ]),
-      classification: "explicitly_out_of_scope",
-      currentPreGateEffects: expect.arrayContaining(["internal_signal", "enqueue", "start_work"]),
+      classification: "convert_to_attention_operationplan_admission",
+      currentPreGateEffects: ["quiet_audit"],
       preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-      requiresTypedAdmission: false,
-      exceptionBoundary: expect.any(String),
+      requiresTypedAdmission: true,
     });
     expect(byId.get("event_server.post_events")?.existingBehavior).toContain("POST /events");
+    expect(byId.get("event_server.post_events")?.existingBehavior).toContain("personal-agent admission");
 
     expect(byId.get("event_server.command_runtime_control")).toMatchObject({
       ownerModules: expect.arrayContaining([
@@ -267,19 +275,18 @@ describe("LivingAutonomyDirectPathInventory", () => {
     expect(byId.get("event_server.command_approval_response")?.existingBehavior).toContain("approval_resolved");
   });
 
-  it("pins trigger and file-ingested goal-linked events as EventServer transport exceptions", () => {
+  it("pins trigger and file-ingested goal-linked events to personal-agent signal admission", () => {
     const byId = directPathInventoryById();
 
     for (const id of ["event_server.trigger_create_task", "event_server.file_ingestion"] as const) {
       expect(byId.get(id)).toMatchObject({
         ownerModules: expect.arrayContaining(["src/runtime/event/dispatcher.ts"]),
-        classification: "explicitly_out_of_scope",
-        currentPreGateEffects: expect.arrayContaining(["internal_signal", "enqueue", "start_work"]),
+        classification: "convert_to_attention_operationplan_admission",
+        currentPreGateEffects: ["quiet_audit"],
         preGateAllowedEffects: ["internal_signal", "quiet_audit"],
-        requiresTypedAdmission: false,
-        exceptionBoundary: expect.any(String),
+        requiresTypedAdmission: true,
       });
-      expect(byId.get(id)?.nextAction).toContain("EventServer");
+      expect(byId.get(id)?.nextAction).toContain("personal-agent");
     }
   });
 });

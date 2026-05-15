@@ -6,6 +6,7 @@ import {
   RunSpecHandoffService,
   type RunSpecConfirmationSnapshot,
 } from "../../runtime/run-spec/index.js";
+import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 import { RunSpecSafeNonnegativeIntSchema } from "../../runtime/run-spec/types.js";
 import { ChatSessionSchema } from "../../interface/chat/chat-history.js";
 import { ChatSessionDataStore } from "../../interface/chat/chat-session-data-store.js";
@@ -60,6 +61,7 @@ export interface RunSpecHandoffToolDeps {
   llmClient?: Pick<ILLMClient, "sendMessage" | "parseJSON">;
   daemonClient?: Pick<DaemonClient, "startGoal">;
   daemonClientFactory?: () => Promise<Pick<DaemonClient, "startGoal">>;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 export function createRunSpecHandoffTools(deps: RunSpecHandoffToolDeps): ITool[] {
@@ -334,6 +336,7 @@ function createService(deps: RunSpecHandoffToolDeps, context: ToolCallContext): 
     sessionCwd: context.cwd,
     replyTarget: context.runtimeReplyTarget ?? null,
     currentTurnStartedAt: context.runSpecConfirmation?.currentTurnStartedAt ?? null,
+    personalAgentRuntime: deps.personalAgentRuntime,
     getPendingConfirmation: async () => getPendingConfirmation(deps.stateManager, context),
     setPendingConfirmation: async (confirmation) => setPendingConfirmation(deps.stateManager, context, confirmation),
   });

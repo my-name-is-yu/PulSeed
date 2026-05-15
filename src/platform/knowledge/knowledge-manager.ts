@@ -41,6 +41,7 @@ import {
 } from "./knowledge-manager-query.js";
 import type { ToolExecutor } from "../../tools/executor.js";
 import type { ToolCallContext } from "../../tools/types.js";
+import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 import type { AgentMemoryEntry, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import {
   loadAgentMemoryStore,
@@ -136,19 +137,25 @@ export class KnowledgeManager {
   private readonly vectorIndex?: VectorIndex;
   private readonly embeddingClient?: IEmbeddingClient;
   private readonly gateway?: IPromptGateway;
+  private readonly toolExecutor?: ToolExecutor;
+  private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 
   constructor(
     stateManager: StateManager,
     llmClient: ILLMClient,
     vectorIndex?: VectorIndex,
     embeddingClient?: IEmbeddingClient,
-    gateway?: IPromptGateway
+    gateway?: IPromptGateway,
+    toolExecutor?: ToolExecutor,
+    personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
   ) {
     this.stateManager = stateManager;
     this.llmClient = llmClient;
     this.vectorIndex = vectorIndex;
     this.embeddingClient = embeddingClient;
     this.gateway = gateway;
+    this.toolExecutor = toolExecutor;
+    this.personalAgentRuntime = personalAgentRuntime;
   }
 
   // ─── detectKnowledgeGap ───
@@ -159,7 +166,13 @@ export class KnowledgeManager {
     confidence: number;
   }): Promise<KnowledgeGapSignal | null> {
     return _detectKnowledgeGap(
-      { llmClient: this.llmClient, gateway: this.gateway, stateManager: this.stateManager },
+      {
+        llmClient: this.llmClient,
+        gateway: this.gateway,
+        stateManager: this.stateManager,
+        toolExecutor: this.toolExecutor,
+        personalAgentRuntime: this.personalAgentRuntime,
+      },
       context
     );
   }
@@ -171,7 +184,13 @@ export class KnowledgeManager {
     goalId: string
   ): Promise<Task> {
     return _generateAcquisitionTask(
-      { llmClient: this.llmClient, gateway: this.gateway, stateManager: this.stateManager },
+      {
+        llmClient: this.llmClient,
+        gateway: this.gateway,
+        stateManager: this.stateManager,
+        toolExecutor: this.toolExecutor,
+        personalAgentRuntime: this.personalAgentRuntime,
+      },
       signal,
       goalId
     );

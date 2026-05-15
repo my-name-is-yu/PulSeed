@@ -6,6 +6,10 @@ import { verifyTaskArtifactContract } from "../../orchestrator/execution/task/ta
 import { resolveTaskWorkspacePath } from "../../orchestrator/execution/task/task-workspace.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Logger } from "../logger.js";
+import {
+  PersonalAgentRuntimeStore,
+  buildPersonalAgentDecisionTrace,
+} from "../personal-agent/index.js";
 
 type InterruptedTaskTerminalStatus = Extract<Task["status"], "cancelled" | "timed_out" | "error">;
 
@@ -62,6 +66,12 @@ export async function reconcileInterruptedExecutions(params: ReconcileInterrupte
         .join("\n"),
     });
 
+    await recordRecoveryTrace(params, recoveredTask, {
+      now,
+      recoverySource,
+      reason: failedEventReason,
+      outcome: "failed",
+    });
     await params.stateManager.saveTask(recoveredTask);
     await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
       recoverySource,
@@ -145,6 +155,12 @@ async function recoverInterruptedTaskFromArtifactContract(
     timestamp: now,
   });
 
+  await recordRecoveryTrace(params, recoveredTask, {
+    now,
+    recoverySource,
+    reason: successReason,
+    outcome: "completed",
+  });
   await params.stateManager.saveTask(recoveredTask);
   await params.stateManager.saveTaskVerificationResult(task.id, verificationResult);
   await appendRecoveredTaskHistory(params.stateManager, recoveredTask, {
@@ -161,6 +177,54 @@ async function recoverInterruptedTaskFromArtifactContract(
   });
 
   return recoveredTask;
+}
+
+async function recordRecoveryTrace(
+  params: ReconcileInterruptedExecutionsParams,
+  task: Task,
+  input: {
+    now: string;
+    recoverySource: string;
+    reason: string;
+    outcome: "completed" | "failed";
+  },
+): Promise<void> {
+  const store = new PersonalAgentRuntimeStore(params.baseDir, {
+    controlBaseDir: params.stateManager.getBaseDir(),
+  });
+  await store.recordTrace(buildPersonalAgentDecisionTrace({
+    callerPath: "crash_restart_resume",
+    source: {
+      sourceKind: "restart_recovery",
+      sourceId: task.id,
+      emittedAt: input.now,
+      sourceEpoch: input.recoverySource,
+      highWatermark: `${task.goal_id}:${task.status}`,
+      replayKey: ["restart_recovery", input.recoverySource, task.goal_id, task.id].join(":"),
+      summary: `Interrupted task ${task.id} was reconciled from durable state after ${input.recoverySource}.`,
+      sourceRef: { kind: "task", ref: task.id },
+    },
+    target: {
+      kind: "run",
+      ref: { kind: "task", ref: task.id },
+      effect: "continue_route",
+      summary: `Recovery ${input.outcome} for task ${task.id}`,
+    },
+    decision: "allow",
+    decisionReason: input.reason,
+    capabilityDecision: "not_applicable",
+    policyRef: { kind: "intervention_policy", ref: "policy:crash-restart-resume-v1" },
+    currentRefs: [
+      { kind: "goal", ref: task.goal_id },
+      { kind: "task", ref: task.id },
+      { kind: "recovery_source", ref: input.recoverySource },
+    ],
+    outcomeEvent: {
+      type: "runtime_resumed",
+      summary: `Crash/restart recovery reconciled task as ${input.outcome}.`,
+      targetRef: { kind: "task", ref: task.id },
+    },
+  }));
 }
 
 function stoppedReasonForStatus(status: InterruptedTaskTerminalStatus): string {

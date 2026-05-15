@@ -33,6 +33,7 @@ import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/clie
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
+import { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 import { getNotificationConfigPath, loadNotificationConfig } from "../../../runtime/notification-routing.js";
 import { getProviderRuntimeFingerprint } from "../../../base/llm/provider-config.js";
 import { buildDeps } from "../setup.js";
@@ -368,8 +369,12 @@ export async function cmdStart(
   const pluginLoader = await loadPluginsIntoDeps(deps);
   registerGlobalCrossPlatformChatSessionManager(getGlobalCrossPlatformChatSessionManager);
   const daemonBaseDir = deps.stateManager.getBaseDir();
+  const personalAgentRuntime = new PersonalAgentRuntimeStore(
+    resolveDaemonRuntimeRoot(daemonBaseDir, resolvedDaemonConfig.runtime_root),
+    { controlBaseDir: daemonBaseDir },
+  );
   const notificationConfig = await loadNotificationConfig(getNotificationConfigPath(daemonBaseDir));
-  const notificationDispatcher = new NotificationDispatcher(notificationConfig, notifierRegistry);
+  const notificationDispatcher = new NotificationDispatcher(notificationConfig, notifierRegistry, logger, personalAgentRuntime);
   deps.reportingEngine.setNotificationDispatcher(notificationDispatcher);
 
   // Create EventServer for event-driven wake-ups and SSE clients.
@@ -432,6 +437,7 @@ export async function cmdStart(
     hookManager: deps.hookManager,
     memoryLifecycle: deps.memoryLifecycleManager,
     knowledgeManager: deps.knowledgeManager,
+    personalAgentRuntime,
   });
   await scheduleEngine.loadEntries();
   await scheduleEngine.syncExternalSources(pluginLoader.getScheduleSources());
@@ -461,6 +467,7 @@ export async function cmdStart(
       hookManager: freshDeps.hookManager,
       memoryLifecycle: freshDeps.memoryLifecycleManager,
       knowledgeManager: freshDeps.knowledgeManager,
+      personalAgentRuntime,
     });
     await freshScheduleEngine.loadEntries();
     const freshPluginLoader = await loadPluginsIntoDeps(freshDeps);
@@ -495,6 +502,7 @@ export async function cmdStart(
     scheduleEngine,
     memoryLifecycle: deps.memoryLifecycleManager,
     knowledgeManager: deps.knowledgeManager,
+    personalAgentRuntime,
     getProviderRuntimeFingerprint,
     refreshResidentDeps,
   });

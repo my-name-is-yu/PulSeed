@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Logger } from "../../../runtime/logger.js";
 import { buildTaskGenerationPrompt } from "./task-prompt-builder.js";
@@ -27,6 +26,17 @@ import {
   LLMGeneratedTaskSchema,
   type LLMGeneratedTask,
 } from "./task-generation-schema.js";
+import { TaskCreateTool } from "../../../tools/mutation/TaskCreateTool/TaskCreateTool.js";
+import type { TaskCreateInput } from "../../../tools/mutation/TaskCreateTool/TaskCreateTool.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
+import type { ToolCallContext } from "../../../tools/types.js";
+import {
+  stableId,
+  type PersonalAgentRuntimeStore,
+} from "../../../runtime/personal-agent/index.js";
 
 export { LLMGeneratedTaskSchema } from "./task-generation-schema.js";
 
@@ -42,6 +52,10 @@ export interface TaskGenerationDeps {
   knowledgeManager?: KnowledgeManager;
   /** Optional PromptGateway — when provided, LLM calls are routed through it */
   gateway?: IPromptGateway;
+  /** Optional ToolExecutor; generation materialization uses a TaskCreateTool through this pipeline when supplied. */
+  toolExecutor?: ToolExecutor;
+  /** Durable personal-agent runtime trace recorder. */
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   memoryLifecycle?: {
     selectForWorkingMemory(
       goalId: string,
@@ -445,18 +459,14 @@ export async function generateTask(
   const activeStrategy = await deps.strategyManager.getActiveStrategy(goalId);
   const resolvedStrategyId = strategyId ?? activeStrategy?.id ?? null;
 
-  const taskId = randomUUID();
-  const now = new Date().toISOString();
   const artifactContract = artifactContractRequired
     ? { ...generated.artifact_contract, required: true }
     : generated.artifact_contract;
-
-  const task = TaskSchema.parse({
-    id: taskId,
-    goal_id: goalId,
-    strategy_id: resolvedStrategyId,
-    target_dimensions: [targetDimension],
-    primary_dimension: targetDimension,
+  const taskCreateInput = {
+    goalId,
+    strategyId: resolvedStrategyId,
+    targetDimensions: [targetDimension],
+    primaryDimension: targetDimension,
     work_description: generated.work_description,
     rationale: generated.rationale,
     approach: generated.approach,
@@ -468,21 +478,134 @@ export async function generateTask(
     reversibility: generated.reversibility,
     intended_direction: generated.intended_direction,
     estimated_duration: generated.estimated_duration,
-    status: "pending",
-    created_at: now,
-  });
+    task_category: "normal" as const,
+  };
 
-  // Attach pipeline based on complexity (additive, backward compatible)
-  const complexity = evaluateTaskComplexity(task);
-  const pipeline = buildPipeline(complexity);
-  if (pipeline) {
-    (task as Record<string, unknown>).pipeline = pipeline;
+  const taskCreateResult = await executeTaskCreateMaterialization(
+    deps,
+    taskCreateInput,
+    {
+      goalId,
+      targetDimension,
+      adapterType,
+      executionMode,
+      repoRoot,
+      resolvedStrategyId,
+    },
+  );
+  if (!taskCreateResult.success) {
+    deps.logger?.warn("Task generation materialization was blocked before task creation", {
+      goalId,
+      targetDimension,
+      reason: taskCreateResult.error ?? taskCreateResult.summary,
+    });
+    return {
+      task: null,
+      tokensUsed: generationTokens,
+      refusalReason: taskCreateResult.execution?.reason ?? "task_materialization_blocked",
+    };
   }
-
-  // Persist
-  await deps.stateManager.saveTask(task);
-
+  const taskId = (taskCreateResult.data as { taskId?: string } | null | undefined)?.taskId;
+  const task = taskId ? await deps.stateManager.loadTask(goalId, taskId) : null;
+  if (!task) {
+    deps.logger?.warn("Task generation materialization completed without a readable task", {
+      goalId,
+      targetDimension,
+      taskId,
+    });
+    return { task: null, tokensUsed: generationTokens, refusalReason: "task_materialization_unreadable" };
+  }
   return { task, tokensUsed: generationTokens };
+}
+
+type TaskCreateMaterializationInput = TaskCreateInput;
+
+async function executeTaskCreateMaterialization(
+  deps: TaskGenerationDeps,
+  input: TaskCreateMaterializationInput,
+  context: {
+    goalId: string;
+    targetDimension: string;
+    adapterType?: string;
+    executionMode?: ExecutionModeState;
+    repoRoot?: string;
+    resolvedStrategyId: string | null;
+  },
+) {
+  const replaySeed = stableTaskCreateSeed(input, context);
+  const toolExecutor = deps.toolExecutor ?? createTaskCreateToolExecutor(deps);
+  const toolContext: ToolCallContext = {
+    cwd: context.repoRoot ?? deps.stateManager.getBaseDir(),
+    goalId: context.goalId,
+    trustBalance: 0,
+    preApproved: true,
+    approvalFn: async () => false,
+    providerConfigBaseDir: deps.stateManager.getBaseDir(),
+    personalAgentRuntime: deps.personalAgentRuntime,
+    callId: `goal-gap-task-create:${stableId(replaySeed)}`,
+    sessionId: `goal:${context.goalId}`,
+    turnId: `goal-gap:${stableId([
+      context.goalId,
+      context.targetDimension,
+      context.resolvedStrategyId ?? "",
+      context.adapterType ?? "",
+      context.executionMode?.mode ?? "",
+    ].join(":"))}`,
+    personalAgentTrace: {
+      callerPath: "goal_gap_task_generation",
+      sourceKind: "goal_gap",
+      replayKey: `goal_gap_task_generation:create_task:${stableId(replaySeed)}`,
+      sourceId: `${context.goalId}:${context.targetDimension}`,
+      summary: `Goal gap for dimension "${context.targetDimension}" requested durable task materialization.`,
+    },
+  };
+  return await toolExecutor.execute("task_create", input, toolContext);
+}
+
+function createTaskCreateToolExecutor(deps: TaskGenerationDeps): ToolExecutor {
+  const registry = new ToolRegistry();
+  registry.register(new TaskCreateTool(deps.stateManager, deps.personalAgentRuntime));
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: deps.personalAgentRuntime,
+    traceBaseDir: deps.stateManager.getBaseDir(),
+  });
+}
+
+function stableTaskCreateSeed(
+  input: TaskCreateMaterializationInput,
+  context: {
+    goalId: string;
+    targetDimension: string;
+    adapterType?: string;
+    executionMode?: ExecutionModeState;
+    repoRoot?: string;
+    resolvedStrategyId: string | null;
+  },
+): string {
+  return stableJson({
+    input,
+    goalId: context.goalId,
+    targetDimension: context.targetDimension,
+    adapterType: context.adapterType ?? null,
+    executionMode: context.executionMode ? {
+      mode: context.executionMode.mode,
+      source: context.executionMode.source,
+    } : null,
+    repoRoot: context.repoRoot ?? null,
+    resolvedStrategyId: context.resolvedStrategyId,
+  });
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 // ─── generateTaskGroup ───
@@ -647,7 +770,12 @@ export async function generateTaskGroup(
 
   // Build full Task objects from LLM subtask descriptions
   const subtasks: Task[] = raw.subtasks.map((sub, i) => {
-    const taskId = `subtask-${i}-${randomUUID()}`;
+    const taskId = `subtask-${i}-${stableId(stableJson({
+      goal: context.goalDescription,
+      targetDimension: context.targetDimension,
+      index: i,
+      subtask: sub,
+    }))}`;
     const complexity = sub.work_description.length < 50 ? "small" : "medium";
     const task = TaskSchema.parse({
       id: taskId,

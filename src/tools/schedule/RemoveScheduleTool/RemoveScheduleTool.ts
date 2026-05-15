@@ -9,6 +9,12 @@ import type {
 } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import { resolveScheduleEntry } from "../../../runtime/schedule/entry-resolver.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, CATEGORY as _CATEGORY, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
 
@@ -41,16 +47,56 @@ export class RemoveScheduleTool implements ITool<RemoveScheduleInput, RemoveSche
 
   readonly inputSchema = RemoveScheduleInputSchema;
 
-  constructor(private readonly scheduleEngine: ScheduleEngine) {}
+  constructor(
+    private readonly scheduleEngine: ScheduleEngine,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
   }
 
-  async call(input: RemoveScheduleInput, _context: ToolCallContext): Promise<ToolResult> {
+  async call(input: RemoveScheduleInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.scheduleEngine),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        startTime,
+        {
+          targetSummary: `Remove schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:remove_schedule" },
+            { kind: "capability", ref: "durable_schedule_state_write" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          denialMessage: "remove_schedule requires approval before mutating durable schedule state.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        input,
+        context,
+        {
+          targetSummary: `Remove schedule ${input.schedule_id}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:remove_schedule" },
+            { kind: "capability", ref: "durable_schedule_state_write" },
+          ],
+          currentRefs: [{ kind: "schedule", ref: input.schedule_id }],
+          outcomeSummary: "remove_schedule was admitted to mutate durable schedule state.",
+        },
+      );
+
       const existingEntry = resolveScheduleEntry(this.scheduleEngine.getEntries(), input.schedule_id);
       if (!existingEntry) {
         return {

@@ -111,7 +111,10 @@ describe("EscalationHandler", () => {
 
     await handler.escalateToGoal(history);
 
-    expect(goalNegotiator.negotiate).toHaveBeenCalledWith(description);
+    expect(goalNegotiator.negotiate).toHaveBeenCalledWith(
+      description,
+      expect.objectContaining({ goalId: expect.stringMatching(/^goal:track:/) }),
+    );
   });
 
   it("returns EscalationResult with goalId and title from negotiated goal", async () => {

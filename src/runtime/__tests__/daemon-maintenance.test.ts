@@ -103,7 +103,7 @@ describe("runRuntimeStoreMaintenanceCycle", () => {
         correlation_id: `corr-${seq}`,
         created_at: seq,
         payload: { seq },
-      }));
+      }), { boundary: "test_seed" });
     }
 
     const report = await runRuntimeStoreMaintenanceCycle({

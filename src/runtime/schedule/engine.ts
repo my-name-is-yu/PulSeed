@@ -7,6 +7,7 @@ import {
   type ScheduleResult,
 } from "../types/schedule.js";
 import { executeCron, executeGoalTrigger, executeProbe } from "./engine-layers.js";
+import { buildScheduleNotificationReport } from "./notification-report.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import {
   deriveAttentionScopeFromSignalContext,
@@ -48,10 +49,14 @@ import {
   getDueEntriesFromEngine,
   runEntryNowForEngine,
   tickEngine,
+  type ScheduleEscalationGoalContext,
   type ScheduleExecutionContext,
   type RunScheduleNowOptions,
   type RunScheduleNowResult,
 } from "./engine-execution.js";
+import {
+  PersonalAgentRuntimeStore,
+} from "../personal-agent/index.js";
 
 export type { ScheduleEntryUpdateInput } from "./engine-mutations.js";
 export type { RunScheduleNowOptions, RunScheduleNowResult } from "./engine-execution.js";
@@ -77,6 +82,7 @@ interface ScheduleEngineDeps {
   memoryLifecycle?: MemoryLifecycleManager;
   knowledgeManager?: KnowledgeManager;
   attentionReevaluation?: AttentionReevaluationPort;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 const noopLogger = {
@@ -101,6 +107,7 @@ export class ScheduleEngine {
   private attentionReevaluation: AttentionReevaluationPort;
   private historyStore: ScheduleHistoryStore;
   private readonly entryStore: ScheduleEntryStore;
+  private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 
   constructor(deps: ScheduleEngineDeps) {
     this.baseDir = deps.baseDir;
@@ -114,6 +121,10 @@ export class ScheduleEngine {
     this.hookManager = deps.hookManager;
     this.memoryLifecycle = deps.memoryLifecycle;
     this.knowledgeManager = deps.knowledgeManager;
+    this.personalAgentRuntime = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(
+      resolveConfiguredDaemonRuntimeRoot(this.baseDir),
+      { controlBaseDir: this.baseDir },
+    );
     const defaultAttentionStore = new AttentionStateStore(
       resolveConfiguredDaemonRuntimeRoot(this.baseDir),
       { controlBaseDir: this.baseDir },
@@ -398,6 +409,7 @@ export class ScheduleEngine {
       memoryLifecycle: this.memoryLifecycle,
       knowledgeManager: this.knowledgeManager,
       attentionReevaluation: this.attentionReevaluation,
+      personalAgentRuntime: this.personalAgentRuntime,
       logger: this.logger,
     };
   }
@@ -449,8 +461,12 @@ export class ScheduleEngine {
     return executeEscalationTargetEntryForEngine(this.executionHost(), targetEntryId);
   }
 
-  private async executeEscalationTargetGoal(goalId: string): Promise<ScheduleResult> {
-    return executeEscalationTargetGoalForEngine({ logger: this.logger, coreLoop: this.coreLoop }, goalId);
+  private async executeEscalationTargetGoal(goalId: string, context?: ScheduleEscalationGoalContext): Promise<ScheduleResult> {
+    return executeEscalationTargetGoalForEngine({
+      logger: this.logger,
+      coreLoop: this.coreLoop,
+      personalAgentRuntime: this.personalAgentRuntime,
+    }, goalId, context);
   }
 
     // ─── Escalation logic ───
@@ -465,7 +481,7 @@ export class ScheduleEngine {
   private async dispatchNotification(payload: Record<string, unknown>): Promise<void> {
     if (!this.notificationDispatcher) return;
     try {
-      await this.notificationDispatcher.dispatch(payload);
+      await this.notificationDispatcher.dispatch(buildScheduleNotificationReport(payload));
     } catch (err) {
       this.logger.warn(`Notification dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -527,7 +543,8 @@ export class ScheduleEngine {
       executeGoalTrigger: (entry: ScheduleEntry, context?: ScheduleExecutionContext) =>
         this.executeGoalTrigger(entry, context),
       checkEscalation: (entry: ScheduleEntry, result: ScheduleResult) => this.checkEscalation(entry, result),
-      executeEscalationTargetGoal: (goalId: string) => this.executeEscalationTargetGoal(goalId),
+      executeEscalationTargetGoal: (goalId: string, context?: ScheduleEscalationGoalContext) =>
+        this.executeEscalationTargetGoal(goalId, context),
       executeEscalationTargetEntry: (entryId: string) => this.executeEscalationTargetEntry(entryId),
       dispatchNotification: (payload: Record<string, unknown>) => this.dispatchNotification(payload),
     };

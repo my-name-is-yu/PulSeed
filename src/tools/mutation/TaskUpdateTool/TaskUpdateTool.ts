@@ -10,6 +10,12 @@ import type {
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { CriterionSchema, ScopeBoundarySchema, TaskSchema } from "../../../base/types/task.js";
 import { DurationSchema, ReversibilityEnum, TaskStatusEnum, VerdictEnum } from "../../../base/types/core.js";
+import type { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import {
+  getPersonalAgentToolTraceBaseDir,
+  recordAllowedPersonalAgentToolCall,
+  rejectUnapprovedPersonalAgentToolCall,
+} from "../../personal-agent-tool-trace.js";
 import { upsertTaskHistory } from "../task-history-utils.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, READ_ONLY, PERMISSION_LEVEL } from "./constants.js";
@@ -88,7 +94,10 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
 
   readonly inputSchema = TaskUpdateInputSchema;
 
-  constructor(private readonly stateManager: StateManager) {}
+  constructor(
+    private readonly stateManager: StateManager,
+    private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {}
 
   description(_context?: ToolDescriptionContext): string {
     return DESCRIPTION;
@@ -116,6 +125,49 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
           durationMs: Date.now() - startTime,
         };
       }
+
+      const traceDeps = {
+        personalAgentRuntime: this.personalAgentRuntime,
+        baseDir: getPersonalAgentToolTraceBaseDir(this.stateManager),
+      };
+      const denied = await rejectUnapprovedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        effectiveInput,
+        context,
+        startTime,
+        {
+          targetSummary: `Update task ${effectiveInput.taskId} for goal ${effectiveInput.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:task_update" },
+            { kind: "capability", ref: "durable_task_state_write" },
+          ],
+          currentRefs: [
+            { kind: "goal", ref: effectiveInput.goalId },
+            { kind: "task", ref: effectiveInput.taskId },
+          ],
+          denialMessage: "task_update requires approval before mutating durable task state.",
+        },
+      );
+      if (denied) return denied;
+      await recordAllowedPersonalAgentToolCall(
+        traceDeps,
+        this.metadata.name,
+        effectiveInput,
+        context,
+        {
+          targetSummary: `Update task ${effectiveInput.taskId} for goal ${effectiveInput.goalId}`,
+          capabilityRefs: [
+            { kind: "capability", ref: "tool:task_update" },
+            { kind: "capability", ref: "durable_task_state_write" },
+          ],
+          currentRefs: [
+            { kind: "goal", ref: effectiveInput.goalId },
+            { kind: "task", ref: effectiveInput.taskId },
+          ],
+          outcomeSummary: "task_update was admitted to mutate durable task state.",
+        },
+      );
 
       const raw = await this.stateManager.loadTask(effectiveInput.goalId, effectiveInput.taskId);
       if (raw == null) {
@@ -204,9 +256,17 @@ export class TaskUpdateTool implements ITool<TaskUpdateInput, unknown> {
   }
 
   async checkPermissions(input: TaskUpdateInput, context: ToolCallContext): Promise<PermissionCheckResult> {
-    void input;
-    void context;
-    return { status: "allowed" };
+    const ignoredFields = lifecycleOwnedSelfUpdateFields(input, context);
+    const effectiveInput: TaskUpdateInput = { ...input };
+    for (const field of ignoredFields) {
+      delete (effectiveInput as Record<string, unknown>)[field];
+    }
+    if (ignoredFields.length > 0 && Object.keys(effectiveInput).every((key) => key === "goalId" || key === "taskId")) {
+      return { status: "allowed" };
+    }
+    return context.preApproved
+      ? { status: "allowed" }
+      : { status: "needs_approval", reason: "task_update mutates durable task state" };
   }
 
   isConcurrencySafe(): boolean {

@@ -12,6 +12,12 @@ import type {
   CapabilitySideEffectProfile,
   CapabilityVerificationRef,
 } from "../runtime/store/capability-verification-schemas.js";
+import type {
+  PersonalAgentCallerPath,
+  PersonalAgentRuntimeStore,
+  PersonalAgentSourceKind,
+  RuntimeGraphRef,
+} from "../runtime/personal-agent/index.js";
 
 // --- Tool Result ---
 
@@ -264,6 +270,19 @@ export type CapabilityExecutionResolver = (
   input: CapabilityExecutionResolutionInput
 ) => CapabilityExecutionContext | null | Promise<CapabilityExecutionContext | null>;
 
+export interface ToolPersonalAgentTraceContext {
+  callerPath: PersonalAgentCallerPath;
+  sourceKind: PersonalAgentSourceKind;
+  sourceId?: string;
+  sourceEpoch?: string;
+  highWatermark?: string;
+  replayKey?: string;
+  summary?: string;
+  sourceRef?: RuntimeGraphRef;
+  currentRefs?: RuntimeGraphRef[];
+  auditRefs?: RuntimeGraphRef[];
+}
+
 export interface ToolCallContext {
   /** Current working directory */
   cwd: string;
@@ -275,6 +294,8 @@ export interface ToolCallContext {
   trustBalance: number;
   /** Whether the user has pre-approved certain operations */
   preApproved: boolean;
+  /** Set only by ToolExecutor after a host permission request is approved for this exact call. */
+  hostPolicyApproved?: boolean;
   /** Approval callback for interactive permission requests */
   approvalFn: (request: ApprovalRequest) => Promise<boolean>;
   /** Optional hook emitted before approvalFn is invoked */
@@ -354,6 +375,10 @@ export interface ToolCallContext {
     warn: (msg: string, meta?: Record<string, unknown>) => void;
     error: (msg: string, meta?: Record<string, unknown>) => void;
   };
+  /** Durable personal-agent runtime trace sink for production tool admission. */
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  /** Durable personal-agent source context for production tool admission. */
+  personalAgentTrace?: ToolPersonalAgentTraceContext;
   /** When true, gates pass but tool.call() is skipped (for testing pipelines) */
   dryRun?: boolean;
 }

@@ -294,6 +294,7 @@ export async function executeAgentLoopRoute(
         ...(host.deps.capabilityExecutionResolver ? { capabilityExecutionResolver: host.deps.capabilityExecutionResolver } : {}),
         ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
         providerConfigBaseDir: host.getProviderConfigBaseDir(),
+        personalAgentRuntime: host.getPersonalAgentRuntime(),
         setupSecretIntake: host.getSetupSecretIntake(),
         setupDialogue: {
           get: () => host.getPendingSetupDialogue(),
@@ -781,6 +782,10 @@ async function executeWithTools(
       const approvalBindingFailure = isGatewaySurface
         ? gatewayApprovalBindingFailure(executableTool, args, gatewayScopeContext)
         : null;
+      const gatewayHostPolicyApproved = isGatewaySurface
+        && executableTool.metadata.gatewayExposure === "approval_required"
+        && !executableTool.metadata.isReadOnly
+        && approvalBindingFailure === null;
       if (approvalBindingFailure) {
         host.eventBridge.emitActivity("tool", formatToolActivity("Failed", executableTool.metadata.name, approvalBindingFailure), eventContext, tc.id);
         host.eventBridge.emitEvent({
@@ -806,6 +811,7 @@ async function executeWithTools(
             abortSignal: execution.abortSignal,
             ...(execution.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
             callId: tc.id,
+            ...(gatewayHostPolicyApproved ? { preApproved: true, hostPolicyApproved: true } : {}),
           },
           eventContext,
         ),
@@ -1463,79 +1469,32 @@ async function dispatchToolCall(
     });
     host.eventBridge.emitActivity("tool", formatToolActivity("Running", name, JSON.stringify(args)), eventContext, toolCallId);
 
-    let result: ToolResult;
-    if (host.deps.toolExecutor) {
+    const toolExecutor = host.getToolExecutor();
+    if (!toolExecutor) {
+      const message = "No ToolExecutor configured";
       host.eventBridge.emitEvent({
-        type: "tool_update",
+        type: "tool_end",
         toolCallId,
         toolName: name,
-        status: "running",
-        message: "running",
+        success: false,
+        summary: message,
+        durationMs: Date.now() - startTime,
         ...(activityCategory ? { activityCategory } : {}),
         ...host.eventBridge.eventBase(eventContext),
       });
-      host.deps.onToolStart?.(name, args);
-      result = await host.deps.toolExecutor.execute(name, parsed.data, context);
-    } else {
-      const permResult = await tool.checkPermissions(parsed.data, context);
-      if (permResult.status === "denied") {
-        host.eventBridge.emitEvent({
-          type: "tool_end",
-          toolCallId,
-          toolName: name,
-          success: false,
-          summary: permResult.reason,
-          durationMs: Date.now() - startTime,
-          ...(activityCategory ? { activityCategory } : {}),
-          ...host.eventBridge.eventBase(eventContext),
-        });
-        return `Tool ${name} denied: ${permResult.reason}`;
-      }
-      if (permResult.status === "needs_approval") {
-        host.eventBridge.emitActivity("tool", formatToolActivity("Running", name, `awaiting approval: ${permResult.reason}`), eventContext, toolCallId);
-        host.eventBridge.emitEvent({
-          type: "tool_update",
-          toolCallId,
-          toolName: name,
-          status: "awaiting_approval",
-          message: permResult.reason,
-          ...(activityCategory ? { activityCategory } : {}),
-          ...host.eventBridge.eventBase(eventContext),
-        });
-        const approved = await context.approvalFn({
-          toolName: name,
-          input: parsed.data,
-          reason: permResult.reason,
-          permissionLevel: tool.metadata.permissionLevel,
-          isDestructive: tool.metadata.isDestructive,
-          reversibility: "unknown",
-        });
-        if (!approved) {
-          host.eventBridge.emitEvent({
-            type: "tool_end",
-            toolCallId,
-            toolName: name,
-            success: false,
-            summary: `Not approved: ${permResult.reason}`,
-            durationMs: Date.now() - startTime,
-            ...(activityCategory ? { activityCategory } : {}),
-            ...host.eventBridge.eventBase(eventContext),
-          });
-          throw new ToolLoopTerminalError("approval_denied", `Tool ${name} not approved: ${permResult.reason}`);
-        }
-      }
-      host.eventBridge.emitEvent({
-        type: "tool_update",
-        toolCallId,
-        toolName: name,
-        status: "running",
-        message: "running",
-        ...(activityCategory ? { activityCategory } : {}),
-        ...host.eventBridge.eventBase(eventContext),
-      });
-      host.deps.onToolStart?.(name, args);
-      result = await tool.call(parsed.data, context);
+      return JSON.stringify({ error: message });
     }
+    host.eventBridge.emitEvent({
+      type: "tool_update",
+      toolCallId,
+      toolName: name,
+      status: "running",
+      message: "running",
+      ...(activityCategory ? { activityCategory } : {}),
+      ...host.eventBridge.eventBase(eventContext),
+    });
+    host.deps.onToolStart?.(name, args);
+    const result = await toolExecutor.execute(name, parsed.data, context);
 
     const durationMs = Date.now() - startTime;
     host.deps.onToolEnd?.(name, { success: result.success, summary: result.summary || "...", durationMs });
@@ -1718,6 +1677,7 @@ async function buildToolCallContext(
     ...(execution?.timeoutMs !== undefined ? { timeoutMs: execution.timeoutMs } : {}),
     ...(host.getConversationSessionId() ? { conversationSessionId: host.getConversationSessionId()! } : {}),
     providerConfigBaseDir: host.getProviderConfigBaseDir(),
+    personalAgentRuntime: host.getPersonalAgentRuntime(),
     setupSecretIntake: host.getSetupSecretIntake(),
     setupDialogue: {
       get: () => host.getPendingSetupDialogue(),

@@ -2009,12 +2009,22 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const secondRunAt = "2026-05-12T00:00:15.000Z";
     vi.setSystemTime(new Date(firstRunAt));
 
+    const order: string[] = [];
+    const personalAgentRuntime = {
+      recordTrace: vi.fn(async (trace: { replay_key: string }) => {
+        order.push(`trace:${trace.replay_key}`);
+      }),
+    };
     const attentionReevaluation = {
-      reevaluate: vi.fn().mockResolvedValue(undefined),
+      reevaluate: vi.fn().mockImplementation(async () => {
+        order.push("reevaluate");
+        return undefined;
+      }),
     };
     const eng = new ScheduleEngine({
       baseDir: tempDir,
       attentionReevaluation,
+      personalAgentRuntime: personalAgentRuntime as never,
     });
     const entry = await eng.addEntry(makeGoalTriggerEntry({
       metadata: {
@@ -2040,6 +2050,10 @@ describe("GoalTrigger execution (Phase 3)", () => {
       signal_context_id: string;
       assembled_at: string;
     };
+    expect(order.slice(0, 2)).toEqual([
+      `trace:wait_resume:${entry.id}:${dueAt}`,
+      "reevaluate",
+    ]);
 
     const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
     replayedEntry.next_fire_at = "2026-05-12T01:00:00.000Z";
@@ -2383,6 +2397,16 @@ describe("Cron execution — output_format both and report (Phase 3)", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!["report_type"]).toBe("schedule_report_ready");
     expect(notifications[0]!["output_summary"]).toBe("summary for both");
+    expect(notifications[0]).toMatchObject({
+      id: expect.stringMatching(/^schedule-report:/),
+      goal_id: null,
+      title: "Schedule report ready: test-cron",
+      content: "summary for both",
+      verbosity: "standard",
+      generated_at: expect.any(String),
+      delivered_at: null,
+      read: false,
+    });
   });
 
   it("executeCron with output_format 'report' calls reportingEngine when provided", async () => {
@@ -2742,6 +2766,16 @@ describe("ReportingEngine integration (Phase 4)", () => {
     expect(mockReportingEngine.generateNotification).toHaveBeenCalledOnce();
     expect(notifications).toHaveLength(1);
     expect(notifications[0]!["report_type"]).toBe("schedule_report_ready");
+    expect(notifications[0]).toMatchObject({
+      id: expect.stringMatching(/^schedule-report:/),
+      goal_id: null,
+      title: "Schedule report ready: test-cron",
+      content: "combined output",
+      verbosity: "standard",
+      generated_at: expect.any(String),
+      delivered_at: null,
+      read: false,
+    });
   });
 
   it("executeCron with output_format 'report' handles missing reportingEngine gracefully", async () => {

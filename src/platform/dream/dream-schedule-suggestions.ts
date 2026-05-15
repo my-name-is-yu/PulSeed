@@ -12,7 +12,7 @@ import {
   type ScheduleSuggestion,
 } from "./dream-types.js";
 
-type CreateScheduleEntryInput = Omit<
+export type CreateScheduleEntryInput = Omit<
   ScheduleEntryInput,
   | "id"
   | "created_at"
@@ -208,6 +208,10 @@ export class DreamScheduleSuggestionStore {
   async applySuggestion(
     idOrPrefix: string,
     scheduleEngine: ScheduleEngine,
+    createEntry: (
+      entryInput: CreateScheduleEntryInput,
+      suggestion: ResolvedScheduleSuggestion,
+    ) => Promise<ScheduleEntry>,
   ): Promise<{ suggestion: ResolvedScheduleSuggestion; entry: ScheduleEntry; duplicate: boolean }> {
     const data = await this.load();
     const index = data.suggestions.findIndex((item) => item.id === idOrPrefix || item.id.startsWith(idOrPrefix));
@@ -225,7 +229,7 @@ export class DreamScheduleSuggestionStore {
 
     const entryInput = buildEntryFromSuggestion(suggestion);
     const existing = scheduleEngine.getEntries().find((entry) => entriesEquivalent(entry, entryInput));
-    const entry = existing ?? await scheduleEngine.addEntry(entryInput);
+    const entry = existing ?? await createEntry(entryInput, suggestion);
     const nextSuggestion: ResolvedScheduleSuggestion = {
       ...suggestion,
       status: "applied",

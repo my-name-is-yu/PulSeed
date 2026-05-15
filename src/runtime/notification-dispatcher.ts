@@ -15,6 +15,8 @@ import { sendSlack } from "./channels/slack-channel.js";
 import { sendEmail } from "./channels/email-channel.js";
 import { sendWebhook } from "./channels/webhook-channel.js";
 import { NotificationBatcher } from "./notification-batcher.js";
+import type { InterventionDecisionKind, InterventionTargetEffect, PersonalAgentRuntimeStore } from "./personal-agent/index.js";
+import { buildPersonalAgentDecisionTrace } from "./personal-agent/index.js";
 
 // ─── Interface ───
 
@@ -56,6 +58,8 @@ function reportTypeToEventType(reportType: string): NotificationEventType | null
       return "schedule_heartbeat_failure";
     case "schedule_escalation":
       return "schedule_escalation";
+    case "schedule_report_ready":
+      return "schedule_report_ready";
     case "schedule_report":
       return "schedule_report_ready";
     default:
@@ -73,11 +77,18 @@ export class NotificationDispatcher implements INotificationDispatcher {
   private readonly logger?: Logger;
   private batcher?: NotificationBatcher;
   private realtimeSink?: (report: Report) => void | Promise<void>;
+  private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 
-  constructor(config?: Partial<NotificationConfig>, notifierRegistry?: NotifierRegistry, logger?: Logger) {
+  constructor(
+    config?: Partial<NotificationConfig>,
+    notifierRegistry?: NotifierRegistry,
+    logger?: Logger,
+    personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+  ) {
     this.config = NotificationConfigSchema.parse(config ?? {});
     this.notifierRegistry = notifierRegistry;
     this.logger = logger;
+    this.personalAgentRuntime = personalAgentRuntime;
 
     if (this.config.batching.enabled) {
       this.batcher = new NotificationBatcher(
@@ -104,7 +115,15 @@ export class NotificationDispatcher implements INotificationDispatcher {
     // If batching is enabled, non-immediate reports go to the batcher
     if (this.batcher) {
       const batched = this.batcher.add(report);
-      if (batched) return [];
+      if (batched) {
+        await this.recordNotificationDecision(report, [], {
+          decision: "hold",
+          reason: "Notification report was held by batching policy before any interruption was sent.",
+          targetEffect: "hold_concern",
+          capabilityDecision: "not_applicable",
+        });
+        return [];
+      }
     }
 
     return this.sendReport(report);
@@ -115,42 +134,59 @@ export class NotificationDispatcher implements INotificationDispatcher {
     const results: NotificationResult[] = [];
 
     const channels = this.getChannelsForReport(report);
-
-    for (const channel of channels) {
-      // Check DND
-      if (this.isDND(report.report_type)) {
+    const dnd = this.isDND(report.report_type);
+    const cooldown = this.isCooldown(report.report_type);
+    if (dnd || cooldown) {
+      const suppressionReason = dnd ? "dnd" : "cooldown";
+      await this.recordNotificationDecision(report, channels, {
+        decision: "suppress",
+        reason: dnd
+          ? "Notification report was suppressed by do-not-disturb policy before interruption delivery."
+          : "Notification report was suppressed by cooldown policy before interruption delivery.",
+        targetEffect: "hold_concern",
+        capabilityDecision: "not_applicable",
+        replayScope: `suppress:${suppressionReason}`,
+      });
+      for (const channel of channels) {
         results.push({
           channel_type: channel.type,
           success: false,
           suppressed: true,
-          suppression_reason: "dnd",
+          suppression_reason: suppressionReason,
         });
-        continue;
       }
+      await this.dispatchToPluginNotifiers(report);
+      await this.dispatchRealtimeSink(report);
+      return results;
+    }
 
-      // Check cooldown
-      if (this.isCooldown(report.report_type)) {
-        results.push({
-          channel_type: channel.type,
-          success: false,
-          suppressed: true,
-          suppression_reason: "cooldown",
-        });
-        continue;
-      }
+    const acceptedChannels = channels.filter((channel) => this.channelAcceptsReportType(channel, report.report_type));
+    const filteredChannels = channels.filter((channel) => !this.channelAcceptsReportType(channel, report.report_type));
+    const hasPluginRoute = this.hasPluginRoute(report);
 
-      // Check if this channel accepts this report type
-      if (!this.channelAcceptsReportType(channel, report.report_type)) {
-        results.push({
-          channel_type: channel.type,
-          success: false,
-          suppressed: true,
-          suppression_reason: "filtered",
-        });
-        continue;
-      }
+    if (acceptedChannels.length > 0 || hasPluginRoute) {
+      await this.recordNotificationDecision(report, acceptedChannels);
+    }
+    if (filteredChannels.length > 0) {
+      await this.recordNotificationDecision(report, filteredChannels, {
+        decision: "suppress",
+        reason: "Notification report was suppressed for one or more channels by report-type routing policy.",
+        targetEffect: "hold_concern",
+        capabilityDecision: "not_applicable",
+        replayScope: `suppress:filtered:${filteredChannels.map((channel) => channel.type).sort().join(",")}`,
+      });
+    }
+    if (acceptedChannels.length === 0 && !hasPluginRoute && filteredChannels.length === 0) {
+      await this.recordNotificationDecision(report, [], {
+        decision: "suppress",
+        reason: "Notification report had no configured channel or plugin route.",
+        targetEffect: "hold_concern",
+        capabilityDecision: "not_applicable",
+        replayScope: "suppress:no-route",
+      });
+    }
 
-      // Send
+    for (const channel of acceptedChannels) {
       const result = await this.sendToChannel(channel, report);
       results.push(result);
 
@@ -158,17 +194,19 @@ export class NotificationDispatcher implements INotificationDispatcher {
         this.lastSent.set(report.report_type, Date.now());
       }
     }
+    for (const channel of filteredChannels) {
+      results.push({
+        channel_type: channel.type,
+        success: false,
+        suppressed: true,
+        suppression_reason: "filtered",
+      });
+    }
 
     // Route to NotifierRegistry plugins (additive, failures don't affect core dispatch)
     await this.dispatchToPluginNotifiers(report);
 
-    if (this.realtimeSink) {
-      try {
-        await this.realtimeSink(report);
-      } catch (err) {
-        this.logger?.warn?.(`[NotificationDispatcher] realtime sink failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    await this.dispatchRealtimeSink(report);
 
     return results;
   }
@@ -320,6 +358,22 @@ export class NotificationDispatcher implements INotificationDispatcher {
     return true;
   }
 
+  private hasPluginRoute(report: Report): boolean {
+    const eventType = reportTypeToEventType(report.report_type);
+    return Boolean(this.notifierRegistry && eventType && this.notifierRegistry
+      .findForEvent(eventType)
+      .some((notifier) => this.pluginNotifierAcceptsReportType(notifier.name, report.report_type)));
+  }
+
+  private async dispatchRealtimeSink(report: Report): Promise<void> {
+    if (!this.realtimeSink) return;
+    try {
+      await this.realtimeSink(report);
+    } catch (err) {
+      this.logger?.warn?.(`[NotificationDispatcher] realtime sink failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   /** Dispatch to the correct sender based on channel type. */
   private async sendToChannel(
     channel: NotificationChannel,
@@ -334,4 +388,73 @@ export class NotificationDispatcher implements INotificationDispatcher {
         return sendWebhook(channel as WebhookChannel, report);
     }
   }
+
+  private async recordNotificationDecision(
+    report: Report,
+    channels: NotificationChannel[],
+    override?: {
+      decision: InterventionDecisionKind;
+      reason: string;
+      targetEffect: InterventionTargetEffect;
+      capabilityDecision: "available" | "missing" | "permission_required" | "blocked" | "not_applicable";
+      replayScope?: string;
+    },
+  ): Promise<void> {
+    if (!this.personalAgentRuntime) return;
+    const dnd = this.isDND(report.report_type);
+    const cooldown = this.isCooldown(report.report_type);
+    const hasPluginRoute = this.hasPluginRoute(report);
+    const decision = override?.decision ?? (channels.length === 0 && !hasPluginRoute
+      ? "suppress"
+      : dnd || cooldown
+        ? "suppress"
+        : "allow");
+    const reason = override?.reason ?? (decision === "allow"
+      ? "Notification report was admitted for dispatch after routing policy evaluation."
+      : dnd
+        ? "Notification report was suppressed by do-not-disturb policy."
+        : cooldown
+          ? "Notification report was suppressed by cooldown policy."
+          : "Notification report had no configured channel or plugin route.");
+    await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "notification_interruption",
+      source: {
+        sourceKind: "notification_report",
+        sourceId: override?.replayScope ? `${report.id}:${override.replayScope}` : report.id,
+        emittedAt: validDateTimeOrNow(report.generated_at),
+        sourceEpoch: report.report_type,
+        highWatermark: `${report.goal_id ?? "goal:none"}:${report.delivered_at ?? "undelivered"}`,
+        replayKey: [
+          "notification",
+          report.id,
+          report.report_type,
+          report.generated_at,
+          report.goal_id ?? "",
+          override?.replayScope ?? "dispatch",
+        ].join(":"),
+        summary: `Notification report "${report.report_type}" entered interruption policy.`,
+        sourceRef: { kind: "report", ref: report.id },
+      },
+      target: {
+        kind: "notification",
+        ref: { kind: "report", ref: report.id },
+        effect: override?.targetEffect ?? (decision === "allow" ? "send_notification" : "none"),
+        summary: report.title,
+      },
+      decision,
+      decisionReason: reason,
+      capabilityDecision: override?.capabilityDecision ?? (decision === "allow" ? "available" : "not_applicable"),
+      capabilityRefs: channels.map((channel) => ({ kind: "notification_channel", ref: channel.type })),
+      policyRef: { kind: "intervention_policy", ref: "policy:notification-interruption-v1" },
+      currentRefs: [
+        { kind: "report", ref: report.id },
+        ...(report.goal_id ? [{ kind: "goal", ref: report.goal_id }] : []),
+      ],
+    }));
+  }
+}
+
+function validDateTimeOrNow(value: string): string {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }

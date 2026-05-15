@@ -593,6 +593,57 @@ describe("RuntimeControlService", () => {
     }
   });
 
+  it("records automation-control mutation approval and outcome as durable personal-agent traces", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-automation-trace-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const recordTrace = vi.fn(async (_trace: unknown) => ({} as never));
+      const approvalFn = vi.fn().mockResolvedValue(true);
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        guardrailStore: new GuardrailStore(runtimeRoot),
+        personalAgentRuntime: { recordTrace },
+      });
+
+      const result = await service.controlAutomation({
+        domain: "backpressure",
+        action: "reset",
+        reason: "operator approved reset",
+        cwd: "/repo",
+        approvalFn,
+      });
+
+      expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(approvalFn).toHaveBeenCalledOnce();
+      const traces = recordTrace.mock.calls.map((call) =>
+        call[0] as {
+          trace_id: string;
+          intervention_decisions: Array<{ decision: string; permission_required: boolean; target_effect: string }>;
+          task_candidates: Array<{ materialization_state: string }>;
+          initiative_events: Array<{ event_type: string }>;
+        }
+      );
+      expect(traces).toHaveLength(3);
+      expect(traces.map((trace) => trace.trace_id)).toHaveLength(new Set(traces.map((trace) => trace.trace_id)).size);
+      expect(traces[0]?.intervention_decisions[0]).toMatchObject({
+        decision: "confirm_required",
+        permission_required: true,
+        target_effect: "mutate_runtime_control",
+      });
+      expect(traces[1]?.intervention_decisions[0]).toMatchObject({
+        decision: "allow",
+        permission_required: false,
+        target_effect: "mutate_runtime_control",
+      });
+      expect(traces[1]?.task_candidates[0]?.materialization_state).toBe("materialized");
+      expect(traces[2]?.initiative_events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ event_type: "action_outcome" }),
+      ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("rejects expired auth handoffs and missing linked browser sessions", async () => {
     const tmpDir = makeTempDir("pulseed-runtime-control-auth-stale-");
     try {

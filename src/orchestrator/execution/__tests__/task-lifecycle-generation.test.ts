@@ -972,18 +972,15 @@ describe("TaskLifecycle", async () => {
       expect(task.created_at <= after).toBe(true);
     });
 
-    it("generates a unique UUID for task id", async () => {
+    it("uses deterministic task_create ids for replayed generated tasks", async () => {
       const llm = createMockLLMClient([VALID_TASK_RESPONSE, VALID_TASK_RESPONSE]);
       const lifecycle = createLifecycle(llm);
 
       const task1 = expectTask(await lifecycle.generateTask("goal-1", "dim"));
       const task2 = expectTask(await lifecycle.generateTask("goal-1", "dim"));
 
-      expect(task1.id).not.toBe(task2.id);
-      // UUID format check
-      expect(task1.id).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-      );
+      expect(task1.id).toBe(task2.id);
+      expect(task1.id).toMatch(/^task:tool:task_create:[0-9a-f]+$/);
     });
 
     it("sets goal_id correctly", async () => {

@@ -26,6 +26,7 @@ import type { Goal } from "../../../base/types/goal.js";
 import * as execMod from "../../../base/utils/execFileNoThrow.js";
 import { ActionHandler } from "../actions.js";
 import { IntentRecognizer } from "../intent-recognizer.js";
+import { PersonalAgentRuntimeStore, stableTraceId } from "../../../runtime/personal-agent/index.js";
 
 const testState = vi.hoisted(() => ({
   lastChatProps: null as null | { onSubmit: (value: string) => Promise<void> },
@@ -1813,8 +1814,86 @@ describe("daemon-mode chat routing", () => {
     await testState.lastChatProps!.onSubmit("  /start 1  ");
     await flush();
 
+    for (let i = 0; i < 5 && vi.mocked(daemonClient.startGoal).mock.calls.length === 0; i++) {
+      await flush();
+    }
     expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-alpha");
+    const store = new PersonalAgentRuntimeStore(stateManager.getBaseDir(), { controlBaseDir: stateManager.getBaseDir() });
+    let trace = await store.loadTrace(stableTraceId("tui_start_goal:daemon_app:goal-alpha"));
+    for (let i = 0; i < 5 && !trace; i++) {
+      await flush();
+      trace = await store.loadTrace(stableTraceId("tui_start_goal:daemon_app:goal-alpha"));
+    }
+    expect(trace).toMatchObject({
+      task_candidates: [expect.objectContaining({ target_kind: "run", desired_effect: "create_run" })],
+      intervention_decisions: [expect.objectContaining({ decision: "allow" })],
+    });
     expect(testState.lastChatMessages.some((message) => message.text.includes("Improve alpha routing"))).toBe(true);
+
+    screen.unmount();
+  });
+
+  it("records daemon-mode /stop admission before calling stopGoal", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const order: string[] = [];
+    const originalRecordTrace = PersonalAgentRuntimeStore.prototype.recordTrace;
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockImplementation(async function (this: PersonalAgentRuntimeStore, trace) {
+        if (trace.replay_key === "tui_stop_goal:daemon_app:goal-alpha") {
+          order.push("trace");
+        }
+        return originalRecordTrace.call(this, trace);
+      });
+    vi.mocked(daemonClient.stopGoal).mockImplementation(async () => {
+      order.push("stopGoal");
+    });
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    await act(async () => {
+      daemonClient.handlers.get("loop_update")?.({
+        goalId: "goal-alpha",
+        running: true,
+        iteration: 1,
+        status: "running",
+        trustScore: 0,
+      });
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("/stop");
+    await flush();
+
+    expect(daemonClient.stopGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(order).toEqual(["trace", "stopGoal"]);
+    const store = new PersonalAgentRuntimeStore(stateManager.getBaseDir(), { controlBaseDir: stateManager.getBaseDir() });
+    const trace = await store.loadTrace(stableTraceId("tui_stop_goal:daemon_app:goal-alpha"));
+    expect(trace).toMatchObject({
+      task_candidates: [expect.objectContaining({
+        target_kind: "runtime_control",
+        desired_effect: "mutate_runtime_control",
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "mutate_runtime_control",
+      })],
+    });
 
     screen.unmount();
   });
@@ -1851,6 +1930,9 @@ describe("daemon-mode chat routing", () => {
     await testState.lastChatProps!.onSubmit("/START Goal-ABC");
     await flush();
 
+    for (let i = 0; i < 5 && vi.mocked(daemonClient.startGoal).mock.calls.length === 0; i++) {
+      await flush();
+    }
     expect(daemonClient.startGoal).toHaveBeenCalledWith("Goal-ABC");
     expect(testState.lastChatMessages.some((message) => message.text.includes("Improve exact ID fallback"))).toBe(true);
 

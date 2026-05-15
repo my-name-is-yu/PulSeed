@@ -1,16 +1,21 @@
 // ─── MCP Server Tool Implementations ───
 
-import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
 import { writeEventSpoolJson } from "../../base/utils/event-spool.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { Goal } from "../../base/types/goal.js";
 import { loadSharedEntries } from "../../platform/knowledge/knowledge-search.js";
+import {
+  allocateDeterministicGoalId,
+  recordExplicitCommandDecision,
+  stableId,
+  type PersonalAgentRuntimeStore,
+} from "../../runtime/personal-agent/index.js";
 
 export interface MCPServerDeps {
   stateManager: StateManager;
   baseDir: string;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
 }
 
 type MCPResult = { content: [{ type: "text"; text: string }] };
@@ -63,7 +68,11 @@ export async function toolGoalCreate(
 ): Promise<MCPResult> {
   try {
     const now = new Date().toISOString();
-    const goalId = randomUUID();
+    const goalId = await allocateDeterministicGoalId({
+      command: "pulseed_goal_create",
+      title: args.title,
+      description: args.description,
+    }, async (candidate) => (await deps.stateManager.loadGoal(candidate)) !== null);
     const goal: Goal = {
       id: goalId,
       parent_id: null,
@@ -90,6 +99,23 @@ export async function toolGoalCreate(
       created_at: now,
       updated_at: now,
     };
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: "pulseed_goal_create",
+      sourceId: `pulseed_goal_create:${goalId}`,
+      sourceEpoch: goalId,
+      target: {
+        kind: "goal",
+        ref: { kind: "goal", ref: goalId },
+        effect: "create_goal",
+        summary: `Create MCP goal "${args.title}".`,
+      },
+      decisionReason: "MCP goal creation was allowed by InterventionPolicy after Capability Registry evaluation.",
+      capabilityRefs: [{ kind: "capability", ref: "mcp:pulseed_goal_create" }],
+      currentRefs: [{ kind: "mcp_tool", ref: "pulseed_goal_create" }],
+    });
     await deps.stateManager.saveGoal(goal);
     return ok({ goal_id: goalId, title: args.title, status: goal.status });
   } catch (e) {
@@ -145,7 +171,12 @@ export async function toolTrigger(
 ): Promise<MCPResult> {
   try {
     const eventsDir = path.join(deps.baseDir, "events");
-    const eventId = randomUUID();
+    const eventSeed = stableId(stableJson({
+      source: args.source,
+      event_type: args.event_type,
+      data: args.data,
+    }));
+    const eventId = `mcp_trigger_${eventSeed}`;
     const event = {
       id: eventId,
       source: args.source,
@@ -153,9 +184,49 @@ export async function toolTrigger(
       data: args.data,
       created_at: new Date().toISOString(),
     };
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: "pulseed_trigger",
+      sourceId: `pulseed_trigger:${eventId}`,
+      sourceEpoch: eventId,
+      replayKey: ["mcp_trigger", eventSeed].join(":"),
+      target: {
+        kind: "attention_only",
+        ref: { kind: "event_spool", ref: eventId },
+        effect: "continue_route",
+        summary: `Queue MCP trigger "${args.event_type}" from "${args.source}".`,
+      },
+      decisionReason: "MCP trigger enqueue was allowed by InterventionPolicy after Capability Registry evaluation.",
+      capabilityRefs: [{ kind: "capability", ref: "mcp:pulseed_trigger" }],
+      currentRefs: [
+        { kind: "mcp_tool", ref: "pulseed_trigger" },
+        { kind: "external_event_source", ref: args.source },
+        { kind: "external_event_type", ref: args.event_type },
+      ],
+      outcomeSummary: `MCP trigger ${eventId} was queued for runtime event processing.`,
+    });
     await writeEventSpoolJson(eventsDir, event, { fileName: `${eventId}.json` });
     return ok({ event_id: eventId, status: "queued" });
   } catch (e) {
     return err(String(e));
   }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(normalizeForStableJson(value));
+}
+
+function normalizeForStableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeForStableJson(item));
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, normalizeForStableJson(record[key])]),
+    );
+  }
+  return value;
 }

@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { ChatRunner } from "../chat-runner.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -125,6 +128,26 @@ function makeDeps(overrides: Partial<ChatRunnerDeps> = {}): ChatRunnerDeps {
 
 // ─── Tests ───
 
+const originalPulseedHome = process.env["PULSEED_HOME"];
+let testHome: string | null = null;
+
+beforeEach(() => {
+  testHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-chat-permissions-")));
+  process.env["PULSEED_HOME"] = testHome;
+});
+
+afterEach(() => {
+  if (originalPulseedHome === undefined) {
+    delete process.env["PULSEED_HOME"];
+  } else {
+    process.env["PULSEED_HOME"] = originalPulseedHome;
+  }
+  if (testHome) {
+    fs.rmSync(testHome, { recursive: true, force: true });
+    testHome = null;
+  }
+});
+
 describe("ChatRunner — permission gate (Fix #505)", () => {
   describe("denied permission", () => {
     it("returns denial message and does NOT call tool.call", async () => {
@@ -133,7 +156,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
-      const result = await runner.execute("do something", "/repo");
+      const result = await runner.execute("do something", testHome!);
 
       expect(tool.call).not.toHaveBeenCalled();
       // The LLM receives the denial message as a tool result
@@ -157,10 +180,10 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       const llmClient = makeLLMClientWithToolCall("confirm_gateway_config_write");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(approvalFn).toHaveBeenCalledOnce();
-      expect(approvalFn).toHaveBeenCalledWith("requires confirmation");
+      expect(approvalFn).toHaveBeenCalledWith("Host policy requires permission for write_local tools.");
       expect(tool.call).toHaveBeenCalledOnce();
     });
   });
@@ -173,29 +196,52 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
       const llmClient = makeLLMClientWithToolCall("confirm_gateway_config_write");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
-      const result = await runner.execute("do something", "/repo");
+      const result = await runner.execute("do something", testHome!);
 
       expect(approvalFn).toHaveBeenCalledOnce();
       expect(tool.call).not.toHaveBeenCalled();
       expect(llmClient.sendMessage).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(false);
-      expect(result.output).toContain("not approved");
+      expect(result.output).toContain("Host policy requires permission for write_local tools.");
       expect(result.output).toContain("Type: Permission failure");
     });
   });
 
   describe("allowed permission", () => {
-    it("calls tool.call directly without invoking approvalFn", async () => {
+    it("executes through ToolExecutor without invoking approvalFn", async () => {
       const tool = makeMockTool("read", { status: "allowed" });
       const registry = makeMockRegistry(tool);
       const approvalFn = vi.fn().mockResolvedValue(false);
       const llmClient = makeLLMClientWithToolCall("read");
 
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never, approvalFn }));
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(tool.call).toHaveBeenCalledOnce();
       expect(approvalFn).not.toHaveBeenCalled();
+    });
+
+    it("does not call tool.call when the default ToolExecutor cannot record its policy trace", async () => {
+      const tool = makeMockTool("read", { status: "allowed" });
+      const registry = makeMockRegistry(tool);
+      const llmClient = makeLLMClientWithToolCall("read");
+      const recordTrace = vi.fn()
+        .mockResolvedValueOnce({} as never)
+        .mockRejectedValueOnce(new Error("policy trace unavailable"));
+
+      const runner = new ChatRunner(makeDeps({
+        registry,
+        llmClient: llmClient as never,
+        personalAgentRuntime: { recordTrace },
+      }));
+      await runner.execute("do something", testHome!);
+
+      expect(recordTrace).toHaveBeenCalledTimes(2);
+      expect(tool.call).not.toHaveBeenCalled();
+      const secondCall = llmClient.sendMessage.mock.calls[1];
+      const messages = secondCall[0] as Array<{ role: string; content: string }>;
+      const toolResultMsg = messages.find((m) => m.role === "tool");
+      expect(toolResultMsg?.content).toContain("policy trace unavailable");
     });
   });
 
@@ -207,7 +253,7 @@ describe("ChatRunner — permission gate (Fix #505)", () => {
 
       // No approvalFn in deps — context.approvalFn returns false by default
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(tool.call).not.toHaveBeenCalled();
     });
@@ -224,7 +270,7 @@ describe("ChatRunner — goalId plumbing (Fix #506)", () => {
       const runner = new ChatRunner(
         makeDeps({ registry, llmClient: llmClient as never, goalId: "test-goal-123" }),
       );
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(tool.call).toHaveBeenCalledOnce();
       const ctx = (tool.call as ReturnType<typeof vi.fn>).mock.calls[0][1] as ToolCallContext;
@@ -240,7 +286,7 @@ describe("ChatRunner — goalId plumbing (Fix #506)", () => {
 
       // No goalId in deps
       const runner = new ChatRunner(makeDeps({ registry, llmClient: llmClient as never }));
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(tool.call).toHaveBeenCalledOnce();
       const ctx = (tool.call as ReturnType<typeof vi.fn>).mock.calls[0][1] as ToolCallContext;
@@ -257,7 +303,7 @@ describe("ChatRunner — goalId plumbing (Fix #506)", () => {
       const runner = new ChatRunner(
         makeDeps({ registry, llmClient: llmClient as never, goalId: undefined }),
       );
-      await runner.execute("do something", "/repo");
+      await runner.execute("do something", testHome!);
 
       expect(tool.call).toHaveBeenCalledOnce();
       const ctx = (tool.call as ReturnType<typeof vi.fn>).mock.calls[0][1] as ToolCallContext;

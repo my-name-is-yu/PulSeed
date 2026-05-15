@@ -1,17 +1,22 @@
 import type { Logger } from "../../../runtime/logger.js";
 import type { Task } from "../../../base/types/task.js";
-import type { AdapterRegistry, AgentResult, IAdapter } from "../adapter-layer.js";
+import { AdapterRegistry, type AgentResult, type AgentTask, type IAdapter } from "../adapter-layer.js";
 import type { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
-import type { ToolExecutor } from "../../../tools/executor.js";
+import { ToolExecutor } from "../../../tools/executor.js";
+import { ToolRegistry } from "../../../tools/registry.js";
+import { ToolPermissionManager } from "../../../tools/permission.js";
+import { ConcurrencyController } from "../../../tools/concurrency.js";
+import { RunAdapterTool } from "../../../tools/execution/RunAdapterTool/RunAdapterTool.js";
 import {
-  applyPostExecutionDiffScopeChecks,
-  executeTask as executeTaskDirect,
+  executeTask as executeTaskWithAdapterState,
 } from "./task-executor.js";
-import { captureExecutionDiffBaseline } from "./task-diff-capture.js";
-import type { ExecutionDiffBaseline } from "./task-diff-capture.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { SessionManager } from "../session-manager.js";
-import { resolveTaskWorkspacePath } from "./task-workspace.js";
+import { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
+import type { PersonalAgentRuntimeStore as PersonalAgentRuntimeStoreType } from "../../../runtime/personal-agent/index.js";
+import { recordTaskPreExecutionPolicyDecision } from "./task-pre-execution-policy-trace.js";
+
+const INVALID_RUN_ADAPTER_RESULT_REASON = "run-adapter returned invalid or truncated adapter result";
 
 interface ExecuteTaskWithGuardsParams {
   task: Task;
@@ -25,6 +30,7 @@ interface ExecuteTaskWithGuardsParams {
   logger?: Logger;
   execFileSyncFn: (cmd: string, args: string[], opts: { cwd: string; encoding: "utf-8" }) => string;
   fallbackCwd?: string;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStoreType, "recordTrace">;
 }
 
 export async function executeTaskWithGuards(
@@ -52,9 +58,11 @@ export async function executeTaskWithGuards(
       input: { task, adapter_type: adapter.adapterType },
     });
     if (!beforeResult.allowed) {
+      const reason = guardrailReasons(beforeResult.results);
+      await recordGuardrailBlock(params, "guardrail_before", reason, 0);
       return {
         success: false,
-        output: `Guardrail rejected: ${beforeResult.results.map((r) => r.reason).filter(Boolean).join("; ")}`,
+        output: `Guardrail rejected: ${reason}`,
         error: "guardrail_rejected",
         exit_code: null,
         elapsed_ms: 0,
@@ -63,81 +71,39 @@ export async function executeTaskWithGuards(
     }
   }
 
-  let directFallbackDiffBaseline: ExecutionDiffBaseline | undefined;
-  if (toolExecutor) {
-    try {
-      const workspaceCwd = await resolveTaskWorkspacePath({ stateManager, task, fallbackCwd });
-      let trustBalance = 0;
-      try {
-        await stateManager.loadGoal(task.goal_id);
-      } catch {
-        // non-fatal, keep default trust balance
-      }
-      const toolCtx = {
-        cwd: workspaceCwd ?? process.cwd(),
-        goalId: task.goal_id,
-        trustBalance,
-        preApproved: true,
-        approvalFn: async () => false,
-      };
-      const diffBaseline = captureExecutionDiffBaseline(execFileSyncFn, toolCtx.cwd);
-      directFallbackDiffBaseline = diffBaseline;
-      const toolResult = await toolExecutor.execute(
-        "run-adapter",
-        {
-          adapter_id: adapter.adapterType,
-          task_description: task.work_description ?? "",
-          goal_id: task.goal_id,
-          ...(workspaceCwd !== undefined ? { cwd: workspaceCwd } : {}),
-        },
-        toolCtx
-      );
-      if (toolResult.data != null) {
-        if (isAgentResult(toolResult.data)) {
-          const result = toolResult.data;
-          await applyPostExecutionDiffScopeChecks({
-            result,
-            taskId: task.id,
-            cwd: workspaceCwd ?? process.cwd(),
-            execFileSyncFn,
-            logger,
-            fallbackChangedPaths: result.filesChangedPaths,
-            baseline: diffBaseline,
-          });
-          return result;
-        }
-
-        logger?.warn?.("[TaskLifecycle] run-adapter tool returned an invalid adapter result after execution");
-        return await buildInvalidRunAdapterResult({
-          taskId: task.id,
-          cwd: workspaceCwd ?? process.cwd(),
-          execFileSyncFn,
-          logger,
-          baseline: diffBaseline,
-          reason: "run-adapter returned invalid or truncated adapter result",
-        });
-      } else {
-        logger?.warn?.(`[TaskLifecycle] run-adapter tool failed, falling back to direct call: ${toolResult.error ?? "unknown"}`);
-      }
-    } catch (err) {
-      logger?.warn?.(`[TaskLifecycle] run-adapter tool threw, falling back to direct call: ${(err as Error).message}`);
-    }
-  }
-
-  const result = await executeTaskDirect(
-    {
-      stateManager,
-      sessionManager,
-      logger,
-      execFileSyncFn,
-      fallbackCwd,
-    },
-    task,
+  const executionToolExecutor = toolExecutor ?? createRunAdapterToolExecutor({
+    stateManager,
+    adapterRegistry,
     adapter,
-    workspaceContext,
-    undefined,
-    { diffBaseline: directFallbackDiffBaseline },
-  );
+  });
+  const toolBackedAdapter = createToolBackedAdapter({
+    adapter,
+    task,
+    stateManager,
+    toolExecutor: executionToolExecutor,
+  });
+
+  let result: AgentResult;
+  try {
+    result = normalizeInvalidRunAdapterResult(await executeTaskWithAdapterState(
+      { stateManager, sessionManager, logger, execFileSyncFn, fallbackCwd },
+      task,
+      toolBackedAdapter,
+      workspaceContext,
+    ));
+    if (isInvalidRunAdapterResult(result)) {
+      await stateManager.saveTask({
+        ...task,
+        status: "error",
+        completed_at: new Date().toISOString(),
+        execution_output: result.output,
+      });
+    }
+  } catch (err) {
+    const message = (err as Error).message;
+    logger?.warn?.(`[TaskLifecycle] run-adapter tool threw; direct adapter fallback is disabled: ${message}`);
+    result = buildNotExecutedAdapterResult("run_adapter_tool_error", `run-adapter admission failed: ${message}`, message);
+  }
   recordAdapterCircuitOutcome(adapterRegistry, adapter.adapterType, result);
 
   if (guardrailRunner) {
@@ -148,9 +114,11 @@ export async function executeTaskWithGuards(
       input: { task, result, adapter_type: adapter.adapterType },
     });
     if (!afterResult.allowed) {
+      const reason = guardrailReasons(afterResult.results);
+      await recordGuardrailBlock(params, "guardrail_after", reason, result.elapsed_ms);
       return {
         success: false,
-        output: `Guardrail rejected result: ${afterResult.results.map((r) => r.reason).filter(Boolean).join("; ")}`,
+        output: `Guardrail rejected result: ${reason}`,
         error: "guardrail_rejected",
         exit_code: null,
         elapsed_ms: result.elapsed_ms,
@@ -162,41 +130,168 @@ export async function executeTaskWithGuards(
   return result;
 }
 
-async function buildInvalidRunAdapterResult(input: {
-  taskId: string;
-  cwd: string;
-  execFileSyncFn: ExecuteTaskWithGuardsParams["execFileSyncFn"];
-  logger?: Logger;
-  baseline?: ExecutionDiffBaseline;
-  reason: string;
-}): Promise<AgentResult> {
-  const result: AgentResult = {
+async function recordGuardrailBlock(
+  params: ExecuteTaskWithGuardsParams,
+  gate: "guardrail_before" | "guardrail_after",
+  reason: string,
+  elapsedMs: number,
+): Promise<void> {
+  const store = params.personalAgentRuntime
+    ?? new PersonalAgentRuntimeStore(params.stateManager.getBaseDir(), {
+      controlBaseDir: params.stateManager.getBaseDir(),
+    });
+  await recordTaskPreExecutionPolicyDecision(store, params.task, {
+    gate,
+    replayStage: "guardrail_rejected",
+    decision: "block",
+    capabilityDecision: "blocked",
+    reason: `${gate === "guardrail_before" ? "Before-tool" : "After-tool"} guardrail rejected task execution: ${reason}`,
+    permissionRequired: false,
+    targetEffect: "execute_tool",
+    capabilityRefs: [
+      { kind: "guardrail", ref: gate },
+      { kind: "adapter", ref: params.adapter.adapterType },
+    ],
+    policyRef: { kind: "intervention_policy", ref: "policy:task-guardrail-v1" },
+    outcomeSummary: `Task execution was blocked by ${gate} guardrail after ${elapsedMs}ms.`,
+  });
+}
+
+function guardrailReasons(results: Array<{ reason?: string | null }>): string {
+  return results.map((result) => result.reason).filter(Boolean).join("; ") || "guardrail rejected execution";
+}
+
+function createRunAdapterToolExecutor(input: {
+  stateManager: StateManager;
+  adapterRegistry?: AdapterRegistry;
+  adapter: IAdapter;
+}): ToolExecutor {
+  const registry = new ToolRegistry();
+  const adapterRegistry = input.adapterRegistry ?? new AdapterRegistry();
+  adapterRegistry.register(input.adapter);
+  registry.register(new RunAdapterTool(adapterRegistry));
+  const baseDir = input.stateManager.getBaseDir();
+  return new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    personalAgentRuntime: new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir }),
+    traceBaseDir: baseDir,
+  });
+}
+
+function createToolBackedAdapter(input: {
+  adapter: IAdapter;
+  task: Task;
+  stateManager: StateManager;
+  toolExecutor: ToolExecutor;
+}): IAdapter {
+  const { adapter, task, stateManager, toolExecutor } = input;
+  const baseDir = stateManager.getBaseDir();
+  const traceStore = new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir });
+  return {
+    adapterType: adapter.adapterType,
+    ...(adapter.capabilities !== undefined ? { capabilities: adapter.capabilities } : {}),
+    ...(adapter.formatPrompt ? { formatPrompt: adapter.formatPrompt.bind(adapter) } : {}),
+    ...(adapter.checkDuplicate ? { checkDuplicate: adapter.checkDuplicate.bind(adapter) } : {}),
+    async execute(agentTask: AgentTask): Promise<AgentResult> {
+      const toolResult = await toolExecutor.execute(
+        "run-adapter",
+        {
+          adapter_id: adapter.adapterType,
+          task_description: agentTask.prompt,
+          goal_id: task.goal_id,
+          timeout_ms: agentTask.timeout_ms,
+          ...(agentTask.cwd !== undefined ? { cwd: agentTask.cwd } : {}),
+          ...(agentTask.allowed_tools !== undefined ? { allowed_tools: [...agentTask.allowed_tools] } : {}),
+          ...(agentTask.system_prompt !== undefined ? { system_prompt: agentTask.system_prompt } : {}),
+        },
+        {
+          cwd: agentTask.cwd ?? process.cwd(),
+          goalId: task.goal_id,
+          taskId: task.id,
+          trustBalance: 0,
+          preApproved: true,
+          approvalFn: async () => false,
+          providerConfigBaseDir: baseDir,
+          personalAgentRuntime: traceStore,
+          personalAgentTrace: {
+            callerPath: "task_execution",
+            sourceKind: "task_execution",
+            sourceId: task.id,
+            sourceEpoch: task.started_at ?? task.created_at,
+            highWatermark: `${task.goal_id}:${task.id}`,
+            replayKey: `task_execution:run_adapter:${task.goal_id}:${task.id}`,
+            summary: `Execute task ${task.id} through run-adapter.`,
+            sourceRef: { kind: "task", ref: task.id },
+            currentRefs: [
+              { kind: "goal", ref: task.goal_id },
+              { kind: "task", ref: task.id },
+            ],
+          },
+        }
+      );
+      if (toolResult.data != null) {
+        if (isAgentResult(toolResult.data)) {
+          return toolResult.data;
+        }
+        return makeInvalidRunAdapterResult();
+      }
+      const policyReason = toolResult.execution?.reason;
+      return buildNotExecutedAdapterResult(
+        policyReason ?? (toolResult.error ? "run_adapter_tool_error" : "run_adapter_tool_blocked"),
+        `run-adapter was not executed: ${toolResult.error ?? toolResult.summary}`,
+        policyReason ? undefined : toolResult.error,
+      );
+    },
+  };
+}
+
+function makeInvalidRunAdapterResult(): AgentResult {
+  return {
     success: true,
     output: "",
+    structuredOutput: { pulseedRunAdapterInvalidResult: true },
     error: null,
     exit_code: null,
     elapsed_ms: 0,
     stopped_reason: "completed",
   };
-  await applyPostExecutionDiffScopeChecks({
-    result,
-    taskId: input.taskId,
-    cwd: input.cwd,
-    execFileSyncFn: input.execFileSyncFn,
-    logger: input.logger,
-    baseline: input.baseline,
-  });
+}
 
+function isInvalidRunAdapterResult(result: AgentResult): boolean {
+  return Boolean(
+    result.structuredOutput
+    && typeof result.structuredOutput === "object"
+    && (result.structuredOutput as { pulseedRunAdapterInvalidResult?: unknown }).pulseedRunAdapterInvalidResult === true
+  );
+}
+
+function normalizeInvalidRunAdapterResult(result: AgentResult): AgentResult {
+  if (!isInvalidRunAdapterResult(result)) return result;
   const scopeError = result.error;
-  result.success = false;
-  result.error = scopeError ? `${input.reason}; ${scopeError}` : input.reason;
-  result.output = [
-    result.output,
-    `[Execution Result] ${input.reason}`,
-  ].filter((value) => value.length > 0).join("\n");
-  result.exit_code = null;
-  result.stopped_reason = "error";
-  return result;
+  return {
+    ...result,
+    success: false,
+    output: [
+      result.output,
+      `[Execution Result] ${INVALID_RUN_ADAPTER_RESULT_REASON}`,
+    ].filter((value) => value.length > 0).join("\n"),
+    error: scopeError ? `${INVALID_RUN_ADAPTER_RESULT_REASON}; ${scopeError}` : INVALID_RUN_ADAPTER_RESULT_REASON,
+    exit_code: null,
+    stopped_reason: "error",
+  };
+}
+
+function buildNotExecutedAdapterResult(reason: string, message: string, errorOverride?: string): AgentResult {
+  return {
+    success: false,
+    output: message,
+    error: errorOverride ?? reason,
+    exit_code: null,
+    elapsed_ms: 0,
+    stopped_reason: "error",
+  };
 }
 
 function isAgentResult(value: unknown): value is AgentResult {

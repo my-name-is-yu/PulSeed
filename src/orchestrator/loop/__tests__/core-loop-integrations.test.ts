@@ -1311,7 +1311,7 @@ describe("CoreLoop", async () => {
       expect(callArgs![4]).not.toContain("Prefer VS Code.");
     });
 
-    it("adds cross-goal lessons when activation flag is enabled", async () => {
+    it("does not inject legacy direct cross-goal lessons from task-cycle", async () => {
       const { deps, mocks } = createMockDeps(tmpDir);
       await mocks.stateManager.saveGoal(makeGoal());
       await saveDreamConfig({
@@ -1356,8 +1356,9 @@ describe("CoreLoop", async () => {
       expect(result.error).toBeNull();
       expect(mocks.taskLifecycle.runTaskCycle).toHaveBeenCalledOnce();
       const callArgs = mocks.taskLifecycle.runTaskCycle.mock.calls[0];
-      expect(callArgs![4]).toContain("Cross-goal lessons");
-      expect(callArgs![4]).toContain("migration checklist");
+      expect(memoryLifecycleManager.searchCrossGoalLessons).not.toHaveBeenCalled();
+      expect(callArgs![4] ?? "").not.toContain("Cross-goal lessons");
+      expect(callArgs![4] ?? "").not.toContain("migration checklist");
     });
 
     it("does not inject raw knowledge or semantic working memory when verified-only mode is enabled", async () => {

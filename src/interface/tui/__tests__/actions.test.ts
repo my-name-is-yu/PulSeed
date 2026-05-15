@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { ActionHandler } from "../actions.js";
 import type { ActionDeps } from "../actions.js";
 import type { RecognizedIntent } from "../intent-recognizer.js";
@@ -21,9 +24,11 @@ function makeReport() {
 // ─── Mock deps factory ───
 
 function makeDeps(overrides: Partial<ActionDeps> = {}): ActionDeps {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-tui-actions-"));
   const stateManager = {
     listGoalIds: vi.fn().mockResolvedValue([]),
     loadGoal: vi.fn().mockResolvedValue(null),
+    getBaseDir: vi.fn(() => baseDir),
   } as unknown as ActionDeps["stateManager"];
 
   const goalNegotiator = {
@@ -441,7 +446,10 @@ describe("ActionHandler — handle()", () => {
         raw: "READMEを書いてほしい",
       };
       await handler.handle(intent);
-      expect(deps.goalNegotiator.negotiate).toHaveBeenCalledWith("READMEを書く");
+      expect(deps.goalNegotiator.negotiate).toHaveBeenCalledWith(
+        "READMEを書く",
+        expect.objectContaining({ goalId: expect.stringMatching(/^goal_/) }),
+      );
     });
 
     it("falls back to raw input when no params.description", async () => {
@@ -464,7 +472,10 @@ describe("ActionHandler — handle()", () => {
         raw: "テスト書いて",
       };
       await handler.handle(intent);
-      expect(deps.goalNegotiator.negotiate).toHaveBeenCalledWith("テスト書いて");
+      expect(deps.goalNegotiator.negotiate).toHaveBeenCalledWith(
+        "テスト書いて",
+        expect.objectContaining({ goalId: expect.stringMatching(/^goal_/) }),
+      );
     });
 
     it("returns natural created-goal confirmation without raw diagnostics", async () => {

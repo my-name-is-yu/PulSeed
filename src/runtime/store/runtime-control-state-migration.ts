@@ -148,7 +148,7 @@ export async function importLegacyRuntimeControlStateStores(
 
     const outboxRecords = await listRuntimeJson(paths.outboxDir, OutboxRecordSchema);
     for (const record of outboxRecords) {
-      await outboxStore.save(record);
+      await outboxStore.save(record, { boundary: "migration" });
     }
     legacyImports.push(await recordLegacyImport(
       controlDb,

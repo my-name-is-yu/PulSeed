@@ -1089,6 +1089,7 @@ export class ChatRunnerCommandHandler {
       sessionId: this.host.getHistory()?.getSessionId() ?? null,
       workspace: this.host.getSessionCwd() ?? process.cwd(),
       replyTarget: this.host.getRuntimeControlContext()?.replyTarget ?? this.host.deps.runtimeReplyTarget ?? null,
+      personalAgentRuntime: this.host.getPersonalAgentRuntime(),
     };
   }
 }

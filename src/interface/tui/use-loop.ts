@@ -4,6 +4,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { TrustManager } from "../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../base/types/core.js";
 import type { DaemonClient } from "../../runtime/daemon/client.js";
+import { recordExplicitCommandDecision, stableId } from "../../runtime/personal-agent/index.js";
 
 const EXACT_FINITE_NUMBER_TOKEN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 
@@ -94,6 +95,44 @@ function toFiniteNumberOrNull(value: unknown): number | null {
 // ─── LoopController ───
 
 const POLL_INTERVAL_MS = 2000;
+type TuiLoopMode = "standalone" | "daemon" | "daemon_app";
+
+export async function recordTuiStopDecision(input: {
+  baseDir: string;
+  goalId: string | null;
+  mode: TuiLoopMode;
+  command?: string;
+}): Promise<void> {
+  const goalRef = input.goalId ? [{ kind: "goal", ref: input.goalId }] : [];
+  const sourceEpoch = input.goalId ?? "no-active-goal";
+  const replayKey = ["tui_stop_goal", input.mode, sourceEpoch].join(":");
+  await recordExplicitCommandDecision({
+    baseDir: input.baseDir,
+    surface: "tui",
+    command: input.command ?? "/stop",
+    sourceId: `tui /stop:${input.mode}:${sourceEpoch}`,
+    sourceEpoch,
+    replayKey,
+    target: {
+      kind: "runtime_control",
+      ref: { kind: "runtime_control", ref: `runtime-control:tui-stop:${stableId(replayKey)}` },
+      effect: "mutate_runtime_control",
+      summary: input.goalId
+        ? `Stop goal ${input.goalId} from TUI.`
+        : "Stop the current TUI loop controller.",
+    },
+    decisionReason: "Explicit TUI stop was allowed to mutate durable runtime-control state.",
+    capabilityRefs: [
+      { kind: "capability", ref: "tui:loop_stop" },
+      { kind: "capability", ref: input.mode === "standalone" ? "durable_loop_stop" : "daemon_goal_stop" },
+    ],
+    currentRefs: goalRef,
+    auditRefs: goalRef,
+    outcomeSummary: input.goalId
+      ? `TUI stop command admitted for goal ${input.goalId}.`
+      : "TUI stop command admitted without an active goal.",
+  });
+}
 
 export class LoopController {
   private state: LoopState;
@@ -146,6 +185,20 @@ export class LoopController {
   async start(goalId: string): Promise<void> {
     if (this.state.running) return;
 
+    try {
+      await this.recordStartDecision(goalId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.setState({
+        running: false,
+        goalId: null,
+        status: "error",
+        lastResult: null,
+        lastError: msg,
+      });
+      return;
+    }
+
     this.setState({
       running: true,
       goalId,
@@ -196,9 +249,28 @@ export class LoopController {
     }
   }
 
-  stop(): void {
-    if (this.daemonClient && this.state.goalId) {
-      this.daemonClient.stopGoal(this.state.goalId).catch(() => {});
+  async stop(options: { command?: string } = {}): Promise<void> {
+    const goalId = this.state.goalId;
+    const mode: TuiLoopMode = this.daemonClient ? "daemon" : "standalone";
+    try {
+      await recordTuiStopDecision({
+        baseDir: this.stateManager.getBaseDir(),
+        goalId,
+        mode,
+        command: options.command,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.setState({
+        running: false,
+        status: "error",
+        lastError: msg,
+      });
+      return;
+    }
+
+    if (this.daemonClient && goalId) {
+      await this.daemonClient.stopGoal(goalId).catch(() => {});
     } else if (this.coreLoop) {
       this.coreLoop.stop();
     }
@@ -265,6 +337,29 @@ export class LoopController {
     this.sseHandlers.set("daemon_status", onDaemonStatus);
   }
 
+  private async recordStartDecision(goalId: string): Promise<void> {
+    const mode = this.daemonClient ? "daemon" : "standalone";
+    const replayKey = ["tui_start_goal", mode, goalId].join(":");
+    await recordExplicitCommandDecision({
+      baseDir: this.stateManager.getBaseDir(),
+      surface: "tui",
+      command: "/start",
+      sourceId: `tui /start:${mode}:${goalId}`,
+      sourceEpoch: goalId,
+      replayKey,
+      target: {
+        kind: "run",
+        ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
+        effect: "create_run",
+        summary: `Start goal ${goalId} from TUI.`,
+      },
+      decisionReason: "Explicit TUI /start was allowed to start durable goal work.",
+      capabilityRefs: [{ kind: "capability", ref: "durable_loop_goal_run" }],
+      currentRefs: [{ kind: "goal", ref: goalId }],
+      auditRefs: [{ kind: "goal", ref: goalId }],
+    });
+  }
+
   private cleanup(): void {
     if (this.pollInterval !== null) {
       clearInterval(this.pollInterval);
@@ -303,7 +398,7 @@ export class LoopController {
 export interface UseLoopResult {
   loopState: LoopState;
   start: (goalId: string) => void;
-  stop: () => void;
+  stop: () => Promise<void>;
   /** Register a callback that will be invoked whenever a LoopController
    *  onUpdate notification would have fired (used by entry.ts approval wiring). */
   getController: () => LoopController;
@@ -328,7 +423,7 @@ export function useLoop(
     controller.setOnUpdate(setLoopState);
     return () => {
       controller.setOnUpdate(null);
-      controller.stop();
+      void controller.stop({ command: "component_unmount" });
     };
   }, [controller]);
 
@@ -339,8 +434,8 @@ export function useLoop(
     [controller]
   );
 
-  const stop = useCallback(() => {
-    controller.stop();
+  const stop = useCallback(async () => {
+    await controller.stop();
   }, [controller]);
 
   const getController = useCallback(() => controller, [controller]);

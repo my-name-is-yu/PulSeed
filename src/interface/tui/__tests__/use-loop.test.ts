@@ -8,6 +8,7 @@ import type { TrustManager } from "../../../platform/traits/trust-manager.js";
 import type { Threshold } from "../../../base/types/core.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { PersonalAgentRuntimeStore, stableTraceId } from "../../../runtime/personal-agent/index.js";
 
 /** Flush enough microtask/Promise queues for async StateManager I/O to settle */
 async function flushAsync(rounds = 50): Promise<void> {
@@ -207,10 +208,7 @@ describe("LoopController", async () => {
     const updates: string[] = [];
     ctrl.setOnUpdate((s) => updates.push(s.status));
 
-    void ctrl.start("goal-1");
-
-    // Allow microtasks to settle
-    await Promise.resolve();
+    await ctrl.start("goal-1");
 
     const state = ctrl.getState();
     expect(state.running).toBe(true);
@@ -258,34 +256,60 @@ describe("LoopController", async () => {
     const callCount = { n: 0 };
     ctrl.setOnUpdate(() => { callCount.n++; });
 
-    void ctrl.start("goal-1");
-    await Promise.resolve();
+    await ctrl.start("goal-1");
 
     expect(callCount.n).toBeGreaterThan(0);
   });
 
-  it("stop() sets running=false and status=stopped, calls coreLoop.stop()", async () => {
+  it("stop() records personal-agent admission before setting stopped and calling coreLoop.stop()", async () => {
     const goal = makeGoal();
     await stateManager.saveGoal(goal);
 
+    const order: string[] = [];
+    const originalRecordTrace = PersonalAgentRuntimeStore.prototype.recordTrace;
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockImplementation(async function (this: PersonalAgentRuntimeStore, trace) {
+        if (trace.replay_key === "tui_stop_goal:standalone:goal-1") {
+          order.push("trace");
+        }
+        return originalRecordTrace.call(this, trace);
+      });
     const neverResolve = new Promise<LoopResult>(() => {});
     const loop = {
       run: vi.fn().mockReturnValue(neverResolve),
-      stop: vi.fn(),
+      stop: vi.fn(() => {
+        order.push("coreLoop.stop");
+      }),
       isStopped: vi.fn().mockReturnValue(false),
       runOneIteration: vi.fn(),
     } as unknown as CoreLoop;
 
     const ctrl = new LoopController(loop, stateManager, trustManager);
-    void ctrl.start("goal-1");
-    await Promise.resolve();
+    await ctrl.start("goal-1");
 
-    ctrl.stop();
+    await ctrl.stop();
 
     const state = ctrl.getState();
     expect(state.running).toBe(false);
     expect(state.status).toBe("stopped");
     expect(loop.stop).toHaveBeenCalled();
+    const store = new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir });
+    const trace = await store.loadTrace(stableTraceId("tui_stop_goal:standalone:goal-1"));
+    expect(trace).toMatchObject({
+      situation_frame: expect.objectContaining({
+        caller_path: "explicit_user_command",
+        source_kind: "explicit_command",
+      }),
+      task_candidates: [expect.objectContaining({
+        target_kind: "runtime_control",
+        desired_effect: "mutate_runtime_control",
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "mutate_runtime_control",
+      })],
+    });
+    expect(order).toEqual(["trace", "coreLoop.stop"]);
   });
 
   it("completes: state transitions to completed after coreLoop.run resolves", async () => {
@@ -306,6 +330,35 @@ describe("LoopController", async () => {
     expect(state.status).toBe("completed");
     expect(state.lastResult).not.toBeNull();
     expect(state.lastResult?.totalIterations).toBe(5);
+  });
+
+  it("records a personal-agent trace before standalone TUI starts a goal run", async () => {
+    const goal = makeGoal();
+    await stateManager.saveGoal(goal);
+
+    const loop = makeMockCoreLoop({ finalStatus: "completed", totalIterations: 1 });
+    const ctrl = new LoopController(loop, stateManager, trustManager);
+
+    await ctrl.start("goal-1");
+    await flushAsync(100);
+
+    const store = new PersonalAgentRuntimeStore(tmpDir, { controlBaseDir: tmpDir });
+    const trace = await store.loadTrace(stableTraceId("tui_start_goal:standalone:goal-1"));
+    expect(trace).toMatchObject({
+      situation_frame: expect.objectContaining({
+        caller_path: "explicit_user_command",
+        source_kind: "explicit_command",
+      }),
+      task_candidates: [expect.objectContaining({
+        target_kind: "run",
+        desired_effect: "create_run",
+      })],
+      intervention_decisions: [expect.objectContaining({
+        decision: "allow",
+        target_effect: "create_run",
+      })],
+    });
+    expect(loop.run).toHaveBeenCalledWith("goal-1");
   });
 
   it("polling interval calls refreshState every 2 seconds", async () => {

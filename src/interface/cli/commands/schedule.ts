@@ -3,17 +3,20 @@ import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { CharacterConfigManager } from "../../../platform/traits/character-config.js";
 import {
-  buildSchedulePresetEntry,
   listSchedulePresetDefinitions,
   type SchedulePresetInput,
 } from "../../../runtime/schedule/presets.js";
 import { DreamScheduleSuggestionStore } from "../../../platform/dream/dream-schedule-suggestions.js";
-import type { HeartbeatConfig, ScheduleTriggerInput } from "../../../runtime/types/schedule.js";
+import type { HeartbeatConfig, ScheduleEntry, ScheduleTriggerInput } from "../../../runtime/types/schedule.js";
 import { scheduleEdit } from "./schedule/edit.js";
 import { scheduleCost } from "./schedule/cost.js";
 import { scheduleHistory } from "./schedule/history.js";
 import { scheduleRunNow } from "./schedule/run-now.js";
 import { getScheduleOrPrintError, parsePositiveInteger } from "./schedule/shared.js";
+import {
+  executeScheduleCliTool,
+  throwIfScheduleCliToolFailed,
+} from "./schedule/tool-execution.js";
 import { parseExactFiniteNumber } from "./exact-number.js";
 
 export async function cmdSchedule(
@@ -38,19 +41,19 @@ export async function cmdSchedule(
       return await scheduleAdd(engine, argv.slice(1));
     case "edit":
     case "update":
-      await scheduleEdit(engine, argv.slice(1));
+      await scheduleEdit(engine, argv.slice(1), argv);
       return 0;
     case "pause":
     case "disable":
-      await scheduleSetEnabled(engine, argv.slice(1), false);
+      await scheduleSetEnabled(engine, argv.slice(1), false, argv);
       return 0;
     case "resume":
     case "enable":
-      await scheduleSetEnabled(engine, argv.slice(1), true);
+      await scheduleSetEnabled(engine, argv.slice(1), true, argv);
       return 0;
     case "run":
     case "run-now":
-      await scheduleRunNow(stateManager, characterConfigManager, engine, argv.slice(1));
+      await scheduleRunNow(stateManager, characterConfigManager, engine, argv.slice(1), argv);
       return 0;
     case "history":
       await scheduleHistory(engine, argv.slice(1));
@@ -58,13 +61,13 @@ export async function cmdSchedule(
     case "cost":
       return await scheduleCost(engine, argv.slice(1));
     case "remove":
-      await scheduleRemove(engine, argv.slice(1));
+      await scheduleRemove(engine, argv.slice(1), argv);
       return 0;
     case "presets":
       schedulePresetList();
       return 0;
     case "suggestions":
-      await scheduleSuggestions(baseDir, engine, argv.slice(1));
+      await scheduleSuggestions(baseDir, engine, argv.slice(1), argv);
       return 0;
     default:
       console.log("Usage: pulseed schedule <list|show|add|edit|pause|resume|run|history|cost|remove|presets|suggestions>");
@@ -141,14 +144,26 @@ function scheduleShow(engine: ScheduleEngine, argv: string[]): void {
   console.log(JSON.stringify(entry, null, 2));
 }
 
-async function scheduleSetEnabled(engine: ScheduleEngine, argv: string[], enabled: boolean): Promise<void> {
+async function scheduleSetEnabled(
+  engine: ScheduleEngine,
+  argv: string[],
+  enabled: boolean,
+  fullArgv: string[],
+): Promise<void> {
   const entry = getScheduleOrPrintError(engine, argv[0]);
   if (!entry) return;
-  const updated = await engine.updateEntry(entry.id, { enabled });
-  if (!updated) {
-    console.error(`No schedule entry found matching: ${argv[0]}`);
-    return;
-  }
+  const result = await executeScheduleCliTool(
+    engine,
+    enabled ? "resume_schedule" : "pause_schedule",
+    { schedule_id: entry.id },
+    {
+      command: enabled ? "resume" : "pause",
+      argv: fullArgv,
+      currentRefs: [{ kind: "schedule", ref: entry.id }],
+    },
+  );
+  throwIfScheduleCliToolFailed(result);
+  const updated = (result.data as { entry: ScheduleEntry }).entry;
   console.log(`${enabled ? "Resumed" : "Paused"} schedule entry: ${updated.id} (${updated.name})`);
 }
 
@@ -332,7 +347,14 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
   try {
     if (values.preset) {
       const presetInput = buildPresetInput(values);
-      const entry = await engine.addEntry(buildSchedulePresetEntry(presetInput));
+      const result = await executeScheduleCliTool(
+        engine,
+        "create_schedule",
+        presetInput,
+        { command: "add", argv },
+      );
+      throwIfScheduleCliToolFailed(result);
+      const entry = (result.data as { entry: ScheduleEntry }).entry;
       console.log(`Added preset schedule entry: ${entry.id} (${entry.name})`);
       return 0;
     }
@@ -350,7 +372,7 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
         jitter_factor: 0,
       };
 
-    const entry = await engine.addEntry({
+    const result = await executeScheduleCliTool(engine, "create_schedule", {
       name: values.name as string,
       layer: "heartbeat",
       trigger,
@@ -360,7 +382,9 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
         dependency_hints: [],
       },
       heartbeat: buildHeartbeatConfigFromAddArgs(values),
-    });
+    }, { command: "add", argv });
+    throwIfScheduleCliToolFailed(result);
+    const entry = (result.data as { entry: ScheduleEntry }).entry;
 
     console.log(`Added schedule entry: ${entry.id} (${entry.name})`);
     return 0;
@@ -370,11 +394,22 @@ async function scheduleAdd(engine: ScheduleEngine, argv: string[]): Promise<numb
   }
 }
 
-async function scheduleRemove(engine: ScheduleEngine, argv: string[]): Promise<void> {
+async function scheduleRemove(engine: ScheduleEngine, argv: string[], fullArgv: string[]): Promise<void> {
   const match = getScheduleOrPrintError(engine, argv[0]);
   if (!match) return;
-  await engine.removeEntry(match.id);
-  console.log(`Removed schedule entry: ${match.id} (${match.name})`);
+  const result = await executeScheduleCliTool(
+    engine,
+    "remove_schedule",
+    { schedule_id: match.id },
+    {
+      command: "remove",
+      argv: fullArgv,
+      currentRefs: [{ kind: "schedule", ref: match.id }],
+    },
+  );
+  throwIfScheduleCliToolFailed(result);
+  const data = result.data as { entry: { id: string; name: string } };
+  console.log(`Removed schedule entry: ${data.entry.id} (${data.entry.name})`);
 }
 
 function schedulePresetList(): void {
@@ -394,6 +429,7 @@ async function scheduleSuggestions(
   baseDir: string,
   engine: ScheduleEngine,
   argv: string[],
+  fullArgv: string[],
 ): Promise<void> {
   const store = new DreamScheduleSuggestionStore(baseDir);
   const action = argv[0] ?? "list";
@@ -422,7 +458,20 @@ async function scheduleSuggestions(
         console.error("Error: dream suggestion ID is required");
         return;
       }
-      const { entry, duplicate } = await store.applySuggestion(id, engine);
+      const { entry, duplicate } = await store.applySuggestion(id, engine, async (entryInput, suggestion) => {
+        const result = await executeScheduleCliTool(
+          engine,
+          "create_schedule",
+          entryInput,
+          {
+            command: "suggestions apply",
+            argv: fullArgv,
+            currentRefs: [{ kind: "dream_checkpoint", ref: suggestion.id }],
+          },
+        );
+        throwIfScheduleCliToolFailed(result);
+        return (result.data as { entry: ScheduleEntry }).entry;
+      });
       console.log(
         duplicate
           ? `Matched existing schedule entry: ${entry.id} (${entry.name})`
