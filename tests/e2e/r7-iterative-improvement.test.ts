@@ -40,7 +40,7 @@ import * as DriveScorer from "../../src/platform/drive/drive-scorer.js";
 import type { Goal } from "../../src/base/types/goal.js";
 import type { ObservationMethod } from "../../src/base/types/core.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import type { CompletionJudgment } from "../../src/base/types/satisficing.js";
 import type { GapVector } from "../../src/base/types/gap.js";
 import type { DriveScore } from "../../src/base/types/drive.js";

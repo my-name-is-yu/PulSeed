@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import * as path from "node:path";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";

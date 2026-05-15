@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const SuggestionRepoContextSchema = z.object({
   path: z.string().trim().min(1),

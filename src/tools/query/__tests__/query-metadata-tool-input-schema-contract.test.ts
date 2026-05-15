@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { PluginLoader } from "../../../runtime/plugin-loader.js";
 import type { ToolRegistry } from "../../registry.js";
 import { toToolDefinition } from "../../tool-definition-adapter.js";

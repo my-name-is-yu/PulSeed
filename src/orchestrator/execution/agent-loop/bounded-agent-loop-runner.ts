@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { AgentLoopStopReason } from "./agent-loop-budget.js";
 import type {
   AgentLoopMessage,

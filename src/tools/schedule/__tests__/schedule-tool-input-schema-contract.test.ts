@@ -34,7 +34,7 @@ import {
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import type { ITool } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 type JsonObject = Record<string, unknown>;
 

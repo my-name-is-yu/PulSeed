@@ -7,7 +7,7 @@ import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js"
 import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
 import type { ITool, ToolResult } from "../../../tools/types.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({

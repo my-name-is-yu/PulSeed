@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const MAX_PACING_RATIO = 1_000_000;
 

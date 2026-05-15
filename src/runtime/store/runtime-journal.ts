@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 export async function ensureRuntimeDirectory(dirPath: string): Promise<void> {
   await fsp.mkdir(dirPath, { recursive: true });

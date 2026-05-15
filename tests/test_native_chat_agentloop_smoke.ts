@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AgentResult, IAdapter } from "../src/orchestrator/execution/adapter-layer.js";
 import { OpenAILLMClient } from "../src/base/llm/openai-client.js";
 import { ChatRunner } from "../src/interface/chat/chat-runner.js";

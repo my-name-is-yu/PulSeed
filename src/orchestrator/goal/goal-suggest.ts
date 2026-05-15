@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Logger } from "../../runtime/logger.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { EthicsGate } from "../../platform/traits/ethics-gate.js";

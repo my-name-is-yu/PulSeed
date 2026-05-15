@@ -4,7 +4,7 @@
  * Used by PromptGateway for CURIOSITY_PROPOSE.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── CURIOSITY_PROPOSE ────────────────────────────────────────────────────────
 

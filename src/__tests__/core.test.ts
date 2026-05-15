@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   ObservationEngine,
   StateManager,

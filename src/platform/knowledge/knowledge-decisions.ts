@@ -1,6 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import type { DecisionRecord } from "../../base/types/knowledge.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";

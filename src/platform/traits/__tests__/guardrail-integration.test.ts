@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { GuardrailRunner } from "../guardrail-runner.js";
 import { LLMClient } from "../../../base/llm/llm-client.js";
 import { StateManager } from "../../../base/state/state-manager.js";

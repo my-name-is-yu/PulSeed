@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // Memory tier (hierarchical memory: core/recall/archival)
 export const MemoryTierSchema = z.enum(["core", "recall", "archival"]);

@@ -2,7 +2,7 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { Task } from "../../base/types/task.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { KnowledgeEntrySchema } from "../../base/types/knowledge.js";
 import type {
   KnowledgeEntry,

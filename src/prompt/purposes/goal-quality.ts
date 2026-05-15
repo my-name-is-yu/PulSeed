@@ -4,7 +4,7 @@
  * Used by PromptGateway for GOAL_QUALITY_ASSESSMENT, GOAL_QUALITY_IMPROVEMENT, and GOAL_QUALITY_VALIDATION.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── GOAL_QUALITY_ASSESSMENT ─────────────────────────────────────────────────
 

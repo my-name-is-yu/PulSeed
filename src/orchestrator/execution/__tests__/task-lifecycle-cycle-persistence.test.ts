@@ -23,7 +23,7 @@ import type {
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { summarizeTaskOutcomeLedgers } from "../task/task-outcome-ledger.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 function createSpyLLMClient(responses: string[]): ILLMClient {
   let callIndex = 0;

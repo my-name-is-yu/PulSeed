@@ -3,7 +3,7 @@
 // Zod schemas for Google A2A (Agent-to-Agent) Protocol v0.3.
 // Used by A2AClient and A2AAdapter to validate all A2A message types.
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── Part variants ───
 

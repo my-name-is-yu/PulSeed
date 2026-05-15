@@ -3,7 +3,7 @@
 // Detects semantic contradictions between parallel subtask results using LLM.
 // Fails open: on any LLM error, returns no contradictions with confidence 0.
 
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import { RESULT_RECONCILIATION_SYSTEM_PROMPT } from "../../prompt/purposes/final-migration.js";

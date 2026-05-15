@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import { TrustStateStore, type TrustStateStorePort } from "../../../runtime/store/trust-state-store.js";

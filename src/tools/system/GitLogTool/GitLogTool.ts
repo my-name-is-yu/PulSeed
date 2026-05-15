@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { DESCRIPTION_PREFIX } from "./prompt.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { IntentRecognizer } from "../intent-recognizer.js";
 import type { ILLMClient, LLMResponse } from "../../../base/llm/llm-client.js";
 import { createSingleMockLLMClient as makeMockLLMClient } from "../../../../tests/helpers/mock-llm.js";

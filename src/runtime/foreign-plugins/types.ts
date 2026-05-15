@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const ForeignPluginSourceSchema = z.enum(["hermes", "openclaw"]);
 export type ForeignPluginSource = z.infer<typeof ForeignPluginSourceSchema>;

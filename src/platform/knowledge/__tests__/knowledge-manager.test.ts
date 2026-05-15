@@ -9,7 +9,7 @@ import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { randomUUID } from "node:crypto";
 import { upsertRelationshipProfileItem } from "../../profile/relationship-profile.js";

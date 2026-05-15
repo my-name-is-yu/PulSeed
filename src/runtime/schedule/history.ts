@@ -5,7 +5,7 @@ import {
   type ScheduleFailureKind,
   type ScheduleResult,
 } from "../types/schedule.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   openControlDatabase,
   type ControlDatabase,

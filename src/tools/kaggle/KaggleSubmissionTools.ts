@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type {
   ITool,
   PermissionCheckResult,

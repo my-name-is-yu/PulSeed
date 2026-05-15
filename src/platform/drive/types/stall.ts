@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StallTypeEnum, StallCauseEnum } from "../../../base/types/core.js";
 import type { MetricTrendContext } from "../metric-history.js";
 

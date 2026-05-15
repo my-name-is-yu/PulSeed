@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { EnvelopeSchema, type Envelope, type EnvelopePriority } from '../types/envelope.js';
 import { createRuntimeStorePaths } from '../store/runtime-paths.js';
 import {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ParallelExecutor } from "../parallel-executor.js";
 import { generateTaskGroup } from "../task/task-generation.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // 4 checkpoint types where guardrails execute
 export const GuardrailCheckpointEnum = z.enum([

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { safeSeedyPresenceActivity } from "./seedy-presence-text.js";
 
 export const SEEDY_TURN_PRESENCE_SCHEMA_VERSION = "seedy-turn-presence-v1";

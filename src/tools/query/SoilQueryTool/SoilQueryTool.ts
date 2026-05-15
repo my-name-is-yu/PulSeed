@@ -1,6 +1,6 @@
 import * as os from "node:os";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type {
   ITool,
   ToolResult,

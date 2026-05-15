@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { SurfaceInspectionAdapterPayloadSchema } from "../../grounding/surface-contracts.js";
 import { RuntimeSafePauseRecordSchema } from "../store/runtime-schemas.js";
 

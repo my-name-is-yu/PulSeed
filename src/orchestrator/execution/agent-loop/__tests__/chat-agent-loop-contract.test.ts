@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import * as os from "node:os";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ChatAgentLoopRunner } from "../chat-agent-loop-runner.js";
 import { buildAgentLoopBaseInstructions, buildChatStructuredOutputInstructions } from "../agent-loop-prompts.js";
 import type {

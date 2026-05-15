@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const EmbeddingConfigSchema = z.object({
   model: z.string().default("nomic-embed-text"),

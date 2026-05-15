@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopBudget } from "./agent-loop-budget.js";
 import { defaultAgentLoopBudget } from "./agent-loop-budget.js";

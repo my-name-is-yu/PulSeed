@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const ShutdownMarkerSchema = z.object({
   goal_ids: z.array(z.string().min(1)),

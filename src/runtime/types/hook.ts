@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const MAX_HOOK_TIMEOUT_MS = 60 * 60 * 1000;
 

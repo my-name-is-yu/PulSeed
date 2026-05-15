@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../../base/llm/llm-client.js";
 import { ConcurrencyController } from "../../../../tools/concurrency.js";
 import { ToolExecutor } from "../../../../tools/executor.js";

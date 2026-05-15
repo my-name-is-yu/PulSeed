@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { MemoryLifecycleManager } from "../memory/memory-lifecycle.js";
 import { MemoryLifecycleStateStore } from "../memory/memory-lifecycle-state-store.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 

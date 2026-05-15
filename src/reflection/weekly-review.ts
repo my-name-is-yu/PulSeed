@@ -1,7 +1,7 @@
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { WeeklyReviewReport } from "./types.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import { WeeklyReviewReportSchema } from "./types.js";

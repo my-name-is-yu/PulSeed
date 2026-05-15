@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { KnowledgeGapSignalSchema } from "../../base/types/knowledge.js";
 import type { StrategyState } from "../../base/types/core.js";
 import type { KnowledgeGapSignal } from "../../base/types/knowledge.js";

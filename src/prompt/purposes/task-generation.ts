@@ -4,7 +4,7 @@
  * Used by PromptGateway to generate the next task given goal, gap, and past experience.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const TASK_GENERATION_SYSTEM_PROMPT = `You are a task generation assistant. Given a goal, gap analysis, and past experience, generate the most effective next task.
 Learn from past reflections and lessons to avoid repeating failures.

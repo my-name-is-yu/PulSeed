@@ -1,7 +1,7 @@
 import type { StateManager } from "../base/state/state-manager.js";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { INotificationDispatcher } from "../runtime/notification-dispatcher.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { CatchupReport, PlanningReport } from "./types.js";
 import { CatchupReportSchema } from "./types.js";
 import type { HookManager } from "../runtime/hook-manager.js";

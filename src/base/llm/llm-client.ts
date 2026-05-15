@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ContentBlockParam, Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { sleep } from "../utils/sleep.js";
 import { BaseLLMClient, DEFAULT_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_MS, MAX_RETRY_ATTEMPTS, RETRY_DELAYS_MS, RATE_LIMIT_RETRY_DELAYS_MS, isRateLimitError, getRateLimitRetryDelay, extractJSON } from "./base-llm-client.js";
 import type { ModelTier, ParseJSONMessage, ParseJSONOptions } from "./base-llm-client.js";

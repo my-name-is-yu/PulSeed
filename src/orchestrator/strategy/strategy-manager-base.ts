@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StateManager } from "../../base/state/state-manager.js";
 import { StrategySchema, PortfolioSchema, parseStrategy } from "../../base/types/strategy.js";
 import type { Strategy, Portfolio } from "../../base/types/strategy.js";

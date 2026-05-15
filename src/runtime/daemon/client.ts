@@ -6,7 +6,7 @@
 import http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readTextFileWithinLimitSync } from "../../base/utils/json-io.js";
 import { signalProcessPid } from "../../base/utils/process-pid.js";
 import { DEFAULT_PORT } from "../port-utils.js";

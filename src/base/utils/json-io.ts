@@ -8,7 +8,7 @@ import * as fsp from "node:fs/promises";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 interface WriteJsonFileAtomicOptions {
   mode?: number;

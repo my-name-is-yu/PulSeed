@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyDreamStateStore } from "../../../runtime/store/strategy-dream-state-store.js";

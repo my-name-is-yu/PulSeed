@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { MemoryCorrectionEntrySchema } from "../corrections/memory-correction-ledger.js";
 import { SoilKindSchema, SoilRouteSchema, SoilStatusSchema } from "./types.js";
 

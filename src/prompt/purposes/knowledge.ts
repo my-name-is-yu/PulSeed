@@ -5,7 +5,7 @@
  * KNOWLEDGE_QUERY, KNOWLEDGE_DECISION, and KNOWLEDGE_REVALIDATION.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── Legacy exports (kept for backward compatibility) ─────────────────────────
 

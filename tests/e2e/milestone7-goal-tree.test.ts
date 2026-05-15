@@ -28,7 +28,7 @@ import { VectorIndex } from "../../src/platform/knowledge/vector-index.js";
 import { MockEmbeddingClient } from "../../src/platform/knowledge/embedding-client.js";
 import { SatisficingJudge } from "../../src/platform/drive/satisficing-judge.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../src/base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import type { Goal } from "../../src/base/types/goal.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const MemorySensitivitySchema = z.enum(["public", "local", "private", "secret"]);
 export type MemorySensitivity = z.infer<typeof MemorySensitivitySchema>;

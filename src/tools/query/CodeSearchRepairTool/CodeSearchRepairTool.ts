@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { SearchOrchestrator } from "../../../platform/code-search/orchestrator.js";
 import { parseVerificationSignal } from "../../../platform/code-search/verification-retrieval.js";
 import { validateFilePath } from "../../fs/FileValidationTool/FileValidationTool.js";

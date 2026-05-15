@@ -11,7 +11,7 @@ import { TaskGenerationResponseSchema } from "../purposes/task-generation.js";
 import { ObservationResponseSchema } from "../purposes/observation.js";
 import { PURPOSE_CONFIGS } from "../purposes/index.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

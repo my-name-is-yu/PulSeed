@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { validateProtectedPath } from "../FileValidationTool/protected-path-policy.js";
 import { resolveWorkspaceCwd } from "../../workspace-scope.js";

@@ -3,7 +3,7 @@
 // Schema for agent definition files loaded from ~/.pulseed/agents/*.md.
 // Each file has YAML frontmatter + a system prompt body.
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── Schema ───
 

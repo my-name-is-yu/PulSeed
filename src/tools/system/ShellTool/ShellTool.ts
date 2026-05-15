@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import { execFileNoThrow } from "../../../base/utils/execFileNoThrow.js";
 import { expandTildePath } from "../../fs/FileValidationTool/protected-path-policy.js";

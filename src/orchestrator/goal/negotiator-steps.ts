@@ -5,7 +5,7 @@
  * These are pure/functional helpers; they do NOT save state.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../prompt/gateway.js";
 import type { ObservationEngine } from "../../platform/observation/observation-engine.js";

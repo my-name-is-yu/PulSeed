@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_PROVIDER = 2;
 export const DEFAULT_BACKPRESSURE_MAX_CONCURRENT_PER_SERVICE = 1;
