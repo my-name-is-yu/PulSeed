@@ -40,6 +40,7 @@ export const PeerDeliveryRecordSchema = z.object({
   claim_attempt: z.number().int().positive().optional(),
   delivered_at: z.string().datetime().optional(),
   message_id: z.string().min(1).optional(),
+  transport_message_ref: z.string().min(1).optional(),
   target_binding_ref: z.string().min(1).optional(),
   expression_decision_ref: z.string().min(1).optional(),
   visibility_policy_ref: z.string().min(1).optional(),
