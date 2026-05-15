@@ -6,6 +6,10 @@ import {
   type PeerInitiativeFeedbackAction,
   type PeerInitiativeTriggerAction,
 } from "../gateway/outbound-conversation.js";
+import {
+  PeerInitiativeKindSchema,
+  type PeerInitiativeKind,
+} from "./kinds.js";
 
 const DateTimeStringSchema = z.string().datetime();
 
@@ -25,18 +29,8 @@ export const PeerInitiativeGroundingSchema = z.enum([
 ]);
 export type PeerInitiativeGrounding = z.infer<typeof PeerInitiativeGroundingSchema>;
 
-export const PeerInitiativeKindSchema = z.enum([
-  "care_presence",
-  "attention_preparation",
-  "permissioned_attention_action",
-  "contextual_capability_disclosure",
-  "gentle_pushback",
-  "tiny_nudge",
-  "remembered_thread",
-  "repair_followup",
-  "playful_curiosity",
-]);
-export type PeerInitiativeKind = z.infer<typeof PeerInitiativeKindSchema>;
+export { PeerInitiativeKindSchema };
+export type { PeerInitiativeKind };
 
 export const CurrentNeedSignalKindSchema = z.enum([
   "care_presence_appropriate",
@@ -376,4 +370,3 @@ export function peerInitiativeActionButtons(input: {
   }
   return [...triggerActions, ...feedbackActions];
 }
-

@@ -128,6 +128,19 @@ describe("gateway outbound conversation port", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects peer feedback actions with unsupported initiative kinds", () => {
+    expect(PeerInitiativeFeedbackActionSchema.safeParse({
+      action: "less_like_this",
+      candidate_id: "peer-candidate:1",
+      initiative_kind: "unknown_peer_kind",
+      feedback_target: {
+        kind: "peer_initiative_candidate",
+        id: "peer-candidate:1",
+      },
+      feedback_epoch: "2026-05-15T00:00:00.000Z",
+    }).success).toBe(false);
+  });
+
   it("routes Telegram peer feedback callbacks through canonical feedback ingestion and peer projection", async () => {
     const tmpDir = makeTempDir("telegram-peer-feedback-");
     const runtimeRoot = path.join(tmpDir, "runtime");
