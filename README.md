@@ -4,7 +4,7 @@
 
 # PulSeed
 
-PulSeed is local-first companion software for goals that take time.
+Your Personal Agentic Friend
 
 [![Website](https://img.shields.io/badge/Website-pulseed.dev-blue?style=for-the-badge)](https://pulseed.dev)
 [![npm](https://img.shields.io/npm/v/pulseed.svg?style=for-the-badge)](https://www.npmjs.com/package/pulseed)
