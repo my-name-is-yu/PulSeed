@@ -72,6 +72,25 @@ export {
   CapabilityProjectionExecutionLabelSchema,
   CapabilityProjectionReadinessLabelSchema,
 } from "./capability-status-projection.js";
+export {
+  createExecutionAuthorityDecision,
+  projectAdmissionAuthority,
+  projectAutonomyAuthority,
+  projectHostToolExecutionAuthority,
+  projectOutboundConversationAuthority,
+  projectPermissionGrantAuthority,
+  projectResidentOperationBoundaryAuthority,
+  ExecutionAuthorityBindingsSchema,
+  ExecutionAuthorityDecisionSchema,
+  ExecutionAuthorityHostDecisionSchema,
+  ExecutionAuthorityLifecycleSchema,
+  ExecutionAuthorityOutcomeSchema,
+  ExecutionAuthorityOutboundConversationSchema,
+  ExecutionAuthorityResidentBoundarySchema,
+  ExecutionAuthoritySourceKindSchema,
+  ExecutionAuthoritySourceSchema,
+  ExecutionAuthorityStageSchema,
+} from "./execution-authority-decision.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -141,6 +160,18 @@ export type {
   CapabilityProjectionExecutionLabel,
   CapabilityProjectionReadinessLabel,
 } from "./capability-status-projection.js";
+export type {
+  ExecutionAuthorityBindings,
+  ExecutionAuthorityDecision,
+  ExecutionAuthorityDecisionInput,
+  ExecutionAuthorityLifecycle,
+  ExecutionAuthorityOutcome,
+  ExecutionAuthorityOutboundConversation,
+  ExecutionAuthorityResidentBoundary,
+  ExecutionAuthoritySource,
+  ExecutionAuthoritySourceKind,
+  ExecutionAuthorityStage,
+} from "./execution-authority-decision.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,

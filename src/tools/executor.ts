@@ -10,6 +10,7 @@ import type {
   ToolCallContext,
   PermissionCheckResult,
 } from "./types.js";
+import type { PermissionGrantEvaluation } from "./permission-grant-evaluation.js";
 import type { ToolRegistry } from "./registry.js";
 import type { ToolPermissionManager } from "./permission.js";
 import type { ConcurrencyController } from "./concurrency.js";
@@ -351,7 +352,7 @@ export class ToolExecutor {
     reason: string;
     reversibility: "reversible" | "irreversible" | "unknown";
     policyDecision?: HostToolExecutionDecision;
-    permissionGrantDecision?: unknown;
+    permissionGrantDecision?: PermissionGrantEvaluation;
   }): Promise<ToolResult | null> {
     const approvalId = `permission-wait:${randomUUID()}`;
     const canonicalPlan = this.buildCanonicalPermissionWaitPlan(input);

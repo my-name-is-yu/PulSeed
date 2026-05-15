@@ -10,31 +10,15 @@ import {
   isPermissionGrantStale,
 } from "../runtime/store/permission-grant-store.js";
 import type { HostToolExecutionDecision } from "./execution-orchestrator.js";
+import type {
+  PermissionGrantEvaluation,
+  PermissionGrantEvaluationStatus,
+} from "./permission-grant-evaluation.js";
 import { assessShellCommand } from "./system/ShellTool/command-policy.js";
 import type { ITool, ToolCallContext } from "./types.js";
 import { resolveWorkspaceCwd } from "./workspace-scope.js";
 
-export type PermissionGrantEvaluationStatus =
-  | "matched"
-  | "missing_grant"
-  | "expired_grant"
-  | "revoked_grant"
-  | "stale_grant"
-  | "superseded_grant"
-  | "excluded_capability"
-  | "unknown_capability"
-  | "hard_boundary"
-  | "fresh_approval_required";
-
-export interface PermissionGrantEvaluation {
-  status: PermissionGrantEvaluationStatus;
-  allowed: boolean;
-  reason: string;
-  requiredCapabilities: PermissionGrantCapability[];
-  excludedCapabilities: PermissionGrantExcludedCapability[];
-  matchedGrantId?: string;
-  consideredGrantIds: string[];
-}
+export type { PermissionGrantEvaluation, PermissionGrantEvaluationStatus };
 
 export interface PermissionGrantEvaluationRequest {
   tool: ITool;
