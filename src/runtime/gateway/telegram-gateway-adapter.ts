@@ -477,10 +477,15 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button in this chat.");
       return;
     }
-    if (this.config.denied_user_ids.includes(fromId)) return;
-    if (this.config.denied_chat_ids.includes(chatId)) return;
-    if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) return;
-    if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) return;
+    if (
+      this.config.denied_user_ids.includes(fromId)
+      || this.config.denied_chat_ids.includes(chatId)
+      || (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId))
+      || (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId))
+    ) {
+      await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button in this chat.");
+      return;
+    }
 
     this.timing.beginTurn({ updateId, messageId });
     await this.recordTiming();
