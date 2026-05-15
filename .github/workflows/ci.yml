@@ -7,6 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     name: ${{ matrix.name }} (${{ matrix.node-version }})
@@ -19,6 +26,7 @@ jobs:
             node-version: 22
             run-docs: true
             run-build: true
+            run-public-contracts: true
             run-typecheck: true
             run-lint: true
             test-command: npm run test:unit
@@ -26,6 +34,7 @@ jobs:
             node-version: 24
             run-docs: false
             run-build: true
+            run-public-contracts: false
             run-typecheck: false
             run-lint: false
             test-command: |
@@ -35,9 +44,11 @@ jobs:
               npm run test:smoke
               npm run test:integration
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
@@ -46,6 +57,8 @@ jobs:
         run: npm run check:docs
       - if: ${{ matrix.run-build }}
         run: npm run build
+      - if: ${{ matrix.run-public-contracts }}
+        run: npm run check:public-contracts
       - if: ${{ matrix.run-typecheck }}
         run: npm run typecheck
       - if: ${{ matrix.run-lint }}

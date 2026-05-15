@@ -18,6 +18,7 @@ memory/
 docs/archive/
 scripts/*
 !scripts/check-docs.mjs
+!scripts/check-public-contracts.mjs
 !scripts/check-database-first-legacy-stores.mjs
 !scripts/inventory-test-redesign.mjs
 !scripts/clean-dist.mjs
