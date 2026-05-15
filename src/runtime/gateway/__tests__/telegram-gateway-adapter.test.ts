@@ -110,7 +110,7 @@ describe("TelegramGatewayAdapter", () => {
         body: JSON.stringify({
           offset: 0,
           timeout: 30,
-          allowed_updates: ["message"],
+          allowed_updates: ["message", "callback_query"],
         }),
       })
     );

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 33;
+export const CONTROL_DB_SCHEMA_VERSION = 34;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2376,6 +2376,79 @@ CREATE UNIQUE INDEX IF NOT EXISTS outbox_records_dedupe_idx
   WHERE dedupe_key IS NOT NULL;
 `.trim();
 
+export const CONTROL_DB_PEER_INITIATIVE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS peer_initiatives (
+  candidate_id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  selected_state TEXT NOT NULL CHECK (selected_state IN ('held', 'digested', 'suggested', 'notified', 'rejected')),
+  created_at TEXT NOT NULL,
+  next_eligible_at TEXT,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+
+CREATE INDEX IF NOT EXISTS peer_initiatives_state_idx
+  ON peer_initiatives(selected_state, created_at, candidate_id);
+
+CREATE INDEX IF NOT EXISTS peer_initiatives_kind_idx
+  ON peer_initiatives(kind, created_at, candidate_id);
+
+CREATE TABLE IF NOT EXISTS peer_prepared_artifacts (
+  artifact_ref TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL,
+  preparation_kind TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  artifact_json TEXT NOT NULL CHECK (json_valid(artifact_json)),
+  FOREIGN KEY (candidate_id) REFERENCES peer_initiatives(candidate_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS peer_prepared_artifacts_candidate_idx
+  ON peer_prepared_artifacts(candidate_id, created_at, artifact_ref);
+
+CREATE TABLE IF NOT EXISTS peer_deliveries (
+  delivery_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending_send', 'delivered', 'held', 'failed')),
+  delivered_at TEXT,
+  delivery_json TEXT NOT NULL CHECK (json_valid(delivery_json)),
+  FOREIGN KEY (candidate_id) REFERENCES peer_initiatives(candidate_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS peer_deliveries_candidate_idx
+  ON peer_deliveries(candidate_id, delivered_at, delivery_id);
+
+CREATE TABLE IF NOT EXISTS peer_capability_exposures (
+  exposure_id TEXT PRIMARY KEY,
+  capability_ref TEXT NOT NULL,
+  current_need_ref TEXT NOT NULL,
+  first_exposed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  accepted_count INTEGER NOT NULL CHECK (accepted_count >= 0),
+  dismissed_count INTEGER NOT NULL CHECK (dismissed_count >= 0),
+  ignored_count INTEGER NOT NULL CHECK (ignored_count >= 0),
+  exposure_json TEXT NOT NULL CHECK (json_valid(exposure_json)),
+  UNIQUE (capability_ref, current_need_ref)
+);
+
+CREATE INDEX IF NOT EXISTS peer_capability_exposures_capability_idx
+  ON peer_capability_exposures(capability_ref, updated_at, exposure_id);
+
+CREATE TABLE IF NOT EXISTS peer_feedback_projection (
+  projection_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  structured_outcome TEXT NOT NULL,
+  source_surface TEXT NOT NULL,
+  projected_at TEXT NOT NULL,
+  projection_json TEXT NOT NULL CHECK (json_valid(projection_json)),
+  FOREIGN KEY (candidate_id) REFERENCES peer_initiatives(candidate_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS peer_feedback_projection_candidate_idx
+  ON peer_feedback_projection(candidate_id, projected_at, projection_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2558,5 +2631,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     33,
     "outbox-dedupe-key",
     CONTROL_DB_OUTBOX_DEDUPE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    34,
+    "peer-initiative-runtime-state",
+    CONTROL_DB_PEER_INITIATIVE_SCHEMA_SQL
   ),
 ];

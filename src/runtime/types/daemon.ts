@@ -125,6 +125,15 @@ export const ResidentActivitySchema = z.object({
   cognition_tool_candidate_count: DaemonNonnegativeSafeIntSchema.optional(),
   cognition_replay_record_id: z.string().optional(),
   cognition_replay_index_entry_id: z.string().optional(),
+  peer_initiative_candidate_id: z.string().optional(),
+  peer_initiative_selection_reason: z.string().optional(),
+  peer_initiative_boundary_mapping_id: z.string().optional(),
+  peer_initiative_boundary: z.string().optional(),
+  peer_initiative_threshold_delivery_kind: z.enum(["hold", "digest", "suggest", "notify", "ask", "prepare", "execute"]).optional(),
+  peer_initiative_message_id: z.string().optional(),
+  peer_initiative_delivery_id: z.string().optional(),
+  peer_initiative_delivery_status: z.enum(["pending_send", "delivered", "held", "failed"]).optional(),
+  peer_prepared_artifact_ref: z.string().optional(),
 });
 export type ResidentActivity = z.infer<typeof ResidentActivitySchema>;
 

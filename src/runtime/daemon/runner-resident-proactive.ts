@@ -18,10 +18,31 @@ import {
 import { projectCompanionAction } from "../control/companion-action-projection.js";
 import { createCompanionGadgetPlan } from "../decision/companion-gadget-planning.js";
 import {
+  createExpressionDecisionForOutcome,
+  ref,
+} from "../attention/index.js";
+import { projectSurfaceDelivery, renderSurfaceDeliveryProjection } from "../attention/surface-delivery.js";
+import {
+  OutboundConversationMessageSchema,
+  type OutboundConversationSurface,
+} from "../gateway/outbound-conversation.js";
+import {
+  generatePeerInitiativeCandidates,
+  mapPeerInitiativeBoundary,
+  peerInitiativeActionButtons,
+  selectPeerInitiativeCandidate,
+  PeerInitiativeStore,
+  PeerInitiativeMessageSchema,
+  type PeerInitiativeCandidate,
+  type PeerInitiativeSelection,
+} from "../peer-initiative/index.js";
+import { VisibilityPolicySchema, type VisibilityPolicy } from "../types/companion-autonomy.js";
+import {
   FileCognitiveReplayIndexStore,
   createCognitiveReplayIndexEntry,
 } from "../visibility/index.js";
 import { runProactiveMaintenance, type ProactiveMaintenanceResult } from "./maintenance.js";
+import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 import {
   evaluateResidentAttentionAdmission,
   residentAttentionActivityMetadata,
@@ -151,7 +172,7 @@ export async function triggerResidentPreemptiveCheck(
 export async function proactiveTick(
   context: Pick<
     DaemonRunnerResidentContext,
-    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
+    "config" | "llmClient" | "state" | "logger" | "saveDaemonState" | "curiosityEngine" | "stateManager" | "goalNegotiator" | "currentGoalIds" | "supervisor" | "gateway" | "refreshOperationalState" | "abortSleep" | "baseDir" | "scheduleEngine" | "knowledgeManager" | "memoryLifecycle" | "driveSystem" | "attentionStateStore" | "residentOperationBoundaryEvaluator"
     | "feedbackIngestionStore"
   > & { personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace"> },
   lastProactiveTickAt: number,
@@ -328,12 +349,403 @@ export async function proactiveTick(
     return;
   }
 
+  if (proactiveDecision.action === "peer_initiative") {
+    await triggerResidentPeerInitiative(context, proactiveDecision.details, {
+      attentionAdmission,
+      operationBoundary,
+      selectionSurfaceRef: surfaceActivityMetadata.surface_id,
+      metadata: residentActivityMetadata,
+    });
+    return;
+  }
+
   await persistResidentActivity(context, {
     kind: "skipped",
     trigger: "proactive_tick",
     summary: `Resident proactive tick requested ${proactiveDecision.action}, but no resident executor is wired for it yet.`,
     ...residentActivityMetadata,
   });
+}
+
+export async function triggerResidentPeerInitiative(
+  context: Pick<
+    DaemonRunnerResidentContext,
+    "baseDir" | "config" | "gateway" | "logger" | "state" | "saveDaemonState"
+  >,
+  details: Record<string, unknown> | undefined,
+  input: {
+    attentionAdmission: Awaited<ReturnType<typeof evaluateResidentAttentionAdmission>>;
+    operationBoundary: ResidentOperationBoundaryResult;
+    selectionSurfaceRef?: string;
+    metadata: ResidentActivityMetadata;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const store = new PeerInitiativeStore(
+    resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
+    { controlBaseDir: context.baseDir },
+  );
+  const candidates = generatePeerInitiativeCandidates({
+    details,
+    attentionSignalRefs: [
+      input.attentionAdmission.attention_input_id,
+      input.attentionAdmission.signal_context_id,
+      input.attentionAdmission.agenda_item_id,
+    ],
+    relationshipProjectionRef: input.selectionSurfaceRef,
+    policyEpoch: input.attentionAdmission.initiative_gate_decision_id,
+    now,
+    surfaceTarget: "telegram",
+  });
+  const selection = selectPeerInitiativeCandidate(candidates);
+  const selected = selectedPeerCandidate(candidates, selection);
+  if (!selected) {
+    await persistPeerInitiativeSelection(store, candidates, selection, "held");
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: `Resident peer initiative held: ${selection.selection_reason}`,
+      ...input.metadata,
+      peer_initiative_selection_reason: selection.selection_reason,
+    });
+    return;
+  }
+
+  await store.upsertCandidate({
+    candidate: selected,
+    selectedState: "held",
+  });
+  const artifactRef = await persistPreparedPeerArtifact(store, selected, now);
+  const boundary = mapPeerInitiativeBoundary({
+    candidate: selected,
+    attentionAdmission: input.attentionAdmission,
+    operationBoundary: input.operationBoundary,
+    now,
+  });
+  const peerMetadata = {
+    peer_initiative_candidate_id: selected.candidate_id,
+    peer_initiative_selection_reason: selection.selection_reason,
+    peer_initiative_boundary_mapping_id: boundary.mapping.mapping_id,
+    peer_initiative_boundary: boundary.mapping.mapped_boundary,
+    peer_initiative_threshold_delivery_kind: boundary.thresholdDecision.display_delivery_kind,
+    ...(artifactRef ? { peer_prepared_artifact_ref: artifactRef } : {}),
+  };
+  await store.upsertCandidate({
+    candidate: selected,
+    selectedState: boundary.thresholdDecision.allowed_delivery_kind === "digest"
+      ? "digested"
+      : boundary.shouldRender ? "suggested" : "held",
+  });
+
+  if (!boundary.shouldRender || !input.attentionAdmission.outcome_decision) {
+    await store.recordDelivery({
+      delivery_id: `peer-delivery:${selected.candidate_id}:held`,
+      candidate_id: selected.candidate_id,
+      surface: "telegram",
+      status: "held",
+      failure_reason: boundary.thresholdDecision.downgrade_reasons.join(", ") || "peer initiative held by threshold or missing outcome",
+    });
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: "Resident peer initiative held before outbound delivery.",
+      ...input.metadata,
+      ...peerMetadata,
+      peer_initiative_delivery_status: "held",
+    });
+    return;
+  }
+
+  const visibilityPolicy = createPeerInitiativeVisibilityPolicy({
+    policyId: input.attentionAdmission.outcome_decision.visibility_policy_ref?.id,
+    outcomeDecisionId: input.attentionAdmission.outcome_decision.outcome_decision_id,
+    candidate: selected,
+    digestOnly: input.attentionAdmission.outcome_decision.final_outcome === "add_to_digest",
+  });
+  const expression = createExpressionDecisionForOutcome({
+    expression_decision_id: `expression:peer-initiative:${selected.candidate_id}`,
+    outcome_decision: input.attentionAdmission.outcome_decision,
+    created_at: now,
+    target_surface_classes: ["gateway"],
+    visibility_policy_ref: ref("visibility_policy", visibilityPolicy.visibility_policy_id),
+    user_facing_rationale: selected.draft_message,
+  });
+  const surfaceDelivery = projectSurfaceDelivery({
+    renderId: `peer-initiative:${selected.candidate_id}`,
+    renderedAt: now,
+    surfaceClass: "gateway",
+    outcomeDecision: input.attentionAdmission.outcome_decision,
+    expressionDecision: expression,
+    visibilityPolicy,
+    auditRef: ref("audit_trace", boundary.mapping.mapping_id),
+  });
+  const text = renderSurfaceDeliveryProjection(surfaceDelivery);
+  if (!expression || !surfaceDelivery?.should_render || !text) {
+    await store.recordDelivery({
+      delivery_id: `peer-delivery:${selected.candidate_id}:visibility-held`,
+      candidate_id: selected.candidate_id,
+      surface: "telegram",
+      status: "held",
+      expression_decision_ref: expression?.expression_decision_id,
+      visibility_policy_ref: visibilityPolicy.visibility_policy_id,
+      failure_reason: surfaceDelivery?.quiet_audit_reason ?? "peer expression did not render",
+    });
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: "Resident peer initiative held by expression or visibility policy.",
+      ...input.metadata,
+      ...peerMetadata,
+      peer_initiative_delivery_status: "held",
+    });
+    return;
+  }
+
+  const delivery = await deliverPeerInitiativeMessage({
+    context,
+    store,
+    candidate: selected,
+    text,
+    outcomeDecisionId: input.attentionAdmission.outcome_decision.outcome_decision_id,
+    expressionDecisionId: expression.expression_decision_id,
+    visibilityPolicyId: visibilityPolicy.visibility_policy_id,
+    now,
+  });
+  if (delivery.status === "delivered") {
+    await store.upsertCandidate({
+      candidate: selected,
+      selectedState: boundary.thresholdDecision.allowed_delivery_kind === "notify" ? "notified" : "suggested",
+      deliveredAt: delivery.delivered_at ?? now,
+    });
+  }
+  await persistResidentActivity(context, {
+    kind: delivery.status === "delivered" ? "observation" : "skipped",
+    trigger: "proactive_tick",
+    summary: delivery.status === "delivered"
+      ? "Resident peer initiative delivered through outbound conversation port."
+      : `Resident peer initiative delivery ${delivery.status}.`,
+    ...input.metadata,
+    ...peerMetadata,
+    peer_initiative_message_id: delivery.message_id,
+    peer_initiative_delivery_id: delivery.delivery_id,
+    peer_initiative_delivery_status: delivery.status,
+  });
+}
+
+function selectedPeerCandidate(
+  candidates: readonly PeerInitiativeCandidate[],
+  selection: PeerInitiativeSelection,
+): PeerInitiativeCandidate | null {
+  if (!selection.selected_candidate_id) return null;
+  return candidates.find((candidate) => candidate.candidate_id === selection.selected_candidate_id) ?? null;
+}
+
+async function persistPeerInitiativeSelection(
+  store: PeerInitiativeStore,
+  candidates: readonly PeerInitiativeCandidate[],
+  selection: PeerInitiativeSelection,
+  selectedState: "held" | "rejected",
+): Promise<void> {
+  for (const candidate of candidates) {
+    await store.upsertCandidate({
+      candidate,
+      selectedState: selection.rejected_candidate_ids.includes(candidate.candidate_id) ? "rejected" : selectedState,
+    });
+  }
+}
+
+async function persistPreparedPeerArtifact(
+  store: PeerInitiativeStore,
+  candidate: PeerInitiativeCandidate,
+  now: string,
+): Promise<string | undefined> {
+  const plan = candidate.action_plan;
+  if (plan.mode !== "internal_preparation") return undefined;
+  await store.appendPreparedArtifact({
+    artifact_ref: plan.prepared_artifact_ref,
+    candidate_id: candidate.candidate_id,
+    preparation_kind: plan.preparation_kind,
+    created_at: now,
+    summary: candidate.message_intent,
+    content_preview: candidate.draft_message,
+  });
+  return plan.prepared_artifact_ref;
+}
+
+function createPeerInitiativeVisibilityPolicy(input: {
+  policyId?: string;
+  outcomeDecisionId: string;
+  candidate: PeerInitiativeCandidate;
+  digestOnly: boolean;
+}): VisibilityPolicy {
+  const policyId = input.policyId ?? `visibility:peer-initiative:${input.candidate.candidate_id}`;
+  return VisibilityPolicySchema.parse({
+    schema_version: "visibility-policy-v1",
+    visibility_policy_id: policyId,
+    applies_to: [ref("outcome_decision", input.outcomeDecisionId)],
+    hidden_by_default: false,
+    visible_in_gui: false,
+    visible_in_chat: !input.digestOnly,
+    visible_in_tui: false,
+    visible_in_cli: false,
+    visible_in_audit: true,
+    visible_in_debug: true,
+    digest_only: input.digestOnly,
+    visible_in_digest: input.digestOnly,
+    never_directly_show: false,
+    raw_content_allowed: true,
+    inspectable_summary: input.candidate.message_intent,
+    rationale: "Peer initiative passed attention, threshold, and visibility gates for a low-pressure outbound message.",
+    audit_refs: [ref("audit_trace", input.candidate.candidate_id)],
+  });
+}
+
+async function deliverPeerInitiativeMessage(input: {
+  context: Pick<DaemonRunnerResidentContext, "gateway" | "logger">;
+  store: PeerInitiativeStore;
+  candidate: PeerInitiativeCandidate;
+  text: string;
+  outcomeDecisionId: string;
+  expressionDecisionId: string;
+  visibilityPolicyId: string;
+  now: string;
+}): Promise<{
+  delivery_id: string;
+  message_id?: string;
+  delivered_at?: string;
+  status: "pending_send" | "delivered" | "held" | "failed";
+}> {
+  const surface: OutboundConversationSurface = "telegram";
+  const deliveryId = `peer-delivery:${input.candidate.candidate_id}:${surface}`;
+  const existingDelivery = await input.store.getDelivery(deliveryId);
+  if (existingDelivery?.status === "delivered") {
+    return {
+      delivery_id: deliveryId,
+      message_id: existingDelivery.message_id,
+      delivered_at: existingDelivery.delivered_at,
+      status: "delivered",
+    };
+  }
+  const port = input.context.gateway?.getOutboundConversationPort(surface);
+  if (!port) {
+    await input.store.recordDelivery({
+      delivery_id: deliveryId,
+      candidate_id: input.candidate.candidate_id,
+      surface,
+      status: "held",
+      failure_reason: "no live gateway outbound conversation port for telegram",
+    });
+    return { delivery_id: deliveryId, status: "held" };
+  }
+  const target = await port.resolveDefaultTarget();
+  if (!target) {
+    await input.store.recordDelivery({
+      delivery_id: deliveryId,
+      candidate_id: input.candidate.candidate_id,
+      surface,
+      status: "held",
+      failure_reason: "telegram outbound conversation target is not bound",
+    });
+    return { delivery_id: deliveryId, status: "held" };
+  }
+  const actionButtons = peerInitiativeActionButtons({
+    candidate: input.candidate,
+    outcomeDecisionId: input.outcomeDecisionId,
+    feedbackEpoch: input.now,
+  });
+  const peerMessage = PeerInitiativeMessageSchema.parse({
+    message_id: `peer-message:${input.candidate.candidate_id}`,
+    candidate_id: input.candidate.candidate_id,
+    expression_decision_ref: input.expressionDecisionId,
+    visibility_policy_ref: input.visibilityPolicyId,
+    surface,
+    text: input.text,
+    reply_required: false,
+    action_buttons: actionButtons,
+    thread_behavior: "new_lightweight_thread",
+  });
+  const outbound = OutboundConversationMessageSchema.parse({
+    message_id: peerMessage.message_id,
+    surface,
+    target_binding_ref: target.target_binding_ref,
+    channel_policy_ref: target.channel_policy_ref,
+    text: peerMessage.text,
+    reply_required: false,
+    source: "peer_initiative",
+    candidate_id: peerMessage.candidate_id,
+    expression_decision_ref: peerMessage.expression_decision_ref,
+    visibility_policy_ref: peerMessage.visibility_policy_ref,
+    trigger_actions: actionButtons.filter((action) =>
+      action.action === "show_prepared"
+        || action.action === "use_once"
+        || action.action === "approve_external_action"
+    ),
+    feedback_actions: actionButtons.filter((action) =>
+      action.action === "more_like_this"
+        || action.action === "less_like_this"
+        || action.action === "not_now"
+        || action.action === "wrong_read"
+        || action.action === "mute_this_kind"
+    ),
+  });
+  const claim = await input.store.claimDelivery({
+    delivery_id: deliveryId,
+    candidate_id: input.candidate.candidate_id,
+    surface,
+    status: "pending_send",
+    message_id: peerMessage.message_id,
+    target_binding_ref: target.target_binding_ref,
+    expression_decision_ref: input.expressionDecisionId,
+    visibility_policy_ref: input.visibilityPolicyId,
+    outbound_message: outbound,
+  });
+  if (claim.status === "existing") {
+    return {
+      delivery_id: deliveryId,
+      message_id: claim.record.message_id,
+      delivered_at: claim.record.delivered_at,
+      status: claim.record.status,
+    };
+  }
+  try {
+    const receipt = await port.sendOutboundConversationMessage(outbound);
+    await input.store.recordDelivery({
+      delivery_id: deliveryId,
+      candidate_id: input.candidate.candidate_id,
+      surface,
+      status: "delivered",
+      delivered_at: receipt.delivered_at,
+      message_id: receipt.message_id,
+      target_binding_ref: receipt.target_binding_ref,
+      expression_decision_ref: input.expressionDecisionId,
+      visibility_policy_ref: input.visibilityPolicyId,
+      outbound_message: outbound,
+    });
+    return {
+      delivery_id: deliveryId,
+      message_id: receipt.message_id,
+      delivered_at: receipt.delivered_at,
+      status: "delivered",
+    };
+  } catch (error) {
+    await input.store.recordDelivery({
+      delivery_id: deliveryId,
+      candidate_id: input.candidate.candidate_id,
+      surface,
+      status: "failed",
+      message_id: peerMessage.message_id,
+      target_binding_ref: target.target_binding_ref,
+      expression_decision_ref: input.expressionDecisionId,
+      visibility_policy_ref: input.visibilityPolicyId,
+      outbound_message: outbound,
+      failure_reason: error instanceof Error ? error.message : String(error),
+    });
+    input.context.logger.warn("Resident peer initiative outbound delivery failed", {
+      candidate_id: input.candidate.candidate_id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { delivery_id: deliveryId, message_id: peerMessage.message_id, status: "failed" };
+  }
 }
 
 async function validateResidentPreemptiveTarget(

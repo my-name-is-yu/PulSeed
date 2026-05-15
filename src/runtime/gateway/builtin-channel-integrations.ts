@@ -41,7 +41,10 @@ export async function loadBuiltinGatewayIntegrations(
     try {
       switch (location.channelName) {
         case "telegram-bot": {
-          const adapter = TelegramGatewayAdapter.fromConfigDir(location.channelDir);
+          const adapter = TelegramGatewayAdapter.fromConfigDir(location.channelDir, {
+            runtimeBaseDir: baseDir,
+            controlBaseDir: baseDir,
+          });
           adapters.push(adapter);
           notifiers.push({ name: "telegram-bot", notifier: adapter.getNotifier() });
           break;
