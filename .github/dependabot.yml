@@ -9,13 +9,13 @@ updates:
       production-minor-patch-dependencies:
         dependency-type: production
         update-types:
-          - version-update:semver-minor
-          - version-update:semver-patch
+          - minor
+          - patch
       development-minor-patch-dependencies:
         dependency-type: development
         update-types:
-          - version-update:semver-minor
-          - version-update:semver-patch
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: /
