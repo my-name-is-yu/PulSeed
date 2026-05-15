@@ -623,7 +623,11 @@ function runtimeControlRefsForResidentAction(input: {
       admitted: [],
     };
   }
-  if (input.action !== "peer_initiative" || input.requestedOutcome !== "express_to_user") {
+  const requiresPeerSurfaceControl = input.action === "peer_initiative" && (
+    input.requestedOutcome === "express_to_user" ||
+    input.requestedOutcome === "request_approval"
+  );
+  if (!requiresPeerSurfaceControl) {
     return { required: [], admitted: [] };
   }
 
