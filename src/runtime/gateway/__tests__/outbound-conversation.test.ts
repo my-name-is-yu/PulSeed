@@ -202,6 +202,7 @@ describe("gateway outbound conversation port", () => {
       status: "delivered",
       delivered_at: "2026-05-15T00:00:02.000Z",
       message_id: outbound.message_id,
+      transport_message_ref: "77",
       target_binding_ref: outbound.target_binding_ref,
       expression_decision_ref: outbound.expression_decision_ref,
       visibility_policy_ref: outbound.visibility_policy_ref,
@@ -245,6 +246,32 @@ describe("gateway outbound conversation port", () => {
         data: string;
       }): Promise<void>;
     }).processCallbackQuery({
+      id: "callback-wrong-chat",
+      from: { id: 42 },
+      message: { message_id: 77, chat: { id: 99999 } },
+      data: `psp1:lt:${candidate.candidate_id}`,
+    });
+    await (adapter as unknown as {
+      processCallbackQuery(query: {
+        id: string;
+        from: { id: number };
+        message: { message_id: number; chat: { id: number } };
+        data: string;
+      }): Promise<void>;
+    }).processCallbackQuery({
+      id: "callback-wrong-message",
+      from: { id: 42 },
+      message: { message_id: 78, chat: { id: 12345 } },
+      data: `psp1:lt:${candidate.candidate_id}`,
+    });
+    await (adapter as unknown as {
+      processCallbackQuery(query: {
+        id: string;
+        from: { id: number };
+        message: { message_id: number; chat: { id: number } };
+        data: string;
+      }): Promise<void>;
+    }).processCallbackQuery({
       id: "callback-1",
       from: { id: 42 },
       message: { message_id: 77, chat: { id: 12345 } },
@@ -266,7 +293,12 @@ describe("gateway outbound conversation port", () => {
 
     const feedbackRecords = await feedbackStore.listRecords();
     const projections = await peerStore.listFeedbackProjections({ candidateId: candidate.candidate_id });
-    expect(callbackAckIds).toEqual(["callback-1", "callback-2"]);
+    expect(callbackAckIds).toEqual([
+      "callback-wrong-chat",
+      "callback-wrong-message",
+      "callback-1",
+      "callback-2",
+    ]);
     expect(feedbackRecords).toHaveLength(1);
     expect(projections).toHaveLength(1);
     expect(feedbackRecords).toMatchObject([{
@@ -284,5 +316,52 @@ describe("gateway outbound conversation port", () => {
       source_surface: "telegram",
       feedback_id: feedbackRecords[0]!.feedback_id,
     }]);
+  });
+
+  it("acknowledges malformed Telegram peer callback payloads without side effects", async () => {
+    const tmpDir = makeTempDir("telegram-peer-feedback-malformed-");
+    const callbackAckIds: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "answerCallbackQuery") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        callbackAckIds.push(String(body["callback_query_id"]));
+        return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = new TelegramGatewayAdapter("/tmp/telegram-bot", {
+      bot_token: "token",
+      chat_id: 12345,
+      allowed_user_ids: [],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 1,
+    }, {
+      runtimeBaseDir: tmpDir,
+      controlBaseDir: tmpDir,
+    });
+
+    await (adapter as unknown as {
+      processCallbackQuery(query: {
+        id: string;
+        from: { id: number };
+        message: { message_id: number; chat: { id: number } };
+        data: string;
+      }): Promise<void>;
+    }).processCallbackQuery({
+      id: "callback-malformed",
+      from: { id: 42 },
+      message: { message_id: 77, chat: { id: 12345 } },
+      data: "not-a-peer-callback",
+    });
+
+    expect(callbackAckIds).toEqual(["callback-malformed"]);
   });
 });

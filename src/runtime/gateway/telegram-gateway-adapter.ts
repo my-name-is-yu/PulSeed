@@ -29,6 +29,7 @@ import {
   PeerInitiativeStore,
   peerInitiativeFeedbackToIngestionInput,
   projectPeerInitiativeFeedback,
+  type PeerDeliveryRecord,
 } from "../peer-initiative/index.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
@@ -113,6 +114,18 @@ function parseTelegramPeerActionCallbackData(data: string): {
   const candidateId = candidateParts.join(":");
   if (!action || candidateId.trim().length === 0) return null;
   return { action, candidateId };
+}
+
+function telegramPeerDeliveryMatchesCallback(
+  delivery: PeerDeliveryRecord | null | undefined,
+  chatId: number,
+  messageId: number,
+): boolean {
+  if (!delivery || delivery.status !== "delivered") return false;
+  const targetBindingRef = telegramOutboundTargetBindingRef(chatId);
+  if (delivery.target_binding_ref !== targetBindingRef) return false;
+  if (delivery.outbound_message?.target_binding_ref !== targetBindingRef) return false;
+  return !delivery.transport_message_ref || delivery.transport_message_ref === String(messageId);
 }
 
 function telegramPeerActionLabel(
@@ -449,7 +462,10 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
   private async processCallbackQuery(query: TelegramCallbackQuery, updateId?: number): Promise<void> {
     const parsedAction = parseTelegramPeerActionCallbackData(query.data ?? "");
-    if (!parsedAction) return;
+    if (!parsedAction) {
+      await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button anymore.");
+      return;
+    }
     const fromId = query.from?.id;
     const chatId = query.message?.chat?.id;
     const messageId = query.message?.message_id;
@@ -471,6 +487,14 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       candidateId: parsedAction.candidateId,
       surface: "telegram",
     });
+    if (!telegramPeerDeliveryMatchesCallback(delivery, chatId, messageId)) {
+      await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+        this.api.answerCallbackQuery(query.id, "PulSeed could not find that peer action for this chat anymore.")
+      );
+      this.timing.markLifecycleEnd();
+      await this.recordTiming();
+      return;
+    }
     const feedbackAction = delivery?.outbound_message?.feedback_actions.find((action) =>
       action.action === parsedAction.action
     );

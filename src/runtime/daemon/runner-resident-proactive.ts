@@ -716,6 +716,7 @@ async function deliverPeerInitiativeMessage(input: {
       status: "delivered",
       delivered_at: receipt.delivered_at,
       message_id: receipt.message_id,
+      transport_message_ref: receipt.transport_message_ref,
       target_binding_ref: receipt.target_binding_ref,
       expression_decision_ref: input.expressionDecisionId,
       visibility_policy_ref: input.visibilityPolicyId,
