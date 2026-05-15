@@ -276,7 +276,7 @@ describe("DiscordGatewayAdapter", () => {
       { name: "Ed25519" },
       true,
       ["sign", "verify"]
-    ) as Ed25519KeyPair;
+    ) as unknown as Ed25519KeyPair;
     const publicKeyHex = Buffer.from(await webcrypto.subtle.exportKey("raw", keyPair.publicKey)).toString("hex");
     const signature = Buffer.from(
       await webcrypto.subtle.sign(
