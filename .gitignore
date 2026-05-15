@@ -16,15 +16,6 @@ memory/
 /memory/research/dream-mode/
 *.tmp
 docs/archive/
-scripts/*
-!scripts/check-docs.mjs
-!scripts/check-public-contracts.mjs
-!scripts/check-database-first-legacy-stores.mjs
-!scripts/inventory-test-redesign.mjs
-!scripts/clean-dist.mjs
-!scripts/release.mjs
-!scripts/run-tui-test.mjs
-
 # Non-public: stale, will revisit later
 src/adapters/datasources/openclaw-datasource.ts
 src/adapters/agents/openclaw-acp.ts
