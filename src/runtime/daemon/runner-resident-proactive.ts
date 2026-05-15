@@ -34,6 +34,7 @@ import {
   PeerInitiativeStore,
   PeerInitiativeMessageSchema,
   type PeerInitiativeCandidate,
+  type PeerInitiativeSelectedState,
   type PeerInitiativeSelection,
 } from "../peer-initiative/index.js";
 import { VisibilityPolicySchema, type VisibilityPolicy } from "../types/companion-autonomy.js";
@@ -493,6 +494,10 @@ export async function triggerResidentPeerInitiative(
       visibility_policy_ref: visibilityPolicy.visibility_policy_id,
       failure_reason: surfaceDelivery?.quiet_audit_reason ?? "peer expression did not render",
     });
+    await store.upsertCandidate({
+      candidate: selected,
+      selectedState: "held",
+    });
     await persistResidentActivity(context, {
       kind: "skipped",
       trigger: "proactive_tick",
@@ -514,13 +519,14 @@ export async function triggerResidentPeerInitiative(
     visibilityPolicyId: visibilityPolicy.visibility_policy_id,
     now,
   });
-  if (delivery.status === "delivered") {
-    await store.upsertCandidate({
-      candidate: selected,
-      selectedState: boundary.thresholdDecision.allowed_delivery_kind === "notify" ? "notified" : "suggested",
-      deliveredAt: delivery.delivered_at ?? now,
-    });
-  }
+  await store.upsertCandidate({
+    candidate: selected,
+    selectedState: selectedStateForPeerDelivery(
+      delivery.status,
+      boundary.thresholdDecision.allowed_delivery_kind,
+    ),
+    deliveredAt: delivery.status === "delivered" ? delivery.delivered_at ?? now : undefined,
+  });
   await persistResidentActivity(context, {
     kind: delivery.status === "delivered" ? "observation" : "skipped",
     trigger: "proactive_tick",
@@ -533,6 +539,15 @@ export async function triggerResidentPeerInitiative(
     peer_initiative_delivery_id: delivery.delivery_id,
     peer_initiative_delivery_status: delivery.status,
   });
+}
+
+function selectedStateForPeerDelivery(
+  status: "pending_send" | "delivered" | "held" | "failed",
+  allowedDeliveryKind: string,
+): PeerInitiativeSelectedState {
+  if (status === "held" || status === "failed") return "held";
+  if (status === "delivered" && allowedDeliveryKind === "notify") return "notified";
+  return "suggested";
 }
 
 function selectedPeerCandidate(
