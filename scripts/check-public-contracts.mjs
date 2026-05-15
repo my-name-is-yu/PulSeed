@@ -67,7 +67,18 @@ if (existsSync("dist/interface/cli/cli-runner.js")) {
 
 if (existsSync("dist/index.js")) {
   const publicModule = await import(pathToFileURL(resolve("dist/index.js")).href);
-  for (const exportName of ["CLIRunner", "ChatRunner", "StateManager", "DaemonRunner"]) {
+  for (const exportName of [
+    "CLIRunner",
+    "ChatRunner",
+    "StateManager",
+    "DaemonRunner",
+    "EXTERNAL_SURFACE_METADATA_KEY",
+    "buildChannelPolicyMetadata",
+    "buildExternalSurfaceDecision",
+    "evaluateChannelAccess",
+    "normalizeExternalSurfaceDecision",
+    "resolveChannelRoute",
+  ]) {
     if (!(exportName in publicModule)) {
       issues.push(`dist/index.js is missing public export ${exportName}`);
     }

@@ -1,3 +1,5 @@
+import type { ExternalSurfaceDecision } from "pulseed";
+
 export interface ChatContinuationInput {
   platform: "signal";
   identity_key: string;
@@ -6,6 +8,7 @@ export interface ChatContinuationInput {
   message_id?: string;
   text: string;
   metadata: Record<string, unknown>;
+  externalSurface?: ExternalSurfaceDecision;
 }
 
 type SessionManagerMethod = (input: ChatContinuationInput) => Promise<unknown> | unknown;

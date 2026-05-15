@@ -208,6 +208,11 @@ describe("IngressRouter", () => {
       platform: "slack",
       externalSurface,
       metadata: { runtime_control_approved: true },
+      runtimeControl: {
+        allowed: true,
+        approvalMode: "preapproved",
+        approval_mode: "preapproved",
+      },
     });
 
     const route = router.selectRoute(message, {

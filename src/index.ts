@@ -590,6 +590,11 @@ export { NotifierRegistry } from "./runtime/notifier-registry.js";
 export { PluginLoader } from "./runtime/plugin-loader.js";
 export { SkillRegistry } from "./runtime/skills/skill-registry.js";
 export type { SkillRecord, SkillRegistryOptions } from "./runtime/skills/skill-registry.js";
+export type {
+  INotifier,
+  NotificationEvent,
+  NotificationEventType,
+} from "./base/types/plugin.js";
 
 // --- Iteration budget ---
 export { IterationBudget } from "./orchestrator/loop/iteration-budget.js";

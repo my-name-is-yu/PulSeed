@@ -1,3 +1,5 @@
+import type { ExternalSurfaceDecision } from "pulseed";
+
 export type ChatEventHandler = (event: unknown) => Promise<void> | void;
 
 export interface ChatContinuationInput {
@@ -8,6 +10,7 @@ export interface ChatContinuationInput {
   message_id?: string;
   text: string;
   metadata: Record<string, unknown>;
+  externalSurface?: ExternalSurfaceDecision;
   onEvent?: ChatEventHandler;
 }
 

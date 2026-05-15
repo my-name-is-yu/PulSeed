@@ -272,17 +272,21 @@ export function normalizeLegacyIngressInput(input: NormalizeLegacyIngressInput):
   const surfacePreapproved = externalSurface?.runtime_control_policy.allowed === true
     && externalSurface.runtime_control_policy.approval_mode === "preapproved";
   const surfaceDenied = externalSurface?.runtime_control_policy.approval_mode === "disallowed";
-  const preapproved = input.runtimeControl?.approvalMode === "preapproved"
-    || input.runtimeControl?.approval_mode === "preapproved"
-    || (externalSurface ? surfacePreapproved : metadata["runtime_control_approved"] === true);
+  const preapproved = !surfaceDenied && (
+    input.runtimeControl?.approvalMode === "preapproved"
+      || input.runtimeControl?.approval_mode === "preapproved"
+      || (externalSurface ? surfacePreapproved : metadata["runtime_control_approved"] === true)
+  );
   const disallowedByMetadata = metadata["runtime_control_denied"] === true || surfaceDenied;
   const interactiveDefault = channel === "tui" || channel === "cli";
-  const allowed = input.runtimeControl?.allowed ?? (preapproved || interactiveDefault);
-  const approvalMode = input.runtimeControl?.approvalMode
-    ?? input.runtimeControl?.approval_mode
-    ?? (externalSurface
-      ? surfacePreapproved ? "preapproved" : "disallowed"
-      : preapproved ? "preapproved" : disallowedByMetadata ? "disallowed" : interactiveDefault ? "interactive" : "disallowed");
+  const allowed = surfaceDenied ? false : input.runtimeControl?.allowed ?? (preapproved || interactiveDefault);
+  const approvalMode = surfaceDenied
+    ? "disallowed"
+    : input.runtimeControl?.approvalMode
+      ?? input.runtimeControl?.approval_mode
+      ?? (externalSurface
+        ? surfacePreapproved ? "preapproved" : "disallowed"
+        : preapproved ? "preapproved" : disallowedByMetadata ? "disallowed" : interactiveDefault ? "interactive" : "disallowed");
 
   const actor: RuntimeControlActor = input.actor ?? {
     surface: actorSurface,

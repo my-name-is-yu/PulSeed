@@ -3,7 +3,12 @@ import * as http from "node:http";
 import { WhatsAppCloudClient } from "./whatsapp-client.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
 import type { WhatsAppWebhookConfig } from "./config.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import {
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "pulseed";
 
 interface WhatsAppWebhookPayload {
   entry?: Array<{
@@ -147,6 +152,7 @@ export class WhatsAppWebhookServer {
       },
       channelContext
     );
+    const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
     const input: ChatContinuationInput = {
       platform: "whatsapp",
       identity_key: route.identityKey ?? this.config.identity_key,
@@ -154,12 +160,12 @@ export class WhatsAppWebhookServer {
       sender_id: message.from,
       message_id: message.id,
       text: message.text.body,
+      externalSurface,
       metadata: {
-        ...route.metadata,
+        ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
         message_type: message.type,
         timestamp: message.timestamp,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
-        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
       },
     };
 

@@ -1,7 +1,12 @@
 import { SignalBridgeClient, type SignalReceivedMessage } from "./signal-client.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
 import type { SignalBridgeConfig } from "./config.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import {
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "pulseed";
 
 export class SignalBridgePoller {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -76,6 +81,7 @@ export class SignalBridgePoller {
         },
         channelContext
       );
+      const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
 
       const reply = await this.fetchChatReply({
         platform: "signal",
@@ -84,11 +90,11 @@ export class SignalBridgePoller {
         sender_id: normalized.senderId,
         message_id: normalized.messageId,
         text: normalized.text,
+        externalSurface,
         metadata: {
-          ...route.metadata,
+          ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
           ...normalized.metadata,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
-          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
         },
       });
 

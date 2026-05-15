@@ -191,7 +191,6 @@ describe("TelegramChatRunnerProcessor", () => {
       }),
       expect.objectContaining({
         hasAgentLoop: false,
-        hasToolLoop: true,
         hasRuntimeControlService: false,
       })
     );

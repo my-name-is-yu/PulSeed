@@ -2,7 +2,7 @@ import type {
   INotifier,
   NotificationEvent,
   NotificationEventType,
-} from "../../../src/base/types/plugin.js";
+} from "pulseed";
 
 // ─── Supported events (must match plugin.yaml) ───
 

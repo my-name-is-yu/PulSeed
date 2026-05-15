@@ -3,11 +3,14 @@ import { createHash, webcrypto } from "node:crypto";
 import { DiscordAPI } from "./discord-api.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
 import type { DiscordBotConfig } from "./config.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
 import {
   DISCORD_GATEWAY_DISPLAY_CONTRACT,
   NonTuiDisplayProjector,
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
   createGatewayDisplayPolicy,
+  evaluateChannelAccess,
+  resolveChannelRoute,
   type ChatEvent,
   type NonTuiDisplayMessageRef,
   type NonTuiDisplayTransport,
@@ -152,6 +155,7 @@ export class DiscordWebhookServer {
       },
       channelContext
     );
+    const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
     const input: ChatContinuationInput = {
       platform: "discord",
       identity_key: route.identityKey ?? this.config.identity_key,
@@ -159,14 +163,14 @@ export class DiscordWebhookServer {
       sender_id: senderId,
       message_id: payload.id,
       text,
+      externalSurface,
       metadata: {
-        ...route.metadata,
+        ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
         interaction_type: payload.type,
         command_name: payload.data?.name,
         channel_id: payload.channel_id,
         guild_id: payload.guild_id,
         ...(route.goalId ? { goal_id: route.goalId } : {}),
-        ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
       },
     };
 
