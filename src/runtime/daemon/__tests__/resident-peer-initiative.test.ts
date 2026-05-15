@@ -8,6 +8,7 @@ import type {
   OutboundConversationSurface,
   OutboundConversationTarget,
 } from "../../gateway/index.js";
+import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { PeerInitiativeStore } from "../../peer-initiative/index.js";
 import { proactiveTick } from "../runner-resident-proactive.js";
 
@@ -48,6 +49,15 @@ describe("resident peer initiative caller path", () => {
   it("runs resident proactive tick into a Telegram outbound conversation without a direct user prompt", async () => {
     const baseDir = makeTempDir("resident-peer-initiative-");
     const gatewayPort = new FakeOutboundConversationPort();
+    await upsertRelationshipProfileItem(baseDir, {
+      stableKey: "peer-initiative-test-context",
+      kind: "preference",
+      value: "Low-pressure peer initiative messages are allowed when they reduce current load.",
+      source: "setup_user",
+      allowedScopes: ["resident_behavior"],
+      sensitivity: "private",
+      now: "2026-05-15T00:00:00.000Z",
+    });
     const state = DaemonStateSchema.parse({
       pid: 123,
       started_at: "2026-05-15T00:00:00.000Z",
