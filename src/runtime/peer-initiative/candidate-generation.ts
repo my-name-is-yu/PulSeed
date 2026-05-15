@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/v3";
 import {
   CurrentNeedSignalSchema,
@@ -156,9 +157,5 @@ function unique(values: readonly string[]): string[] {
 }
 
 function stableToken(value: string): string {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
+  return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }

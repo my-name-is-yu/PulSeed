@@ -296,6 +296,31 @@ export class PeerInitiativeStore {
     return projection;
   }
 
+  async getFeedbackProjectionForAction(input: {
+    candidateId: string;
+    sourceSurface: PeerFeedbackProjection["source_surface"];
+    structuredOutcome: PeerFeedbackProjection["structured_outcome"];
+  }): Promise<PeerFeedbackProjection | null> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT projection_json
+        FROM peer_feedback_projection
+        WHERE candidate_id = ?
+          AND source_surface = ?
+          AND structured_outcome = ?
+        ORDER BY projected_at ASC, projection_id ASC
+        LIMIT 1
+      `).get(
+        input.candidateId,
+        input.sourceSurface,
+        input.structuredOutcome,
+      ) as { projection_json: string } | undefined;
+      const projections = row ? parsePeerFeedbackProjection(row.projection_json) : [];
+      return projections[0] ?? null;
+    });
+  }
+
   async listFeedbackProjections(input: {
     candidateId?: string;
     limit?: number;

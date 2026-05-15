@@ -197,7 +197,7 @@ interface TelegramGatewayRuntimeOptions {
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
   peerInitiativeStore?: Pick<
     PeerInitiativeStore,
-    "appendFeedbackProjection" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+    "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
   >;
 }
 
@@ -313,7 +313,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
   private readonly peerInitiativeStore: Pick<
     PeerInitiativeStore,
-    "appendFeedbackProjection" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+    "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
   >;
   private running = false;
   private loopPromise: Promise<void> | null = null;
@@ -476,6 +476,24 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     );
     if (feedbackAction) {
       const now = new Date().toISOString();
+      const existingProjection = await this.peerInitiativeStore.getFeedbackProjectionForAction({
+        candidateId: feedbackAction.candidate_id,
+        sourceSurface: "telegram",
+        structuredOutcome: feedbackAction.action,
+      });
+      if (existingProjection) {
+        await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+          this.api.answerCallbackQuery(query.id, "PulSeed already recorded that feedback.")
+        );
+        this.timing.markLifecycleEnd();
+        await this.recordTiming();
+        await this.recordHealth({
+          last_inbound_at: new Date().toISOString(),
+          last_outbound_at: new Date().toISOString(),
+          last_error: null,
+        });
+        return;
+      }
       const result = await this.feedbackIngestionStore.ingest(peerInitiativeFeedbackToIngestionInput(feedbackAction, {
         sourceSurface: "telegram",
         recordedAt: now,
