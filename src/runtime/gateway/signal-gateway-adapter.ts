@@ -13,6 +13,7 @@ import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { SIGNAL_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
+import { ExternalAdapterIntervalPoller, formatExternalAdapterHttpFailure } from "./external-adapter-shell.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -81,12 +82,17 @@ export class SignalGatewayAdapter implements ChannelAdapter {
   private handler: EnvelopeHandler | null = null;
   private readonly client: SignalBridgeClient;
   private readonly notifier: SignalGatewayNotifier;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly poller: ExternalAdapterIntervalPoller;
   private readonly seenMessageIds = new Set<string>();
 
   constructor(private readonly config: SignalGatewayConfig) {
     this.client = new SignalBridgeClient(config.bridge_url, config.account);
     this.notifier = new SignalGatewayNotifier(this.client, config);
+    this.poller = new ExternalAdapterIntervalPoller({
+      intervalMs: this.config.poll_interval_ms,
+      pollOnce: () => this.pollOnce(),
+      onError: () => undefined,
+    });
   }
 
   static fromConfigDir(configDir: string): SignalGatewayAdapter {
@@ -102,18 +108,11 @@ export class SignalGatewayAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
-    if (this.timer !== null) return;
-    void this.pollOnce().catch(() => undefined);
-    this.timer = setInterval(() => {
-      void this.pollOnce().catch(() => undefined);
-    }, this.config.poll_interval_ms);
+    this.poller.start();
   }
 
   async stop(): Promise<void> {
-    if (this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this.poller.stop();
   }
 
   private async pollOnce(): Promise<void> {
@@ -300,8 +299,11 @@ class SignalBridgeClient {
       }),
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`signal-bridge: send failed with ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "signal-bridge",
+        operation: "send failed",
+        statusVerb: "with",
+      }));
     }
   }
 

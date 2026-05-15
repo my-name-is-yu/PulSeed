@@ -1,5 +1,4 @@
 import * as http from "node:http";
-import { createHash, webcrypto } from "node:crypto";
 import { DiscordAPI } from "./discord-api.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
 import type { DiscordBotConfig } from "./config.js";
@@ -11,9 +10,14 @@ import {
   createGatewayDisplayPolicy,
   evaluateChannelAccess,
   resolveChannelRoute,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  respondExternalAdapterJson,
+  singleHeaderValue,
   type ChatEvent,
   type NonTuiDisplayMessageRef,
   type NonTuiDisplayTransport,
+  verifyOptionalEd25519Signature,
 } from "pulseed";
 
 interface DiscordInteractionOption {
@@ -80,31 +84,30 @@ export class DiscordWebhookServer {
 
   async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== "POST") {
-      this.respondJson(res, 405, { error: "method_not_allowed" });
+      respondExternalAdapterJson(res, 405, { error: "method_not_allowed" });
       return;
     }
 
-    const body = await this.readBody(req);
-    if (body === null) {
-      this.respondJson(res, 400, { error: "invalid_body" });
+    const bodyResult = await readExternalAdapterHttpBody(req);
+    if (bodyResult.status !== "ok") {
+      respondExternalAdapterJson(res, bodyResult.statusCode, bodyResult.payload);
       return;
     }
 
-    if (!(await this.verifyRequest(req, body))) {
-      this.respondJson(res, 401, { error: "invalid_signature" });
+    if (!(await this.verifyRequest(req, bodyResult.body))) {
+      respondExternalAdapterJson(res, 401, { error: "invalid_signature" });
       return;
     }
 
-    let payload: DiscordInteractionPayload;
-    try {
-      payload = JSON.parse(body) as DiscordInteractionPayload;
-    } catch {
-      this.respondJson(res, 400, { error: "invalid_json" });
+    const parsed = parseExternalAdapterJson<DiscordInteractionPayload>(bodyResult.body);
+    if (parsed.status !== "ok") {
+      respondExternalAdapterJson(res, parsed.statusCode, parsed.payload);
       return;
     }
+    const payload = parsed.value;
 
     if (payload.type === 1) {
-      this.respondJson(res, 200, { type: 1 });
+      respondExternalAdapterJson(res, 200, { type: 1 });
       return;
     }
 
@@ -114,13 +117,13 @@ export class DiscordWebhookServer {
       payload.application_id === undefined ||
       payload.data?.name !== this.config.command_name
     ) {
-      this.respondJson(res, 400, { error: "unsupported_interaction" });
+      respondExternalAdapterJson(res, 400, { error: "unsupported_interaction" });
       return;
     }
 
     const text = this.extractCommandText(payload);
     if (text === null) {
-      this.respondJson(res, 400, { error: "missing_message_text" });
+      respondExternalAdapterJson(res, 400, { error: "missing_message_text" });
       return;
     }
 
@@ -143,7 +146,7 @@ export class DiscordWebhookServer {
       channelContext
     );
     if (!access.allowed) {
-      this.respondJson(res, 403, { error: access.reason ?? "forbidden" });
+      respondExternalAdapterJson(res, 403, { error: access.reason ?? "forbidden" });
       return;
     }
     const route = resolveChannelRoute(
@@ -178,7 +181,7 @@ export class DiscordWebhookServer {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[discord-bot] failed to process interaction: ${msg}`);
     });
-    this.respondJson(res, 200, { type: 5, data: this.config.ephemeral ? { flags: 64 } : undefined });
+    respondExternalAdapterJson(res, 200, { type: 5, data: this.config.ephemeral ? { flags: 64 } : undefined });
   }
 
   private async processIncomingMessage(
@@ -242,45 +245,16 @@ export class DiscordWebhookServer {
       return true;
     }
 
-    const signature = req.headers["x-signature-ed25519"];
-    const timestamp = req.headers["x-signature-timestamp"];
-    if (typeof signature !== "string" || typeof timestamp !== "string") {
+    const timestamp = singleHeaderValue(req.headers["x-signature-timestamp"]);
+    if (timestamp === undefined) {
       return false;
     }
 
-    const publicKeyBytes = Uint8Array.from(Buffer.from(this.config.public_key_hex, "hex"));
-    let key: CryptoKey;
-    try {
-      key = await webcrypto.subtle.importKey("raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]);
-    } catch {
-      return false;
-    }
-
-    const messageBytes = new TextEncoder().encode(timestamp + body);
-    try {
-      return await webcrypto.subtle.verify(
-        { name: "Ed25519" },
-        key,
-        Buffer.from(signature, "hex"),
-        messageBytes
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  private async readBody(req: http.IncomingMessage): Promise<string | null> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    }
-    return Buffer.concat(chunks).toString("utf-8");
-  }
-
-  private respondJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
-    res.statusCode = statusCode;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(payload));
+    return verifyOptionalEd25519Signature({
+      publicKeyHex: this.config.public_key_hex,
+      signatureHeader: req.headers["x-signature-ed25519"],
+      signedPayload: timestamp + body,
+    });
   }
 }
 

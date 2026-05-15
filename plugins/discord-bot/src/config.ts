@@ -1,5 +1,11 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import {
+  assertExternalAdapterBoolean,
+  assertExternalAdapterIntegerInRange,
+  assertExternalAdapterNonEmptyString,
+  assertExternalAdapterStringArray,
+  assertExternalAdapterStringMap,
+  loadExternalAdapterConfigJson,
+} from "pulseed";
 
 const MIN_PORT = 1;
 const MAX_PORT = 65_535;
@@ -25,25 +31,10 @@ export interface DiscordBotConfig {
 }
 
 export function loadConfig(pluginDir: string): DiscordBotConfig {
-  const configPath = path.join(pluginDir, "config.json");
-  let raw: unknown;
-
-  try {
-    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`discord-bot: failed to read config.json — ${msg}`);
-  }
-
-  return validateConfig(raw);
+  return validateConfig(loadExternalAdapterConfigJson(pluginDir, "discord-bot"));
 }
 
-function validateConfig(raw: unknown): DiscordBotConfig {
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error("discord-bot: config must be a JSON object");
-  }
-
-  const cfg = raw as Record<string, unknown>;
+function validateConfig(cfg: Record<string, unknown>): DiscordBotConfig {
   const commandName = cfg["command_name"] ?? "pulseed";
   const host = cfg["host"] ?? "127.0.0.1";
   const port = cfg["port"] ?? 8787;
@@ -56,61 +47,31 @@ function validateConfig(raw: unknown): DiscordBotConfig {
   const conversationGoalMap = cfg["conversation_goal_map"] ?? cfg["goal_routes"] ?? {};
   const senderGoalMap = cfg["sender_goal_map"] ?? {};
 
-  if (typeof cfg["application_id"] !== "string" || cfg["application_id"].length === 0) {
-    throw new Error("discord-bot: application_id must be a non-empty string");
-  }
-  if (typeof cfg["bot_token"] !== "string" || cfg["bot_token"].length === 0) {
-    throw new Error("discord-bot: bot_token must be a non-empty string");
-  }
-  if (typeof cfg["channel_id"] !== "string" || cfg["channel_id"].length === 0) {
-    throw new Error("discord-bot: channel_id must be a non-empty string");
-  }
-  if (typeof cfg["identity_key"] !== "string" || cfg["identity_key"].length === 0) {
-    throw new Error("discord-bot: identity_key must be a non-empty string");
-  }
-  if (typeof commandName !== "string" || commandName.length === 0) {
-    throw new Error("discord-bot: command_name must be a non-empty string");
-  }
-  if (typeof host !== "string" || host.length === 0) {
-    throw new Error("discord-bot: host must be a non-empty string");
-  }
-  if (!isPort(port)) {
-    throw new Error(`discord-bot: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
-  }
-  if (typeof ephemeral !== "boolean") {
-    throw new Error("discord-bot: ephemeral must be a boolean");
-  }
-  if (
-    !Array.isArray(runtimeControlAllowedSenderIds) ||
-    !runtimeControlAllowedSenderIds.every((id) => typeof id === "string" && id.length > 0)
-  ) {
-    throw new Error("discord-bot: runtime_control_allowed_sender_ids must be an array of non-empty strings");
-  }
+  assertExternalAdapterNonEmptyString(cfg["application_id"], "discord-bot: application_id must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["bot_token"], "discord-bot: bot_token must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["channel_id"], "discord-bot: channel_id must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["identity_key"], "discord-bot: identity_key must be a non-empty string");
+  assertExternalAdapterNonEmptyString(commandName, "discord-bot: command_name must be a non-empty string");
+  assertExternalAdapterNonEmptyString(host, "discord-bot: host must be a non-empty string");
+  assertExternalAdapterIntegerInRange(port, MIN_PORT, MAX_PORT, `discord-bot: port must be a safe integer between ${MIN_PORT} and ${MAX_PORT}`);
+  assertExternalAdapterBoolean(ephemeral, "discord-bot: ephemeral must be a boolean");
+  assertExternalAdapterStringArray(runtimeControlAllowedSenderIds, "discord-bot: runtime_control_allowed_sender_ids must be an array of non-empty strings");
   for (const [key, value] of Object.entries({
     allowed_sender_ids: allowedSenderIds,
     denied_sender_ids: deniedSenderIds,
     allowed_conversation_ids: allowedConversationIds,
     denied_conversation_ids: deniedConversationIds,
   })) {
-    if (!Array.isArray(value) || !value.every((id) => typeof id === "string" && id.length > 0)) {
-      throw new Error(`discord-bot: ${key} must be an array of non-empty strings`);
-    }
+    assertExternalAdapterStringArray(value, `discord-bot: ${key} must be an array of non-empty strings`);
   }
   for (const [key, value] of Object.entries({
     conversation_goal_map: conversationGoalMap,
     sender_goal_map: senderGoalMap,
   })) {
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value) ||
-      !Object.values(value).every((goalId) => typeof goalId === "string" && goalId.length > 0)
-    ) {
-      throw new Error(`discord-bot: ${key} must be an object mapping IDs to goal IDs`);
-    }
+    assertExternalAdapterStringMap(value, `discord-bot: ${key} must be an object mapping IDs to goal IDs`);
   }
-  if (cfg["default_goal_id"] !== undefined && (typeof cfg["default_goal_id"] !== "string" || cfg["default_goal_id"].length === 0)) {
-    throw new Error("discord-bot: default_goal_id must be a non-empty string when set");
+  if (cfg["default_goal_id"] !== undefined) {
+    assertExternalAdapterNonEmptyString(cfg["default_goal_id"], "discord-bot: default_goal_id must be a non-empty string when set");
   }
   if (cfg["public_key_hex"] !== undefined && typeof cfg["public_key_hex"] !== "string") {
     throw new Error("discord-bot: public_key_hex must be a string when set");
@@ -135,13 +96,4 @@ function validateConfig(raw: unknown): DiscordBotConfig {
     port,
     ephemeral,
   };
-}
-
-function isPort(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= MIN_PORT &&
-    value <= MAX_PORT
-  );
 }

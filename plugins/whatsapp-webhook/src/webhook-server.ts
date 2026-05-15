@@ -1,4 +1,3 @@
-import * as crypto from "node:crypto";
 import * as http from "node:http";
 import { WhatsAppCloudClient } from "./whatsapp-client.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
@@ -8,6 +7,10 @@ import {
   buildExternalSurfaceDecision,
   evaluateChannelAccess,
   resolveChannelRoute,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  respondExternalAdapterJson,
+  verifyOptionalHmacSha256Signature,
 } from "pulseed";
 
 interface WhatsAppWebhookPayload {
@@ -69,30 +72,28 @@ export class WhatsAppWebhookServer {
     }
 
     if (req.method !== "POST" || url.pathname !== this.config.path) {
-      this.respondJson(res, 404, { error: "not_found" });
+      respondExternalAdapterJson(res, 404, { error: "not_found" });
       return;
     }
 
-    const body = await this.readBody(req);
-    if (body === null) {
-      this.respondJson(res, 400, { error: "invalid_body" });
+    const bodyResult = await readExternalAdapterHttpBody(req);
+    if (bodyResult.status !== "ok") {
+      respondExternalAdapterJson(res, bodyResult.statusCode, bodyResult.payload);
       return;
     }
 
-    if (!(await this.verifySignature(req, body))) {
-      this.respondJson(res, 401, { error: "invalid_signature" });
+    if (!this.verifySignature(req, bodyResult.body)) {
+      respondExternalAdapterJson(res, 401, { error: "invalid_signature" });
       return;
     }
 
-    let payload: WhatsAppWebhookPayload;
-    try {
-      payload = JSON.parse(body) as WhatsAppWebhookPayload;
-    } catch {
-      this.respondJson(res, 400, { error: "invalid_json" });
+    const parsed = parseExternalAdapterJson<WhatsAppWebhookPayload>(bodyResult.body);
+    if (parsed.status !== "ok") {
+      respondExternalAdapterJson(res, parsed.statusCode, parsed.payload);
       return;
     }
 
-    const messages = this.extractMessages(payload);
+    const messages = this.extractMessages(parsed.value);
     for (const message of messages) {
       void this.processMessage(message).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -100,7 +101,7 @@ export class WhatsAppWebhookServer {
       });
     }
 
-    this.respondJson(res, 200, { ok: true });
+    respondExternalAdapterJson(res, 200, { ok: true });
   }
 
   private handleVerification(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
@@ -114,7 +115,7 @@ export class WhatsAppWebhookServer {
       return;
     }
 
-    this.respondJson(res, 403, { error: "verification_failed" });
+    respondExternalAdapterJson(res, 403, { error: "verification_failed" });
   }
 
   private async processMessage(message: {
@@ -203,38 +204,11 @@ export class WhatsAppWebhookServer {
     return messages;
   }
 
-  private async verifySignature(req: http.IncomingMessage, body: string): Promise<boolean> {
-    if (this.config.app_secret === undefined || this.config.app_secret.length === 0) {
-      return true;
-    }
-
-    const header = req.headers["x-hub-signature-256"];
-    if (typeof header !== "string" || !header.startsWith("sha256=")) {
-      return false;
-    }
-
-    const expected = crypto
-      .createHmac("sha256", this.config.app_secret)
-      .update(body)
-      .digest("hex");
-    const actual = header.slice("sha256=".length);
-    if (expected.length !== actual.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(actual, "hex"));
-  }
-
-  private async readBody(req: http.IncomingMessage): Promise<string | null> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-    }
-    return Buffer.concat(chunks).toString("utf-8");
-  }
-
-  private respondJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
-    res.statusCode = statusCode;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(payload));
+  private verifySignature(req: http.IncomingMessage, body: string): boolean {
+    return verifyOptionalHmacSha256Signature({
+      secret: this.config.app_secret,
+      body,
+      signatureHeader: req.headers["x-hub-signature-256"],
+    });
   }
 }

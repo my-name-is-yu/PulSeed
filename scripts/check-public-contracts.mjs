@@ -78,6 +78,11 @@ if (existsSync("dist/index.js")) {
     "evaluateChannelAccess",
     "normalizeExternalSurfaceDecision",
     "resolveChannelRoute",
+    "loadExternalAdapterConfigJson",
+    "readExternalAdapterHttpBody",
+    "respondExternalAdapterJson",
+    "formatExternalAdapterHttpFailure",
+    "ExternalAdapterIntervalPoller",
   ]) {
     if (!(exportName in publicModule)) {
       issues.push(`dist/index.js is missing public export ${exportName}`);

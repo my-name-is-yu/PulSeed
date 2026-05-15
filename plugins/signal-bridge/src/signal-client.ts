@@ -1,3 +1,5 @@
+import { formatExternalAdapterHttpFailure } from "pulseed";
+
 export interface SignalOutboundMessage {
   recipient: string;
   body: string;
@@ -36,8 +38,11 @@ export class SignalBridgeClient {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`signal-bridge: send failed with ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "signal-bridge",
+        operation: "send failed",
+        statusVerb: "with",
+      }));
     }
   }
 

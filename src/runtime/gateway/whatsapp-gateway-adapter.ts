@@ -1,4 +1,3 @@
-import * as crypto from "node:crypto";
 import * as http from "node:http";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
@@ -14,7 +13,13 @@ import { WHATSAPP_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { WHATSAPP_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
-import { isPayloadTooLargeError, readBody } from "../http-body.js";
+import {
+  formatExternalAdapterHttpFailure,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  respondExternalAdapterJson,
+  verifyOptionalHmacSha256Signature,
+} from "./external-adapter-shell.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -130,39 +135,31 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       return;
     }
     if (req.method !== "POST" || url.pathname !== this.config.path) {
-      this.respondJson(res, 404, { error: "not_found" });
+      respondExternalAdapterJson(res, 404, { error: "not_found" });
       return;
     }
 
-    let body: string;
-    try {
-      body = await readBody(req);
-    } catch (error) {
-      if (isPayloadTooLargeError(error)) {
-        this.respondJson(res, 413, { error: "payload_too_large" });
-        return;
-      }
-      this.respondJson(res, 400, { error: "invalid_body" });
+    const bodyResult = await readExternalAdapterHttpBody(req);
+    if (bodyResult.status !== "ok") {
+      respondExternalAdapterJson(res, bodyResult.statusCode, bodyResult.payload);
       return;
     }
-    if (!(await this.verifySignature(req, body))) {
-      this.respondJson(res, 401, { error: "invalid_signature" });
+    if (!this.verifySignature(req, bodyResult.body)) {
+      respondExternalAdapterJson(res, 401, { error: "invalid_signature" });
       return;
     }
 
-    let payload: WhatsAppWebhookPayload;
-    try {
-      payload = JSON.parse(body) as WhatsAppWebhookPayload;
-    } catch {
-      this.respondJson(res, 400, { error: "invalid_json" });
+    const parsed = parseExternalAdapterJson<WhatsAppWebhookPayload>(bodyResult.body);
+    if (parsed.status !== "ok") {
+      respondExternalAdapterJson(res, parsed.statusCode, parsed.payload);
       return;
     }
 
-    for (const message of this.extractMessages(payload)) {
+    for (const message of this.extractMessages(parsed.value)) {
       void this.processMessage(message).catch(() => undefined);
     }
 
-    this.respondJson(res, 200, { ok: true });
+    respondExternalAdapterJson(res, 200, { ok: true });
   }
 
   private handleVerification(res: http.ServerResponse, url: URL): void {
@@ -174,7 +171,7 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
       res.end(challenge);
       return;
     }
-    this.respondJson(res, 403, { error: "verification_failed" });
+    respondExternalAdapterJson(res, 403, { error: "verification_failed" });
   }
 
   private async processMessage(message: {
@@ -315,24 +312,12 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
     return messages;
   }
 
-  private async verifySignature(req: http.IncomingMessage, body: string): Promise<boolean> {
-    if (!this.config.app_secret) {
-      return true;
-    }
-    const header = req.headers["x-hub-signature-256"];
-    if (typeof header !== "string" || !header.startsWith("sha256=")) {
-      return false;
-    }
-    const expected = crypto.createHmac("sha256", this.config.app_secret).update(body).digest("hex");
-    const actual = header.slice("sha256=".length);
-    if (expected.length !== actual.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(actual, "hex"));
-  }
-
-  private respondJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
-    res.statusCode = statusCode;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(payload));
+  private verifySignature(req: http.IncomingMessage, body: string): boolean {
+    return verifyOptionalHmacSha256Signature({
+      secret: this.config.app_secret,
+      body,
+      signatureHeader: req.headers["x-hub-signature-256"],
+    });
   }
 }
 
@@ -383,8 +368,11 @@ class WhatsAppCloudClient {
       }),
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`whatsapp-webhook: send failed with ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "whatsapp-webhook",
+        operation: "send failed",
+        statusVerb: "with",
+      }));
     }
   }
 }

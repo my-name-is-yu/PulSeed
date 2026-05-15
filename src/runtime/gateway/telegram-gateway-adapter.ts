@@ -13,6 +13,7 @@ import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from ".
 import { TELEGRAM_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
+import { formatExternalAdapterHttpFailure, runExternalAdapterBackoffLoop } from "./external-adapter-shell.js";
 import {
   OutboundConversationDeliveryReceiptSchema,
   OutboundConversationMessageSchema,
@@ -35,7 +36,6 @@ import type { INotifier, NotificationEvent, NotificationEventType } from "../../
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
-const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
 const MIN_POLLING_TIMEOUT_SECONDS = 1;
 const MAX_POLLING_TIMEOUT_SECONDS = 60;
@@ -409,81 +409,79 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   }
 
   private async loop(): Promise<void> {
-    let backoffIndex = 0;
-    while (this.running) {
-      try {
-        const poll = this.timing.beginPoll(this.offset, this.config.polling_timeout);
-        const updates = await this.api.getUpdates(this.offset, this.config.polling_timeout);
-        this.timing.completePoll(poll, { updateCount: updates.length, ok: true });
-        await this.recordTiming();
-        backoffIndex = 0;
-        for (const update of updates) {
-          const nextOffset = update.update_id + 1;
-          let shouldAdvanceOffset = false;
-          try {
-            const callbackQuery = update.callback_query;
-            if (callbackQuery?.data) {
-              shouldAdvanceOffset = true;
-              await this.processCallbackQueryWithoutBlockingPoll(callbackQuery, update.update_id);
-              continue;
-            }
-            const msg = update.message;
-            if (!msg?.text) {
-              shouldAdvanceOffset = true;
-              continue;
-            }
-            const fromId = msg.from?.id;
-            const chatId = msg.chat?.id;
-            if (!Number.isInteger(fromId) || !Number.isInteger(chatId)) {
-              shouldAdvanceOffset = true;
-              continue;
-            }
-            if (this.config.denied_user_ids.includes(fromId)) {
-              shouldAdvanceOffset = true;
-              continue;
-            }
-            if (this.config.denied_chat_ids.includes(chatId)) {
-              shouldAdvanceOffset = true;
-              continue;
-            }
-            if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) {
-              shouldAdvanceOffset = true;
-              continue;
-            }
-            this.handlingUpdate = true;
-            try {
-              if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
-                shouldAdvanceOffset = true;
-                await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-                await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
-                continue;
-              }
-              if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) {
-                shouldAdvanceOffset = true;
-                continue;
-              }
-              shouldAdvanceOffset = true;
-              await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
-              await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
-            } finally {
-              this.handlingUpdate = false;
-            }
-          } finally {
-            if (shouldAdvanceOffset) {
-              this.offset = nextOffset;
-            }
-          }
-        }
-      } catch (err) {
+    await runExternalAdapterBackoffLoop({
+      shouldContinue: () => this.running,
+      runOnce: () => this.pollOnce(),
+      onError: async (err) => {
         this.timing.completeOpenPoll({ ok: false, error: err });
         await this.recordHealth({
           last_error: err instanceof Error ? err.message : String(err),
           last_timing: this.timing.snapshot(),
         });
-        if (!this.running) break;
-        const delay = BACKOFF_STEPS_MS[Math.min(backoffIndex, BACKOFF_STEPS_MS.length - 1)];
-        backoffIndex++;
-        await sleep(delay);
+      },
+    });
+  }
+
+  private async pollOnce(): Promise<void> {
+    const poll = this.timing.beginPoll(this.offset, this.config.polling_timeout);
+    const updates = await this.api.getUpdates(this.offset, this.config.polling_timeout);
+    this.timing.completePoll(poll, { updateCount: updates.length, ok: true });
+    await this.recordTiming();
+    for (const update of updates) {
+      const nextOffset = update.update_id + 1;
+      let shouldAdvanceOffset = false;
+      try {
+        const callbackQuery = update.callback_query;
+        if (callbackQuery?.data) {
+          shouldAdvanceOffset = true;
+          await this.processCallbackQueryWithoutBlockingPoll(callbackQuery, update.update_id);
+          continue;
+        }
+        const msg = update.message;
+        if (!msg?.text) {
+          shouldAdvanceOffset = true;
+          continue;
+        }
+        const fromId = msg.from?.id;
+        const chatId = msg.chat?.id;
+        if (!Number.isInteger(fromId) || !Number.isInteger(chatId)) {
+          shouldAdvanceOffset = true;
+          continue;
+        }
+        if (this.config.denied_user_ids.includes(fromId)) {
+          shouldAdvanceOffset = true;
+          continue;
+        }
+        if (this.config.denied_chat_ids.includes(chatId)) {
+          shouldAdvanceOffset = true;
+          continue;
+        }
+        if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) {
+          shouldAdvanceOffset = true;
+          continue;
+        }
+        this.handlingUpdate = true;
+        try {
+          if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
+            shouldAdvanceOffset = true;
+            await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+            await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+            continue;
+          }
+          if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) {
+            shouldAdvanceOffset = true;
+            continue;
+          }
+          shouldAdvanceOffset = true;
+          await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
+          await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
+        } finally {
+          this.handlingUpdate = false;
+        }
+      } finally {
+        if (shouldAdvanceOffset) {
+          this.offset = nextOffset;
+        }
       }
     }
   }
@@ -944,8 +942,10 @@ class TelegramAPI {
       body: params !== undefined ? JSON.stringify(params) : undefined,
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`telegram-api: ${method} returned ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "telegram-api",
+        operation: method,
+      }));
     }
     const json = (await response.json()) as { ok: boolean; result: T; description?: string };
     if (!json.ok) {
@@ -1355,9 +1355,6 @@ function splitMessage(text: string, maxLen: number): string[] {
   return chunks;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function assertNonEmptyString(value: unknown, message: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0) {

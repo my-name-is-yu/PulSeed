@@ -26,6 +26,8 @@ export {
   createTextUserInput,
   NonTuiDisplayProjector,
   createGatewayDisplayPolicy,
+  formatExternalAdapterHttpFailure,
+  runExternalAdapterBackoffLoop,
   TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
 } from "../../../src/index.js";
 

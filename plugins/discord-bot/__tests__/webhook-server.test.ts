@@ -11,6 +11,11 @@ vi.mock("pulseed", async () => {
     createGatewayDisplayPolicy: gateway.createGatewayDisplayPolicy,
     evaluateChannelAccess: channelPolicy.evaluateChannelAccess,
     resolveChannelRoute: channelPolicy.resolveChannelRoute,
+    parseExternalAdapterJson: gateway.parseExternalAdapterJson,
+    readExternalAdapterHttpBody: gateway.readExternalAdapterHttpBody,
+    respondExternalAdapterJson: gateway.respondExternalAdapterJson,
+    singleHeaderValue: gateway.singleHeaderValue,
+    verifyOptionalEd25519Signature: gateway.verifyOptionalEd25519Signature,
   };
 });
 
