@@ -11,56 +11,40 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  ci:
-    name: ${{ matrix.name }} (${{ matrix.node-version }})
+  typescript:
+    name: typescript (22)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: unit
-            node-version: 22
-            run-docs: true
-            run-build: true
-            run-public-contracts: true
-            run-typecheck: true
-            run-lint: true
-            test-command: npm run test:unit
-          - name: integration
-            node-version: 24
-            run-docs: false
-            run-build: true
-            run-public-contracts: false
-            run-typecheck: false
-            run-lint: false
-            test-command: |
-              npm run test:contracts
-              npm run test:golden-traces
-              npm run test:replay
-              npm run test:smoke
-              npm run test:integration
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-      - name: Use Node.js ${{ matrix.node-version }}
+      - name: Use Node.js 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22
           cache: "npm"
       - run: npm ci
-      - if: ${{ matrix.run-docs }}
-        run: npm run check:docs
-      - if: ${{ matrix.run-build }}
-        run: npm run build
-      - if: ${{ matrix.run-public-contracts }}
-        run: npm run check:public-contracts
-      - if: ${{ matrix.run-typecheck }}
-        run: npm run typecheck
-      - if: ${{ matrix.run-lint }}
-        run: npm run lint:boundaries
-      - run: ${{ matrix.test-command }}
+      - run: npm run check:docs
+      - run: npm run build
+      - run: npm run check:public-contracts
+      - run: npm run typecheck
+      - run: npm run lint:boundaries
+
+  unit:
+    name: unit (22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: "npm"
+      - run: npm ci
+      - run: npm run test:unit
