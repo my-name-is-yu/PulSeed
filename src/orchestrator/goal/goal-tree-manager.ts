@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Logger } from "../../runtime/logger.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ReflectionNoteSchema, type ReflectionNote } from "../../base/types/reflection.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { Task } from "../../base/types/task.js";

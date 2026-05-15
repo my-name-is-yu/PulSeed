@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../../base/utils/json-io.js";
 
 export const RelationshipProfileItemKindSchema = z.enum([

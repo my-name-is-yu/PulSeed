@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import fs from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";

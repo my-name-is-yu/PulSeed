@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { TaskSchema } from "../../base/types/task.js";
 import type { Task } from "../../base/types/task.js";
 import {

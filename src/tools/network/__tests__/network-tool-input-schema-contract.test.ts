@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import { HttpFetchInputSchema, HttpFetchTool } from "../HttpFetchTool/HttpFetchTool.js";
 import { McpCallToolInputSchema, McpCallToolTool, McpListToolsInputSchema, McpListToolsTool } from "../McpStdioTool/McpStdioTool.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const ChatUsageTokenCountSchema = z.number().int().nonnegative().refine(Number.isSafeInteger).catch(0);
 

@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../../strategy/strategy-manager.js";
 import type {

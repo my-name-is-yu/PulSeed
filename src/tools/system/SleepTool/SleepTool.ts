@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolMetadata, ToolCallContext, ToolResult, PermissionCheckResult, ToolDescriptionContext } from "../../types.js";
 import { DESCRIPTION } from "./prompt.js";
 import { TAGS, MAX_OUTPUT_CHARS, PERMISSION_LEVEL } from "./constants.js";

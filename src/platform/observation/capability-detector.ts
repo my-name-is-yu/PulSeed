@@ -1,4 +1,4 @@
-import type { infer as ZodInfer } from "zod";
+import type { infer as ZodInfer } from "zod/v3";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ReportingEngine } from "../../reporting/reporting-engine.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";

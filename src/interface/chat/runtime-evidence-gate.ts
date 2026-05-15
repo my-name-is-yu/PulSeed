@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { ChatTurnContext } from "./turn-context.js";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { OpenAILLMClient } from "../src/base/llm/openai-client.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { ToolExecutor } from "../src/tools/executor.js";

@@ -4,7 +4,7 @@
  * Used by PromptGateway for STRATEGY_TEMPLATE_MATCH and STRATEGY_TEMPLATE_ADAPT.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── STRATEGY_TEMPLATE_MATCH ──────────────────────────────────────────────────
 

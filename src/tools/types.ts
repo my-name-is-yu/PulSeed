@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ExecutionPolicy, SubagentRole } from "../orchestrator/execution/agent-loop/execution-policy.js";
 import type { PermissionGrantRecord } from "../runtime/store/permission-grant-store.js";
 import type {

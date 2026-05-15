@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Capability } from "../../../base/types/capability.js";
 
 export interface CapabilityAcquisitionRecommendation {

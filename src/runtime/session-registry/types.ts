@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const RuntimeSessionKindSchema = z.enum(["conversation", "agent", "coreloop"]);
 export type RuntimeSessionKind = z.infer<typeof RuntimeSessionKindSchema>;

@@ -5,7 +5,7 @@ import { ObservationEngine } from "../observation-engine.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { randomUUID } from "node:crypto";
 

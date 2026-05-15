@@ -1,5 +1,5 @@
 import type * as http from "node:http";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { createEnvelope, type Envelope } from "../types/envelope.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { RuntimeControlOperationKindSchema } from "../store/index.js";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { randomUUID } from "node:crypto";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import {

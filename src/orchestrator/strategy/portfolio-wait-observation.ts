@@ -1,7 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readTextFileWithinLimit } from "../../base/utils/json-io.js";
 import { isProcessPidValue, signalProcessPid } from "../../base/utils/process-pid.js";
 import type {

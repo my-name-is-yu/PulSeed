@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { ConcurrencyController } from "../concurrency.js";
 import type { ITool, ToolMetadata, ToolResult } from "../types.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 function makeTool(name: string): ITool<Record<string, unknown>> {
   return {

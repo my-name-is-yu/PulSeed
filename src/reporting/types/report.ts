@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ReportTypeEnum, VerbosityLevelEnum } from "../../base/types/core.js";
 import { VerificationFileDiffSchema } from "../../base/types/task.js";
 

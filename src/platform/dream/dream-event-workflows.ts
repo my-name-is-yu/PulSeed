@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StrategyDreamStateStore } from "../../runtime/store/strategy-dream-state-store.js";
 import type { EventLog } from "./dream-types.js";
 

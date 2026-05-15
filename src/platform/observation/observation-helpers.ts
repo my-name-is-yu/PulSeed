@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ObservationLogEntrySchema, ObservationLogSchema } from "../../base/types/state.js";
 import type { ObservationLogEntry, ObservationLog } from "../../base/types/state.js";
 import type { ObservationLayer, ObservationMethod, ObservationTrigger, ConfidenceTier } from "../../base/types/core.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { toToolDefinition } from "../../tool-definition-adapter.js";
 import { SoilDoctorInputSchema, SoilDoctorTool } from "../SoilDoctorTool/SoilDoctorTool.js";
 import { SoilImportInputSchema, SoilImportTool } from "../SoilImportTool/SoilImportTool.js";

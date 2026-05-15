@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { ToolExecutionTimeoutError, type ToolExecutor } from "../../../tools/executor.js";
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { AgentLoopTurnContext } from "./agent-loop-turn-context.js";

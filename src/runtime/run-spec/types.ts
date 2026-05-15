@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 
 export const RunSpecProfileSchema = z.enum(["generic", "kaggle"]);

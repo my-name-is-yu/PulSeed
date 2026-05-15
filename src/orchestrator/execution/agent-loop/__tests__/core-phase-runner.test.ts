@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AgentLoopModelInfo, AgentLoopModelRef } from "../agent-loop-model.js";
 import type { BoundedAgentLoopRunner } from "../bounded-agent-loop-runner.js";
 import { defaultAgentLoopCapabilities } from "../index.js";

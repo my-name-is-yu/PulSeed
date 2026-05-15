@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { CrossPlatformChatSessionManager } from "../cross-platform-session.js";
 import type { CrossPlatformChatSessionOptions } from "../cross-platform-session.js";
 import type { ChatRunnerDeps } from "../chat-runner-contracts.js";

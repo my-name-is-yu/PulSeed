@@ -15,7 +15,7 @@ import type { DriveContext } from "../../../base/types/drive.js";
 import { saveDreamConfig } from "../../../platform/dream/dream-config.js";
 import { KnowledgeGraph } from "../../../platform/knowledge/knowledge-graph.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 

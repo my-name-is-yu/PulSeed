@@ -1,6 +1,6 @@
 // ─── goal-raw.ts: cmdGoalAddRaw — add a goal without LLM negotiation ───
 
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { getCliLogger } from "../cli-logger.js";
 import {

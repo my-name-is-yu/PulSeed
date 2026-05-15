@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { Dirent } from "node:fs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   LessonEntrySchema,
   MemoryDataTypeSchema,

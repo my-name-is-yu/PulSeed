@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import * as path from "node:path";
 import { getCodeSearchIndexes } from "../../../platform/code-search/indexes/index-store.js";
 import { ProgressiveReader } from "../../../platform/code-search/progressive-reader.js";

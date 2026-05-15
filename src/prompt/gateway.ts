@@ -3,7 +3,7 @@
  * Thin orchestrator: assembles context, calls LLM, parses response.
  */
 
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import type { ContextAssembler } from "./context-assembler.js";
 import { PURPOSE_CONFIGS } from "./purposes/index.js";

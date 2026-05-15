@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata } from "../../types.js";
 import * as path from "node:path";
 import { isTextFileSizeLimitError, readTextFileWithinLimit } from "../../../base/utils/json-io.js";

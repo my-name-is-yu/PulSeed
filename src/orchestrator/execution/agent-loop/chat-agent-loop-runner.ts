@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AgentResult } from "../adapter-layer.js";
 import type { AgentLoopBudget, AgentLoopStopReason } from "./agent-loop-budget.js";
 import type {

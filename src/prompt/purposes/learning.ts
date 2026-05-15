@@ -4,7 +4,7 @@
  * Used by PromptGateway for LEARNING_PATTERN_EXTRACT and LEARNING_INSIGHT_GENERATE.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── LEARNING_PATTERN_EXTRACT ─────────────────────────────────────────────────
 

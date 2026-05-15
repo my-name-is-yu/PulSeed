@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const TurnLanguageHintSchema = z.object({
   language: z.enum(["en", "ja", "unknown"]),

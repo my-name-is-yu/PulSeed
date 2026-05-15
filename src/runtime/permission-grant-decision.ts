@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../base/llm/llm-client.js";
 import { getInternalIdentityPrefix } from "../base/config/identity-loader.js";
 import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";

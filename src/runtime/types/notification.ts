@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const MAX_NOTIFICATION_BATCHING_WINDOW_MINUTES = 24 * 60;
 const MAX_NOTIFICATION_COOLDOWN_MINUTES = 30 * 24 * 60;

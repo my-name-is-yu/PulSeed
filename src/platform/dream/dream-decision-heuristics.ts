@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const DreamStrategySelectorSchema = z.object({
   strategy_id: z.string().optional(),

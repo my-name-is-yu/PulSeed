@@ -4,7 +4,7 @@
  * Used by PromptGateway for CAPABILITY_DETECT, CAPABILITY_ASSESS, and CAPABILITY_PLAN.
  */
 
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // ─── CAPABILITY_DETECT ────────────────────────────────────────────────────────
 

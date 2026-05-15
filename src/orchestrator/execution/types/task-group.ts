@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { TaskSchema } from "./task.js";
 
 export const TaskGroupSchema = z.object({

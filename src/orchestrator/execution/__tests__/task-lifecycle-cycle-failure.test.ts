@@ -18,7 +18,7 @@ import type {
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 function createSpyLLMClient(responses: string[]): ILLMClient {
   let callIndex = 0;

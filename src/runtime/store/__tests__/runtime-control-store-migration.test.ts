@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import {

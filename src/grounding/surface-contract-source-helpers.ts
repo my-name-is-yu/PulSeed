@@ -1,4 +1,4 @@
-import type { RefinementCtx } from "zod";
+import type { RefinementCtx } from "zod/v3";
 import {
   GovernedMemoryForbiddenUseClassSchema,
   type GovernedMemoryBlockedUseClass,

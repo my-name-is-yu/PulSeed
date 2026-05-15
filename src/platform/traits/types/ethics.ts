@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const EthicsVerdictEnum = z.enum(["reject", "flag", "pass"]);
 export type EthicsVerdictType = z.infer<typeof EthicsVerdictEnum>;

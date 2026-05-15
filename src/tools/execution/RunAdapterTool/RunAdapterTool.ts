@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ITool, ToolResult, ToolCallContext, PermissionCheckResult, ToolMetadata, ToolDescriptionContext } from "../../types.js";
 import type { AdapterRegistry, AgentTask } from "../../../orchestrator/execution/adapter-layer.js";
 import { DESCRIPTION } from "./prompt.js";

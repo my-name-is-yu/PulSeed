@@ -19,7 +19,7 @@ import { verifyTask, type VerifierDeps } from "../task/task-verifier.js";
 import type { Task } from "../../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───

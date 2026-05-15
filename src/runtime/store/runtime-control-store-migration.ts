@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import {
   RuntimeControlOperationSchema,
   type RuntimeControlOperation,

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { DependencyTypeEnum } from "../../../base/types/core.js";
 
 export const DependencyEdgeStatusEnum = z.enum(["active", "satisfied", "invalidated"]);

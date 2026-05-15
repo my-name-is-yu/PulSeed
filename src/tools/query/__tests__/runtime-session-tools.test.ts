@@ -2,7 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 import { StateManager } from "../../../base/state/state-manager.js";
 import { ChatSessionDataStore } from "../../../interface/chat/chat-session-data-store.js";

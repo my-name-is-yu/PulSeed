@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { readJsonFileOrNull, writeJsonFileAtomic } from "../base/utils/json-io.js";
 import { getPulseedDirPath } from "../base/utils/paths.js";
 import { NotificationConfigSchema } from "../base/types/notification.js";

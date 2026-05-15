@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import type { Logger } from "../../runtime/logger.js";
 import type { ConcretenessScore, DecompositionQualityMetrics } from "../../base/types/goal-tree.js";

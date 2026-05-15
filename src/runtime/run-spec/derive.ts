@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { getInternalIdentityPrefix } from "../../base/config/identity-loader.js";
 import {
   RunSpecConfidenceValueSchema,

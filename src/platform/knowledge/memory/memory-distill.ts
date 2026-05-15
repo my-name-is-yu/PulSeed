@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ShortTermEntry, LessonEntry } from "../../../base/types/memory-lifecycle.js";

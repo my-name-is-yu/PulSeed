@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const requiredDomainValueSchema = z.unknown().refine((value) => {
   if (value === undefined || value === null) {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import type { Goal } from "../../../base/types/goal.js";
 import { DaemonClient, isDaemonRunning, type DaemonStartGoalOptions } from "../../../runtime/daemon/client.js";

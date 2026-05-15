@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { StrategyManager } from "../strategy-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";

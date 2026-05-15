@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { SearchOrchestrator } from "../../../platform/code-search/orchestrator.js";
 import type { RankedCandidate } from "../../../platform/code-search/contracts.js";
 import { saveCodeSearchSession } from "../../../platform/code-search/session-store.js";

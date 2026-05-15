@@ -5,7 +5,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ITool, ToolCallContext, PermissionCheckResult, ToolResult } from "../../../tools/types.js";
 import type { ToolRegistry } from "../../../tools/registry.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // Mock context-provider so tests don't walk the real filesystem
 vi.mock("../../../platform/observation/context-provider.js", () => ({

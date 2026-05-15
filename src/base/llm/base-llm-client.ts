@@ -1,4 +1,4 @@
-import type { ZodSchema } from "zod";
+import type { ZodSchema } from "zod/v3";
 import { LLMError } from "../utils/errors.js";
 import { sanitizeLLMJson } from "./json-sanitizer.js";
 

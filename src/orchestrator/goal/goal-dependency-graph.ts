@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { ValidationError } from "../../base/utils/errors.js";
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { ILLMClient, LLMMessage } from "../../base/llm/llm-client.js";

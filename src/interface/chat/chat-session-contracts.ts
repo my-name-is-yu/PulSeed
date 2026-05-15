@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import { RuntimeReplyTargetSchema } from "../../runtime/session-registry/types.js";
 import { RunSpecSchema } from "../../runtime/run-spec/index.js";
 import { SetupDialoguePublicStateSchema } from "./setup-dialogue.js";
