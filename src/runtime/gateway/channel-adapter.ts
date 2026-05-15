@@ -1,6 +1,7 @@
 import type { Envelope } from "../types/envelope.js";
 import type { GatewayChannelDisplayContract } from "./channel-display-policy.js";
 import type { GatewayChannelPresenceContract } from "./channel-presence-policy.js";
+import type { GatewayOutboundConversationPort } from "./outbound-conversation.js";
 
 export interface ReplyChannel {
   send(data: unknown): void;
@@ -55,4 +56,7 @@ export interface ChannelAdapter {
 
   /** Optional Seedy turn-presence surface capabilities and timing defaults */
   readonly presenceContract?: GatewayChannelPresenceContract;
+
+  /** Optional proactive outbound conversation capability for lightweight direct messages */
+  readonly outboundConversation?: GatewayOutboundConversationPort;
 }

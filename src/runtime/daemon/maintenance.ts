@@ -62,7 +62,7 @@ export interface RuntimeStoreMaintenanceReport {
 }
 
 const ProactiveResponseSchema = z.object({
-  action: z.enum(["suggest_goal", "investigate", "preemptive_check", "sleep"]),
+  action: z.enum(["suggest_goal", "investigate", "preemptive_check", "peer_initiative", "sleep"]),
   details: z.record(z.string(), z.unknown()).optional(),
 });
 export type ProactiveDecision = z.infer<typeof ProactiveResponseSchema>;
@@ -360,6 +360,7 @@ export async function runProactiveMaintenance(params: {
       getInternalIdentityPrefix("proactive engine", { baseDir }),
       relationshipProfileSurfaceContext.promptContext,
       `Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`,
+      `Given the current state of all goals:\n${goalSummaries}\n\nDecide what action to take:\n- "suggest_goal": A new goal should be created (provide title + description)\n- "investigate": Something needs investigation (provide what and why)\n- "preemptive_check": Run a pre-emptive observation (provide goal_id)\n- "peer_initiative": PulSeed should send at most one low-pressure friend-like care/preparation/capability message without a direct user prompt. Use only when it is valuable without requiring a reply. Put structured data under details.peer_initiative with kind, message, action_plan, worthiness, need_signals, and optional capability_fit.\n- "sleep": Nothing needs attention right now\n\nRespond with JSON: { "action": "...", "details": { ... } }`,
     ].filter((part) => part.trim().length > 0).join("\n\n");
 
     const response = await llmClient.sendMessage(

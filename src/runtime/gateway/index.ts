@@ -17,6 +17,23 @@ export type {
   TypingIndicatorStatus,
 } from "./channel-adapter.js";
 export {
+  OutboundConversationDeliveryReceiptSchema,
+  OutboundConversationMessageSchema,
+  OutboundConversationSurfaceSchema,
+  OutboundConversationTargetSchema,
+  PeerInitiativeFeedbackActionSchema,
+  PeerInitiativeTriggerActionSchema,
+} from "./outbound-conversation.js";
+export type {
+  GatewayOutboundConversationPort,
+  OutboundConversationDeliveryReceipt,
+  OutboundConversationMessage,
+  OutboundConversationSurface,
+  OutboundConversationTarget,
+  PeerInitiativeFeedbackAction,
+  PeerInitiativeTriggerAction,
+} from "./outbound-conversation.js";
+export {
   createGatewayDisplayPolicy,
   resolveGatewayChannelDisplayContract,
   DISCORD_GATEWAY_DISPLAY_CONTRACT,

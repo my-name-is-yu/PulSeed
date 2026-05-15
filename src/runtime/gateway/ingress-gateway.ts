@@ -1,6 +1,10 @@
 import type { ChannelAdapter, EnvelopeHandler, ReplyChannel } from "./channel-adapter.js";
 import type { Envelope } from "../types/envelope.js";
 import type { Logger } from "../logger.js";
+import type {
+  GatewayOutboundConversationPort,
+  OutboundConversationSurface,
+} from "./outbound-conversation.js";
 import {
   buildChannelPolicyMetadata,
   evaluateChannelAccess,
@@ -80,6 +84,16 @@ export class IngressGateway {
   /** Get a registered adapter by name. */
   getAdapter(name: string): ChannelAdapter | undefined {
     return this.adapters.get(name);
+  }
+
+  /** Resolve a proactive outbound conversation port from the live registered adapter set. */
+  getOutboundConversationPort(surface: OutboundConversationSurface): GatewayOutboundConversationPort | undefined {
+    for (const adapter of this.adapters.values()) {
+      if (adapter.outboundConversation?.surface === surface) {
+        return adapter.outboundConversation;
+      }
+    }
+    return undefined;
   }
 
   /** List all registered adapter names. */

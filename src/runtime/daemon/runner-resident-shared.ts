@@ -28,6 +28,7 @@ import {
 import type { Logger } from "../logger.js";
 import type { LoopSupervisor } from "../executor/index.js";
 import type { ScheduleEngine } from "../schedule/engine.js";
+import type { IngressGateway } from "../gateway/ingress-gateway.js";
 import type { AttentionStateStore } from "../store/attention-state-store.js";
 import type { RuntimeOperationStore } from "../store/runtime-operation-store.js";
 import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
@@ -134,6 +135,7 @@ export interface DaemonRunnerResidentContext {
   knowledgeManager?: KnowledgeManager;
   scheduleEngine?: ScheduleEngine;
   supervisor?: LoopSupervisor;
+  gateway?: Pick<IngressGateway, "getOutboundConversationPort">;
   attentionStateStore?: Pick<AttentionStateStore, "saveCycle">;
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
@@ -184,11 +186,25 @@ export type ResidentCognitionActivityMetadata = Partial<Pick<
   | "cognition_replay_index_entry_id"
 >>;
 
+export type ResidentPeerInitiativeActivityMetadata = Partial<Pick<
+  ResidentActivity,
+  | "peer_initiative_candidate_id"
+  | "peer_initiative_selection_reason"
+  | "peer_initiative_boundary_mapping_id"
+  | "peer_initiative_boundary"
+  | "peer_initiative_threshold_delivery_kind"
+  | "peer_initiative_message_id"
+  | "peer_initiative_delivery_id"
+  | "peer_initiative_delivery_status"
+  | "peer_prepared_artifact_ref"
+>>;
+
 export type ResidentActivityMetadata =
   ResidentSurfaceActivityMetadata &
   ResidentAttentionActivityMetadata &
   ResidentOperationPlanActivityMetadata &
-  ResidentCognitionActivityMetadata;
+  ResidentCognitionActivityMetadata &
+  ResidentPeerInitiativeActivityMetadata;
 
 export function residentOperationBoundaryAllowsPreparation(
   metadata: ResidentOperationPlanActivityMetadata,

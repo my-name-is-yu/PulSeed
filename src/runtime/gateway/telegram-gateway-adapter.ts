@@ -13,7 +13,23 @@ import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from ".
 import { TELEGRAM_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
+import {
+  OutboundConversationDeliveryReceiptSchema,
+  OutboundConversationMessageSchema,
+  type PeerInitiativeFeedbackAction,
+  type PeerInitiativeTriggerAction,
+  type GatewayOutboundConversationPort,
+  type OutboundConversationDeliveryReceipt,
+  type OutboundConversationMessage,
+  type OutboundConversationTarget,
+} from "./outbound-conversation.js";
 import { PluginChannelRuntimeStateStore, type GatewayChannelTimingSnapshot } from "../store/plugin-channel-runtime-state-store.js";
+import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
+import {
+  PeerInitiativeStore,
+  peerInitiativeFeedbackToIngestionInput,
+  projectPeerInitiativeFeedback,
+} from "../peer-initiative/index.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -22,6 +38,22 @@ const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
 const MIN_POLLING_TIMEOUT_SECONDS = 1;
 const MAX_POLLING_TIMEOUT_SECONDS = 60;
+const TELEGRAM_PEER_ACTION_CALLBACK_PREFIX = "psp1";
+
+const TELEGRAM_PEER_ACTION_CODE = {
+  more_like_this: "mt",
+  less_like_this: "lt",
+  not_now: "nn",
+  wrong_read: "wr",
+  mute_this_kind: "mk",
+  show_prepared: "sp",
+  use_once: "uo",
+  approve_external_action: "ae",
+} as const;
+
+const TELEGRAM_PEER_ACTION_FROM_CODE = Object.fromEntries(
+  Object.entries(TELEGRAM_PEER_ACTION_CODE).map(([action, code]) => [code, action])
+) as Record<string, PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"]>;
 
 function parseTelegramIntegerId(value: string): number | null {
   const normalized = value.trim();
@@ -36,6 +68,109 @@ function parseTelegramMessageRef(ref: NonTuiDisplayMessageRef): number {
     throw new Error(`telegram-display: invalid message reference "${ref.id}"`);
   }
   return messageId;
+}
+
+function telegramOutboundTargetBindingRef(chatId: number): string {
+  return `gateway:telegram:home_chat:${chatId}`;
+}
+
+function telegramOutboundChannelPolicyRef(channelName: string): string {
+  return `gateway:telegram:${channelName}:outbound-conversation-policy`;
+}
+
+function telegramPeerReplyMarkup(message: OutboundConversationMessage): TelegramInlineKeyboardMarkup | undefined {
+  const buttons = [
+    ...message.trigger_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
+    ...message.feedback_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
+  ];
+  if (buttons.length === 0) return undefined;
+  return {
+    inline_keyboard: chunkButtons(buttons, 2),
+  };
+}
+
+function telegramPeerActionButton(
+  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"],
+  candidateId: string,
+): { text: string; callback_data: string } {
+  return {
+    text: telegramPeerActionLabel(action),
+    callback_data: [
+      TELEGRAM_PEER_ACTION_CALLBACK_PREFIX,
+      TELEGRAM_PEER_ACTION_CODE[action],
+      candidateId,
+    ].join(":"),
+  };
+}
+
+function parseTelegramPeerActionCallbackData(data: string): {
+  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"];
+  candidateId: string;
+} | null {
+  const [prefix, code, ...candidateParts] = data.split(":");
+  if (prefix !== TELEGRAM_PEER_ACTION_CALLBACK_PREFIX || !code) return null;
+  const action = TELEGRAM_PEER_ACTION_FROM_CODE[code];
+  const candidateId = candidateParts.join(":");
+  if (!action || candidateId.trim().length === 0) return null;
+  return { action, candidateId };
+}
+
+function telegramPeerActionLabel(
+  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"],
+): string {
+  switch (action) {
+    case "show_prepared":
+      return "見る";
+    case "use_once":
+      return "今回だけ";
+    case "approve_external_action":
+      return "進めていい";
+    case "more_like_this":
+      return "もっと";
+    case "less_like_this":
+      return "少なめ";
+    case "not_now":
+      return "今は違う";
+    case "wrong_read":
+      return "読み違い";
+    case "mute_this_kind":
+      return "この種類を止める";
+  }
+}
+
+function telegramPeerFeedbackAckText(action: PeerInitiativeFeedbackAction["action"]): string {
+  switch (action) {
+    case "more_like_this":
+      return "PulSeed will keep this style in mind.";
+    case "less_like_this":
+      return "PulSeed will make this kind less frequent.";
+    case "not_now":
+      return "PulSeed will hold this for now.";
+    case "wrong_read":
+      return "PulSeed recorded this as a wrong read.";
+    case "mute_this_kind":
+      return "PulSeed will mute this kind.";
+  }
+}
+
+function chunkButtons<T>(buttons: T[], size: number): T[][] {
+  const rows: T[][] = [];
+  for (let index = 0; index < buttons.length; index += size) {
+    rows.push(buttons.slice(index, index + size));
+  }
+  return rows;
+}
+
+function parseTelegramOutboundTargetBindingRef(ref: string): number {
+  const prefix = "gateway:telegram:home_chat:";
+  if (!ref.startsWith(prefix)) {
+    throw new Error("telegram outbound conversation target ref does not reference a Telegram home chat");
+  }
+  const chatId = parseTelegramIntegerId(ref.slice(prefix.length));
+  if (chatId === null) {
+    throw new Error("telegram outbound conversation target ref carries an invalid chat id");
+  }
+  return chatId;
 }
 
 export interface TelegramGatewayConfig {
@@ -57,6 +192,13 @@ export interface TelegramGatewayConfig {
 interface TelegramGatewayRuntimeOptions {
   channelName?: string;
   runtimeStateStore?: PluginChannelRuntimeStateStore;
+  runtimeBaseDir?: string;
+  controlBaseDir?: string;
+  feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
+  peerInitiativeStore?: Pick<
+    PeerInitiativeStore,
+    "appendFeedbackProjection" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+  >;
 }
 
 export class TelegramGatewayNotifier implements INotifier {
@@ -80,11 +222,85 @@ export class TelegramGatewayNotifier implements INotifier {
   }
 }
 
+class TelegramOutboundConversationPort implements GatewayOutboundConversationPort {
+  readonly surface = "telegram" as const;
+
+  constructor(
+    private readonly api: TelegramAPI,
+    private readonly homeChatStore: TelegramHomeChatStore,
+    private readonly channelName: string,
+    private readonly timing: TelegramGatewayTimingRecorder,
+    private readonly onTimingUpdated: () => Promise<void>,
+    private readonly recordHealth: (update: Partial<{
+      last_outbound_at: string;
+      last_error: string | null;
+      last_timing: GatewayChannelTimingSnapshot;
+    }>) => Promise<void>,
+  ) {}
+
+  async resolveDefaultTarget(): Promise<OutboundConversationTarget | null> {
+    const chatId = this.homeChatStore.get();
+    if (chatId === undefined) return null;
+    return {
+      surface: "telegram",
+      target_binding_ref: telegramOutboundTargetBindingRef(chatId),
+      channel_policy_ref: telegramOutboundChannelPolicyRef(this.channelName),
+    };
+  }
+
+  async sendOutboundConversationMessage(
+    message: OutboundConversationMessage
+  ): Promise<OutboundConversationDeliveryReceipt> {
+    const parsed = OutboundConversationMessageSchema.parse(message);
+    if (parsed.surface !== "telegram") {
+      throw new Error(`telegram outbound conversation cannot send ${parsed.surface} messages`);
+    }
+    const target = await this.resolveDefaultTarget();
+    if (!target) {
+      throw new Error("telegram outbound conversation: no home chat configured. Send /sethome from the target Telegram chat.");
+    }
+    if (
+      parsed.target_binding_ref !== target.target_binding_ref
+      || parsed.channel_policy_ref !== target.channel_policy_ref
+    ) {
+      throw new Error("telegram outbound conversation rejected stale target or channel policy ref");
+    }
+
+    let transportMessageRef: string | undefined;
+    try {
+      const chatId = parseTelegramOutboundTargetBindingRef(parsed.target_binding_ref);
+      const messageId = await this.timing.recordOutbound("peer_initiative_send", () =>
+        this.api.sendPlainMessage(chatId, parsed.text, telegramPeerReplyMarkup(parsed))
+      );
+      transportMessageRef = String(messageId);
+      await this.onTimingUpdated();
+      await this.recordHealth({
+        last_outbound_at: new Date().toISOString(),
+        last_error: null,
+      });
+    } catch (error) {
+      await this.recordHealth({
+        last_error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    return OutboundConversationDeliveryReceiptSchema.parse({
+      message_id: parsed.message_id,
+      surface: "telegram",
+      target_binding_ref: parsed.target_binding_ref,
+      delivered_at: new Date().toISOString(),
+      ...(transportMessageRef ? { transport_message_ref: transportMessageRef } : {}),
+    });
+  }
+}
+
 export class TelegramGatewayAdapter implements ChannelAdapter {
   readonly name = "telegram";
   readonly typingIndicator: TypingIndicatorCapability;
   readonly displayContract = TELEGRAM_GATEWAY_DISPLAY_CONTRACT;
   readonly presenceContract = TELEGRAM_SEEDY_PRESENCE_CONTRACT;
+  readonly outboundConversation: GatewayOutboundConversationPort;
 
   private handler: EnvelopeHandler | null = null;
   private readonly api: TelegramAPI;
@@ -94,6 +310,11 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly timing: TelegramGatewayTimingRecorder;
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
+  private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
+  private readonly peerInitiativeStore: Pick<
+    PeerInitiativeStore,
+    "appendFeedbackProjection" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+  >;
   private running = false;
   private loopPromise: Promise<void> | null = null;
   private handlingUpdate = false;
@@ -102,7 +323,13 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   constructor(pluginDir: string, config: TelegramGatewayConfig, options: TelegramGatewayRuntimeOptions = {}) {
     this.config = config;
     this.channelName = options.channelName ?? inferGatewayChannelName(pluginDir);
-    this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(inferGatewayRuntimeBaseDir(pluginDir));
+    const runtimeBaseDir = options.runtimeBaseDir ?? inferGatewayRuntimeBaseDir(pluginDir);
+    const controlBaseDir = options.controlBaseDir ?? runtimeBaseDir;
+    this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(runtimeBaseDir, { controlBaseDir });
+    this.feedbackIngestionStore = options.feedbackIngestionStore
+      ?? new FeedbackIngestionStore(runtimeBaseDir, { controlBaseDir });
+    this.peerInitiativeStore = options.peerInitiativeStore
+      ?? new PeerInitiativeStore(runtimeBaseDir, { controlBaseDir });
     this.timing = new TelegramGatewayTimingRecorder(this.name);
     this.api = new TelegramAPI(config.bot_token);
     this.typingIndicator = createRefreshingTypingIndicator({
@@ -120,12 +347,28 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     });
     this.homeChatStore = new TelegramHomeChatStore(this.channelName, this.runtimeStateStore, config.chat_id);
     this.notifier = new TelegramGatewayNotifier(this.api, this.homeChatStore);
+    this.outboundConversation = new TelegramOutboundConversationPort(
+      this.api,
+      this.homeChatStore,
+      this.channelName,
+      this.timing,
+      () => this.recordTiming(),
+      (update) => this.recordHealth(update),
+    );
   }
 
-  static fromConfigDir(configDir: string): TelegramGatewayAdapter {
+  static fromConfigDir(
+    configDir: string,
+    options: Omit<TelegramGatewayRuntimeOptions, "channelName" | "runtimeStateStore"> = {},
+  ): TelegramGatewayAdapter {
+    const runtimeBaseDir = options.runtimeBaseDir ?? inferGatewayRuntimeBaseDir(configDir);
+    const controlBaseDir = options.controlBaseDir ?? runtimeBaseDir;
     return new TelegramGatewayAdapter(configDir, loadTelegramGatewayConfig(configDir), {
       channelName: inferGatewayChannelName(configDir),
-      runtimeStateStore: new PluginChannelRuntimeStateStore(inferGatewayRuntimeBaseDir(configDir)),
+      runtimeStateStore: new PluginChannelRuntimeStateStore(runtimeBaseDir, { controlBaseDir }),
+      ...options,
+      runtimeBaseDir,
+      controlBaseDir,
     });
   }
 
@@ -163,6 +406,11 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         backoffIndex = 0;
         for (const update of updates) {
           this.offset = update.update_id + 1;
+          const callbackQuery = update.callback_query;
+          if (callbackQuery?.data) {
+            await this.processCallbackQuery(callbackQuery, update.update_id);
+            continue;
+          }
           const msg = update.message;
           if (!msg?.text) continue;
           const fromId = msg.from?.id;
@@ -197,6 +445,102 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         await sleep(delay);
       }
     }
+  }
+
+  private async processCallbackQuery(query: TelegramCallbackQuery, updateId?: number): Promise<void> {
+    const parsedAction = parseTelegramPeerActionCallbackData(query.data ?? "");
+    if (!parsedAction) return;
+    const fromId = query.from?.id;
+    const chatId = query.message?.chat?.id;
+    const messageId = query.message?.message_id;
+    if (
+      typeof fromId !== "number" || !Number.isInteger(fromId)
+      || typeof chatId !== "number" || !Number.isInteger(chatId)
+      || typeof messageId !== "number" || !Number.isInteger(messageId)
+    ) {
+      return;
+    }
+    if (this.config.denied_user_ids.includes(fromId)) return;
+    if (this.config.denied_chat_ids.includes(chatId)) return;
+    if (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId)) return;
+    if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) return;
+
+    this.timing.beginTurn({ updateId, messageId });
+    await this.recordTiming();
+    const delivery = await this.peerInitiativeStore.getLatestDeliveryForCandidate({
+      candidateId: parsedAction.candidateId,
+      surface: "telegram",
+    });
+    const feedbackAction = delivery?.outbound_message?.feedback_actions.find((action) =>
+      action.action === parsedAction.action
+    );
+    if (feedbackAction) {
+      const now = new Date().toISOString();
+      const result = await this.feedbackIngestionStore.ingest(peerInitiativeFeedbackToIngestionInput(feedbackAction, {
+        sourceSurface: "telegram",
+        recordedAt: now,
+        surfaceRef: telegramOutboundTargetBindingRef(chatId),
+      }), { now });
+      await this.peerInitiativeStore.appendFeedbackProjection(projectPeerInitiativeFeedback({
+        action: feedbackAction,
+        result,
+        sourceSurface: "telegram",
+        projectedAt: now,
+      }));
+      await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+        this.api.answerCallbackQuery(query.id, telegramPeerFeedbackAckText(feedbackAction.action))
+      );
+      this.timing.markLifecycleEnd();
+      await this.recordTiming();
+      await this.recordHealth({
+        last_inbound_at: new Date().toISOString(),
+        last_outbound_at: new Date().toISOString(),
+        last_error: null,
+      });
+      return;
+    }
+
+    const triggerAction = delivery?.outbound_message?.trigger_actions.find((action) =>
+      action.action === parsedAction.action
+    );
+    if (triggerAction) {
+      await this.handlePeerTriggerAction(triggerAction, chatId, query.id);
+      this.timing.markLifecycleEnd();
+      await this.recordTiming();
+      await this.recordHealth({
+        last_inbound_at: new Date().toISOString(),
+        last_outbound_at: new Date().toISOString(),
+        last_error: null,
+      });
+      return;
+    }
+
+    await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+      this.api.answerCallbackQuery(query.id, "PulSeed could not find that peer action anymore.")
+    );
+    this.timing.markLifecycleEnd();
+    await this.recordTiming();
+  }
+
+  private async handlePeerTriggerAction(
+    action: PeerInitiativeTriggerAction,
+    chatId: number,
+    callbackQueryId: string,
+  ): Promise<void> {
+    if (action.action === "show_prepared") {
+      const artifact = await this.peerInitiativeStore.getPreparedArtifact(action.prepared_artifact_ref);
+      const text = artifact?.content_preview ?? artifact?.summary ?? "PulSeed could not find that prepared artifact anymore.";
+      await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+        this.api.answerCallbackQuery(callbackQueryId, "Showing the prepared note.")
+      );
+      await this.timing.recordOutbound("peer_initiative_callback_send", () =>
+        this.api.sendPlainMessage(chatId, text)
+      );
+      return;
+    }
+    await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+      this.api.answerCallbackQuery(callbackQueryId, "PulSeed received this. Reply in chat to continue before anything external happens.")
+    );
   }
 
   private async processMessage(text: string, fromUserId: number, chatId: number, messageId: number, updateId?: number): Promise<void> {
@@ -376,13 +720,31 @@ interface TelegramMessage {
   text?: string;
 }
 
+interface TelegramCallbackQuery {
+  id: string;
+  from: { id: number };
+  message?: {
+    message_id: number;
+    chat: { id: number };
+  };
+  data?: string;
+}
+
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 }
 
 interface SendMessageResult {
   message_id: number;
+}
+
+interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: Array<Array<{
+    text: string;
+    callback_data: string;
+  }>>;
 }
 
 class TelegramAPI {
@@ -400,7 +762,7 @@ class TelegramAPI {
     return this.call("getUpdates", {
       offset,
       timeout,
-      allowed_updates: ["message"],
+      allowed_updates: ["message", "callback_query"],
     });
   }
 
@@ -408,8 +770,15 @@ class TelegramAPI {
     await this.sendMessageInternal(chatId, text, "Markdown");
   }
 
-  async sendPlainMessage(chatId: number, text: string): Promise<number> {
-    return this.sendMessageInternal(chatId, text, null);
+  async sendPlainMessage(chatId: number, text: string, replyMarkup?: TelegramInlineKeyboardMarkup): Promise<number> {
+    return this.sendMessageInternal(chatId, text, null, replyMarkup);
+  }
+
+  async answerCallbackQuery(callbackQueryId: string, text: string): Promise<void> {
+    await this.call("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      text,
+    });
   }
 
   async sendChatAction(chatId: number, action: "typing"): Promise<void> {
@@ -442,7 +811,12 @@ class TelegramAPI {
     });
   }
 
-  private async sendMessageInternal(chatId: number, text: string, parseMode: "Markdown" | null): Promise<number> {
+  private async sendMessageInternal(
+    chatId: number,
+    text: string,
+    parseMode: "Markdown" | null,
+    replyMarkup?: TelegramInlineKeyboardMarkup,
+  ): Promise<number> {
     const chunks = splitMessage(text, 4096);
     let firstMessageId = -1;
     for (const [index, chunk] of chunks.entries()) {
@@ -450,6 +824,7 @@ class TelegramAPI {
         chat_id: chatId,
         text: chunk,
         ...(parseMode ? { parse_mode: parseMode } : {}),
+        ...(index === 0 && replyMarkup ? { reply_markup: replyMarkup } : {}),
       });
       if (index === 0) {
         firstMessageId = result.message_id;
@@ -651,7 +1026,10 @@ type TelegramGatewayOutboundKind =
   | "progress_delete"
   | "final_send"
   | "final_edit"
-  | "sethome_send";
+  | "sethome_send"
+  | "peer_initiative_send"
+  | "peer_initiative_callback_ack"
+  | "peer_initiative_callback_send";
 
 interface TelegramGatewayPollToken {
   readonly startedAtMs: number;

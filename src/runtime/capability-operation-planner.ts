@@ -37,6 +37,7 @@ export type ResidentOperationPlanAction =
   | "suggest_goal"
   | "investigate"
   | "preemptive_check"
+  | "peer_initiative"
   | "curiosity"
   | "curiosity_noop";
 
@@ -100,18 +101,19 @@ export interface ResidentOperationBoundaryResult {
 type ResidentPlanConfig = {
   capabilityId: string;
   operationIdPrefix: string;
-  operationKind: "hint" | "prepare" | "read";
+  operationKind: "hint" | "prepare" | "read" | "send" | "write" | "mutate";
   providerRef: string;
   payloadClass: string;
-  sideEffectProfile: "none" | "read" | "write";
+  sideEffectProfile: "none" | "read" | "send" | "write" | "mutate";
   riskClass: "low" | "medium";
-  privacyProfile: "workspace_private" | "local_private";
+  privacyProfile: "workspace_private" | "local_private" | "external_service";
   reversibility: "reversible" | "append_only" | "draft_only";
   advisoryOnly: boolean;
   preparableWhenBlocked: boolean;
   requiresRuntimeControl: boolean;
   requiredPermissionCapabilities: Array<"read_workspace" | "prepare_draft">;
   requiredApprovals: string[];
+  externalActionAuthority: boolean;
   userVisibleSummary: string;
 };
 
@@ -251,7 +253,7 @@ export function assembleResidentOperationPlans(
     ?? input.admission.agenda_item_id
     ?? input.admission.attention_input_id;
   const source = residentOperationPlanSource(input, sourceRef);
-  const config = residentPlanConfig(input.admission.action, input.goalId ?? "");
+  const config = residentPlanConfig(input.admission.action, input.goalId ?? "", input.details);
 
   if (!config) {
     return CapabilityOperationPlanAssemblySchema.parse({
@@ -294,7 +296,7 @@ export function assembleResidentOperationPlans(
       risk_class: config.riskClass,
       privacy_profile: config.privacyProfile,
       reversibility: config.reversibility,
-      external_action_authority: false,
+      external_action_authority: config.externalActionAuthority,
       target_refs: targetRefs,
       advisory_only: config.advisoryOnly,
       preparable_when_blocked: config.preparableWhenBlocked,
@@ -311,7 +313,7 @@ export function assembleResidentOperationPlans(
       payload_class: config.payloadClass,
       payload_epoch: input.admission.outcome_decision_id ?? input.admission.agenda_item_id,
       side_effect_profile: config.sideEffectProfile,
-      external_action_authority: false,
+      external_action_authority: config.externalActionAuthority,
       requires_runtime_control: config.requiresRuntimeControl,
       required_permission_capabilities: config.requiredPermissionCapabilities,
       target_refs: targetRefs,
@@ -509,6 +511,7 @@ function residentOperationPlanSource(
 function residentPlanConfig(
   action: ResidentOperationPlanAction,
   goalId: string,
+  details?: Record<string, unknown>,
 ): ResidentPlanConfig | null {
   switch (action) {
     case "suggest_goal":
@@ -527,6 +530,7 @@ function residentPlanConfig(
         requiresRuntimeControl: false,
         requiredPermissionCapabilities: [],
         requiredApprovals: [],
+        externalActionAuthority: false,
         userVisibleSummary: "Resident goal suggestion may prepare a local draft only; downstream gates decide whether to ask or act.",
       };
     case "investigate":
@@ -546,6 +550,7 @@ function residentPlanConfig(
         requiresRuntimeControl: false,
         requiredPermissionCapabilities: [],
         requiredApprovals: [],
+        externalActionAuthority: false,
         userVisibleSummary: "Resident curiosity may prepare an inspectable proposal only; it cannot start work or notify.",
       };
     case "preemptive_check":
@@ -564,12 +569,97 @@ function residentPlanConfig(
         requiresRuntimeControl: true,
         requiredPermissionCapabilities: ["read_workspace"],
         requiredApprovals: [`runtime-control:resident-preemptive-check:${goalId || "unknown"}`],
+        externalActionAuthority: false,
         userVisibleSummary: "Resident preemptive check is only a prepared read candidate until runtime-control admission is granted.",
       };
+    case "peer_initiative":
+      return residentPeerInitiativePlanConfig(details, goalId);
     case "sleep":
     case "curiosity_noop":
       return null;
   }
+}
+
+function residentPeerInitiativePlanConfig(details: Record<string, unknown> | undefined, goalId: string): ResidentPlanConfig {
+  const actionPlan = peerActionPlanDetails(details);
+  if (actionPlan.mode === "permissioned_external_action") {
+    return {
+      capabilityId: "capability:resident_peer_permissioned_action",
+      operationIdPrefix: "resident.peer_initiative.permissioned",
+      operationKind: operationKindForPeerExternalAction(actionPlan.proposed_action_kind),
+      providerRef: "resident:peer-initiative",
+      payloadClass: "resident.peer_initiative.permissioned_external_action",
+      sideEffectProfile: sideEffectForPeerExternalAction(actionPlan.proposed_action_kind),
+      riskClass: "medium",
+      privacyProfile: "external_service",
+      reversibility: "draft_only",
+      advisoryOnly: false,
+      preparableWhenBlocked: true,
+      requiresRuntimeControl: false,
+      requiredPermissionCapabilities: [],
+      requiredApprovals: [`approval:peer-initiative:${goalId || "daemon"}`],
+      externalActionAuthority: true,
+      userVisibleSummary: "Resident peer initiative may prepare the external action only; execution requires the existing approval path.",
+    };
+  }
+  if (actionPlan.mode === "internal_preparation") {
+    return {
+      capabilityId: "capability:resident_peer_internal_preparation",
+      operationIdPrefix: "resident.peer_initiative.prepare",
+      operationKind: "prepare",
+      providerRef: "resident:peer-initiative",
+      payloadClass: "resident.peer_initiative.internal_preparation",
+      sideEffectProfile: "write",
+      riskClass: "low",
+      privacyProfile: "local_private",
+      reversibility: "draft_only",
+      advisoryOnly: false,
+      preparableWhenBlocked: true,
+      requiresRuntimeControl: false,
+      requiredPermissionCapabilities: [],
+      requiredApprovals: [],
+      externalActionAuthority: false,
+      userVisibleSummary: "Resident peer initiative may prepare a local reversible artifact before asking the user to inspect it.",
+    };
+  }
+  if (actionPlan.mode === "contextual_capability_disclosure" && actionPlan.permission_required === true) {
+    return {
+      capabilityId: "capability:resident_peer_capability_disclosure",
+      operationIdPrefix: "resident.peer_initiative.capability.ask",
+      operationKind: "mutate",
+      providerRef: "resident:peer-initiative",
+      payloadClass: "resident.peer_initiative.contextual_capability_disclosure",
+      sideEffectProfile: "mutate",
+      riskClass: "medium",
+      privacyProfile: "workspace_private",
+      reversibility: "draft_only",
+      advisoryOnly: false,
+      preparableWhenBlocked: true,
+      requiresRuntimeControl: false,
+      requiredPermissionCapabilities: [],
+      requiredApprovals: [`approval:peer-initiative-capability:${goalId || "daemon"}`],
+      externalActionAuthority: true,
+      userVisibleSummary: "Resident peer initiative may disclose the capability and ask before enabling or externalizing it.",
+    };
+  }
+  return {
+    capabilityId: "capability:resident_peer_care_presence",
+    operationIdPrefix: "resident.peer_initiative.care",
+    operationKind: "hint",
+    providerRef: "resident:peer-initiative",
+    payloadClass: "resident.peer_initiative.care_presence",
+    sideEffectProfile: "none",
+    riskClass: "low",
+    privacyProfile: "local_private",
+    reversibility: "reversible",
+    advisoryOnly: true,
+    preparableWhenBlocked: true,
+    requiresRuntimeControl: false,
+    requiredPermissionCapabilities: [],
+    requiredApprovals: [],
+    externalActionAuthority: false,
+    userVisibleSummary: "Resident peer initiative may offer low-pressure care or contextual capability help without execution authority.",
+  };
 }
 
 function residentOperationPlanFailClosedReason(
@@ -590,6 +680,19 @@ function residentOperationPlanFailClosedReason(
   if (input.admission.action === "preemptive_check") {
     if (requested !== "prepare_action_candidate") {
       return "Resident preemptive operation plan requires a prepare_action_candidate attention outcome.";
+    }
+    return null;
+  }
+  if (input.admission.action === "peer_initiative") {
+    if (!input.admission.branch_admitted) {
+      return "Resident peer initiative operation plan requires an admitted attention outcome before delivery.";
+    }
+    if (
+      finalOutcome !== "express_to_user"
+      && finalOutcome !== "add_to_digest"
+      && finalOutcome !== "request_approval"
+    ) {
+      return `Resident peer initiative cannot prepare from attention outcome ${finalOutcome}.`;
     }
     return null;
   }
@@ -648,8 +751,73 @@ function residentPreparationSteps(action: ResidentOperationPlanAction): string[]
         "Record the preemptive check as a read candidate.",
         "Wait for runtime-control admission before any runtime executor or user-visible route.",
       ];
+    case "peer_initiative":
+      return [
+        "Prepare only the local peer initiative artifact or conversation suggestion.",
+        "Route visible delivery through attention outcome, proactive threshold, expression, visibility, and gateway outbound conversation gates.",
+        "Do not execute external actions from the peer initiative operation plan.",
+      ];
     case "sleep":
     case "curiosity_noop":
       return [];
+  }
+}
+
+function peerActionPlanDetails(details?: Record<string, unknown>): {
+  mode: "care_only" | "internal_preparation" | "permissioned_external_action" | "contextual_capability_disclosure";
+  proposed_action_kind?: string;
+  permission_required?: boolean;
+} {
+  const peer = details?.["peer_initiative"];
+  const peerRecord = peer && typeof peer === "object" && !Array.isArray(peer)
+    ? peer as Record<string, unknown>
+    : details ?? {};
+  const actionPlan = peerRecord["action_plan"];
+  if (!actionPlan || typeof actionPlan !== "object" || Array.isArray(actionPlan)) {
+    return { mode: "care_only" };
+  }
+  const actionPlanRecord = actionPlan as Record<string, unknown>;
+  const mode = actionPlanRecord["mode"];
+  if (
+    mode === "internal_preparation"
+    || mode === "permissioned_external_action"
+    || mode === "contextual_capability_disclosure"
+  ) {
+    return {
+      mode,
+      proposed_action_kind: typeof actionPlanRecord["proposed_action_kind"] === "string"
+        ? actionPlanRecord["proposed_action_kind"]
+        : undefined,
+      permission_required: actionPlanRecord["permission_required"] === true,
+    };
+  }
+  return { mode: "care_only" };
+}
+
+function operationKindForPeerExternalAction(actionKind?: string): ResidentPlanConfig["operationKind"] {
+  switch (actionKind) {
+    case "send_message":
+    case "share_artifact":
+      return "send";
+    case "create_calendar_event":
+    case "schedule_reminder":
+    case "commit_setting":
+      return "mutate";
+    default:
+      return "write";
+  }
+}
+
+function sideEffectForPeerExternalAction(actionKind?: string): ResidentPlanConfig["sideEffectProfile"] {
+  switch (actionKind) {
+    case "send_message":
+    case "share_artifact":
+      return "send";
+    case "create_calendar_event":
+    case "schedule_reminder":
+    case "commit_setting":
+      return "mutate";
+    default:
+      return "write";
   }
 }

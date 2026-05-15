@@ -40,6 +40,7 @@ export type ResidentAttentionAction =
   | "suggest_goal"
   | "investigate"
   | "preemptive_check"
+  | "peer_initiative"
   | "curiosity"
   | "curiosity_noop";
 
@@ -57,6 +58,7 @@ export interface ResidentAttentionAdmission {
   requested_outcome: OutcomeClass;
   admission_status: OutcomeDecision["admission_status"] | "not_selected";
   final_outcome?: OutcomeClass;
+  outcome_decision?: OutcomeDecision;
   branch_admitted: boolean;
   summary: string;
 }
@@ -89,7 +91,7 @@ export async function evaluateResidentAttentionAdmission(
 ): Promise<ResidentAttentionAdmission> {
   const now = input.now ?? new Date().toISOString();
   const sourceKind = sourceKindForResidentAttention(input.action);
-  const requestedOutcome = requestedOutcomeForResidentAction(input.action);
+  const requestedOutcome = requestedOutcomeForResidentAction(input.action, input.details);
   const goalId = input.goalId ?? goalIdFromDetails(input.details);
   const companionSnapshot = await loadResidentCompanionControlSnapshot(context);
   const companionControls = companionSnapshot.controls;
@@ -232,11 +234,13 @@ export async function evaluateResidentAttentionAdmission(
     gate_decision: gate,
     decided_at: now,
     runtime_item_refs: [ref("runtime_item", decisionAgendaItem.agenda_item_id)],
+    admitted_runtime_control_refs: admittedRuntimeControlsForResidentAction(input.action, goalId),
     authority_checks: [passedCheck("authority", "resident outcome has no execution authority without runtime-control admission")],
     staleness_checks: [passedCheck("staleness", "resident outcome uses the current source high-watermark")],
     companion_control_checks: companionControlChecks,
     safety_checks: [passedCheck("safety", "resident outcome remains non-GUI and non-notifying")],
     visibility_checks: [passedCheck("visibility", "resident outcome is hidden from normal surfaces until shared delivery admits it")],
+    visibility_policy_ref: visibilityPolicyRefForResidentAction(input.action, sourceId),
   });
 
   const intake = await residentAttentionStore(context).saveCycle({
@@ -255,7 +259,7 @@ export async function evaluateResidentAttentionAdmission(
 
   const returnedAgendaItemId = decisionAgendaItem.agenda_item_id;
   const metabolismAdmitted = replayDisposition === "accepted"
-    && residentBranchAdmitted(input.action, outcome)
+    && residentBranchAdmitted(input.action, outcome, input.details)
     && residentMetabolismAdmitsAction(input.action, currentAdmissionCandidates, metabolismResult);
   const returnedAdmissionStatus = metabolismResult && currentAdmissionCandidates.length === 0 && outcome?.admission_status === "admitted"
     ? "not_selected"
@@ -275,6 +279,7 @@ export async function evaluateResidentAttentionAdmission(
     requested_outcome: requestedOutcome,
     admission_status: returnedAdmissionStatus,
     final_outcome: outcome?.final_outcome,
+    outcome_decision: outcome ?? undefined,
     branch_admitted: metabolismAdmitted,
     summary: replayDisposition === "duplicate"
       ? `Resident ${input.action} reused an existing attention admission; no duplicate branch preparation was started.`
@@ -542,6 +547,8 @@ function residentMetabolismAdmitsAction(
     case "investigate":
     case "curiosity":
       return childTypes.has("prepare") || childTypes.has("digest");
+    case "peer_initiative":
+      return childTypes.has("digest") || childTypes.has("ask") || childTypes.has("prepare");
     case "curiosity_noop":
       return childTypes.has("watch") || childTypes.has("silence");
   }
@@ -574,7 +581,7 @@ function sourceKindForResidentAttention(
     : "resident_proactive_maintenance";
 }
 
-function requestedOutcomeForResidentAction(action: ResidentAttentionAction): OutcomeClass {
+function requestedOutcomeForResidentAction(action: ResidentAttentionAction, details?: Record<string, unknown>): OutcomeClass {
   switch (action) {
     case "sleep":
     case "suggest_goal":
@@ -583,6 +590,8 @@ function requestedOutcomeForResidentAction(action: ResidentAttentionAction): Out
       return "prepare_silently";
     case "preemptive_check":
       return "prepare_action_candidate";
+    case "peer_initiative":
+      return requestedOutcomeForPeerInitiative(details);
     case "curiosity_noop":
       return "keep_watching";
   }
@@ -591,17 +600,35 @@ function requestedOutcomeForResidentAction(action: ResidentAttentionAction): Out
 function residentBranchAdmitted(
   action: ResidentAttentionAction,
   outcome: OutcomeDecision | null,
+  details?: Record<string, unknown>,
 ): boolean {
   if (!outcome || outcome.admission_status !== "admitted") return false;
-  return outcome.final_outcome === requestedOutcomeForResidentAction(action);
+  return outcome.final_outcome === requestedOutcomeForResidentAction(action, details);
 }
 
 function requiredRuntimeControlsForResidentAction(
   action: ResidentAttentionAction,
   goalId: string,
 ): CompanionAutonomyRef[] {
+  if (action === "peer_initiative") return [ref("runtime_control", `resident-peer-initiative-surface:${goalId || "daemon"}`)];
   if (action !== "preemptive_check") return [];
   return [ref("runtime_control", `resident-preemptive-check:${goalId || "unknown"}`)];
+}
+
+function admittedRuntimeControlsForResidentAction(
+  action: ResidentAttentionAction,
+  goalId: string,
+): CompanionAutonomyRef[] {
+  if (action !== "peer_initiative") return [];
+  return [ref("runtime_control", `resident-peer-initiative-surface:${goalId || "daemon"}`)];
+}
+
+function visibilityPolicyRefForResidentAction(
+  action: ResidentAttentionAction,
+  sourceId: string,
+): CompanionAutonomyRef | undefined {
+  if (action !== "peer_initiative") return undefined;
+  return ref("visibility_policy", `visibility:resident-peer-initiative:${stableId(sourceId)}`);
 }
 
 function targetRefForResidentAttention(
@@ -612,6 +639,9 @@ function targetRefForResidentAttention(
   if (goalId) return ref("goal", goalId);
   if (action === "curiosity" || action === "curiosity_noop") {
     return ref("curiosity", sourceId);
+  }
+  if (action === "peer_initiative") {
+    return ref("runtime_event", `resident-peer-initiative:${sourceId}`);
   }
   return ref("runtime_event", `resident-proactive:${sourceId}`);
 }
@@ -625,17 +655,19 @@ function feelingForResidentAction(action: ResidentAttentionAction) {
     case "investigate":
     case "curiosity":
       return "curiosity" as const;
+    case "peer_initiative":
+      return "care" as const;
     case "preemptive_check":
       return "staleness_pressure" as const;
   }
 }
 
 function strengthForResidentAction(action: ResidentAttentionAction): number {
-  return action === "curiosity_noop" ? 0.42 : action === "preemptive_check" ? 0.78 : 0.76;
+  return action === "curiosity_noop" ? 0.42 : action === "preemptive_check" ? 0.78 : action === "peer_initiative" ? 0.72 : 0.76;
 }
 
 function confidenceForResidentAction(action: ResidentAttentionAction): number {
-  return action === "preemptive_check" ? 0.72 : action === "curiosity_noop" ? 0.62 : 0.76;
+  return action === "preemptive_check" ? 0.72 : action === "curiosity_noop" ? 0.62 : action === "peer_initiative" ? 0.7 : 0.76;
 }
 
 function expectedBenefitForResidentAction(action: ResidentAttentionAction): string {
@@ -649,9 +681,27 @@ function expectedBenefitForResidentAction(action: ResidentAttentionAction): stri
       return "PulSeed can prepare curiosity follow-up without user-visible interruption.";
     case "preemptive_check":
       return "PulSeed can hold a possible proactive check until runtime-control admission exists.";
+    case "peer_initiative":
+      return "PulSeed can express a low-pressure peer initiative only after attention, threshold, and visibility admission.";
     case "curiosity_noop":
       return "PulSeed can record that resident curiosity stayed quiet.";
   }
+}
+
+function requestedOutcomeForPeerInitiative(details?: Record<string, unknown>): OutcomeClass {
+  const peer = details?.["peer_initiative"];
+  const peerRecord = peer && typeof peer === "object" && !Array.isArray(peer)
+    ? peer as Record<string, unknown>
+    : details ?? {};
+  const actionPlan = peerRecord["action_plan"];
+  if (actionPlan && typeof actionPlan === "object" && !Array.isArray(actionPlan)) {
+    const mode = (actionPlan as Record<string, unknown>)["mode"];
+    const permissionRequired = (actionPlan as Record<string, unknown>)["permission_required"];
+    if (mode === "permissioned_external_action" || permissionRequired === true) {
+      return "request_approval";
+    }
+  }
+  return peerRecord["max_delivery_kind"] === "digest" ? "add_to_digest" : "express_to_user";
 }
 
 function residentAttentionAdmissionSummary(
