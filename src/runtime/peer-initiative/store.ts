@@ -5,8 +5,10 @@ import {
   type RuntimeStorePaths,
 } from "../store/runtime-paths.js";
 import {
-  openRuntimeControlDatabase,
+  createJsonRowCodec,
+  createRuntimeControlDatabaseOwner,
   type ControlDatabase,
+  type ControlDatabaseHandleOwner,
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "../store/control-db/index.js";
@@ -68,10 +70,15 @@ export const PeerFeedbackProjectionSchema = z.object({
 }).strict();
 export type PeerFeedbackProjection = z.infer<typeof PeerFeedbackProjectionSchema>;
 
+const PeerInitiativeJsonCodec = createJsonRowCodec(PeerInitiativeRecordSchema);
+const PeerPreparedArtifactJsonCodec = createJsonRowCodec(PeerPreparedArtifactSchema);
+const PeerDeliveryJsonCodec = createJsonRowCodec(PeerDeliveryRecordSchema);
+const PeerFeedbackProjectionJsonCodec = createJsonRowCodec(PeerFeedbackProjectionSchema);
+
 export class PeerInitiativeStore {
   private readonly paths: RuntimeStorePaths;
   private readonly dbOptions: RuntimeControlDbStoreOptions;
-  private dbPromise: Promise<ControlDatabase> | null = null;
+  private readonly dbOwner: ControlDatabaseHandleOwner;
 
   constructor(
     runtimeRootOrPaths?: string | RuntimeStorePaths,
@@ -82,6 +89,7 @@ export class PeerInitiativeStore {
         ? createRuntimeStorePaths(runtimeRootOrPaths)
         : runtimeRootOrPaths ?? createRuntimeStorePaths();
     this.dbOptions = options;
+    this.dbOwner = createRuntimeControlDatabaseOwner(this.paths, this.dbOptions);
   }
 
   async ensureReady(): Promise<void> {
@@ -137,7 +145,7 @@ export class PeerInitiativeStore {
         artifact.candidate_id,
         artifact.preparation_kind,
         artifact.created_at,
-        JSON.stringify(artifact),
+        PeerPreparedArtifactJsonCodec.stringify(artifact),
       );
     });
     return artifact;
@@ -175,7 +183,7 @@ export class PeerInitiativeStore {
         delivery.surface,
         delivery.status,
         delivery.delivered_at ?? null,
-        JSON.stringify(delivery),
+        PeerDeliveryJsonCodec.stringify(delivery),
       );
     });
     return delivery;
@@ -243,7 +251,7 @@ export class PeerInitiativeStore {
         claimedDelivery.surface,
         claimedDelivery.status,
         claimedDelivery.delivered_at ?? null,
-        JSON.stringify(claimedDelivery),
+        PeerDeliveryJsonCodec.stringify(claimedDelivery),
       );
       return {
         status: "claimed",
@@ -312,7 +320,7 @@ export class PeerInitiativeStore {
         projection.structured_outcome,
         projection.source_surface,
         projection.projected_at,
-        JSON.stringify(projection),
+        PeerFeedbackProjectionJsonCodec.stringify(projection),
       );
     });
     return projection;
@@ -387,8 +395,7 @@ export class PeerInitiativeStore {
   }
 
   private async database(): Promise<ControlDatabase> {
-    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
-    return this.dbPromise;
+    return this.dbOwner.database();
   }
 }
 
@@ -415,26 +422,17 @@ function upsertPeerInitiative(sqlite: SqliteDatabase, record: PeerInitiativeReco
     record.selected_state,
     record.created_at,
     record.next_eligible_at ?? null,
-    JSON.stringify(record),
+    PeerInitiativeJsonCodec.stringify(record),
   );
 }
 
 function parsePeerInitiative(recordJson: string): PeerInitiativeRecord[] {
-  try {
-    const parsed = PeerInitiativeRecordSchema.safeParse(JSON.parse(recordJson) as unknown);
-    return parsed.success ? [parsed.data] : [];
-  } catch {
-    return [];
-  }
+  const parsed = PeerInitiativeJsonCodec.safeParse(recordJson);
+  return parsed ? [parsed] : [];
 }
 
 function parsePeerDelivery(deliveryJson: string): PeerDeliveryRecord | null {
-  try {
-    const parsed = PeerDeliveryRecordSchema.safeParse(JSON.parse(deliveryJson) as unknown);
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+  return PeerDeliveryJsonCodec.safeParse(deliveryJson);
 }
 
 function pendingDeliveryLeaseExpired(delivery: PeerDeliveryRecord, now: string): boolean {
@@ -446,21 +444,12 @@ function pendingDeliveryLeaseExpired(delivery: PeerDeliveryRecord, now: string):
 }
 
 function parsePeerPreparedArtifact(artifactJson: string): PeerPreparedArtifact | null {
-  try {
-    const parsed = PeerPreparedArtifactSchema.safeParse(JSON.parse(artifactJson) as unknown);
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+  return PeerPreparedArtifactJsonCodec.safeParse(artifactJson);
 }
 
 function parsePeerFeedbackProjection(projectionJson: string): PeerFeedbackProjection[] {
-  try {
-    const parsed = PeerFeedbackProjectionSchema.safeParse(JSON.parse(projectionJson) as unknown);
-    return parsed.success ? [parsed.data] : [];
-  } catch {
-    return [];
-  }
+  const parsed = PeerFeedbackProjectionJsonCodec.safeParse(projectionJson);
+  return parsed ? [parsed] : [];
 }
 
 function preparedArtifactRef(candidate: PeerInitiativeCandidate): string | undefined {

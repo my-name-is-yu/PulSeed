@@ -33,6 +33,7 @@ import {
 } from "./runtime-operation-store.js";
 import {
   openRuntimeControlDatabase,
+  recordControlLegacyImport,
   type ControlDatabase,
   type ControlLegacyImportRecord,
   type RuntimeControlDbStoreOptions,
@@ -213,7 +214,7 @@ async function recordLegacyImport(
   importedAt?: string,
 ): Promise<ControlLegacyImportRecord> {
   const metadata = await readSourceMetadata(sourcePath);
-  return controlDb.recordLegacyImport({
+  return recordControlLegacyImport(controlDb, {
     sourceKind,
     sourceId,
     sourcePath: displayLegacySourcePath(paths, sourcePath),
