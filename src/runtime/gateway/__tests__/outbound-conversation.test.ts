@@ -194,11 +194,12 @@ describe("gateway outbound conversation port", () => {
       visibility_policy_ref: outbound.visibility_policy_ref,
       outbound_message: outbound,
     });
+    const callbackAckIds: string[] = [];
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const method = String(url).split("/").at(-1);
       if (method === "answerCallbackQuery") {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        expect(body["callback_query_id"]).toBe("callback-1");
+        callbackAckIds.push(String(body["callback_query_id"]));
         return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
       }
       throw new Error(`unexpected Telegram method: ${method}`);
@@ -236,9 +237,25 @@ describe("gateway outbound conversation port", () => {
       message: { message_id: 77, chat: { id: 12345 } },
       data: `psp1:lt:${candidate.candidate_id}`,
     });
+    await (adapter as unknown as {
+      processCallbackQuery(query: {
+        id: string;
+        from: { id: number };
+        message: { message_id: number; chat: { id: number } };
+        data: string;
+      }): Promise<void>;
+    }).processCallbackQuery({
+      id: "callback-2",
+      from: { id: 42 },
+      message: { message_id: 77, chat: { id: 12345 } },
+      data: `psp1:lt:${candidate.candidate_id}`,
+    });
 
     const feedbackRecords = await feedbackStore.listRecords();
     const projections = await peerStore.listFeedbackProjections({ candidateId: candidate.candidate_id });
+    expect(callbackAckIds).toEqual(["callback-1", "callback-2"]);
+    expect(feedbackRecords).toHaveLength(1);
+    expect(projections).toHaveLength(1);
     expect(feedbackRecords).toMatchObject([{
       source: "telegram",
       feedback_kind: "proactive_feedback",

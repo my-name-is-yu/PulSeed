@@ -62,6 +62,7 @@ describe("peer initiative contracts and gates", () => {
 
     const selection = selectPeerInitiativeCandidate([candidate]);
 
+    expect(candidate.candidate_id).toMatch(/^peer-candidate:[a-f0-9]{24}$/);
     expect(selection.selected_candidate_id).toBe(candidate.candidate_id);
     expect(selection.selection_reason).toBe("care_presence_budget");
     expect(candidate.reply_required).toBe(false);
@@ -361,6 +362,15 @@ describe("peer initiative contracts and gates", () => {
       source_surface: "telegram",
       feedback_id: ingestion.record.feedback_id,
     }]);
+    await expect(store.getFeedbackProjectionForAction({
+      candidateId: candidate.candidate_id,
+      sourceSurface: "telegram",
+      structuredOutcome: "less_like_this",
+    })).resolves.toMatchObject({
+      candidate_id: candidate.candidate_id,
+      structured_outcome: "less_like_this",
+      feedback_id: ingestion.record.feedback_id,
+    });
   });
 
   it("claims peer delivery before send so retrying the same delivery does not acquire a second send slot", async () => {
