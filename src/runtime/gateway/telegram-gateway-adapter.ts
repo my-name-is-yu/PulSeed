@@ -453,18 +453,18 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
             this.handlingUpdate = true;
             try {
               if (this.isFirstHomeBindingCommand(msg.text, fromId)) {
+                shouldAdvanceOffset = true;
                 await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
                 await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
-                shouldAdvanceOffset = true;
                 continue;
               }
               if (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId)) {
                 shouldAdvanceOffset = true;
                 continue;
               }
+              shouldAdvanceOffset = true;
               await this.recordHealth({ last_inbound_at: new Date().toISOString(), last_error: null });
               await this.processMessage(msg.text, fromId, chatId, msg.message_id, update.update_id);
-              shouldAdvanceOffset = true;
             } finally {
               this.handlingUpdate = false;
             }
