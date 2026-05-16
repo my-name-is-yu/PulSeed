@@ -171,6 +171,8 @@ describe("resident peer initiative caller path", () => {
         expect.objectContaining({ action: "wrong_read" }),
       ]),
     });
+    expect(JSON.stringify(gatewayPort.messages[0])).not.toContain("raw_content_allowed");
+    expect(JSON.stringify(gatewayPort.messages[0])).not.toContain("visibility-policy-v1");
     expect(state.resident_activity).toMatchObject({
       kind: "observation",
       peer_initiative_delivery_status: "delivered",

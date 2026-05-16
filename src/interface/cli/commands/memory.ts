@@ -4,11 +4,13 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../../../platform/knowledge/knowledge-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import {
+  inspectUserMemory,
   parseMemoryCorrectionRef,
   runUserMemoryOperation,
   UserMemoryOperationSchema,
   type UserMemoryOperation,
 } from "../../../platform/corrections/user-memory-operations.js";
+import type { UserFacingMemoryInspectProjection } from "../../../platform/corrections/memory-inspect-projection.js";
 
 function optionValue(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(name);
@@ -21,7 +23,28 @@ function hasOption(argv: string[], name: string): boolean {
 }
 
 function printUsage(): void {
-  getCliLogger().error("Usage: pulseed memory <correct|forget|retract|history> <kind:id> ... | pulseed memory export [--consent-scope id] [--include-secret]");
+  getCliLogger().error("Usage: pulseed memory <correct|forget|retract|history> <kind:id> ... | pulseed memory inspect <kind:id> [--json] | pulseed memory export [--consent-scope id] [--include-secret]");
+}
+
+function printInspectProjection(projection: UserFacingMemoryInspectProjection): void {
+  console.log("Memory inspection:");
+  console.log(`  Target type:           ${projection.target_kind.replace(/_/g, " ")}`);
+  console.log(`  Current state:         ${projection.current_state}`);
+  console.log(`  Active for future use: ${projection.active_for_future_use ? "yes" : "no"}`);
+  console.log(`  Replacement recorded:  ${projection.replacement_recorded ? "yes" : "no"}`);
+  console.log(`  Physical delete:       ${projection.physical_delete_performed ? "performed" : "not performed"}`);
+  console.log(`  Raw content visible:   ${projection.raw_content_visible ? "yes" : "no"}`);
+  if (projection.history.length === 0) {
+    console.log("  History:               No correction entries found.");
+    return;
+  }
+  console.log("  History:");
+  for (const entry of projection.history) {
+    console.log(`    - ${entry.occurred_at} ${entry.action}`);
+    console.log(`      effect: ${entry.user_visible_effect}`);
+    console.log(`      replacement recorded: ${entry.replacement_recorded ? "yes" : "no"}`);
+    console.log(`      reason recorded: ${entry.reason_recorded ? "yes" : "no"}`);
+  }
 }
 
 export async function cmdMemory(stateManager: StateManager, argv: string[]): Promise<number> {
@@ -33,6 +56,35 @@ export async function cmdMemory(stateManager: StateManager, argv: string[]): Pro
     });
     console.log(JSON.stringify({ entries }, null, 2));
     return 0;
+  }
+
+  if (argv[0] === "inspect") {
+    const refValue = argv[1];
+    if (!refValue) {
+      printUsage();
+      return 1;
+    }
+    if (hasOption(argv, "--destructive-delete")) {
+      getCliLogger().error("Destructive memory deletion requires a separate explicit approval flow; inspect is read-only.");
+      return 1;
+    }
+    try {
+      const projection = await inspectUserMemory(stateManager, {
+        targetRef: parseMemoryCorrectionRef(refValue),
+        goalId: optionValue(argv, "--goal"),
+        runId: optionValue(argv, "--run"),
+        taskId: optionValue(argv, "--task"),
+      });
+      if (hasOption(argv, "--json")) {
+        console.log(JSON.stringify(projection, null, 2));
+      } else {
+        printInspectProjection(projection);
+      }
+      return 0;
+    } catch (err) {
+      getCliLogger().error(formatOperationError("memory inspect", err));
+      return 1;
+    }
   }
 
   const operation = argv[0] as UserMemoryOperation | undefined;

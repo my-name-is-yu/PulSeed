@@ -72,3 +72,13 @@ export {
 export type {
   PeerFeedbackSourceSurface,
 } from "./feedback.js";
+export {
+  PeerInitiativeCalibrationReportSchema,
+  PeerInitiativeCurrentCapabilityProjectionSchema,
+  createPeerInitiativeCalibrationReport,
+  projectPeerInitiativeCurrentCapability,
+} from "./diagnostics.js";
+export type {
+  PeerInitiativeCalibrationReport,
+  PeerInitiativeCurrentCapabilityProjection,
+} from "./diagnostics.js";

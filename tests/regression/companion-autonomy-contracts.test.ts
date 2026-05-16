@@ -9,7 +9,7 @@ import {
   AgentAgendaItemSchema,
   AttentionMaturationTransitionSchema,
   AuditTraceSchema,
-  canVisibilityPolicyExposeRawContent,
+  canVisibilityPolicyExposePostGatedUserText,
   ExpressionDecisionSchema,
   InhibitionDecisionSchema,
   InitiativeGateDecisionSchema,
@@ -570,7 +570,7 @@ describe("companion autonomy audit and visibility contracts", () => {
       raw_content_allowed: false,
       rationale: "low-confidence urges are inspection-only",
     });
-    expect(canVisibilityPolicyExposeRawContent(inspectable)).toBe(false);
+    expect(canVisibilityPolicyExposePostGatedUserText(inspectable)).toBe(false);
 
     expect(VisibilityPolicySchema.parse({
       visibility_policy_id: "visibility:digest",
@@ -603,7 +603,7 @@ describe("companion autonomy audit and visibility contracts", () => {
       raw_content_allowed: true,
       rationale: "active audit state can expose raw non-deleted evidence in audit only",
     });
-    expect(canVisibilityPolicyExposeRawContent(auditVisible)).toBe(true);
+    expect(canVisibilityPolicyExposePostGatedUserText(auditVisible)).toBe(true);
 
     const neverShow = VisibilityPolicySchema.parse({
       visibility_policy_id: "visibility:never-direct",
@@ -620,7 +620,7 @@ describe("companion autonomy audit and visibility contracts", () => {
       raw_content_allowed: true,
       rationale: "sensitive eligibility calculations may be audited but never directly displayed",
     });
-    expect(canVisibilityPolicyExposeRawContent(neverShow)).toBe(false);
+    expect(canVisibilityPolicyExposePostGatedUserText(neverShow)).toBe(false);
 
     expect(() => VisibilityPolicySchema.parse({
       visibility_policy_id: "visibility:deleted-invalid",

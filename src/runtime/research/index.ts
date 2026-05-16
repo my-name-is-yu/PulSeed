@@ -11,8 +11,10 @@ export {
   DeepResearchUnsupportedClaimSchema,
   EvaluatorReportSchema,
   ResearchBriefSchema,
+  SourceRecordSchema,
   createResearchBrief,
   evaluateResearchBriefEvidence,
+  sourceRecordsFromRuntimeEvidence,
 } from "./deep-research-contract.js";
 export type {
   DeepResearchClaim,
@@ -26,4 +28,5 @@ export type {
   DeepResearchUnsupportedClaim,
   EvaluatorReport,
   ResearchBrief,
+  SourceRecord,
 } from "./deep-research-contract.js";

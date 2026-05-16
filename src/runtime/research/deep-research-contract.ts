@@ -1,7 +1,9 @@
 import { z } from "zod/v3";
 import {
   RuntimeEvidenceEntrySchema,
+  RuntimeEvidenceResearchSourceSchema,
   type RuntimeEvidenceEntry,
+  type RuntimeEvidenceResearchSource,
 } from "../store/evidence-ledger.js";
 
 export const DeepResearchSourcePriorityKindSchema = z.enum([
@@ -65,6 +67,9 @@ export const DeepResearchEvidenceLedgerRefSchema = z.object({
   path: ["scope"],
 });
 export type DeepResearchEvidenceLedgerRef = z.infer<typeof DeepResearchEvidenceLedgerRefSchema>;
+
+export const SourceRecordSchema = RuntimeEvidenceResearchSourceSchema;
+export type SourceRecord = RuntimeEvidenceResearchSource;
 
 export const ResearchBriefSchema = z.object({
   schema_version: z.literal("deep-research-brief/v1"),
@@ -196,6 +201,17 @@ export type EvaluatorReport = z.infer<typeof EvaluatorReportSchema>;
 
 export function createResearchBrief(input: z.input<typeof ResearchBriefSchema>): ResearchBrief {
   return ResearchBriefSchema.parse(input);
+}
+
+export function sourceRecordsFromRuntimeEvidence(
+  evidenceEntries: readonly RuntimeEvidenceEntry[]
+): SourceRecord[] {
+  return evidenceEntries.flatMap((entry) => {
+    const parsed = RuntimeEvidenceEntrySchema.parse(entry);
+    return (parsed.research ?? []).flatMap((memo) =>
+      memo.sources.map((source) => SourceRecordSchema.parse(source))
+    );
+  });
 }
 
 export function evaluateResearchBriefEvidence(input: {

@@ -138,6 +138,8 @@ pulseed runtime experiment-queues [--json]
 pulseed runtime experiment-queue <id> [--json]
 pulseed runtime bindings [--json]
 pulseed runtime proactive-quality [--json]
+pulseed runtime proactive-calibration [--json]
+pulseed runtime peer-initiative-capability [--json]
 pulseed runtime proactive-feedback --intervention <id> --outcome accepted
 pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
 pulseed runtime situation-frame <frame-id> [--json]
@@ -151,6 +153,8 @@ pulseed runtime memory-provenance [--json]
 
 These are operator and debugging surfaces. They may expose raw IDs and
 diagnostic labels that normal user-facing chat should hide by default.
+`peer-initiative-capability` is the exception that deliberately narrows the
+current product claim: resident peer initiative delivery is Telegram MVP only.
 
 The personal-agent diagnostic commands inspect the durable decision trace:
 SituationFrame, InitiativeEvent sequence, attention transitions, TaskCandidate,

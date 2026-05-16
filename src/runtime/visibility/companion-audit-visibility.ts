@@ -1,7 +1,7 @@
 import {
   AuditTraceSchema,
   VisibilityPolicySchema,
-  canVisibilityPolicyExposeRawContent,
+  canVisibilityPolicyExposePostGatedUserText,
   type AuditRepairOption,
   type AuditTrace,
   type AuditTraceRecord,
@@ -544,7 +544,7 @@ export function renderVisibilityPolicyForSurface(
     visibility_policy_ref: visibilityPolicyRef(policy.visibility_policy_id),
     visible,
     inspectable: policy.visible_in_audit || policy.visible_in_debug || Boolean(policy.inspectable_summary),
-    raw_content_allowed: visible && canVisibilityPolicyExposeRawContent(policy),
+    raw_content_allowed: visible && canVisibilityPolicyExposePostGatedUserText(policy),
     redacted,
     summary: policy.inspectable_summary ?? policy.rationale,
     reason: visible

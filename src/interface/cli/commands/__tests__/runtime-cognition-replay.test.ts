@@ -20,6 +20,7 @@ import { cmdRuntime } from "../runtime.js";
 const NOW = "2026-05-14T00:00:00.000Z";
 const RAW_PROMPT_SECRET = "RAW_PROMPT_SECRET_do_not_render";
 const RAW_MEMORY_SECRET = "RAW_MEMORY_SECRET_do_not_render";
+const RAW_RELATIONSHIP_MEMORY_REF = "profile:memory:included-raw-ref";
 const SENSITIVE_REVIEW_SECRET = "SENSITIVE_REVIEW_SECRET_do_not_render";
 
 function eventRef(ref = "chat:event:1", sourceStore: CognitionSourceStore = "chat_history") {
@@ -74,7 +75,15 @@ async function seedCognitionReplay(baseDir: string): Promise<void> {
       },
       relationship_state: {
         projection_id: "relationship:diagnostic",
-        included: [],
+        included: [{
+          memory_ref: RAW_RELATIONSHIP_MEMORY_REF,
+          role: "preference",
+          user_readable_reason: "A current relationship preference may shape tone without granting authority.",
+          allowed_surface_use: "tone_adaptation",
+          confidence: 0.72,
+          sensitivity: "private",
+          repair_paths: ["correct", "suppress", "forget"],
+        }],
         withheld: [],
         posture: "neutral",
         relationship_refs: [{
@@ -161,6 +170,7 @@ describe("runtime cognition-replay command", () => {
       expect(code).toBe(0);
       expect(output).not.toContain(RAW_PROMPT_SECRET);
       expect(output).not.toContain(RAW_MEMORY_SECRET);
+      expect(output).not.toContain(RAW_RELATIONSHIP_MEMORY_REF);
       expect(output).not.toContain(SENSITIVE_REVIEW_SECRET);
       expect(output).not.toContain("profile:source:deleted");
       const parsed = JSON.parse(output);
@@ -179,6 +189,21 @@ describe("runtime cognition-replay command", () => {
             writeback_proposal_refs: [{ kind: "memory_writeback_proposal", ref: "writeback:diagnostic:1" }],
           }],
         },
+        relationship_memory_summaries: [{
+          schema_version: "relationship-memory-normal-summary/v1",
+          surface_target: "normal_user",
+          included_count: 1,
+          withheld_count: 0,
+          raw_memory_refs_visible: false,
+          raw_source_refs_visible: false,
+          sensitive_content_visible: false,
+          included: [{
+            role: "preference",
+            allowed_surface_use: "tone_adaptation",
+            user_readable_reason: "A current relationship preference may shape tone without granting authority.",
+            sensitivity: "private",
+          }],
+        }],
         writeback_queue_refs: [{
           queue_entry_ref: { kind: "cognition_writeback_queue_entry", ref: "queue:writeback:diagnostic:1" },
           proposal_ref: { kind: "memory_writeback_proposal", ref: "writeback:diagnostic:1" },

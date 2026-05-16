@@ -6,8 +6,10 @@ import {
 import {
   DEFAULT_DEEP_RESEARCH_SOURCE_PRIORITY,
   ResearchBriefSchema,
+  SourceRecordSchema,
   createResearchBrief,
   evaluateResearchBriefEvidence,
+  sourceRecordsFromRuntimeEvidence,
 } from "../index.js";
 
 const NOW = "2026-05-14T00:00:00.000Z";
@@ -214,6 +216,19 @@ describe("Deep Research typed contract", () => {
       "unsupported_claims",
       "stale_unknown_handling",
     ]);
+
+    const sourceRecords = sourceRecordsFromRuntimeEvidence([supported, stale]);
+    expect(sourceRecords).toEqual([
+      expect.objectContaining({
+        url: "https://example.com/research-contract",
+        source_type: "official_docs",
+        provenance: "summarized",
+      }),
+    ]);
+    expect(SourceRecordSchema.parse(sourceRecords[0]!)).toMatchObject({
+      url: "https://example.com/research-contract",
+      source_type: "official_docs",
+    });
   });
 
   it("rejects briefs that try to create a dedicated Deep Research runtime or auto-apply memory", () => {
