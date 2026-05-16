@@ -176,6 +176,23 @@ behavior, product direction, and unsupported overclaim territory.
       ]
     },
     {
+      "id": "reference-runtime-state-memory-truth-maintenance",
+      "classification": "current_operating_behavior",
+      "claim_kind": "current_behavior",
+      "source": {
+        "path": "docs/reference/runtime-state.md",
+        "text": "Memory truth maintenance currently stores agent memory, domain knowledge, and"
+      },
+      "claim": "Agent memory, domain knowledge, and shared knowledge production state use the typed memory truth-maintenance store.",
+      "evidence_refs": [
+        "src/runtime/store/memory-truth-maintenance-store.ts",
+        "src/platform/knowledge/memory-truth-adapter.ts",
+        "src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts",
+        "tests/replay/memory-truth-maintenance-replay.test.ts",
+        "tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts"
+      ]
+    },
+    {
       "id": "reference-runtime-state-personal-agent-trace",
       "classification": "current_operating_behavior",
       "claim_kind": "current_behavior",

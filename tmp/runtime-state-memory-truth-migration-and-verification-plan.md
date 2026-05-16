@@ -1,0 +1,71 @@
+# Runtime State Memory Truth Migration And Verification Plan
+
+## Target Design
+
+`StateManager` remains a compatibility/root/bootstrap boundary for baseDir and legacy import/export/debug paths. Production memory, Soil, and knowledge truth moves to a typed owner store:
+
+- `MemoryTruthMaintenanceStore` owns claims, evidence refs, corrections, forget tombstones, conflict sets, recall records, projection records, Soil projection metadata, and knowledge graph projection metadata.
+- `MemoryTruthUnitOfWork` wraps multi-table truth updates in a real SQLite transaction.
+- `KnowledgeManager` keeps its public API but becomes an adapter over the typed truth store.
+- Soil and knowledge graph consume typed claim/projection lifecycle records. Soil Markdown and publish/import files stay explicit boundary artifacts.
+- Runtime Event Log / RuntimeGraph integration is mandatory because #1997 is merged on the base branch.
+
+## Implementation Steps
+
+1. Add control DB migration for memory truth-maintenance tables. Status: complete in schema version 40.
+2. Add Zod schemas and a typed store/service for:
+   - `MemoryClaim`
+   - `EvidenceRef`
+   - `CorrectionRef`
+   - `ForgetTombstone`
+   - `ConflictSet`
+   - `ProcedureMemory`
+   - `PreferenceMemory`
+   - `RelationshipMemory`
+   - `RecallRecord`
+   - `ProjectionRecord`
+   Status: complete in `src/runtime/store/memory-truth-maintenance-store.ts`.
+3. Add transaction APIs for correction, replacement claim, tombstone/conflict, recall/projection updates, RuntimeGraph/event-log refs, and failure injection tests. Status: complete with rollback/idempotency tests.
+4. Adapt `KnowledgeManager` agent memory save/recall/list/correct/history/export to use the typed truth store as production truth. Status: complete for save/recall/correction/forget/retract/history/inspect/export.
+5. Adapt domain/shared knowledge save/load/query to the typed truth store. Status: complete through `memory-truth-adapter.ts` and KnowledgeManager store/search callers.
+6. Keep `KnowledgeMemoryStateStore` as compatibility/migration/debug and Soil projection helper, not production truth for `KnowledgeManager`. Status: complete; legacy store is fallback/import compatibility when truth store is empty.
+7. Add Soil projection consumption of memory truth projection metadata and block corrected/forgotten/conflicted source claims during rebuild/query/publish. Status: complete for agent memory Soil projection caller paths; import/publish artifacts stay explicit boundaries.
+8. Add Runtime Event Log/RuntimeGraph event payload support for memory truth maintenance or link memory truth rows through existing authority/source refs. Status: complete with `memory.truth_maintenance.recorded` and rebuild summary.
+9. Add guardrails that fail on new production memory/knowledge raw `StateManager.writeRaw`, direct file truth writes, or untyped JSON truth tables without an owned allowlist entry. Status: complete for raw StateManager memory/knowledge/Soil writes; existing direct-file guard remains active.
+10. Update docs after tests prove behavior. Status: pending until final verification pass finishes.
+
+## Verification Plan
+
+Targeted first:
+
+- `npx vitest run src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts`
+- `npx vitest run --config vitest.replay.config.ts tests/replay/memory-truth-maintenance-replay.test.ts`
+- `npx vitest run --config vitest.product-gauntlet.config.ts tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts`
+- `npx vitest run src/platform/corrections/__tests__/user-memory-operations.test.ts src/platform/knowledge/__tests__/knowledge-manager-semantic-recall.test.ts src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts src/tools/execution/MemoryCorrectionTool/__tests__/MemoryCorrectionTool.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+
+Full required lane before final report:
+
+- `npm run check:database-first-legacy-stores`
+- `npm run check:docs`
+- `npm run typecheck`
+- `npm run lint:boundaries`
+- `npm run test:contracts`
+- `npm run test:golden-traces`
+- `npm run test:replay`
+- `npm run test:integration`
+- `npm run test:smoke`
+- `npm run test:product-gauntlet`
+- `npm run test:changed`
+- `npm run check:public-contracts`
+- `git diff --check`
+
+## Completion Blockers To Avoid
+
+- No docs-only or inventory-only completion.
+- No helper-only tests as completion evidence.
+- No production memory/knowledge raw `StateManager.writeRaw`.
+- No direct file-backed truth owner for memory/knowledge production writes.
+- No semantic recall result that silently uses lexical fallback.
+- No transaction wrapper without rollback/partial-failure proof.
+- No replay tests that only repeat calls in the same process.
+- No docs claim without production caller-path tests.

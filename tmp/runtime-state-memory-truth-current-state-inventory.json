@@ -1,0 +1,386 @@
+{
+  "schema_version": "runtime-state-memory-truth-current-state-inventory-v1",
+  "generated_at": "2026-05-16T23:00:00.000+09:00",
+  "repo": "/Users/yuyoshimuta/PulSeed",
+  "branch": "yu/runtime-state-memory-truth-maintenance",
+  "base": {
+    "branch": "main",
+    "commit": "1d8263fcc54d117a0f4459e2092a2e0d2d4a4b12",
+    "latest_main_confirmed_by": [
+      "git fetch --all --prune",
+      "git switch main",
+      "git pull --ff-only",
+      "git rev-parse HEAD"
+    ]
+  },
+  "live_github_state": {
+    "issue_or_pr_1996": {
+      "title": "Interaction Authority Kernel + Evaluation Lab",
+      "state": "MERGED",
+      "merged_at": "2026-05-16T06:57:03Z",
+      "url": "https://github.com/my-name-is-yu/PulSeed/pull/1996"
+    },
+    "runtime_event_log_runtimegraph_pr": {
+      "number": 1997,
+      "title": "Runtime event log RuntimeGraph source of truth",
+      "state": "MERGED",
+      "merged_at": "2026-05-16T14:24:41Z",
+      "merge_commit": "1d8263fcc54d117a0f4459e2092a2e0d2d4a4b12",
+      "url": "https://github.com/my-name-is-yu/PulSeed/pull/1997",
+      "integration_required_for_this_pr": true
+    }
+  },
+  "node": {
+    "node_v": "v24.15.0"
+  },
+  "guard_baseline": {
+    "command": "node scripts/check-database-first-legacy-stores.mjs --json",
+    "ok": true,
+    "debtReport": [],
+    "directFileDebtReport": [],
+    "directFileOwnerReport_ids": [
+      "config-setup-plugin-gateway-channel-files",
+      "debug-logs-and-daemon-pid",
+      "drive-system-event-spool",
+      "drive-system-schedule",
+      "knowledge-graph",
+      "migration-inputs",
+      "reflection-reports",
+      "runtime-report-artifacts",
+      "soil-import-publish-surfaces",
+      "strategy-template-registry",
+      "tool-workspace-artifacts",
+      "user-authored-profile-content",
+      "vector-index"
+    ]
+  },
+  "current_memory_knowledge_soil_owners": [
+    {
+      "domain": "agent_memory",
+      "current_owner": "KnowledgeMemoryStateStore via Soil SQLite records",
+      "primary_files": [
+        "src/platform/knowledge/knowledge-manager.ts",
+        "src/platform/knowledge/knowledge-manager-agent-memory.ts",
+        "src/platform/knowledge/knowledge-manager-internals.ts",
+        "src/platform/knowledge/knowledge-memory-state-store.ts",
+        "src/platform/corrections/user-memory-operations.ts"
+      ],
+      "state_manager_usage": "StateManager is used as a baseDir carrier. Production agent-memory read/write goes through knowledgeMemoryStoreForStateManager(stateManager), which currently returns KnowledgeMemoryStateStore.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "AgentMemoryStore is persisted by rewriting generic Soil records for entries/corrections/state. Claims, evidence refs, tombstones, conflicts, recall records, and projections are not first-class typed owner tables.",
+      "migration_target": "MemoryTruthMaintenanceStore in control DB with typed claim/evidence/correction/tombstone/conflict/recall/projection tables; Soil receives projections from this store."
+    },
+    {
+      "domain": "domain_knowledge",
+      "current_owner": "KnowledgeMemoryStateStore via Soil SQLite records",
+      "primary_files": [
+        "src/platform/knowledge/knowledge-manager-store.ts",
+        "src/platform/knowledge/knowledge-search.ts",
+        "src/platform/knowledge/knowledge-memory-state-store.ts"
+      ],
+      "state_manager_usage": "StateManager is used to resolve baseDir. loadDomainKnowledge/saveDomainKnowledge use KnowledgeMemoryStateStore.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "DomainKnowledge entries are stored as generic Soil records, not claim records linked to evidence/correction/conflict/projection lifecycle.",
+      "migration_target": "Knowledge entries become MemoryClaim claim_type=fact records with goal scope and typed evidence; existing KnowledgeEntry APIs adapt to the typed truth store."
+    },
+    {
+      "domain": "shared_knowledge",
+      "current_owner": "KnowledgeMemoryStateStore via Soil SQLite records",
+      "primary_files": [
+        "src/platform/knowledge/knowledge-manager-store.ts",
+        "src/platform/knowledge/knowledge-search.ts",
+        "src/platform/knowledge/knowledge-memory-state-store.ts"
+      ],
+      "state_manager_usage": "StateManager is used to resolve baseDir for shared knowledge reads and writes.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "SharedKnowledgeEntry records are stored as generic Soil records and do not carry first-class claim lifecycle/projection records.",
+      "migration_target": "Shared knowledge entries become scoped MemoryClaim records with evidence and projection metadata."
+    },
+    {
+      "domain": "memory_corrections_for_agent_memory",
+      "current_owner": "AgentMemoryStore.corrections inside KnowledgeMemoryStateStore plus Runtime Event Log authority trace",
+      "primary_files": [
+        "src/platform/corrections/user-memory-operations.ts",
+        "src/platform/corrections/memory-correction-ledger.ts",
+        "src/platform/corrections/memory-inspect-projection.ts",
+        "src/runtime/control/execution-authority-decision.ts",
+        "src/runtime/store/runtime-event-log.ts"
+      ],
+      "state_manager_usage": "StateManager supplies baseDir and RuntimeEvidenceLedger path; correction persistence for agent_memory currently rewrites the agent memory store.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "Correction entry exists as schema but not as indexed first-class transaction participant with tombstones, conflicts, projection records, and recall records.",
+      "migration_target": "CorrectionRef rows update claim lifecycle, replacement links, tombstone/conflict rows, recall/projection rows, RuntimeGraph refs, and event-log evidence in one unit of work."
+    },
+    {
+      "domain": "runtime_evidence_dream_checkpoint_soil_record_corrections",
+      "current_owner": "RuntimeEvidenceLedger for non-agent memory correction ledger; Soil repository has soil_corrections for Soil records",
+      "primary_files": [
+        "src/platform/corrections/user-memory-operations.ts",
+        "src/runtime/store/evidence-ledger.ts",
+        "src/platform/soil/sqlite-repository.ts",
+        "src/platform/soil/sqlite-repository-storage.ts"
+      ],
+      "state_manager_usage": "StateManager resolves baseDir and scope; non-agent correction requires goal or run scope.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": "RuntimeEvidenceLedger remains file-backed under runtime evidence artifacts.",
+      "typed_owner_gap": "Non-agent memory corrections are not unified with agent-memory claim truth maintenance.",
+      "migration_target": "MemoryTruthMaintenanceStore stores CorrectionRef rows for agent_memory and soil_record targets; runtime_evidence/dream_checkpoint remain scoped runtime evidence boundary unless migrated by a later owner slice."
+    },
+    {
+      "domain": "soil_query_open_import_publish_rebuild",
+      "current_owner": "Soil SQLite repository plus explicit Markdown import/publish/debug artifacts",
+      "primary_files": [
+        "src/platform/soil/sqlite-repository.ts",
+        "src/platform/soil/contracts.ts",
+        "src/platform/soil/runtime-rebuild.ts",
+        "src/tools/query/SoilQueryTool/SoilQueryTool.ts",
+        "src/tools/execution/SoilRebuildTool/SoilRebuildTool.ts",
+        "src/tools/execution/SoilImportTool/SoilImportTool.ts",
+        "src/tools/execution/SoilPublishTool/SoilPublishTool.ts"
+      ],
+      "state_manager_usage": "SoilRebuildTool may use StateManager only to resolve baseDir.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": "Markdown projections/import queue/publish artifacts are explicit Soil boundary artifacts.",
+      "typed_owner_gap": "Soil can store statuses and corrections but does not currently consume a single typed claim truth-maintenance contract for source claim lifecycle.",
+      "migration_target": "Soil projections read MemoryTruthProjection records and source claim lifecycle before publish/query/rebuild."
+    },
+    {
+      "domain": "knowledge_graph",
+      "current_owner": "KnowledgeGraphStateStore control DB rows",
+      "primary_files": [
+        "src/platform/knowledge/knowledge-graph.ts",
+        "src/platform/knowledge/knowledge-graph-state-store.ts",
+        "src/platform/knowledge/knowledge-graph-state-migration.ts"
+      ],
+      "state_manager_usage": "No normal StateManager raw read/write; legacy graph path retained as compatibility constructor input.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "Graph nodes/edges link knowledge entries but not MemoryClaim/EvidenceRef/CorrectionRef/ConflictSet/ProjectionRecord truth-maintenance records.",
+      "migration_target": "Add graph/projection records for claim/evidence/correction/conflict/projection refs and block invalidated claim resurrection."
+    },
+    {
+      "domain": "vector_index",
+      "current_owner": "VectorIndexStateStore control DB rows",
+      "primary_files": [
+        "src/platform/knowledge/vector-index.ts",
+        "src/platform/knowledge/vector-index-state-store.ts",
+        "src/platform/knowledge/vector-index-state-migration.ts"
+      ],
+      "state_manager_usage": "No normal StateManager raw read/write; legacy memory/vector-index.json is doctor/repair import input only.",
+      "raw_state_manager_write": false,
+      "direct_file_truth_write": false,
+      "typed_owner_gap": "Semantic index entries are separate from recall records and claim invalidation status.",
+      "migration_target": "Recall records must state semantic, semantic_unavailable, lexical, exact, or graph mode and carry safe projection/provenance status."
+    }
+  ],
+  "production_caller_paths_to_migrate": [
+    {
+      "path": "memory save",
+      "entrypoints": [
+        "src/tools/execution/MemorySaveTool/MemorySaveTool.ts",
+        "src/platform/knowledge/knowledge-manager.ts:saveAgentMemory"
+      ],
+      "current_owner": "AgentMemoryStore through KnowledgeMemoryStateStore",
+      "target_owner": "MemoryTruthMaintenanceStore.saveClaim plus Soil projection record"
+    },
+    {
+      "path": "memory recall",
+      "entrypoints": [
+        "src/tools/query/MemoryRecallTool/MemoryRecallTool.ts",
+        "src/platform/knowledge/knowledge-manager.ts:recallAgentMemory"
+      ],
+      "current_owner": "AgentMemoryStore filtered in memory by exact/lexical/semantic modes",
+      "target_owner": "MemoryTruthMaintenanceStore.recallClaims returning typed RecallRecord/provenance and adapted agent-memory entries"
+    },
+    {
+      "path": "memory correction/forget/retract/history/inspect/export",
+      "entrypoints": [
+        "src/interface/cli/commands/memory.ts",
+        "src/tools/execution/MemoryCorrectionTool/MemoryCorrectionTool.ts",
+        "src/platform/corrections/user-memory-operations.ts"
+      ],
+      "current_owner": "applyAgentMemoryCorrection rewrites AgentMemoryStore; non-agent corrections append RuntimeEvidenceLedger",
+      "target_owner": "MemoryTruthMaintenanceStore.applyCorrection transaction plus normal/operator projections"
+    },
+    {
+      "path": "chat/gateway memory use",
+      "entrypoints": [
+        "src/interface/chat/chat-runner.ts",
+        "src/runtime/cognition/memory-context.ts",
+        "src/platform/profile/retrieval-context.ts"
+      ],
+      "current_owner": "KnowledgeManager/relationship-profile governed memory context",
+      "target_owner": "Typed recall/projection results filtered by lifecycle and normal-surface safety"
+    },
+    {
+      "path": "Dream/Reflection/AgentLoop planning memory use",
+      "entrypoints": [
+        "src/reflection/dream-consolidation.ts",
+        "src/runtime/daemon/runner-resident-dream.ts",
+        "src/orchestrator/execution/agent-loop/agent-loop-context-assembler.ts",
+        "src/tools/query/SoilQueryTool/SoilQueryTool.ts"
+      ],
+      "current_owner": "KnowledgeManager and Soil query context",
+      "target_owner": "Typed recall/projection contract and Soil projection lifecycle filters"
+    },
+    {
+      "path": "Soil query/open/import/publish/rebuild",
+      "entrypoints": [
+        "src/tools/query/SoilQueryTool/SoilQueryTool.ts",
+        "src/tools/execution/SoilOpenTool/SoilOpenTool.ts",
+        "src/tools/execution/SoilImportTool/SoilImportTool.ts",
+        "src/tools/execution/SoilPublishTool/SoilPublishTool.ts",
+        "src/tools/execution/SoilRebuildTool/SoilRebuildTool.ts",
+        "src/runtime/schedule/engine-cron-reflection.ts:executeSoilPublishCronJob"
+      ],
+      "current_owner": "Soil SQLite plus Markdown artifacts",
+      "target_owner": "Soil projections generated from MemoryTruthMaintenanceStore source claim state"
+    },
+    {
+      "path": "Runtime Event Log / RuntimeGraph",
+      "entrypoints": [
+        "src/runtime/store/runtime-event-log.ts",
+        "src/runtime/personal-agent/store.ts",
+        "src/runtime/control/interaction-authority-store.ts"
+      ],
+      "current_owner": "RuntimeEventLogStore and RuntimeGraph are present on base",
+      "target_owner": "Memory truth mutations append memory.truth_maintenance recorded events or authority trace refs before projection visibility"
+    }
+  ],
+  "repo_wide_runtime_state_ownership_inventory": [
+    {
+      "domain": "Goal",
+      "production_owner": "GoalTaskStateStore",
+      "typed_store": "control DB goal_records/task_records",
+      "transaction_boundary": "GoalTaskStateStore db.transaction",
+      "legacy_exception": "goal/task legacy JSON doctor/repair/test fixture import",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Task",
+      "production_owner": "GoalTaskStateStore",
+      "typed_store": "control DB goal_records/task_records",
+      "transaction_boundary": "GoalTaskStateStore db.transaction",
+      "legacy_exception": "task JSON compatibility reads in tests/migration",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Observation",
+      "production_owner": "GoalTaskStateStore / RuntimeEvidence stores depending caller",
+      "typed_store": "control DB observation/gap/evidence rows",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "legacy observations.json migration input",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Runtime",
+      "production_owner": "RuntimeEventLogStore, runtime operation/session/journal stores",
+      "typed_store": "control DB runtime tables",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "bounded IPC spool, logs, reproducibility artifacts",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Surface",
+      "production_owner": "normal-surface projection and interaction authority stores",
+      "typed_store": "control DB personal-agent/runtime/authority tables",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "debug/export artifacts",
+      "guardrail_status": "covered by docs/public-contract/gauntlet checks"
+    },
+    {
+      "domain": "Attention",
+      "production_owner": "AttentionStateStore and attention metabolism stores",
+      "typed_store": "control DB attention tables",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "none for production owner",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Memory",
+      "production_owner": "currently KnowledgeMemoryStateStore via Soil; target MemoryTruthMaintenanceStore",
+      "typed_store": "target control DB memory truth tables",
+      "transaction_boundary": "target MemoryTruthUnitOfWork",
+      "legacy_exception": "export/import/debug/migration only",
+      "guardrail_status": "to be added in this PR"
+    },
+    {
+      "domain": "Soil",
+      "production_owner": "SqliteSoilRepository for Soil projections and artifacts",
+      "typed_store": "Soil SQLite plus target MemoryTruthProjection records",
+      "transaction_boundary": "Soil applyMutation and target MemoryTruthUnitOfWork",
+      "legacy_exception": "import/publish/debug Markdown artifacts",
+      "guardrail_status": "database-first guard allowlist plus new memory truth guard"
+    },
+    {
+      "domain": "Knowledge",
+      "production_owner": "currently KnowledgeMemoryStateStore and KnowledgeGraphStateStore; target MemoryTruthMaintenanceStore plus KnowledgeGraphStateStore",
+      "typed_store": "target memory truth tables and control DB graph/vector rows",
+      "transaction_boundary": "target MemoryTruthUnitOfWork plus graph store transactions",
+      "legacy_exception": "legacy graph/vector import inputs",
+      "guardrail_status": "to be added in this PR"
+    },
+    {
+      "domain": "Approval",
+      "production_owner": "InteractionAuthorityStore / permission wait-plan/grant stores",
+      "typed_store": "control DB interaction authority, permission, approval tables",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "none for production owner",
+      "guardrail_status": "covered by database-first and runtime event-log tests"
+    },
+    {
+      "domain": "Schedule",
+      "production_owner": "ScheduleEngine and schedule/drive state stores",
+      "typed_store": "control DB schedule and drive tables",
+      "transaction_boundary": "store-local db.transaction",
+      "legacy_exception": "schedule legacy JSON doctor/repair input",
+      "guardrail_status": "covered by database-first legacy-store guard"
+    },
+    {
+      "domain": "Notification",
+      "production_owner": "OutboxStore and notification dispatch authority",
+      "typed_store": "control DB outbox/authority tables",
+      "transaction_boundary": "OutboxStore db.transaction",
+      "legacy_exception": "bounded transport/debug artifacts",
+      "guardrail_status": "covered by database-first guard and event-log replay tests"
+    }
+  ],
+  "implemented_in_branch": {
+    "memory_soil_knowledge_owner": "MemoryTruthMaintenanceStore is now the production typed owner for agent memory, domain knowledge, shared knowledge, correction refs, tombstones, conflicts, recall records, projection records, and memory projection metadata.",
+    "control_db_schema_version": 40,
+    "typed_tables_added": [
+      "memory_claims",
+      "memory_evidence_refs",
+      "memory_correction_refs",
+      "memory_forget_tombstones",
+      "memory_conflict_sets",
+      "memory_conflict_claims",
+      "memory_recall_records",
+      "memory_projection_records",
+      "procedure_memory_records",
+      "preference_memory_records",
+      "relationship_memory_records"
+    ],
+    "production_paths_migrated": [
+      "MemorySaveTool -> KnowledgeManager.saveAgentMemory -> MemoryTruthMaintenanceStore.saveOwnerSnapshot",
+      "MemoryRecallTool -> KnowledgeManager.recallAgentMemoryWithProvenance -> typed RecallRecord",
+      "MemoryCorrectionTool/cmdMemory -> runUserMemoryOperation -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
+      "KnowledgeManager domain/shared knowledge load/save/query adapters -> MemoryTruthMaintenanceStore",
+      "Soil agent memory projection after save/correction/forget/retract",
+      "RuntimeEventLogStore memory.truth_maintenance.recorded event and rebuild summary"
+    ],
+    "guardrail_added": "check:database-first-legacy-stores fails production memory/knowledge/Soil StateManager.writeRaw calls through memory-knowledge-raw-state-manager-write.",
+    "representative_tests_added": [
+      "src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts",
+      "tests/replay/memory-truth-maintenance-replay.test.ts",
+      "tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts",
+      "src/interface/cli/__tests__/database-first-legacy-store-check.test.ts memory raw write negative fixture",
+      "src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts exact/lexical/semantic/graph provenance caller path"
+    ],
+    "runtime_state_ownership_2_full_repo_completion": "incomplete"
+  }
+}

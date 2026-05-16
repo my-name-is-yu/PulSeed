@@ -70,6 +70,7 @@ const ALLOWLIST_RULES_BY_ID = new Map(Object.entries({
     "agentloop-json-store-class",
     "runtime-journal-owner",
     "runtime-jsonl-ledger",
+    "memory-knowledge-raw-state-manager-write",
     "knowledge-graph-json-state",
     "unclassified-direct-runtime-json-state",
     "drive-schedule-json-state",
@@ -113,6 +114,11 @@ const RULES = [
     id: "state-manager-raw-call",
     owner: "StateManager raw fallback boundary / typed store APIs",
     pattern: /\.\s*(?:readRaw|writeRaw)\s*\(/,
+  },
+  {
+    id: "memory-knowledge-raw-state-manager-write",
+    owner: "MemoryTruthMaintenanceStore / typed memory, Soil, and knowledge owner stores",
+    pattern: /\.\s*writeRaw\s*\(\s*["'`][^"'`]*(?:memory|knowledge|soil)[^"'`]*/,
   },
   {
     id: "goal-negotiation-log-json-state",

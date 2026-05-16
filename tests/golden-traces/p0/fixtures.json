@@ -7962,7 +7962,7 @@
       "artifact_tree": [
         {
           "path": "state/state/state_attention_schema_ahead_fail_closed.json",
-          "sha256": "5f32663a55a563994e9d679ee42393b5fa47c8ebdd1e919f3d903a6a62faed70",
+          "sha256": "6be8c44db5037c618b3061ab951a2922b5b3c6fbb582cab947d6c71a90498a17",
           "size": 653,
           "type": "file"
         }

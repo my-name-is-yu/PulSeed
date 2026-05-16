@@ -18,7 +18,12 @@ import {
   AgentMemoryStoreSchema,
   type AgentMemoryEntry,
 } from "../knowledge/types/agent-memory.js";
-import { knowledgeMemoryStoreForStateManager } from "../knowledge/knowledge-manager-internals.js";
+import {
+  loadAgentMemoryStore as loadAgentMemoryStoreFromOwner,
+  projectAgentMemory,
+  saveAgentMemoryStore as saveAgentMemoryStoreToOwner,
+} from "../knowledge/knowledge-manager-internals.js";
+import { commitAgentMemoryCorrectionToTruth } from "../knowledge/memory-truth-adapter.js";
 import {
   applyAgentMemoryCorrection,
   listAgentMemoryCorrectionHistory,
@@ -98,14 +103,23 @@ function correctionReason(input: UserMemoryOperationInput): string {
 
 function stateManagerAgentMemoryHost(stateManager: StateManager): AgentMemoryHost {
   const llmClient = {} as ILLMClient;
-  const store = knowledgeMemoryStoreForStateManager(stateManager);
   return {
     llmClient,
+    baseDir: stateManager.getBaseDir(),
     loadAgentMemoryStore: async () => {
-      return AgentMemoryStoreSchema.parse(await store.loadAgentMemoryStore());
+      return AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromOwner(stateManager));
     },
     saveAgentMemoryStore: async (store) => {
-      await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store);
+      await saveAgentMemoryStoreToOwner(stateManager, store);
+    },
+    commitAgentMemoryCorrection: async (store, result) => {
+      await commitAgentMemoryCorrectionToTruth(stateManager.getBaseDir(), {
+        store,
+        correction: result.correction,
+        target: result.target,
+        replacement: result.replacement,
+      });
+      await projectAgentMemory(stateManager, store);
     },
   };
 }

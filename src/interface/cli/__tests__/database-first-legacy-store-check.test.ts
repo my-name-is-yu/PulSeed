@@ -61,6 +61,22 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("[unclassified-direct-runtime-json-state] direct filesystem runtime state must be typed SQLite/Soil or explicitly categorized");
   });
 
+  it("fails production memory and knowledge raw StateManager writes", () => {
+    writeFile(tmpDir, "src/platform/knowledge/raw-memory-writer.ts", `
+      export async function persistMemoryTruth(stateManager: { writeRaw(path: string, value: unknown): Promise<void> }, value: unknown) {
+        await stateManager.writeRaw("memory/entries.json", value);
+        await stateManager.writeRaw("knowledge/graph.json", value);
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/platform/knowledge/raw-memory-writer.ts");
+    expect(result.stderr).toContain("[memory-knowledge-raw-state-manager-write] MemoryTruthMaintenanceStore / typed memory, Soil, and knowledge owner stores");
+    expect(result.stderr).toContain("[state-manager-raw-call] StateManager raw fallback boundary / typed store APIs");
+  });
+
   it("fails reflection report JSON owners outside the explicit repair boundary", () => {
     writeFile(tmpDir, "src/reflection/reflection-utils.ts", `
       const reflectionsDir = "reflections";

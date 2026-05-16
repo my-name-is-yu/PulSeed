@@ -45,7 +45,6 @@ import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/ind
 import type { AgentMemoryEntry, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import {
   loadAgentMemoryStore,
-  projectAgentMemory,
   projectDomainKnowledge,
   projectSharedKnowledge,
   saveAgentMemoryStore,
@@ -62,6 +61,7 @@ import {
   listAgentMemoryEntries,
   quarantineAgentMemoryEntries,
   recallAgentMemoryEntries,
+  recallAgentMemoryEntriesWithRecord,
   saveAgentMemoryEntry,
   type AgentMemoryPhysicalDeleteManifest,
   type AgentMemoryRecallMode,
@@ -513,6 +513,23 @@ export class KnowledgeManager {
     return recallAgentMemoryEntries(this.agentMemoryHost(), query, opts);
   }
 
+  async recallAgentMemoryWithProvenance(
+    query: string,
+    opts?: {
+      mode?: AgentMemoryRecallMode;
+      exact?: boolean;
+      category?: string;
+      memory_type?: AgentMemoryType;
+      limit?: number;
+      include_archived?: boolean;
+      semantic?: boolean;
+      consent_scope?: string;
+      max_sensitivity?: MemorySensitivity;
+    }
+  ): Promise<Awaited<ReturnType<typeof recallAgentMemoryEntriesWithRecord>>> {
+    return recallAgentMemoryEntriesWithRecord(this.agentMemoryHost(), query, opts);
+  }
+
   /**
    * List all agent memory entries, optionally filtered by category and/or memory_type.
    * Sorted by updated_at desc.
@@ -642,23 +659,19 @@ export class KnowledgeManager {
     await projectSharedKnowledge(this.stateManager, entries);
   }
 
-  private async _projectAgentMemoryToSoil(store: AgentMemoryStore): Promise<void> {
-    await projectAgentMemory(this.stateManager, store);
-  }
-
   async loadAgentMemoryStore(): Promise<AgentMemoryStore> {
     return this._loadAgentMemoryStore();
   }
 
   async saveAgentMemoryStore(store: AgentMemoryStore): Promise<void> {
     await saveAgentMemoryStore(this.stateManager, store);
-    await this._projectAgentMemoryToSoil(store);
   }
 
   private agentMemoryHost() {
     return {
       llmClient: this.llmClient,
       embeddingClient: this.embeddingClient,
+      baseDir: this.stateManager.getBaseDir(),
       loadAgentMemoryStore: () => this._loadAgentMemoryStore(),
       saveAgentMemoryStore: (store: AgentMemoryStore) => this.saveAgentMemoryStore(store),
     };

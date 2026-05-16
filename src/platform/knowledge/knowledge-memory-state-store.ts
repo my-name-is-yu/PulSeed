@@ -24,6 +24,14 @@ import {
   MemoryCorrectionEntrySchema,
   type MemoryCorrectionEntry,
 } from "../corrections/memory-correction-ledger.js";
+import {
+  loadAgentMemoryStoreFromTruth,
+  loadDomainKnowledgeFromTruth,
+  loadSharedKnowledgeFromTruth,
+  saveAgentMemoryStoreToTruth,
+  saveDomainKnowledgeToTruth,
+  saveSharedKnowledgeToTruth,
+} from "./memory-truth-adapter.js";
 
 const SOURCE_DOMAIN_STATE = "knowledge_domain_state";
 const SOURCE_DOMAIN_ENTRY = "knowledge_domain_entry";
@@ -414,6 +422,8 @@ export class KnowledgeMemoryStateStore {
   }
 
   async loadDomainKnowledge(goalId: string): Promise<DomainKnowledge> {
+    const truth = await loadDomainKnowledgeFromTruth(this.baseDir, goalId);
+    if (truth.entries.length > 0) return truth;
     const repo = await this.openRepository();
     try {
       const stateRecords = await repo.loadRecords({
@@ -486,6 +496,7 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      await saveDomainKnowledgeToTruth(this.baseDir, parsed);
     } finally {
       repo.close();
     }
@@ -505,13 +516,16 @@ export class KnowledgeMemoryStateStore {
   }
 
   async loadSharedKnowledgeEntries(): Promise<SharedKnowledgeEntry[]> {
+    const truth = await loadSharedKnowledgeFromTruth(this.baseDir);
+    if (truth.length > 0) return truth;
     const repo = await this.openRepository();
     try {
-      return (await repo.loadRecords({ source_types: [SOURCE_SHARED_ENTRY] }))
+      const entries = (await repo.loadRecords({ source_types: [SOURCE_SHARED_ENTRY] }))
         .map((record) => ({ record, entry: metadataEntry(record, "entry", (value) => SharedKnowledgeEntrySchema.parse(value)) }))
         .filter((item): item is { record: SoilRecord; entry: SharedKnowledgeEntry } => item.entry !== null)
         .sort((left, right) => metadataSortOrder(left.record) - metadataSortOrder(right.record))
         .map((item) => item.entry);
+      return entries;
     } finally {
       repo.close();
     }
@@ -536,12 +550,15 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      await saveSharedKnowledgeToTruth(this.baseDir, parsed);
     } finally {
       repo.close();
     }
   }
 
   async loadAgentMemoryStore(): Promise<AgentMemoryStore> {
+    const truth = AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromTruth(this.baseDir));
+    if (truth.entries.length > 0 || truth.corrections.length > 0) return truth;
     const repo = await this.openRepository();
     try {
       const entryRecords = await repo.loadRecords({ source_types: [SOURCE_AGENT_MEMORY_ENTRY] });
@@ -604,6 +621,7 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      await saveAgentMemoryStoreToTruth(this.baseDir, parsed);
     } finally {
       repo.close();
     }

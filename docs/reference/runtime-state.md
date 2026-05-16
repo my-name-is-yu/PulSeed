@@ -41,6 +41,33 @@ Bounded event-spool files are IPC payloads, not the decision authority for
 acting on a signal. EventServer and DriveSystem event ingress records the
 personal-agent `external_signal` trace in the control DB before enqueue/replay.
 
+## Memory / Soil / Knowledge Truth Maintenance
+
+Memory truth maintenance currently stores agent memory, domain knowledge, and
+shared knowledge production state in `MemoryTruthMaintenanceStore` control-DB
+tables. The owner tables cover memory claims, evidence refs, correction refs,
+forget tombstones, conflict sets, recall records, projection records,
+procedure/preference/relationship memory records, and memory projection
+metadata.
+
+`StateManager` is a root, config, debug, import/export, migration, and
+compatibility boundary for these paths. Normal production memory/knowledge
+mutations do not use raw `StateManager.writeRaw` as truth. The DB-first guard
+fails new production raw memory, knowledge, or Soil `StateManager.writeRaw`
+callers unless they are explicitly categorized as a non-production boundary.
+
+Correction, forget, and retract operations for agent memory use one typed
+transaction that updates the correction row, replacement claim, target claim
+lifecycle, forget tombstone, conflict records, recall/projection records, and
+Runtime Event Log linkage. Recall results carry an explicit mode: `exact`,
+`lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
+without an embedding index returns `semantic_unavailable`; it is not reported as
+a semantic result backed by lexical matching.
+
+Normal projections expose active user-facing memory only. Operator/debug
+surfaces may show claim IDs, evidence refs, correction refs, tombstones,
+conflict sets, recall mode, and RuntimeGraph/Event Log refs.
+
 ## Runtime Event Log And RuntimeGraph
 
 The current source-of-truth path for major runtime event evidence is the
