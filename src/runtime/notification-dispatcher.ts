@@ -17,6 +17,8 @@ import { sendWebhook } from "./channels/webhook-channel.js";
 import { NotificationBatcher } from "./notification-batcher.js";
 import type { InterventionDecisionKind, InterventionTargetEffect, PersonalAgentRuntimeStore } from "./personal-agent/index.js";
 import { buildPersonalAgentDecisionTrace } from "./personal-agent/index.js";
+import { projectNotificationAuthority } from "./control/execution-authority-decision.js";
+import type { InteractionAuthorityStore } from "./control/interaction-authority-store.js";
 
 // ─── Interface ───
 
@@ -78,17 +80,20 @@ export class NotificationDispatcher implements INotificationDispatcher {
   private batcher?: NotificationBatcher;
   private realtimeSink?: (report: Report) => void | Promise<void>;
   private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  private readonly interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
 
   constructor(
     config?: Partial<NotificationConfig>,
     notifierRegistry?: NotifierRegistry,
     logger?: Logger,
     personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">,
+    interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">,
   ) {
     this.config = NotificationConfigSchema.parse(config ?? {});
     this.notifierRegistry = notifierRegistry;
     this.logger = logger;
     this.personalAgentRuntime = personalAgentRuntime;
+    this.interactionAuthorityStore = interactionAuthorityStore;
 
     if (this.config.batching.enabled) {
       this.batcher = new NotificationBatcher(
@@ -400,7 +405,7 @@ export class NotificationDispatcher implements INotificationDispatcher {
       replayScope?: string;
     },
   ): Promise<void> {
-    if (!this.personalAgentRuntime) return;
+    if (!this.personalAgentRuntime && !this.interactionAuthorityStore) return;
     const dnd = this.isDND(report.report_type);
     const cooldown = this.isCooldown(report.report_type);
     const hasPluginRoute = this.hasPluginRoute(report);
@@ -416,6 +421,17 @@ export class NotificationDispatcher implements INotificationDispatcher {
         : cooldown
           ? "Notification report was suppressed by cooldown policy."
           : "Notification report had no configured channel or plugin route.");
+    await this.interactionAuthorityStore?.recordDecision(projectNotificationAuthority({
+      reportId: report.id,
+      reportType: report.report_type,
+      decidedAt: validDateTimeOrNow(report.generated_at),
+      channelRefs: channels.map((channel) => channel.type),
+      canNotify: decision === "allow",
+      suppressed: decision === "suppress" || decision === "hold",
+      quietingRef: override?.replayScope ?? (dnd ? "notification:dnd" : cooldown ? "notification:cooldown" : undefined),
+      reason,
+    }));
+    if (!this.personalAgentRuntime) return;
     await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
       callerPath: "notification_interruption",
       source: {

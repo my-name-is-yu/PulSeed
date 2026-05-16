@@ -75,11 +75,16 @@ export {
 export {
   createExecutionAuthorityDecision,
   projectAdmissionAuthority,
+  projectApprovalResumeAuthority,
   projectAutonomyAuthority,
   projectHostToolExecutionAuthority,
+  projectMemoryCorrectionAuthority,
+  projectNotificationAuthority,
   projectOutboundConversationAuthority,
+  projectPeerInitiativeDeliveryAuthority,
   projectPermissionGrantAuthority,
   projectResidentOperationBoundaryAuthority,
+  projectTelegramCallbackAuthority,
   ExecutionAuthorityBindingsSchema,
   ExecutionAuthorityDecisionSchema,
   ExecutionAuthorityHostDecisionSchema,
@@ -87,10 +92,14 @@ export {
   ExecutionAuthorityOutcomeSchema,
   ExecutionAuthorityOutboundConversationSchema,
   ExecutionAuthorityResidentBoundarySchema,
+  ExecutionAuthoritySurfaceClassSchema,
   ExecutionAuthoritySourceKindSchema,
   ExecutionAuthoritySourceSchema,
   ExecutionAuthorityStageSchema,
 } from "./execution-authority-decision.js";
+export {
+  InteractionAuthorityStore,
+} from "./interaction-authority-store.js";
 export type { RuntimeTargetResolution } from "./runtime-target-resolver.js";
 export type {
   AdmissionAuthState,
@@ -171,7 +180,12 @@ export type {
   ExecutionAuthoritySource,
   ExecutionAuthoritySourceKind,
   ExecutionAuthorityStage,
+  ExecutionAuthoritySurfaceClass,
 } from "./execution-authority-decision.js";
+export type {
+  InteractionAuthorityDecisionSummary,
+  InteractionAuthorityStoreListOptions,
+} from "./interaction-authority-store.js";
 export { createDaemonRuntimeControlExecutor } from "./daemon-runtime-control-executor.js";
 export {
   publishRuntimeControlResult,

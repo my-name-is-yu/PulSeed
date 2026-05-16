@@ -24,6 +24,10 @@ npm test
 npm run test:unit
 npm run test:smoke
 npm run test:integration
+npm run test:contracts
+npm run test:golden-traces
+npm run test:replay
+npm run test:product-gauntlet
 npm run test:all
 npm run test:changed
 npm run test:watch
@@ -34,11 +38,23 @@ npm run test:runtime-long-run
 Specialized lanes:
 
 ```bash
+npm run check:database-first-legacy-stores
+npm run check:public-contracts
 npm run test:memory-correction-eval
 npm run test:lifelong-agent-eval
 npm run test:dogfood
 npm run test:kaggle-training
 ```
+
+`npm run test:product-gauntlet` runs the local Interaction Authority product
+gauntlet. It uses temp runtime roots, fake providers/transports, fixture DBs,
+and no real Telegram, network, LLM, or user secrets. The lane covers
+representative authority regressions: Telegram peer delivery, stale callback
+rejection, callback failure offset progress, digest-only holds, old approval
+rejection, quiet-mode notification suppression, memory correction propagation,
+ToolExecutor non-execution, replay dedupe, and normal-surface redaction. Set
+`PULSEED_PRODUCT_GAUNTLET_DEBUG=1` to write local failure artifacts under
+`tmp/eval-failures/<scenario-id>/`.
 
 ## Runtime And Smoke Checks
 

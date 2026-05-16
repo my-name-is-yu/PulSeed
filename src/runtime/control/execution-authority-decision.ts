@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/v3";
 import { ToolExecutionReasonSchema, type HostToolExecutionDecision } from "../../tools/types.js";
 import {
@@ -7,6 +8,10 @@ import {
 import { AdmissionPolicyEvaluationSchema, type AdmissionPolicyEvaluation } from "./admission-policy.js";
 import { AutonomyDecisionSchema, type AutonomyDecision } from "./autonomy-governor.js";
 import type { ResidentOperationBoundaryResult } from "../capability-operation-planner.js";
+import type {
+  PermissionWaitCanonicalPlan,
+  PermissionWaitPlanResumeResult,
+} from "../store/permission-wait-plan-store.js";
 import {
   OutboundConversationDeliveryReceiptSchema,
   OutboundConversationMessageSchema,
@@ -20,6 +25,8 @@ export const ExecutionAuthorityOutcomeSchema = z.enum([
   "allowed",
   "approval_required",
   "denied",
+  "held",
+  "suppressed",
   "sandbox_required",
   "escalation_required",
   "fail_closed",
@@ -44,6 +51,12 @@ export const ExecutionAuthorityStageSchema = z.enum([
   "prepare",
   "execute",
   "send",
+  "notify",
+  "ask",
+  "hold",
+  "suppress",
+  "callback",
+  "feedback",
   "inspect",
   "unknown",
 ]);
@@ -58,8 +71,29 @@ export const ExecutionAuthoritySourceKindSchema = z.enum([
   "runspec_safety",
   "task_policy_trace",
   "outbound_conversation",
+  "peer_initiative",
+  "telegram_callback",
+  "notification",
+  "approval",
+  "feedback",
+  "runtime_control",
+  "memory_correction",
+  "tool_executor",
+  "schedule",
+  "daemon_resident",
+  "surface_projection",
 ]);
 export type ExecutionAuthoritySourceKind = z.infer<typeof ExecutionAuthoritySourceKindSchema>;
+
+export const ExecutionAuthoritySurfaceClassSchema = z.enum([
+  "normal_user",
+  "operator_debug",
+  "transport",
+  "projection_only",
+  "mutation_owner",
+  "internal",
+]);
+export type ExecutionAuthoritySurfaceClass = z.infer<typeof ExecutionAuthoritySurfaceClassSchema>;
 
 export const ExecutionAuthorityHostDecisionSchema = z.object({
   status: z.enum([
@@ -86,6 +120,12 @@ export const ExecutionAuthorityBindingsSchema = z.object({
   target_refs: z.array(z.string().min(1)).default([]),
   target_binding_ref: z.string().min(1).optional(),
   channel_policy_ref: z.string().min(1).optional(),
+  delivery_ref: z.string().min(1).optional(),
+  transport_message_ref: z.string().min(1).optional(),
+  feedback_ref: z.string().min(1).optional(),
+  approval_ref: z.string().min(1).optional(),
+  quieting_ref: z.string().min(1).optional(),
+  normal_surface_projection_ref: z.string().min(1).optional(),
 }).strict();
 export type ExecutionAuthorityBindings = z.infer<typeof ExecutionAuthorityBindingsSchema>;
 
@@ -129,7 +169,17 @@ export const ExecutionAuthorityDecisionSchema = z.object({
   can_prepare: z.boolean().default(false),
   can_execute: z.boolean().default(false),
   can_send: z.boolean().default(false),
+  can_notify: z.boolean().default(false),
+  can_ask: z.boolean().default(false),
+  can_hold: z.boolean().default(false),
+  can_suppress: z.boolean().default(false),
+  requires_approval: z.boolean().default(false),
   fail_closed: z.boolean().default(false),
+  stale_target_rejected: z.boolean().default(false),
+  suppressed: z.boolean().default(false),
+  memory_withheld: z.boolean().default(false),
+  surface: z.string().min(1).optional(),
+  surface_class: ExecutionAuthoritySurfaceClassSchema.optional(),
   source: ExecutionAuthoritySourceSchema,
   bindings: ExecutionAuthorityBindingsSchema.default({}),
   evidence_refs: z.array(z.string().min(1)).default([]),
@@ -372,6 +422,11 @@ export function projectOutboundConversationAuthority(input: {
   reason?: string;
   decidedAt?: string;
   decisionId?: string;
+  canNotify?: boolean;
+  surfaceClass?: ExecutionAuthoritySurfaceClass;
+  deliveryRef?: string;
+  quietingRef?: string;
+  normalSurfaceProjectionRef?: string;
 }): ExecutionAuthorityDecision {
   const message = OutboundConversationMessageSchema.parse(input.message);
   const currentTarget = input.currentTarget ? OutboundConversationTargetSchema.parse(input.currentTarget) : null;
@@ -390,7 +445,11 @@ export function projectOutboundConversationAuthority(input: {
       ? "Outbound conversation target and channel policy refs match the current target."
       : "Outbound conversation rejected stale target or channel policy ref."),
     can_send: targetMatches,
+    can_notify: targetMatches && input.canNotify === true,
     fail_closed: !targetMatches,
+    stale_target_rejected: !targetMatches,
+    surface: message.surface,
+    surface_class: input.surfaceClass ?? "transport",
     source: {
       kind: "outbound_conversation",
       ref: sourceRef,
@@ -399,6 +458,10 @@ export function projectOutboundConversationAuthority(input: {
     bindings: {
       target_binding_ref: message.target_binding_ref,
       channel_policy_ref: message.channel_policy_ref,
+      ...(input.deliveryRef ? { delivery_ref: input.deliveryRef } : {}),
+      ...(receipt?.transport_message_ref ? { transport_message_ref: receipt.transport_message_ref } : {}),
+      ...(input.quietingRef ? { quieting_ref: input.quietingRef } : {}),
+      ...(input.normalSurfaceProjectionRef ? { normal_surface_projection_ref: input.normalSurfaceProjectionRef } : {}),
       target_refs: [message.target_binding_ref, message.channel_policy_ref],
     },
     evidence_refs: [
@@ -412,11 +475,361 @@ export function projectOutboundConversationAuthority(input: {
       surface: message.surface,
       target_binding_ref: message.target_binding_ref,
       channel_policy_ref: message.channel_policy_ref,
-      ...(receipt ? { delivery_ref: receipt.message_id } : {}),
+      ...(input.deliveryRef ?? receipt?.message_id ? { delivery_ref: input.deliveryRef ?? receipt?.message_id } : {}),
       ...(receipt?.transport_message_ref ? { transport_message_ref: receipt.transport_message_ref } : {}),
       stale_target_rejected: !targetMatches,
     },
   });
+}
+
+export function projectPeerInitiativeDeliveryAuthority(input: {
+  candidateId: string;
+  deliveryId: string;
+  surface: string;
+  reason: string;
+  decidedAt?: string;
+  decisionId?: string;
+  outcome?: Extract<ExecutionAuthorityOutcome, "allowed" | "held" | "suppressed" | "fail_closed" | "approval_required">;
+  canSend?: boolean;
+  canNotify?: boolean;
+  canHold?: boolean;
+  canSuppress?: boolean;
+  requiresApproval?: boolean;
+  failClosed?: boolean;
+  suppressed?: boolean;
+  targetBindingRef?: string;
+  channelPolicyRef?: string;
+  deliveryRef?: string;
+  transportMessageRef?: string;
+  expressionDecisionRef?: string;
+  visibilityPolicyRef?: string;
+  quietingRef?: string;
+  normalSurfaceProjectionRef?: string;
+}): ExecutionAuthorityDecision {
+  const outcome = input.outcome
+    ?? (input.failClosed
+      ? "fail_closed"
+      : input.suppressed || input.canSuppress
+        ? "suppressed"
+        : input.canSend
+          ? "allowed"
+          : "held");
+  const sourceRef = `peer-initiative:${input.candidateId}:${input.deliveryId}`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: outcome === "allowed" ? "approved" : outcome === "approval_required" ? "waiting" : "terminal",
+    outcome,
+    reason: input.reason,
+    can_prepare: true,
+    can_send: input.canSend === true,
+    can_notify: input.canNotify === true,
+    can_hold: input.canHold === true || outcome === "held",
+    can_suppress: input.canSuppress === true || outcome === "suppressed",
+    requires_approval: input.requiresApproval === true || outcome === "approval_required",
+    fail_closed: input.failClosed === true || outcome === "fail_closed",
+    suppressed: input.suppressed === true || outcome === "suppressed",
+    surface: input.surface,
+    surface_class: "mutation_owner",
+    source: {
+      kind: "peer_initiative",
+      ref: sourceRef,
+      stage: outcome === "suppressed" ? "suppress" : outcome === "held" ? "hold" : "send",
+    },
+    bindings: {
+      target_refs: [
+        input.candidateId,
+        input.targetBindingRef,
+        input.channelPolicyRef,
+      ].filter(isString),
+      ...(input.targetBindingRef ? { target_binding_ref: input.targetBindingRef } : {}),
+      ...(input.channelPolicyRef ? { channel_policy_ref: input.channelPolicyRef } : {}),
+      delivery_ref: input.deliveryRef ?? input.deliveryId,
+      ...(input.transportMessageRef ? { transport_message_ref: input.transportMessageRef } : {}),
+      ...(input.quietingRef ? { quieting_ref: input.quietingRef } : {}),
+      ...(input.normalSurfaceProjectionRef ? { normal_surface_projection_ref: input.normalSurfaceProjectionRef } : {}),
+    },
+    evidence_refs: [
+      `candidate:${input.candidateId}`,
+      input.expressionDecisionRef ? `expression:${input.expressionDecisionRef}` : null,
+      input.visibilityPolicyRef ? `visibility:${input.visibilityPolicyRef}` : null,
+      input.quietingRef ? `quieting:${input.quietingRef}` : null,
+    ].filter(isString),
+  });
+}
+
+export function projectTelegramCallbackAuthority(input: {
+  callbackId: string;
+  candidateId?: string;
+  action?: string;
+  deliveryId?: string;
+  targetBindingRef?: string;
+  channelPolicyRef?: string;
+  transportMessageRef?: string;
+  callbackTargetBindingRef?: string;
+  callbackTransportMessageRef?: string;
+  deliveryMatches: boolean;
+  actionMatches: boolean;
+  feedbackRef?: string;
+  approvalRef?: string;
+  reason?: string;
+  decidedAt?: string;
+  decisionId?: string;
+}): ExecutionAuthorityDecision {
+  const allowed = input.deliveryMatches && input.actionMatches;
+  const sourceRef = `telegram-callback:${input.callbackId}`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: allowed ? "approved" : "terminal",
+    outcome: allowed ? "allowed" : "fail_closed",
+    reason: input.reason ?? (allowed
+      ? "Telegram callback matched the current peer delivery and action binding."
+      : "Telegram callback rejected stale, wrong-target, or unknown peer delivery/action binding."),
+    can_execute: allowed,
+    fail_closed: !allowed,
+    stale_target_rejected: !allowed,
+    surface: "telegram",
+    surface_class: "transport",
+    source: {
+      kind: "telegram_callback",
+      ref: sourceRef,
+      stage: "callback",
+    },
+    bindings: {
+      target_refs: [
+        input.candidateId,
+        input.deliveryId,
+        input.targetBindingRef,
+        input.channelPolicyRef,
+        input.callbackTargetBindingRef,
+      ].filter(isString),
+      ...(input.targetBindingRef ? { target_binding_ref: input.targetBindingRef } : {}),
+      ...(input.channelPolicyRef ? { channel_policy_ref: input.channelPolicyRef } : {}),
+      ...(input.deliveryId ? { delivery_ref: input.deliveryId } : {}),
+      ...(input.transportMessageRef ? { transport_message_ref: input.transportMessageRef } : {}),
+      ...(input.feedbackRef ? { feedback_ref: input.feedbackRef } : {}),
+      ...(input.approvalRef ? { approval_ref: input.approvalRef } : {}),
+    },
+    evidence_refs: [
+      input.candidateId ? `candidate:${input.candidateId}` : null,
+      input.deliveryId ? `peer-delivery:${input.deliveryId}` : null,
+      input.action ? `telegram-callback-action:${input.action}` : null,
+      input.callbackTargetBindingRef ? `callback-target:${input.callbackTargetBindingRef}` : null,
+      input.callbackTransportMessageRef ? `callback-transport-message:${input.callbackTransportMessageRef}` : null,
+    ].filter(isString),
+  });
+}
+
+export function projectApprovalResumeAuthority(input: {
+  waitPlanId: string;
+  resumeResult: PermissionWaitPlanResumeResult;
+  expectedCanonicalPlan?: PermissionWaitCanonicalPlan;
+  actualCanonicalPlan: PermissionWaitCanonicalPlan;
+  reason?: string;
+  decidedAt?: string;
+  decisionId?: string;
+}): ExecutionAuthorityDecision {
+  const resumed = input.resumeResult.status === "resumed";
+  const record = input.resumeResult.status === "not_found" ? null : input.resumeResult.record;
+  const mismatchReasons = input.resumeResult.status === "mismatch_rejected"
+    ? input.resumeResult.mismatch_reasons
+    : [];
+  const expectedPlan = input.expectedCanonicalPlan ?? record?.canonical_plan ?? input.actualCanonicalPlan;
+  const actualPlan = input.actualCanonicalPlan;
+  const targetBindingRef = approvalTargetBindingRef(actualPlan);
+  const sourceRef = `approval:${input.waitPlanId}:resume`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: resumed ? "approved" : "terminal",
+    outcome: resumed ? "allowed" : "fail_closed",
+    reason: input.reason ?? approvalResumeReason(input.resumeResult.status, mismatchReasons),
+    can_execute: resumed,
+    requires_approval: true,
+    fail_closed: !resumed,
+    stale_target_rejected: !resumed,
+    source: {
+      kind: "approval",
+      ref: sourceRef,
+      stage: "execute",
+    },
+    bindings: {
+      approval_ref: record?.approval_id ?? input.waitPlanId,
+      target_binding_ref: targetBindingRef,
+      target_refs: uniqueStrings([
+        targetBindingRef,
+        ...approvalPlanTargetRefs(expectedPlan, "expected"),
+        ...approvalPlanTargetRefs(actualPlan, "actual"),
+      ]),
+    },
+    evidence_refs: [
+      `approval:${record?.approval_id ?? input.waitPlanId}`,
+      `permission-wait-plan:${input.waitPlanId}`,
+      record?.state ? `permission-wait-state:${record.state}` : null,
+      ...mismatchReasons.map((reason) => `approval-mismatch:${reason}`),
+    ].filter(isString),
+    invalidation_refs: mismatchReasons.map((reason) => `approval-mismatch:${reason}`),
+    metadata: {
+      resume_status: input.resumeResult.status,
+      mismatch_reasons: mismatchReasons,
+      expected_target_binding_ref: approvalTargetBindingRef(expectedPlan),
+      actual_target_binding_ref: targetBindingRef,
+      expected_input_ref: approvalInputRef(expectedPlan),
+      actual_input_ref: approvalInputRef(actualPlan),
+    },
+  });
+}
+
+export function projectNotificationAuthority(input: {
+  reportId: string;
+  reportType: string;
+  reason: string;
+  decidedAt?: string;
+  decisionId?: string;
+  channelRefs?: readonly string[];
+  canNotify?: boolean;
+  suppressed?: boolean;
+  quietingRef?: string;
+}): ExecutionAuthorityDecision {
+  const suppressed = input.suppressed === true;
+  const sourceRef = `notification:${input.reportId}:${input.reportType}`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: suppressed ? "terminal" : "approved",
+    outcome: suppressed ? "suppressed" : "allowed",
+    reason: input.reason,
+    can_notify: input.canNotify === true && !suppressed,
+    can_suppress: suppressed,
+    suppressed,
+    surface: "notification",
+    surface_class: "mutation_owner",
+    source: {
+      kind: "notification",
+      ref: sourceRef,
+      stage: suppressed ? "suppress" : "notify",
+    },
+    bindings: {
+      target_refs: [...(input.channelRefs ?? [])],
+      ...(input.quietingRef ? { quieting_ref: input.quietingRef } : {}),
+    },
+    evidence_refs: [
+      `report:${input.reportId}`,
+      `report-type:${input.reportType}`,
+      input.quietingRef ? `quieting:${input.quietingRef}` : null,
+      ...(input.channelRefs ?? []).map((ref) => `channel:${ref}`),
+    ].filter(isString),
+  });
+}
+
+export function projectMemoryCorrectionAuthority(input: {
+  correctionId: string;
+  targetRef: string;
+  reason: string;
+  decidedAt?: string;
+  decisionId?: string;
+  memoryWithheld?: boolean;
+  normalSurfaceProjectionRef?: string;
+}): ExecutionAuthorityDecision {
+  const sourceRef = `memory-correction:${input.correctionId}`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: "approved",
+    outcome: "allowed",
+    reason: input.reason,
+    can_execute: true,
+    memory_withheld: input.memoryWithheld === true,
+    surface: "memory_correction",
+    surface_class: "mutation_owner",
+    source: {
+      kind: "memory_correction",
+      ref: sourceRef,
+      stage: "execute",
+    },
+    bindings: {
+      target_refs: [input.targetRef],
+      ...(input.normalSurfaceProjectionRef ? { normal_surface_projection_ref: input.normalSurfaceProjectionRef } : {}),
+    },
+    evidence_refs: [
+      `memory-correction:${input.correctionId}`,
+      `memory-target:${input.targetRef}`,
+    ],
+  });
+}
+
+function approvalResumeReason(
+  status: PermissionWaitPlanResumeResult["status"],
+  mismatchReasons: readonly string[],
+): string {
+  if (status === "resumed") {
+    return "Approval resume matched the stored canonical plan before tool execution.";
+  }
+  if (status === "mismatch_rejected") {
+    return `Approval resume rejected stale or mismatched canonical plan: ${mismatchReasons.join(", ")}`;
+  }
+  if (status === "expired") {
+    return "Approval resume rejected an expired approval before tool execution.";
+  }
+  if (status === "not_approved") {
+    return "Approval resume rejected a wait plan that is not approved.";
+  }
+  return "Approval resume rejected a missing wait plan.";
+}
+
+function approvalPlanTargetRefs(plan: PermissionWaitCanonicalPlan, prefix: "expected" | "actual"): string[] {
+  return [
+    `approval-${prefix}-tool:${plan.tool_name}`,
+    plan.target.goal_id ? `approval-${prefix}-goal:${plan.target.goal_id}` : null,
+    plan.target.run_id ? `approval-${prefix}-run:${plan.target.run_id}` : null,
+    plan.target.session_id ? `approval-${prefix}-session:${plan.target.session_id}` : null,
+    plan.target.turn_id ? `approval-${prefix}-turn:${plan.target.turn_id}` : null,
+    plan.target.tool_call_id ? `approval-${prefix}-tool-call:${plan.target.tool_call_id}` : null,
+    plan.state_epoch ? `approval-${prefix}-state-epoch:${plan.state_epoch}` : null,
+    approvalInputRef(plan),
+  ].filter(isString);
+}
+
+function approvalTargetBindingRef(plan: PermissionWaitCanonicalPlan): string {
+  return `permission-wait-target:${stableAuthorityHash({
+    tool_name: plan.tool_name,
+    cwd: plan.cwd,
+    target: plan.target,
+    permission: plan.permission,
+    state_epoch: plan.state_epoch ?? null,
+  })}`;
+}
+
+function approvalInputRef(plan: PermissionWaitCanonicalPlan): string {
+  return `approval-input:${stableAuthorityHash(plan.input)}`;
+}
+
+function stableAuthorityHash(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex").slice(0, 16);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortJson((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function hostOutcome(status: HostToolExecutionDecision["status"]): ExecutionAuthorityOutcome {

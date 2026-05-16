@@ -41,6 +41,8 @@ import type {
   InterventionTargetEffect,
 } from "../runtime/personal-agent/index.js";
 import type { PersonalAgentRuntimeStore } from "../runtime/personal-agent/index.js";
+import { InteractionAuthorityStore } from "../runtime/control/interaction-authority-store.js";
+import { projectApprovalResumeAuthority } from "../runtime/control/execution-authority-decision.js";
 
 type PermissionApprovalResult =
   | { status: "approved"; context: ToolCallContext }
@@ -60,6 +62,7 @@ export class ToolExecutor {
   private readonly permissionManager: ToolPermissionManager;
   private readonly concurrency: ConcurrencyController;
   private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  private readonly interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   private readonly traceBaseDir?: string | null;
 
   constructor(deps: ToolExecutorDeps) {
@@ -67,6 +70,7 @@ export class ToolExecutor {
     this.permissionManager = deps.permissionManager;
     this.concurrency = deps.concurrency;
     this.personalAgentRuntime = deps.personalAgentRuntime;
+    this.interactionAuthorityStore = deps.interactionAuthorityStore;
     this.traceBaseDir = deps.traceBaseDir ?? null;
   }
 
@@ -77,7 +81,31 @@ export class ToolExecutor {
   ): Promise<ToolResult> {
     const tool = this.registry.get(toolName);
     if (!tool) {
-      return this.failResult(`Tool "${toolName}" not found`, 0);
+      const missing = buildNotExecutedToolResult({
+        summary: `Tool "${toolName}" not found`,
+        durationMs: 0,
+        reason: "policy_blocked",
+        message: `Tool "${toolName}" is missing and cannot fall back to a direct adapter execution path.`,
+      });
+      await recordPersonalAgentToolDecision(
+        {
+          personalAgentRuntime: context.personalAgentRuntime ?? this.personalAgentRuntime,
+          baseDir: context.providerConfigBaseDir ?? this.traceBaseDir ?? null,
+        },
+        toolName,
+        rawInput,
+        context,
+        {
+          decision: "block",
+          capabilityDecision: "missing",
+          decisionReason: `ToolExecutor denied missing tool ${toolName} before any adapter fallback.`,
+          targetEffect: "execute_tool",
+          targetSummary: `${toolName} tool execution was blocked before side effects because no registered tool exists.`,
+          capabilityRefs: [{ kind: "tool", ref: toolName }],
+          outcomeSummary: buildToolOutcomeSummary(toolName, missing),
+        },
+      );
+      return missing;
     }
 
     const startTime = Date.now();
@@ -418,6 +446,12 @@ export class ToolExecutor {
       canonical_plan: resumePlan,
       audit_refs: [waitPlan.auditRef],
     });
+    await this.recordApprovalResumeAuthority(input.context, {
+      waitPlanId: waitPlan.approvalId,
+      expectedCanonicalPlan: waitPlan.canonicalPlan,
+      actualCanonicalPlan: resumePlan,
+      resumeResult,
+    });
     if (resumeResult.status === "resumed") {
       return { status: "approved", context: buildApprovedToolCallContext(input.context) };
     }
@@ -488,6 +522,25 @@ export class ToolExecutor {
         ...(options.outcomeSummary ? { outcomeSummary: options.outcomeSummary } : {}),
       },
     );
+  }
+
+  private async recordApprovalResumeAuthority(
+    context: ToolCallContext,
+    input: Parameters<typeof projectApprovalResumeAuthority>[0],
+  ): Promise<void> {
+    const store = this.resolveInteractionAuthorityStore(context);
+    if (!store) return;
+    await store.recordDecision(projectApprovalResumeAuthority(input));
+  }
+
+  private resolveInteractionAuthorityStore(
+    context: ToolCallContext,
+  ): Pick<InteractionAuthorityStore, "recordDecision"> | null {
+    if (context.interactionAuthorityStore) return context.interactionAuthorityStore;
+    if (this.interactionAuthorityStore) return this.interactionAuthorityStore;
+    const baseDir = context.providerConfigBaseDir ?? this.traceBaseDir ?? null;
+    if (!baseDir) return null;
+    return new InteractionAuthorityStore(baseDir, { controlBaseDir: baseDir });
   }
 
   private async checkHostPolicyPreflight(
@@ -640,5 +693,6 @@ export interface ToolExecutorDeps {
   permissionManager: ToolPermissionManager;
   concurrency: ConcurrencyController;
   personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   traceBaseDir?: string | null;
 }

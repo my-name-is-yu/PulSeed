@@ -31,6 +31,8 @@ import {
   stableId,
   type RuntimeGraphRef,
 } from "../../runtime/personal-agent/index.js";
+import { InteractionAuthorityStore } from "../../runtime/control/interaction-authority-store.js";
+import { projectMemoryCorrectionAuthority } from "../../runtime/control/execution-authority-decision.js";
 
 export const UserMemoryOperationSchema = z.enum(["correct", "forget", "retract", "history"]);
 export type UserMemoryOperation = z.infer<typeof UserMemoryOperationSchema>;
@@ -357,5 +359,15 @@ async function recordMemoryCorrectionTrace(
       summary: "Memory correction/invalidation was recorded before the memory can influence future decisions.",
       targetRef: refs.memoryRef,
     },
+  }));
+  await new InteractionAuthorityStore(stateManager.getBaseDir(), {
+    controlBaseDir: stateManager.getBaseDir(),
+  }).recordDecision(projectMemoryCorrectionAuthority({
+    correctionId: correction.correction_id,
+    targetRef: `${input.targetRef.kind}:${input.targetRef.id}`,
+    decidedAt: correction.created_at,
+    reason: "Memory correction was recorded before the target can influence future recall or normal projection.",
+    memoryWithheld: true,
+    normalSurfaceProjectionRef: `normal-surface:memory-correction:${correction.correction_id}`,
   }));
 }

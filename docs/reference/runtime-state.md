@@ -74,6 +74,11 @@ non-trivial production decisions:
 - `personal_agent_relationship_memory_audits`: memory read/withhold/correction,
   invalidation, allowed/forbidden use, uncertainty, lifecycle/correction state,
   surface projection, and conflict provenance used by production decisions.
+- `interaction_authority_decisions`: unified authority decisions for
+  prepare/execute/send/notify/ask/hold/suppress/callback/feedback boundaries.
+  These rows connect surface, target binding, channel policy, delivery,
+  transport message, approval, feedback, quieting, and normal projection refs
+  before a caller performs a direct side effect.
 
 Production callers that currently write this trace include fail-closed
 chat/gateway turns, TUI turns and explicit TUI `/start`/`/stop`/goal creation
@@ -101,6 +106,34 @@ pipeline-stage, capability-acquisition, and adapter-backed mechanical
 verification execution materialize adapter side effects only through
 `run-adapter`; blocked, missing, or failed tool admission returns a
 non-executed result rather than falling back to direct adapter execution.
+
+## Interaction Authority Kernel
+
+`ExecutionAuthorityDecision` is the common contract for execution-adjacent
+authority. It separates `can_prepare`, `can_execute`, `can_send`, `can_notify`,
+`can_ask`, `can_hold`, `can_suppress`, `requires_approval`, `fail_closed`,
+`stale_target_rejected`, `suppressed`, and `memory_withheld`.
+
+Production callers use this vocabulary for outbound conversations, Telegram
+callback handling, peer initiative delivery, notification suppression,
+ToolExecutor approval resume checks, feedback mutation, memory correction,
+ToolExecutor admission, and resident daemon peer delivery. Runtime-control and
+schedule wake decisions use the same authority vocabulary through durable
+PersonalAgentRuntimeStore projection evidence instead of InteractionAuthorityStore
+rows because their mutation owners are RuntimeOperationStore/ScheduleEngine, not
+user transports. Product gauntlet coverage verifies those traces exist before
+runtime-control executor handoff and before schedule data/model/report/baseline/
+notification side effects.
+Telegram is the current peer initiative delivery implementation. Other
+surfaces remain contract-only future work unless a caller path explicitly owns
+mutation and writes the same authority decision before transport.
+
+Normal surfaces consume redacted projections. They may show ordinary user text,
+delivery status, or feedback affordances, but they must not expose raw trace
+IDs, source refs, evidence refs, policy internals, memory correction internals,
+or capability catalogs. Operator/debug surfaces may inspect those internals
+through explicit diagnostic commands or local failure artifacts such as the
+product gauntlet `tmp/eval-failures/<scenario-id>/` output.
 
 Normal user-facing surfaces should not print trace IDs, source refs, policy
 internals, raw provenance, or memory correction internals. Use `pulseed runtime

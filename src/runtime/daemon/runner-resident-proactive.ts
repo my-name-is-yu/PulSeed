@@ -16,6 +16,11 @@ import {
   type ToolCandidate,
 } from "../cognition/index.js";
 import { projectCompanionAction } from "../control/companion-action-projection.js";
+import {
+  projectOutboundConversationAuthority,
+  projectPeerInitiativeDeliveryAuthority,
+} from "../control/execution-authority-decision.js";
+import { InteractionAuthorityStore } from "../control/interaction-authority-store.js";
 import { createCompanionGadgetPlan } from "../decision/companion-gadget-planning.js";
 import {
   createExpressionDecisionForOutcome,
@@ -395,6 +400,7 @@ export async function triggerResidentPeerInitiative(
     runtimeRoot,
     { controlBaseDir: context.baseDir },
   );
+  const authorityStore = new InteractionAuthorityStore(runtimeRoot, { controlBaseDir: context.baseDir });
   const policyStore = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: context.baseDir });
   const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: context.baseDir });
   const candidates = generatePeerInitiativeCandidates({
@@ -468,6 +474,21 @@ export async function triggerResidentPeerInitiative(
 
   const digestOnly = boundary.thresholdDecision.allowed_delivery_kind === "digest";
   if (digestOnly || !boundary.shouldRender || !input.attentionAdmission.outcome_decision) {
+    const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+      candidateId: selected.candidate_id,
+      deliveryId: `peer-delivery:${selected.candidate_id}:held`,
+      surface: "telegram",
+      decidedAt: now,
+      outcome: digestOnly ? "held" : "suppressed",
+      canHold: true,
+      canSuppress: !digestOnly,
+      suppressed: !digestOnly,
+      reason: digestOnly
+        ? "Peer initiative was held for digest-only delivery before transport."
+        : boundary.thresholdDecision.downgrade_reasons.join(", ") || "Peer initiative held by threshold or missing outcome before transport.",
+      quietingRef: digestOnly ? "peer-threshold:digest-only" : "peer-threshold:render-held",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${selected.candidate_id}`,
+    }));
     await store.recordDelivery({
       delivery_id: `peer-delivery:${selected.candidate_id}:held`,
       candidate_id: selected.candidate_id,
@@ -476,6 +497,8 @@ export async function triggerResidentPeerInitiative(
       failure_reason: digestOnly
         ? "peer initiative held for digest-only delivery"
         : boundary.thresholdDecision.downgrade_reasons.join(", ") || "peer initiative held by threshold or missing outcome",
+      authority_decision_ref: authorityDecision.decision_id,
+      authority_decision: authorityDecision,
     });
     await persistResidentActivity(context, {
       kind: "skipped",
@@ -513,6 +536,21 @@ export async function triggerResidentPeerInitiative(
   });
   const text = renderSurfaceDeliveryProjection(surfaceDelivery);
   if (!expression || !surfaceDelivery?.should_render || !text) {
+    const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+      candidateId: selected.candidate_id,
+      deliveryId: `peer-delivery:${selected.candidate_id}:visibility-held`,
+      surface: "telegram",
+      decidedAt: now,
+      outcome: "suppressed",
+      canHold: true,
+      canSuppress: true,
+      suppressed: true,
+      expressionDecisionRef: expression?.expression_decision_id,
+      visibilityPolicyRef: visibilityPolicy.visibility_policy_id,
+      reason: surfaceDelivery?.quiet_audit_reason ?? "Peer initiative expression or visibility policy suppressed transport.",
+      quietingRef: surfaceDelivery?.quiet_audit_reason ?? "visibility-policy:quiet",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${selected.candidate_id}`,
+    }));
     await store.recordDelivery({
       delivery_id: `peer-delivery:${selected.candidate_id}:visibility-held`,
       candidate_id: selected.candidate_id,
@@ -521,6 +559,8 @@ export async function triggerResidentPeerInitiative(
       expression_decision_ref: expression?.expression_decision_id,
       visibility_policy_ref: visibilityPolicy.visibility_policy_id,
       failure_reason: surfaceDelivery?.quiet_audit_reason ?? "peer expression did not render",
+      authority_decision_ref: authorityDecision.decision_id,
+      authority_decision: authorityDecision,
     });
     await store.upsertCandidate({
       candidate: selected,
@@ -540,12 +580,14 @@ export async function triggerResidentPeerInitiative(
   const delivery = await deliverPeerInitiativeMessage({
     context,
     store,
+    authorityStore,
     candidate: selected,
     text,
     outcomeDecisionId: input.attentionAdmission.outcome_decision.outcome_decision_id,
     expressionDecisionId: expression.expression_decision_id,
     visibilityPolicyId: visibilityPolicy.visibility_policy_id,
     now,
+    canNotify: boundary.thresholdDecision.allowed_delivery_kind === "notify",
   });
   await store.upsertCandidate({
     candidate: selected,
@@ -662,12 +704,14 @@ function createPeerInitiativeVisibilityPolicy(input: {
 async function deliverPeerInitiativeMessage(input: {
   context: Pick<DaemonRunnerResidentContext, "gateway" | "logger">;
   store: PeerInitiativeStore;
+  authorityStore: InteractionAuthorityStore;
   candidate: PeerInitiativeCandidate;
   text: string;
   outcomeDecisionId: string;
   expressionDecisionId: string;
   visibilityPolicyId: string;
   now: string;
+  canNotify: boolean;
 }): Promise<{
   delivery_id: string;
   message_id?: string;
@@ -677,6 +721,7 @@ async function deliverPeerInitiativeMessage(input: {
 }> {
   const surface: OutboundConversationSurface = "telegram";
   const deliveryId = `peer-delivery:${input.candidate.candidate_id}:${surface}`;
+  const authorityStore = input.authorityStore;
   const existingDelivery = await input.store.getDelivery(deliveryId);
   if (existingDelivery?.status === "delivered") {
     return {
@@ -689,23 +734,47 @@ async function deliverPeerInitiativeMessage(input: {
   }
   const port = input.context.gateway?.getOutboundConversationPort(surface);
   if (!port) {
+    const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+      candidateId: input.candidate.candidate_id,
+      deliveryId,
+      surface,
+      decidedAt: input.now,
+      outcome: "held",
+      canHold: true,
+      reason: "No live gateway outbound conversation port for Telegram.",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${input.candidate.candidate_id}`,
+    }));
     await input.store.recordDelivery({
       delivery_id: deliveryId,
       candidate_id: input.candidate.candidate_id,
       surface,
       status: "held",
       failure_reason: "no live gateway outbound conversation port for telegram",
+      authority_decision_ref: authorityDecision.decision_id,
+      authority_decision: authorityDecision,
     });
     return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
   const target = await port.resolveDefaultTarget();
   if (!target) {
+    const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+      candidateId: input.candidate.candidate_id,
+      deliveryId,
+      surface,
+      decidedAt: input.now,
+      outcome: "held",
+      canHold: true,
+      reason: "Telegram outbound conversation target is not bound.",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${input.candidate.candidate_id}`,
+    }));
     await input.store.recordDelivery({
       delivery_id: deliveryId,
       candidate_id: input.candidate.candidate_id,
       surface,
       status: "held",
       failure_reason: "telegram outbound conversation target is not bound",
+      authority_decision_ref: authorityDecision.decision_id,
+      authority_decision: authorityDecision,
     });
     return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
@@ -770,7 +839,50 @@ async function deliverPeerInitiativeMessage(input: {
     };
   }
   try {
+    const authorityDecision = await authorityStore.recordDecision(projectOutboundConversationAuthority({
+      message: outbound,
+      currentTarget: target,
+      decidedAt: input.now,
+      decisionId: `execution-authority:${deliveryId}:send`,
+      canNotify: input.canNotify,
+      deliveryRef: deliveryId,
+      surfaceClass: "mutation_owner",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${input.candidate.candidate_id}`,
+    }));
+    if (!authorityDecision.can_send) {
+      await input.store.recordDelivery({
+        delivery_id: deliveryId,
+        candidate_id: input.candidate.candidate_id,
+        surface,
+        status: "held",
+        message_id: peerMessage.message_id,
+        target_binding_ref: target.target_binding_ref,
+        expression_decision_ref: input.expressionDecisionId,
+        visibility_policy_ref: input.visibilityPolicyId,
+        outbound_message: outbound,
+        failure_reason: authorityDecision.reason,
+        authority_decision_ref: authorityDecision.decision_id,
+        authority_decision: authorityDecision,
+      });
+      return {
+        delivery_id: deliveryId,
+        message_id: peerMessage.message_id,
+        status: "held",
+        fresh_delivery: false,
+      };
+    }
     const receipt = await port.sendOutboundConversationMessage(outbound);
+    const deliveredAuthorityDecision = await authorityStore.recordDecision(projectOutboundConversationAuthority({
+      message: outbound,
+      currentTarget: target,
+      receipt,
+      decidedAt: receipt.delivered_at,
+      decisionId: authorityDecision.decision_id,
+      canNotify: input.canNotify,
+      deliveryRef: deliveryId,
+      surfaceClass: "mutation_owner",
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${input.candidate.candidate_id}`,
+    }));
     await input.store.recordDelivery({
       delivery_id: deliveryId,
       candidate_id: input.candidate.candidate_id,
@@ -783,6 +895,8 @@ async function deliverPeerInitiativeMessage(input: {
       expression_decision_ref: input.expressionDecisionId,
       visibility_policy_ref: input.visibilityPolicyId,
       outbound_message: outbound,
+      authority_decision_ref: deliveredAuthorityDecision.decision_id,
+      authority_decision: deliveredAuthorityDecision,
     });
     return {
       delivery_id: deliveryId,
@@ -792,6 +906,20 @@ async function deliverPeerInitiativeMessage(input: {
       fresh_delivery: true,
     };
   } catch (error) {
+    const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+      candidateId: input.candidate.candidate_id,
+      deliveryId,
+      surface,
+      decidedAt: new Date().toISOString(),
+      outcome: "fail_closed",
+      failClosed: true,
+      targetBindingRef: target.target_binding_ref,
+      channelPolicyRef: target.channel_policy_ref,
+      expressionDecisionRef: input.expressionDecisionId,
+      visibilityPolicyRef: input.visibilityPolicyId,
+      reason: error instanceof Error ? error.message : String(error),
+      normalSurfaceProjectionRef: `normal-surface:peer-initiative:${input.candidate.candidate_id}`,
+    }));
     await input.store.recordDelivery({
       delivery_id: deliveryId,
       candidate_id: input.candidate.candidate_id,
@@ -803,6 +931,8 @@ async function deliverPeerInitiativeMessage(input: {
       visibility_policy_ref: input.visibilityPolicyId,
       outbound_message: outbound,
       failure_reason: error instanceof Error ? error.message : String(error),
+      authority_decision_ref: authorityDecision.decision_id,
+      authority_decision: authorityDecision,
     });
     input.context.logger.warn("Resident peer initiative outbound delivery failed", {
       candidate_id: input.candidate.candidate_id,

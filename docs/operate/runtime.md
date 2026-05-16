@@ -167,6 +167,23 @@ They are not normal chat/status output and may include trace IDs, internal refs,
 policy reasons, and memory provenance needed to answer why a decision was
 allowed, held, blocked, suppressed, or confirmed.
 
+The Interaction Authority Kernel is the shared contract for side-effect
+authority across execution-adjacent surfaces. It records whether a caller may
+prepare, execute, send, notify, ask, hold, or suppress, and it records typed
+refs for target binding, channel policy, approval, feedback, quieting, delivery,
+transport message, and normal-surface projection. Current Telegram peer
+initiative delivery, Telegram callbacks, notification suppression, ToolExecutor
+approval resume checks, ToolExecutor admission, memory correction save/recall/
+inspect, and resident daemon peer delivery write or project this contract before
+mutation. Runtime-control and schedule execution are current operating behavior
+through PersonalAgentRuntimeStore projection evidence: they record typed
+SituationFrame, TaskCandidate, CapabilityDecision, and InterventionDecision
+before executor handoff, schedule data-source queries, model calls, report
+generation, baseline updates, notification attempts, or daemon resident work.
+Non-Telegram peer initiative surfaces are not current delivery implementations;
+they are contract-only future surfaces until a production caller path owns
+mutation and writes the same authority decision.
+
 RuntimeGraph nodes with `runtime_graph_role=source_of_truth` are the durable
 authority for runtime entities. Goal, task, and milestone writes update graph
 authority in the same transaction as legacy query/index projections. The
@@ -252,6 +269,15 @@ are represented as durable `suppress` InterventionPolicy decisions before a
 channel delivery is dropped. Mixed outcomes can therefore have both an
 admission trace for delivered/plugin routes and a suppression trace for the
 held channel concern.
+
+Run `npm run test:product-gauntlet` before broad authority, gateway,
+notification, approval, memory-correction, or peer initiative changes. The
+gauntlet uses fake providers/transports and temp `PULSEED_HOME` roots, so it
+does not require real Telegram, network access, LLM calls, or user secrets. In
+debug mode it writes failure artifacts under
+`tmp/eval-failures/<scenario-id>/`: the scenario input, authority decision
+snapshot, normal projection, operator/debug evidence, DB table summary, replay
+summary, and a short candidate fix plan.
 
 ## Gateway Channels
 
