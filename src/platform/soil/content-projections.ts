@@ -96,6 +96,7 @@ function memoryEntrySection(entry: AgentMemoryEntry): string {
 function isPlanningEligibleMemoryEntry(entry: AgentMemoryEntry): boolean {
   return (
     (entry.status === "raw" || entry.status === "compiled") &&
+    (entry.correction_state?.active ?? true) &&
     entry.governance.consent.allowed_contexts.includes("local_planning") &&
     isSensitivityAllowed(entry.governance.sensitivity, "local")
   );

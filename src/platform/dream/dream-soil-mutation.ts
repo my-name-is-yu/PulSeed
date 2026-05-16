@@ -116,6 +116,10 @@ function isActiveAgentMemoryStatus(status: AgentMemoryStatus): boolean {
   return status === "raw" || status === "compiled";
 }
 
+function isActiveAgentMemoryEntry(entry: AgentMemoryEntry): boolean {
+  return isActiveAgentMemoryStatus(entry.status) && (entry.correction_state?.active ?? true);
+}
+
 function soilRecordStatusForLearnedPattern(confidence: number): SoilRecordStatus {
   return confidence >= 0.7 ? "confirmed" : "candidate";
 }
@@ -340,9 +344,9 @@ function buildRecordFromAgentMemory(
     goal_id: null,
     task_id: null,
     status: recordStatus,
-    is_active: isActiveAgentMemoryStatus(entry.status),
+    is_active: isActiveAgentMemoryEntry(entry),
     valid_from: createdAt,
-    valid_to: isActiveAgentMemoryStatus(entry.status) ? null : updatedAt,
+    valid_to: isActiveAgentMemoryEntry(entry) ? null : updatedAt,
     source_type: "agent_memory",
     source_id: entry.id,
     confidence: DEFAULT_CONFIDENCE,
@@ -407,7 +411,7 @@ function buildRecordFromAgentMemory(
   });
 
   const tombstone: SoilTombstone | null =
-    !isActiveAgentMemoryStatus(entry.status)
+    !isActiveAgentMemoryEntry(entry)
       ? SoilTombstoneSchema.parse({
           record_id: previous?.is_active ? previous.record_id : recordId,
           record_key: previous?.is_active ? previous.record_key : record.record_key,

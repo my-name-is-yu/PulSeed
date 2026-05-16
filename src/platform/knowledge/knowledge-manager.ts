@@ -688,7 +688,7 @@ export class KnowledgeManager {
           target: result.target,
           replacement: result.replacement,
         });
-        await projectAgentMemory(this.stateManager, store);
+        await projectAgentMemory(this.stateManager, store, { persistTruth: false });
       },
     };
   }

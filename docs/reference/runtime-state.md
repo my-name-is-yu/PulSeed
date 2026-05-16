@@ -59,14 +59,19 @@ callers unless they are explicitly categorized as a non-production boundary.
 Correction, forget, and retract operations for agent memory use one typed
 transaction that updates the correction row, replacement claim, target claim
 lifecycle, forget tombstone, conflict records, recall/projection records, and
-Runtime Event Log linkage. Recall results carry an explicit mode: `exact`,
+Runtime Event Log linkage. Post-transaction Soil projection for those correction
+paths writes projection state without re-saving truth, so `CorrectionRef`
+Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Recall
+results carry an explicit mode: `exact`,
 `lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
 without an embedding index returns `semantic_unavailable`; it is not reported as
 a semantic result backed by lexical matching.
 
-Normal projections expose active user-facing memory only. Operator/debug
-surfaces may show claim IDs, evidence refs, correction refs, tombstones,
-conflict sets, recall mode, and RuntimeGraph/Event Log refs.
+Normal projections expose active user-facing memory only. A memory entry is
+normal-surface eligible only when its lifecycle status is active and
+`correction_state.active` is not false. Operator/debug surfaces may show claim
+IDs, evidence refs, correction refs, tombstones, conflict sets, recall mode, and
+RuntimeGraph/Event Log refs.
 
 ## Runtime Event Log And RuntimeGraph
 

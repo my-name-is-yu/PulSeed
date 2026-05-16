@@ -80,6 +80,19 @@ describe("user memory correction operations", () => {
       correction_state: { status: "corrected", active: false, retained_for_audit: true },
     });
     expect(store.corrections).toHaveLength(1);
+
+    const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      await expect(truthStore.listCorrections("memory-old")).resolves.toEqual([
+        expect.objectContaining({
+          target_claim_id: "memory-old",
+          runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+          runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+        }),
+      ]);
+    } finally {
+      await truthStore.close();
+    }
   });
 
   it("records durable admission after committing agent memory correction effects", async () => {

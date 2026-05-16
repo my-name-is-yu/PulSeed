@@ -7,10 +7,12 @@ import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { importLegacyKnowledgeMemoryState } from "../../../runtime/store/knowledge-memory-state-migration.js";
 import { openControlDatabase } from "../../../runtime/store/control-db/index.js";
+import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth-maintenance-store.js";
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
 import { saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../memory-truth-adapter.js";
+import { AgentMemoryStoreSchema } from "../types/agent-memory.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
 
@@ -103,6 +105,92 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         record_filter: { source_types: ["knowledge_domain_entry"] },
       });
       expect(lexical.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-1:entry-1");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("treats correction_state inactive entries as withheld across recall, truth, and Soil", async () => {
+    const baseDir = tempHome("pulseed-knowledge-memory-inactive-state-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const inactiveStore = AgentMemoryStoreSchema.parse({
+      entries: [{
+        id: "memory-inactive",
+        key: "favorite-shell",
+        value: "The user prefers tcsh forever.",
+        tags: ["preference"],
+        memory_type: "preference",
+        status: "compiled",
+        correction_state: {
+          target_ref: { kind: "agent_memory", id: "memory-inactive" },
+          status: "corrected",
+          active: false,
+          latest_correction_id: "correction:inactive",
+          replacement_ref: null,
+          retained_for_audit: true,
+          reason: "Corrected by user.",
+          updated_at: fixedNow,
+        },
+        governance: {
+          sensitivity: "local",
+          consent: {
+            scope_id: "local",
+            allowed_contexts: ["local_planning"],
+            source_actor: "user",
+            collection_context: "chat",
+          },
+          retention: {
+            policy_id: "retain_until_retracted",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: false,
+          },
+          export_visibility: "listed",
+          owner_ref: "user",
+        },
+        created_at: fixedNow,
+        updated_at: fixedNow,
+      }],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+
+    await manager.saveAgentMemoryStore(inactiveStore);
+
+    expect(await manager.recallAgentMemory("favorite-shell", { exact: true })).toEqual([]);
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.getClaim("memory-inactive")).resolves.toMatchObject({
+        lifecycle: "corrected",
+        visible_to_normal_surface: false,
+        invalidated_by: "correction:inactive",
+      });
+    } finally {
+      await truthStore.close();
+    }
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const [record] = await repo!.loadRecords({
+        active_only: false,
+        source_types: ["knowledge_agent_memory_entry"],
+        source_ids: ["memory-inactive"],
+      });
+      expect(record).toMatchObject({
+        status: "corrected",
+        is_active: false,
+        canonical_text: "Agent memory memory-inactive is corrected and withheld from normal Soil retrieval.",
+      });
+      const lexical = await repo!.searchLexical({
+        query: "tcsh forever",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+      });
+      expect(lexical.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-inactive");
     } finally {
       repo?.close();
     }

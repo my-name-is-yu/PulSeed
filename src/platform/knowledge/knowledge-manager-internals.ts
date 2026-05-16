@@ -69,11 +69,17 @@ export async function projectSharedKnowledge(stateManager: StateManager, entries
   }
 }
 
-export async function projectAgentMemory(stateManager: StateManager, store: AgentMemoryStore): Promise<void> {
+export async function projectAgentMemory(
+  stateManager: StateManager,
+  store: AgentMemoryStore,
+  options: { persistTruth?: boolean } = {},
+): Promise<void> {
   try {
     const baseDir = stateManager.getBaseDir();
     await projectAgentMemoryToSoil({ baseDir, store });
-    await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store);
+    await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store, {
+      persistTruth: options.persistTruth,
+    });
     await rebuildSoilIndex({ rootDir: path.join(baseDir, "soil") });
   } catch (error) {
     console.warn(

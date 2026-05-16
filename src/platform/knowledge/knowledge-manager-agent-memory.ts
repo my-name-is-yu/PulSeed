@@ -64,7 +64,8 @@ const inactiveAgentMemoryStatuses = new Set<AgentMemoryStatus>([
 ]);
 
 function isAgentMemoryEntryActive(entry: AgentMemoryEntry): boolean {
-  return !inactiveAgentMemoryStatuses.has(entry.status);
+  return !inactiveAgentMemoryStatuses.has(entry.status)
+    && (entry.correction_state?.active ?? true);
 }
 
 export async function saveAgentMemoryEntry(

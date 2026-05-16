@@ -388,6 +388,8 @@ describe("lintAgentMemory", () => {
               target_claim_id: staleId,
               correction_kind: "corrected",
               actor: "dream_lint",
+              runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+              runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
             }),
           ]);
         } finally {

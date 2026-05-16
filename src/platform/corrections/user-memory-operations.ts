@@ -119,7 +119,7 @@ function stateManagerAgentMemoryHost(stateManager: StateManager): AgentMemoryHos
         target: result.target,
         replacement: result.replacement,
       });
-      await projectAgentMemory(stateManager, store);
+      await projectAgentMemory(stateManager, store, { persistTruth: false });
     },
   };
 }

@@ -131,7 +131,7 @@ export async function commitAgentMemoryCorrectionToTruth(
     failureAfterStep?: "replacement_claim" | "correction" | "target_update" | "tombstone" | "conflict" | "recall" | "projection" | "runtime_event";
   },
 ): Promise<void> {
-  const parsedStore = AgentMemoryStoreSchema.parse(input.store);
+  AgentMemoryStoreSchema.parse(input.store);
   const correction = MemoryCorrectionEntrySchema.parse(input.correction);
   const truthStore = createMemoryTruthStore(baseDir, { appendRuntimeEvents: true });
   try {
@@ -154,30 +154,6 @@ export async function commitAgentMemoryCorrectionToTruth(
         ...(input.replacement ? agentMemoryProjectionInputs(input.replacement) : []),
       ],
       failureAfterStep: input.failureAfterStep,
-    });
-    await truthStore.saveOwnerSnapshot({
-      ownerKind: AGENT_MEMORY_OWNER_KIND,
-      ownerScope: AGENT_MEMORY_OWNER_SCOPE,
-      claims: parsedStore.entries.map(agentMemoryClaimInput),
-      evidenceRefs: parsedStore.entries.map(agentMemoryEvidenceInput),
-      corrections: parsedStore.corrections.map(agentMemoryCorrectionInput),
-      tombstones: parsedStore.corrections
-        .filter((entry) => entry.correction_kind === "forgotten")
-        .map((entry) => ForgetTombstoneSchema.parse({
-          tombstone_id: `agent-memory-tombstone-${entry.correction_id}`,
-          claim_id: entry.target_ref.id,
-          idempotency_key: entry.correction_id,
-          source_evidence_ref: `evidence:agent-memory:${entry.target_ref.id}`,
-          reason: entry.reason,
-          created_at: entry.created_at,
-        })),
-      projections: parsedStore.entries.flatMap(agentMemoryProjectionInputs),
-      tombstoneReason: "Agent memory correction commit removed this claim.",
-      dropRemovedClaimIds: parsedStore.corrections
-        .filter((entry) => entry.correction_kind === "forgotten"
-          && entry.audit?.status === "destructive_delete_requested")
-        .map((entry) => entry.target_ref.id),
-      emitRuntimeEvent: false,
     });
   } finally {
     await truthStore.close();
@@ -328,12 +304,12 @@ export async function recordAgentMemoryRecall(input: {
         invalidation_status: invalidationStatusForEntry(entry),
         confidence: entry.provenance?.reliability ?? null,
         trust_state: trustStateForVerification(entry.verification_status),
-        safe_for_normal_projection: entry.status === "raw" || entry.status === "compiled",
+        safe_for_normal_projection: isAgentMemoryEntrySafeForNormalProjection(entry),
       })),
       withheld_claim_ids: input.withheldClaimIds ?? [],
       semantic_index_status: input.semanticIndexStatus ?? "not_requested",
       safe_for_normal_projection: (input.withheldClaimIds ?? []).length === 0
-        && input.entries.every((entry) => entry.status === "raw" || entry.status === "compiled"),
+        && input.entries.every(isAgentMemoryEntrySafeForNormalProjection),
       created_at: now,
     });
   } finally {
@@ -366,7 +342,7 @@ function agentMemoryClaimInput(entry: AgentMemoryEntry): MemoryClaimInput {
     updated_at: entry.updated_at,
     invalidated_by: entry.correction_state?.latest_correction_id ?? null,
     superseded_by: entry.supersedes_memory_id ?? entry.correction_state?.replacement_ref?.id ?? null,
-    visible_to_normal_surface: entry.status === "raw" || entry.status === "compiled",
+    visible_to_normal_surface: isAgentMemoryEntrySafeForNormalProjection(entry),
     operator_explanation_refs: [
       ...(entry.correction_state?.latest_correction_id ? [entry.correction_state.latest_correction_id] : []),
       `evidence:agent-memory:${entry.id}`,
@@ -437,7 +413,7 @@ function agentMemoryCorrectionEntryFromRef(correction: CorrectionRef): MemoryCor
 }
 
 function agentMemoryProjectionInputs(entry: AgentMemoryEntry): ProjectionRecordInput[] {
-  const safe = entry.status === "raw" || entry.status === "compiled";
+  const safe = isAgentMemoryEntrySafeForNormalProjection(entry);
   const now = entry.updated_at;
   return [
     ProjectionRecordSchema.parse({
@@ -698,7 +674,19 @@ function agentMemoryTypeForClaimType(claimType: MemoryClaim["claim_type"]): Agen
   return "fact";
 }
 
+function isAgentMemoryEntrySafeForNormalProjection(entry: AgentMemoryEntry): boolean {
+  return (entry.status === "raw" || entry.status === "compiled")
+    && (entry.correction_state?.active ?? true);
+}
+
 function lifecycleForAgentMemory(entry: AgentMemoryEntry): MemoryClaimLifecycle {
+  if (entry.correction_state?.active === false) {
+    if (entry.correction_state.status === "corrected" || entry.correction_state.status === "superseded") return "corrected";
+    if (entry.correction_state.status === "retracted") return "retracted";
+    if (entry.correction_state.status === "forgotten") return "forgotten";
+    if (entry.correction_state.status === "conflicted") return "conflicted";
+    if (entry.correction_state.status === "quarantined") return "archived";
+  }
   if (entry.status === "corrected" || entry.status === "superseded") return "corrected";
   if (entry.status === "retracted") return "retracted";
   if (entry.status === "forgotten") return "forgotten";

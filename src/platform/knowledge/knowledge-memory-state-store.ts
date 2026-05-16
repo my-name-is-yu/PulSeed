@@ -144,6 +144,17 @@ function metadataSortOrder(record: SoilRecord): number {
 }
 
 function soilStatusForAgentMemory(entry: AgentMemoryEntry): SoilRecord["status"] {
+  if (entry.correction_state?.active === false) {
+    switch (entry.correction_state.status) {
+      case "corrected": return "corrected";
+      case "superseded": return "superseded";
+      case "retracted": return "retracted";
+      case "forgotten": return "forgotten";
+      case "quarantined": return "quarantined";
+      case "conflicted": return "conflicted";
+      case "active": return "active";
+    }
+  }
   switch (entry.status) {
     case "archived": return "archived";
     case "corrected": return "corrected";
@@ -164,6 +175,11 @@ function isActiveAgentMemoryEntry(entry: AgentMemoryEntry): boolean {
 }
 
 function lifecycleStateForAgentMemory(entry: AgentMemoryEntry): "active" | "superseded" | "archived" | "tombstoned" {
+  if (entry.correction_state?.active === false) {
+    if (entry.correction_state.status === "corrected" || entry.correction_state.status === "superseded") return "superseded";
+    if (entry.correction_state.status === "forgotten" || entry.correction_state.status === "retracted") return "tombstoned";
+    return "archived";
+  }
   if (entry.status === "corrected" || entry.status === "superseded") return "superseded";
   if (entry.status === "forgotten" || entry.status === "retracted") return "tombstoned";
   if (entry.status === "conflicted") return "archived";
@@ -641,7 +657,10 @@ export class KnowledgeMemoryStateStore {
     }
   }
 
-  async saveAgentMemoryStore(store: AgentMemoryStore): Promise<void> {
+  async saveAgentMemoryStore(
+    store: AgentMemoryStore,
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = AgentMemoryStoreSchema.parse(store);
     const repo = await this.openRepository();
     try {
@@ -670,7 +689,9 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
-      await saveAgentMemoryStoreToTruth(this.baseDir, parsed);
+      if (options.persistTruth !== false) {
+        await saveAgentMemoryStoreToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }
