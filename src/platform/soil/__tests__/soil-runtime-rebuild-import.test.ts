@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
 import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
-import { saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../../knowledge/memory-truth-adapter.js";
+import { saveAgentMemoryStoreToTruth, saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../../knowledge/memory-truth-adapter.js";
 import { AgentMemoryStoreSchema } from "../../knowledge/types/agent-memory.js";
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
@@ -222,6 +222,45 @@ describe("Soil runtime rebuild", () => {
       expect(domainPage?.body).not.toContain("Atom");
       expect(sharedPage?.body).toContain("- Entries: 0");
       expect(sharedPage?.body).not.toContain("Atom");
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("rebuilds empty agent memory truth over stale Soil memory pages", async () => {
+    const baseDir = makeTempDir("soil-runtime-rebuild-agent-empty-truth-");
+    try {
+      const knowledgeMemoryStore = new KnowledgeMemoryStateStore(baseDir);
+      await knowledgeMemoryStore.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+        entries: [{
+          id: "memory-stale-editor",
+          key: "favorite-editor",
+          value: "Atom",
+          tags: ["editor"],
+          memory_type: "preference",
+          status: "compiled",
+          created_at: "2026-04-11T08:00:00.000Z",
+          updated_at: "2026-04-11T09:00:00.000Z",
+        }],
+        corrections: [],
+        last_consolidated_at: "2026-04-11T09:30:00.000Z",
+      }));
+      await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const stalePage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "index.md"));
+      expect(stalePage?.body).toContain("Atom");
+
+      await saveAgentMemoryStoreToTruth(baseDir, AgentMemoryStoreSchema.parse({
+        entries: [],
+        corrections: [],
+        last_consolidated_at: null,
+      }));
+
+      const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const memoryPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "index.md"));
+
+      expect(rebuilt.projected.agentMemory).toBe(0);
+      expect(memoryPage?.body).toContain("- Entries: 0");
+      expect(memoryPage?.body).not.toContain("Atom");
     } finally {
       cleanupTempDir(baseDir);
     }

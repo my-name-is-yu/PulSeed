@@ -6,7 +6,7 @@ import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { ScheduleEntryStore } from "../../runtime/schedule/entry-store.js";
 import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
-import { hasSharedKnowledgeTruth } from "../knowledge/memory-truth-adapter.js";
+import { hasAgentMemoryTruth, hasSharedKnowledgeTruth } from "../knowledge/memory-truth-adapter.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
 import { readSoilMarkdownFile } from "./io.js";
@@ -227,9 +227,12 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     agentMemory.entries.length > 0
     || agentMemory.corrections.length > 0
     || agentMemory.last_consolidated_at !== null
+    || await hasAgentMemoryTruth(input.baseDir)
   ) {
     await projectAgentMemoryToSoil({ ...projectionBase, store: agentMemory });
-    projected.agentMemory = agentMemory.entries.length;
+    projected.agentMemory = agentMemory.entries.filter((entry) =>
+      (entry.status === "raw" || entry.status === "compiled") && (entry.correction_state?.active ?? true)
+    ).length;
   }
 
   const decisionRecords = [];
