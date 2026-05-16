@@ -20,23 +20,39 @@ export const KnowledgeQueryInputSchema = z.object({
 }).strict();
 export type KnowledgeQueryInput = z.infer<typeof KnowledgeQueryInputSchema>;
 
+export type KnowledgeQueryMode = "keyword" | "semantic" | "semantic_unavailable";
+export type KnowledgeSemanticIndexStatus = "available" | "unavailable" | "not_requested";
+
 export interface KnowledgeQueryResultItem {
   entryId: string;
   content: string;
   confidence: number;
   source: string;
   goalId: string | null;
+  mode: "keyword" | "semantic";
   relevance?: number;
 }
 
 export interface KnowledgeQueryOutput {
   results: KnowledgeQueryResultItem[];
   totalFound: number;
+  requestedMode: "keyword" | "semantic";
+  mode: KnowledgeQueryMode;
+  semanticIndexStatus: KnowledgeSemanticIndexStatus;
+  lexicalFallbackUsed: boolean;
+}
+
+interface KnowledgeSearchResult {
+  items: KnowledgeQueryResultItem[];
+  mode: KnowledgeQueryMode;
+  semanticIndexStatus: KnowledgeSemanticIndexStatus;
+  lexicalFallbackUsed: boolean;
 }
 
 function entryToItem(
   entry: KnowledgeEntry,
   goalId: string | null,
+  mode: "keyword" | "semantic",
   relevance?: number
 ): KnowledgeQueryResultItem {
   return {
@@ -48,6 +64,7 @@ function entryToItem(
         ? (entry.sources[0]?.reference ?? "unknown")
         : "unknown",
     goalId,
+    mode,
     ...(relevance !== undefined ? { relevance } : {}),
   };
 }
@@ -93,17 +110,21 @@ export class KnowledgeQueryTool
     const startTime = Date.now();
 
     try {
-      const items = await this._search(input);
-      const limited = items.slice(0, input.limit);
+      const search = await this._search(input);
+      const limited = search.items.slice(0, input.limit);
       const output: KnowledgeQueryOutput = {
         results: limited,
-        totalFound: items.length,
+        totalFound: search.items.length,
+        requestedMode: input.type,
+        mode: search.mode,
+        semanticIndexStatus: search.semanticIndexStatus,
+        lexicalFallbackUsed: search.lexicalFallbackUsed,
       };
 
       return {
         success: true,
         data: output,
-        summary: `Found ${items.length} knowledge entries for query "${input.query}"${items.length > input.limit ? ` (showing first ${input.limit})` : ""}`,
+        summary: summaryForKnowledgeQuery(input, search),
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
@@ -119,11 +140,16 @@ export class KnowledgeQueryTool
 
   private async _search(
     input: KnowledgeQueryInput
-  ): Promise<KnowledgeQueryResultItem[]> {
+  ): Promise<KnowledgeSearchResult> {
     if (input.type === "semantic") {
       return this._semanticSearch(input);
     }
-    return this._keywordSearch(input);
+    return {
+      items: await this._keywordSearch(input),
+      mode: "keyword",
+      semanticIndexStatus: "not_requested",
+      lexicalFallbackUsed: false,
+    };
   }
 
   private async _keywordSearch(
@@ -133,7 +159,7 @@ export class KnowledgeQueryTool
       const entries = await this.knowledgeManager.loadKnowledge(input.goalId);
       return entries
         .filter((e) => keywordMatch(e, input.query))
-        .map((e) => entryToItem(e, input.goalId ?? null));
+        .map((e) => entryToItem(e, input.goalId ?? null, "keyword"));
     }
 
     // Cross-goal keyword search via shared KB
@@ -144,23 +170,34 @@ export class KnowledgeQueryTool
           keywordMatch(e, input.query)
       )
       .map((e) =>
-        entryToItem(e, e.source_goal_ids[0] ?? null)
+        entryToItem(e, e.source_goal_ids[0] ?? null, "keyword")
       );
   }
 
   private async _semanticSearch(
     input: KnowledgeQueryInput
-  ): Promise<KnowledgeQueryResultItem[]> {
+  ): Promise<KnowledgeSearchResult> {
+    if (!this._hasSemanticIndex()) {
+      return {
+        items: await this._keywordSearch(input),
+        mode: "semantic_unavailable",
+        semanticIndexStatus: "unavailable",
+        lexicalFallbackUsed: true,
+      };
+    }
+
     if (input.goalId) {
-      // Try semantic via searchKnowledge (VectorIndex), fall back to keyword
       const entries = await this.knowledgeManager.searchKnowledge(
         input.query,
-        input.limit
+        input.limit,
+        { goalId: input.goalId }
       );
-      if (entries.length > 0) {
-        return entries.map((e) => entryToItem(e, input.goalId ?? null));
-      }
-      return this._keywordSearch(input);
+      return {
+        items: entries.map((e) => entryToItem(e, input.goalId ?? null, "semantic")),
+        mode: "semantic",
+        semanticIndexStatus: "available",
+        lexicalFallbackUsed: false,
+      };
     }
 
     // Cross-goal semantic search
@@ -168,14 +205,21 @@ export class KnowledgeQueryTool
       input.query,
       input.limit
     );
-    if (results.length > 0) {
-      return results.map(({ entry, similarity }) =>
-        entryToItem(entry, entry.source_goal_ids[0] ?? null, similarity)
-      );
-    }
+    return {
+      items: results.map(({ entry, similarity }) =>
+        entryToItem(entry, entry.source_goal_ids[0] ?? null, "semantic", similarity)
+      ),
+      mode: "semantic",
+      semanticIndexStatus: "available",
+      lexicalFallbackUsed: false,
+    };
+  }
 
-    // Fall back to keyword
-    return this._keywordSearch(input);
+  private _hasSemanticIndex(): boolean {
+    const manager = this.knowledgeManager as KnowledgeManager & {
+      hasKnowledgeSemanticIndex?: () => boolean;
+    };
+    return manager.hasKnowledgeSemanticIndex?.() ?? true;
   }
 
   async checkPermissions(_input: KnowledgeQueryInput, _context?: ToolCallContext): Promise<PermissionCheckResult> {
@@ -185,4 +229,12 @@ export class KnowledgeQueryTool
   isConcurrencySafe(_input?: KnowledgeQueryInput): boolean {
     return true;
   }
+}
+
+function summaryForKnowledgeQuery(input: KnowledgeQueryInput, search: KnowledgeSearchResult): string {
+  const limitSuffix = search.items.length > input.limit ? ` (showing first ${input.limit})` : "";
+  if (search.mode === "semantic_unavailable") {
+    return `Semantic knowledge search unavailable; returned ${search.items.length} keyword fallback entries for query "${input.query}"${limitSuffix}`;
+  }
+  return `Found ${search.items.length} knowledge entries for query "${input.query}" using ${search.mode} mode${limitSuffix}`;
 }

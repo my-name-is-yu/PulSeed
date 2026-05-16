@@ -5,9 +5,11 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { KnowledgeManager } from "../../knowledge/knowledge-manager.js";
 import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
+import { loadAgentMemoryStoreFromTruth } from "../../knowledge/memory-truth-adapter.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../knowledge/types/agent-memory.js";
 import { PersonalAgentRuntimeStore } from "../../../runtime/personal-agent/index.js";
 import { RuntimeEvidenceLedger } from "../../../runtime/store/evidence-ledger.js";
+import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth-maintenance-store.js";
 import { runUserMemoryOperation } from "../user-memory-operations.js";
 
 function memoryEntry(overrides: Partial<AgentMemoryEntry> = {}): AgentMemoryEntry {
@@ -78,9 +80,59 @@ describe("user memory correction operations", () => {
       correction_state: { status: "corrected", active: false, retained_for_audit: true },
     });
     expect(store.corrections).toHaveLength(1);
+
+    let committedRuntimeEventRef: string | null = null;
+    let committedRuntimeGraphRefs: string[] = [];
+    const replacementClaimId = result.replacement!.ref.id;
+    const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      const [correction] = await truthStore.listCorrections("memory-old");
+      expect(correction).toEqual(expect.objectContaining({
+          target_claim_id: "memory-old",
+          runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+          runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+        }));
+      await expect(truthStore.listConflictSets()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: "resolved",
+          resolution_claim_id: replacementClaimId,
+          claim_ids: expect.arrayContaining(["memory-old", replacementClaimId]),
+        }),
+      ]));
+      await expect(truthStore.listRecallRecords()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          mode: "graph",
+          result_claims: [expect.objectContaining({ claim_id: replacementClaimId })],
+          withheld_claim_ids: ["memory-old"],
+        }),
+      ]));
+      committedRuntimeEventRef = correction?.runtime_event_ref ?? null;
+      committedRuntimeGraphRefs = correction?.runtime_graph_refs ?? [];
+    } finally {
+      await truthStore.close();
+    }
+
+    await manager.saveAgentMemory({
+      key: "unrelated-later-save",
+      value: "A later memory save must not erase correction event refs.",
+      memory_type: "fact",
+    });
+
+    const afterSaveTruthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      await expect(afterSaveTruthStore.listCorrections("memory-old")).resolves.toEqual([
+        expect.objectContaining({
+          target_claim_id: "memory-old",
+          runtime_event_ref: committedRuntimeEventRef,
+          runtime_graph_refs: committedRuntimeGraphRefs,
+        }),
+      ]);
+    } finally {
+      await afterSaveTruthStore.close();
+    }
   });
 
-  it("records durable admission before committing agent memory correction effects", async () => {
+  it("records durable admission after committing agent memory correction effects", async () => {
     await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],
       corrections: [],
@@ -93,11 +145,11 @@ describe("user memory correction operations", () => {
         order.push("trace");
         return originalRecordTrace.call(this, trace);
       });
-    const originalSave = KnowledgeMemoryStateStore.prototype.saveAgentMemoryStore;
-    vi.spyOn(KnowledgeMemoryStateStore.prototype, "saveAgentMemoryStore")
-      .mockImplementation(async function (this: KnowledgeMemoryStateStore, store) {
-        order.push("save");
-        return originalSave.call(this, store);
+    const originalApply = MemoryTruthMaintenanceStore.prototype.applyCorrectionTransaction;
+    vi.spyOn(MemoryTruthMaintenanceStore.prototype, "applyCorrectionTransaction")
+      .mockImplementation(async function (this: MemoryTruthMaintenanceStore, input) {
+        order.push("truth-transaction");
+        return originalApply.call(this, input);
       });
 
     await runUserMemoryOperation(stateManager, {
@@ -110,17 +162,68 @@ describe("user memory correction operations", () => {
     });
 
     expect(order.indexOf("trace")).toBeGreaterThanOrEqual(0);
-    expect(order.indexOf("trace")).toBeLessThan(order.indexOf("save"));
+    expect(order.indexOf("truth-transaction")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("truth-transaction")).toBeLessThan(order.indexOf("trace"));
   });
 
-  it("does not commit agent memory correction when durable admission fails", async () => {
+  it("returns the committed agent memory correction when post-commit trace persistence fails", async () => {
     await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],
       corrections: [],
       last_consolidated_at: null,
     });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
       .mockRejectedValueOnce(new Error("trace unavailable"));
+
+    const result = await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    expect(result.correction).toMatchObject({
+      target_ref: { kind: "agent_memory", id: "memory-old" },
+      correction_kind: "corrected",
+    });
+    expect(result.replacement?.ref).toEqual(expect.objectContaining({
+      kind: "agent_memory",
+    }));
+
+    const manager = new KnowledgeManager(stateManager, {} as ILLMClient);
+    expect(await manager.recallAgentMemory("favorite-editor", { exact: true })).toEqual([]);
+    expect(await manager.recallAgentMemory("favorite-editor-current", { exact: true })).toEqual([
+      expect.objectContaining({
+        key: "favorite-editor-current",
+        supersedes_memory_id: "memory-old",
+      }),
+    ]);
+
+    const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      await expect(truthStore.listCorrections("memory-old")).resolves.toEqual([
+        expect.objectContaining({
+          target_claim_id: "memory-old",
+          replacement_claim_id: result.replacement?.ref.id,
+        }),
+      ]);
+    } finally {
+      await truthStore.close();
+    }
+  });
+
+  it("does not record durable admission when the truth transaction fails", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const traceSpy = vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace");
+    vi.spyOn(MemoryTruthMaintenanceStore.prototype, "applyCorrectionTransaction")
+      .mockRejectedValueOnce(new Error("truth unavailable"));
 
     await expect(runUserMemoryOperation(stateManager, {
       operation: "correct",
@@ -129,11 +232,12 @@ describe("user memory correction operations", () => {
       replacementValue: "The user prefers VS Code.",
       replacementKey: "favorite-editor-current",
       now: "2026-05-02T01:00:00.000Z",
-    })).rejects.toThrow("trace unavailable");
+    })).rejects.toThrow("truth unavailable");
 
     const store = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
     expect(store.entries).toEqual([memoryEntry()]);
     expect(store.corrections).toEqual([]);
+    expect(traceSpy).not.toHaveBeenCalled();
   });
 
   it("replays the same agent memory correction input without duplicate correction effects", async () => {
@@ -156,7 +260,7 @@ describe("user memory correction operations", () => {
 
     expect(second.correction?.correction_id).toBe(first.correction?.correction_id);
     expect(second.replacement?.ref.id).toBe(first.replacement?.ref.id);
-    const store = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
+    const store = await loadAgentMemoryStoreFromTruth(tmpDir);
     expect(store.corrections).toHaveLength(1);
     expect(store.entries.filter((entry) => entry.supersedes_memory_id === "memory-old")).toHaveLength(1);
   });

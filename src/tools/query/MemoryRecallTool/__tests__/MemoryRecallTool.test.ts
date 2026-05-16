@@ -6,6 +6,7 @@ import type { ToolCallContext } from "../../../types.js";
 import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../../../platform/knowledge/types/agent-memory.js";
 import { StateManager } from "../../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../../base/llm/llm-client.js";
+import type { IEmbeddingClient } from "../../../../platform/knowledge/embedding-client.js";
 import { cleanupTempDir, makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { createBuiltinTools } from "../../../builtin/index.js";
 import { ConcurrencyController } from "../../../concurrency.js";
@@ -338,6 +339,64 @@ describe("MemoryRecallTool", () => {
   });
 
   describe("production recall path", () => {
+    it("returns typed provenance for exact, lexical, semantic, and graph recall modes through the tool", async () => {
+      const tmpDir = makeTempDir("pulseed-memory-recall-modes-");
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const embeddingClient: IEmbeddingClient = {
+          embed: vi.fn().mockResolvedValue([1, 0, 0]),
+          batchEmbed: vi.fn().mockResolvedValue([[0.99, 0.01, 0]]),
+          cosineSimilarity: vi.fn(),
+        };
+        const realKm = new RealKnowledgeManager(stateManager, {} as ILLMClient, undefined, embeddingClient);
+        const memory = await realKm.saveAgentMemory({
+          key: "user.editor.current",
+          value: "The user prefers VS Code.",
+          tags: ["editor", "preference"],
+          memory_type: "preference",
+          verification_status: "verified",
+        });
+        const realTool = new MemoryRecallTool(realKm);
+
+        const exact = await realTool.call({ query: "user.editor.current", mode: "exact" }, makeContext());
+        const lexical = await realTool.call({ query: "VS Code", mode: "lexical" }, makeContext());
+        const semantic = await realTool.call({ query: "preferred editor", mode: "semantic" }, makeContext());
+        const graph = await realTool.call({ query: memory.id, mode: "graph" }, makeContext());
+
+        for (const [mode, result] of [
+          ["exact", exact],
+          ["lexical", lexical],
+          ["semantic", semantic],
+          ["graph", graph],
+        ] as const) {
+          expect(result.success).toBe(true);
+          expect(result.data).toMatchObject({
+            entries: [expect.objectContaining({ id: memory.id })],
+            recall: {
+              mode,
+              resultClaims: [expect.objectContaining({
+                claim_id: memory.id,
+                evidence_refs: [`evidence:agent-memory:${memory.id}`],
+                correction_status: "active",
+                invalidation_status: "valid",
+                trust_state: "verified",
+                safe_for_normal_projection: true,
+              })],
+            },
+          });
+        }
+        expect(semantic.data).toMatchObject({
+          recall: {
+            mode: "semantic",
+            semanticIndexStatus: "available",
+          },
+        });
+      } finally {
+        cleanupTempDir(tmpDir);
+      }
+    });
+
     it("reports semantic recall unavailable instead of using lexical substring matches by default", async () => {
       const tmpDir = makeTempDir("pulseed-memory-recall-tool-");
       try {
@@ -352,8 +411,16 @@ describe("MemoryRecallTool", () => {
         const realTool = new MemoryRecallTool(realKm);
 
         const freeform = await realTool.call({ query: "TypeScript" }, makeContext());
-        expect(freeform.success).toBe(false);
-        expect(freeform.error).toContain("semantic agent memory recall requires an embedding client");
+        expect(freeform.success).toBe(true);
+        expect(freeform.summary).toContain("Semantic memory recall unavailable");
+        expect(freeform.data).toMatchObject({
+          entries: [],
+          totalFound: 0,
+          recall: {
+            mode: "semantic_unavailable",
+            semanticIndexStatus: "unavailable",
+          },
+        });
 
         const lexical = await realTool.call({ query: "TypeScript", mode: "lexical" }, makeContext());
         expect(lexical.success).toBe(true);
@@ -388,8 +455,16 @@ describe("MemoryRecallTool", () => {
         });
 
         const freeform = await executor.execute("memory_recall", { query: "TypeScript" }, makeContext());
-        expect(freeform.success).toBe(false);
-        expect(freeform.error ?? "").toContain("semantic agent memory recall requires an embedding client");
+        expect(freeform.success).toBe(true);
+        expect(freeform.summary).toContain("Semantic memory recall unavailable");
+        expect(freeform.data).toMatchObject({
+          entries: [],
+          totalFound: 0,
+          recall: {
+            mode: "semantic_unavailable",
+            semanticIndexStatus: "unavailable",
+          },
+        });
 
         const lexical = await executor.execute(
           "memory_recall",

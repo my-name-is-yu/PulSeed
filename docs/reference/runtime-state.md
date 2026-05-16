@@ -41,6 +41,57 @@ Bounded event-spool files are IPC payloads, not the decision authority for
 acting on a signal. EventServer and DriveSystem event ingress records the
 personal-agent `external_signal` trace in the control DB before enqueue/replay.
 
+## Memory / Soil / Knowledge Truth Maintenance
+
+Memory truth maintenance currently stores agent memory, domain knowledge, and
+shared knowledge production state in `MemoryTruthMaintenanceStore` control-DB
+tables. The owner tables cover memory claims, evidence refs, correction refs,
+forget tombstones, conflict sets, recall records, projection records,
+procedure/preference/relationship memory records, and memory projection
+metadata.
+
+`StateManager` is a root, config, debug, import/export, migration, and
+compatibility boundary for these paths. Normal production memory/knowledge
+mutations do not use raw `StateManager.writeRaw` as truth. The DB-first guard
+fails new production raw memory, knowledge, or Soil `StateManager.writeRaw`
+callers unless they are explicitly categorized as a non-production boundary.
+
+Correction, forget, and retract operations for agent memory use one typed
+transaction that updates the correction row, target claim lifecycle,
+recall/projection records, and Runtime Event Log linkage. Replacement
+corrections also write the replacement claim and a resolved conflict set linking
+the stale claim to the selected replacement claim. Forget operations write a
+forget tombstone in the same transaction. Retract operations do not write a
+conflict set because they have no competing replacement claim. Post-transaction
+Soil projection for those correction paths writes projection state without
+re-saving truth, so `CorrectionRef`
+Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Later
+owner snapshots also preserve those refs when they mirror older correction
+entries. If post-commit trace persistence fails for a user memory correction,
+the committed truth transaction remains authoritative and the caller receives
+the committed correction result.
+
+Conflict resolution restores the selected claim's previous lifecycle and
+normal-projection eligibility, while losing claims are archived and remain
+withheld from normal surfaces. Domain knowledge deletion writes an empty typed
+owner snapshot before tombstoning Soil compatibility records, so normal
+knowledge loads cannot fall back to stale Soil rows after delete. A forget
+tombstone blocks stale evidence reimport until an operator restore records
+`operator_restored_at`; restored tombstones no longer block explicit claim
+reactivation.
+
+Recall results carry an explicit mode: `exact`,
+`lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
+without an embedding index returns `semantic_unavailable`; it is not reported as
+a semantic result backed by lexical matching. Goal-scoped semantic knowledge
+queries filter vector hits by typed domain owner scope before returning entries.
+
+Normal projections expose active user-facing memory only. A memory entry is
+normal-surface eligible only when its lifecycle status is active and
+`correction_state.active` is not false. Operator/debug surfaces may show claim
+IDs, evidence refs, correction refs, tombstones, conflict sets, recall mode, and
+RuntimeGraph/Event Log refs.
+
 ## Runtime Event Log And RuntimeGraph
 
 The current source-of-truth path for major runtime event evidence is the

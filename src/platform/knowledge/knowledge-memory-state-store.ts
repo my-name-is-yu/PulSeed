@@ -24,6 +24,18 @@ import {
   MemoryCorrectionEntrySchema,
   type MemoryCorrectionEntry,
 } from "../corrections/memory-correction-ledger.js";
+import {
+  hasAgentMemoryTruth,
+  hasDomainKnowledgeTruth,
+  hasSharedKnowledgeTruth,
+  listDomainKnowledgeTruthGoalIds,
+  loadAgentMemoryStoreFromTruth,
+  loadDomainKnowledgeFromTruth,
+  loadSharedKnowledgeFromTruth,
+  saveAgentMemoryStoreToTruth,
+  saveDomainKnowledgeToTruth,
+  saveSharedKnowledgeToTruth,
+} from "./memory-truth-adapter.js";
 
 const SOURCE_DOMAIN_STATE = "knowledge_domain_state";
 const SOURCE_DOMAIN_ENTRY = "knowledge_domain_entry";
@@ -133,6 +145,17 @@ function metadataSortOrder(record: SoilRecord): number {
 }
 
 function soilStatusForAgentMemory(entry: AgentMemoryEntry): SoilRecord["status"] {
+  if (entry.correction_state?.active === false) {
+    switch (entry.correction_state.status) {
+      case "corrected": return "corrected";
+      case "superseded": return "superseded";
+      case "retracted": return "retracted";
+      case "forgotten": return "forgotten";
+      case "quarantined": return "quarantined";
+      case "conflicted": return "conflicted";
+      case "active": return "active";
+    }
+  }
   switch (entry.status) {
     case "archived": return "archived";
     case "corrected": return "corrected";
@@ -140,10 +163,29 @@ function soilStatusForAgentMemory(entry: AgentMemoryEntry): SoilRecord["status"]
     case "retracted": return "retracted";
     case "forgotten": return "forgotten";
     case "quarantined": return "quarantined";
+    case "conflicted": return "conflicted";
     case "raw":
     case "compiled":
       return "active";
   }
+}
+
+function isActiveAgentMemoryEntry(entry: AgentMemoryEntry): boolean {
+  return (entry.status === "raw" || entry.status === "compiled")
+    && (entry.correction_state?.active ?? true);
+}
+
+function lifecycleStateForAgentMemory(entry: AgentMemoryEntry): "active" | "superseded" | "archived" | "tombstoned" {
+  if (entry.correction_state?.active === false) {
+    if (entry.correction_state.status === "corrected" || entry.correction_state.status === "superseded") return "superseded";
+    if (entry.correction_state.status === "forgotten" || entry.correction_state.status === "retracted") return "tombstoned";
+    return "archived";
+  }
+  if (entry.status === "corrected" || entry.status === "superseded") return "superseded";
+  if (entry.status === "forgotten" || entry.status === "retracted") return "tombstoned";
+  if (entry.status === "conflicted") return "archived";
+  if (entry.status === "archived" || entry.status === "quarantined") return "archived";
+  return "active";
 }
 
 function recordForDomainState(domainKnowledge: DomainKnowledge): SoilRecordInput {
@@ -194,7 +236,10 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
   const sourceId = `${goalId}:${entry.entry_id}`;
   const id = recordId(SOURCE_DOMAIN_ENTRY, sourceId);
   const acquiredAt = isoOrNow(entry.acquired_at);
-  const canonical = nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Knowledge entry ${entry.entry_id}`);
+  const active = entry.superseded_by === null;
+  const canonical = active
+    ? nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Knowledge entry ${entry.entry_id}`)
+    : `Knowledge entry ${entry.entry_id} is superseded and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_DOMAIN_ENTRY, sourceId),
@@ -202,7 +247,9 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
     record_type: "fact",
     soil_id: `knowledge/domain/${goalId}/${entry.entry_id}`,
     title: nonEmptyText(entry.question, `Knowledge entry ${entry.entry_id}`),
-    summary: nonEmptyText(entry.answer, `Knowledge entry ${entry.entry_id}`),
+    summary: active
+      ? nonEmptyText(entry.answer, `Knowledge entry ${entry.entry_id}`)
+      : `Superseded knowledge entry ${entry.entry_id}`,
     canonical_text: canonical,
     goal_id: goalId,
     task_id: entry.acquisition_task_id,
@@ -213,12 +260,15 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
     valid_from: acquiredAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_DOMAIN_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status: entry.superseded_by ? "superseded" : "active",
+      lifecycle_state: entry.superseded_by ? "superseded" : "active",
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${domainSourceRef(goalId)}#${entry.entry_id}`,
     },
@@ -235,7 +285,10 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
   const sourceId = entry.entry_id;
   const id = recordId(SOURCE_SHARED_ENTRY, sourceId);
   const acquiredAt = isoOrNow(entry.acquired_at);
-  const canonical = nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Shared knowledge entry ${entry.entry_id}`);
+  const active = entry.superseded_by === null;
+  const canonical = active
+    ? nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Shared knowledge entry ${entry.entry_id}`)
+    : `Shared knowledge entry ${entry.entry_id} is superseded and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_SHARED_ENTRY, sourceId),
@@ -243,7 +296,9 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
     record_type: "fact",
     soil_id: `knowledge/shared/${entry.entry_id}`,
     title: nonEmptyText(entry.question, `Shared knowledge entry ${entry.entry_id}`),
-    summary: nonEmptyText(entry.answer, `Shared knowledge entry ${entry.entry_id}`),
+    summary: active
+      ? nonEmptyText(entry.answer, `Shared knowledge entry ${entry.entry_id}`)
+      : `Superseded shared knowledge entry ${entry.entry_id}`,
     canonical_text: canonical,
     goal_id: null,
     task_id: entry.acquisition_task_id,
@@ -254,12 +309,15 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
     valid_from: acquiredAt,
     valid_to: isoOrNull(entry.revalidation_due_at),
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_SHARED_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status: entry.superseded_by ? "superseded" : "active",
+      lifecycle_state: entry.superseded_by ? "superseded" : "active",
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${sharedSourceRef()}#${entry.entry_id}`,
     },
@@ -277,7 +335,11 @@ function recordForAgentMemoryEntry(entry: AgentMemoryEntry, sortOrder: number): 
   const id = recordId(SOURCE_AGENT_MEMORY_ENTRY, sourceId);
   const createdAt = isoOrNow(entry.created_at);
   const updatedAt = isoOrNow(entry.updated_at);
-  const canonical = nonEmptyText(`${entry.key}\n\n${entry.summary ?? ""}\n\n${entry.value}`, `Agent memory ${entry.id}`);
+  const active = isActiveAgentMemoryEntry(entry);
+  const status = soilStatusForAgentMemory(entry);
+  const canonical = active
+    ? nonEmptyText(`${entry.key}\n\n${entry.summary ?? ""}\n\n${entry.value}`, `Agent memory ${entry.id}`)
+    : `Agent memory ${entry.id} is ${status} and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_AGENT_MEMORY_ENTRY, sourceId),
@@ -289,23 +351,28 @@ function recordForAgentMemoryEntry(entry: AgentMemoryEntry, sortOrder: number): 
         : entry.memory_type,
     soil_id: `memory/agent/${entry.id}`,
     title: nonEmptyText(entry.key, `Agent memory ${entry.id}`),
-    summary: entry.summary ?? entry.value,
+    summary: active
+      ? entry.summary ?? entry.value
+      : `Agent memory ${status}; retained for operator audit.`,
     canonical_text: canonical,
     goal_id: null,
     task_id: null,
-    status: soilStatusForAgentMemory(entry),
+    status,
     confidence: null,
     importance: null,
     source_reliability: null,
     valid_from: createdAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_AGENT_MEMORY_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status,
+      lifecycle_state: lifecycleStateForAgentMemory(entry),
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${agentMemorySourceRef()}#${entry.id}`,
     },
@@ -322,10 +389,7 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
   const sourceId = correction.correction_id;
   const id = recordId(SOURCE_AGENT_MEMORY_CORRECTION, sourceId);
   const createdAt = isoOrNow(correction.created_at);
-  const canonical = nonEmptyText(
-    `${correction.correction_kind}: ${correction.reason}`,
-    `Agent memory correction ${correction.correction_id}`,
-  );
+  const canonical = `Agent memory correction ${correction.correction_id} is retained for operator audit.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_AGENT_MEMORY_CORRECTION, sourceId),
@@ -333,7 +397,7 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
     record_type: "state",
     soil_id: `memory/agent/corrections/${correction.correction_id}`,
     title: `Agent memory correction: ${correction.correction_id}`,
-    summary: correction.reason,
+    summary: `Agent memory correction ${correction.correction_kind}; operator audit only.`,
     canonical_text: canonical,
     goal_id: null,
     task_id: null,
@@ -344,12 +408,19 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
     valid_from: createdAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: false,
     source_type: SOURCE_AGENT_MEMORY_CORRECTION,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       correction,
+      status: correction.correction_kind,
+      lifecycle_state: correction.correction_kind === "forgotten" || correction.correction_kind === "retracted"
+        ? "tombstoned"
+        : correction.correction_kind === "corrected" || correction.correction_kind === "superseded"
+          ? "superseded"
+          : "archived",
+      visible_to_normal_surface: false,
       sort_order: sortOrder,
       source_ref: `${agentMemorySourceRef()}#correction:${correction.correction_id}`,
     },
@@ -414,6 +485,9 @@ export class KnowledgeMemoryStateStore {
   }
 
   async loadDomainKnowledge(goalId: string): Promise<DomainKnowledge> {
+    const truth = await loadDomainKnowledgeFromTruth(this.baseDir, goalId);
+    if (truth.entries.length > 0) return truth;
+    if (await hasDomainKnowledgeTruth(this.baseDir, goalId)) return truth;
     const repo = await this.openRepository();
     try {
       const stateRecords = await repo.loadRecords({
@@ -449,15 +523,19 @@ export class KnowledgeMemoryStateStore {
   async listDomainKnowledgeGoalIds(): Promise<string[]> {
     const repo = await this.openRepository();
     try {
-      return (await repo.loadRecords({ source_types: [SOURCE_DOMAIN_STATE] }))
+      const soilGoalIds = (await repo.loadRecords({ source_types: [SOURCE_DOMAIN_STATE] }))
         .map((record) => record.source_id)
-        .sort((left, right) => left.localeCompare(right));
+      const truthGoalIds = await listDomainKnowledgeTruthGoalIds(this.baseDir);
+      return [...new Set([...soilGoalIds, ...truthGoalIds])].sort((left, right) => left.localeCompare(right));
     } finally {
       repo.close();
     }
   }
 
-  async saveDomainKnowledge(domainKnowledge: DomainKnowledge): Promise<void> {
+  async saveDomainKnowledge(
+    domainKnowledge: DomainKnowledge,
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = DomainKnowledgeSchema.parse(domainKnowledge);
     const repo = await this.openRepository();
     try {
@@ -486,6 +564,9 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      if (options.persistTruth !== false) {
+        await saveDomainKnowledgeToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }
@@ -498,6 +579,12 @@ export class KnowledgeMemoryStateStore {
         source_types: [SOURCE_DOMAIN_ENTRY, SOURCE_DOMAIN_STATE],
         goal_ids: [goalId],
       });
+      await saveDomainKnowledgeToTruth(this.baseDir, DomainKnowledgeSchema.parse({
+        goal_id: goalId,
+        domain: goalId,
+        entries: [],
+        last_updated: new Date().toISOString(),
+      }));
       await repo.applyMutation({ tombstones: existing.map(tombstoneForRecord) });
     } finally {
       repo.close();
@@ -505,19 +592,26 @@ export class KnowledgeMemoryStateStore {
   }
 
   async loadSharedKnowledgeEntries(): Promise<SharedKnowledgeEntry[]> {
+    const truth = await loadSharedKnowledgeFromTruth(this.baseDir);
+    if (truth.length > 0) return truth;
+    if (await hasSharedKnowledgeTruth(this.baseDir)) return truth;
     const repo = await this.openRepository();
     try {
-      return (await repo.loadRecords({ source_types: [SOURCE_SHARED_ENTRY] }))
+      const entries = (await repo.loadRecords({ source_types: [SOURCE_SHARED_ENTRY] }))
         .map((record) => ({ record, entry: metadataEntry(record, "entry", (value) => SharedKnowledgeEntrySchema.parse(value)) }))
         .filter((item): item is { record: SoilRecord; entry: SharedKnowledgeEntry } => item.entry !== null)
         .sort((left, right) => metadataSortOrder(left.record) - metadataSortOrder(right.record))
         .map((item) => item.entry);
+      return entries;
     } finally {
       repo.close();
     }
   }
 
-  async saveSharedKnowledgeEntries(entries: SharedKnowledgeEntry[]): Promise<void> {
+  async saveSharedKnowledgeEntries(
+    entries: SharedKnowledgeEntry[],
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = entries.map((entry) => SharedKnowledgeEntrySchema.parse(entry));
     const repo = await this.openRepository();
     try {
@@ -536,16 +630,28 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      if (options.persistTruth !== false) {
+        await saveSharedKnowledgeToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }
   }
 
   async loadAgentMemoryStore(): Promise<AgentMemoryStore> {
+    const truth = AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromTruth(this.baseDir));
+    if (truth.entries.length > 0 || truth.corrections.length > 0) return truth;
+    if (await hasAgentMemoryTruth(this.baseDir)) return truth;
     const repo = await this.openRepository();
     try {
-      const entryRecords = await repo.loadRecords({ source_types: [SOURCE_AGENT_MEMORY_ENTRY] });
-      const correctionRecords = await repo.loadRecords({ source_types: [SOURCE_AGENT_MEMORY_CORRECTION] });
+      const entryRecords = await repo.loadRecords({
+        source_types: [SOURCE_AGENT_MEMORY_ENTRY],
+        active_only: false,
+      });
+      const correctionRecords = await repo.loadRecords({
+        source_types: [SOURCE_AGENT_MEMORY_CORRECTION],
+        active_only: false,
+      });
       const stateRecord = (await repo.loadRecords({
         source_types: [SOURCE_AGENT_MEMORY_STATE],
         source_ids: ["current"],
@@ -575,7 +681,10 @@ export class KnowledgeMemoryStateStore {
     }
   }
 
-  async saveAgentMemoryStore(store: AgentMemoryStore): Promise<void> {
+  async saveAgentMemoryStore(
+    store: AgentMemoryStore,
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = AgentMemoryStoreSchema.parse(store);
     const repo = await this.openRepository();
     try {
@@ -604,6 +713,9 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
+      if (options.persistTruth !== false) {
+        await saveAgentMemoryStoreToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }

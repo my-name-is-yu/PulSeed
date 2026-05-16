@@ -34,6 +34,7 @@ export const SoilRecordStatusSchema = z.enum([
   "retracted",
   "forgotten",
   "quarantined",
+  "conflicted",
 ]);
 export type SoilRecordStatus = z.infer<typeof SoilRecordStatusSchema>;
 

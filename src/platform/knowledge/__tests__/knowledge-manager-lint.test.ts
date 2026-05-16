@@ -5,6 +5,8 @@ import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../types/agent-me
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth-maintenance-store.js";
+import { RuntimeEventLogStore } from "../../../runtime/store/runtime-event-log.js";
 
 // ─── Mock helpers ───
 
@@ -378,6 +380,38 @@ describe("lintAgentMemory", () => {
         }));
 
         await lintAgentMemory({ km, llmCall, autoRepair: true });
+
+        const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
+        try {
+          await expect(truthStore.listCorrections()).resolves.toEqual([
+            expect.objectContaining({
+              target_claim_id: staleId,
+              correction_kind: "corrected",
+              actor: "dream_lint",
+              runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+              runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+            }),
+          ]);
+        } finally {
+          await truthStore.close();
+        }
+
+        const eventLog = new RuntimeEventLogStore(`${tmpDir}/runtime`, { controlBaseDir: tmpDir });
+        try {
+          const events = await eventLog.listEvents({ limit: 20 });
+          expect(events).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+              event_type: "memory.truth_maintenance.recorded",
+              payload: expect.objectContaining({
+                operation: "correction",
+                claim_ids: expect.arrayContaining([staleId]),
+              }),
+            }),
+          ]));
+        } finally {
+          await eventLog.close();
+        }
+
         await km.saveAgentMemory({
           key: "stale-fact",
           value: "fresh value",

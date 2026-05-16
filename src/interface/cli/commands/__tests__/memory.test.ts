@@ -207,4 +207,39 @@ describe("cmdMemory", () => {
       }),
     ]);
   });
+
+  it("redacts corrected inactive memory from governance export", async () => {
+    const correctExit = await cmdMemory(stateManager, [
+      "correct",
+      "agent_memory:memory-forget",
+      "--reason",
+      RAW_REASON,
+      "--value",
+      "Replacement value that may remain active.",
+      "--replacement-key",
+      "replacement-active",
+    ]);
+    expect(correctExit).toBe(0);
+    logs = [];
+
+    const exitCode = await cmdMemory(stateManager, ["export", "--consent-scope", "local_planning"]);
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(logs.at(-1) ?? "{}") as {
+      entries: Array<{ key: string; summary: string | null; status: string }>;
+    };
+    expect(output.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: "[redacted]",
+        summary: null,
+        status: "corrected",
+      }),
+      expect.objectContaining({
+        key: "replacement-active",
+        status: "raw",
+      }),
+    ]));
+    expect(JSON.stringify(output)).not.toContain(RAW_MEMORY_VALUE);
+    expect(JSON.stringify(output)).not.toContain("temporary-fact");
+  });
 });

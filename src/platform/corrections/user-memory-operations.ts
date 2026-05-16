@@ -18,7 +18,12 @@ import {
   AgentMemoryStoreSchema,
   type AgentMemoryEntry,
 } from "../knowledge/types/agent-memory.js";
-import { knowledgeMemoryStoreForStateManager } from "../knowledge/knowledge-manager-internals.js";
+import {
+  loadAgentMemoryStore as loadAgentMemoryStoreFromOwner,
+  projectAgentMemory,
+  saveAgentMemoryStore as saveAgentMemoryStoreToOwner,
+} from "../knowledge/knowledge-manager-internals.js";
+import { commitAgentMemoryCorrectionToTruth } from "../knowledge/memory-truth-adapter.js";
 import {
   applyAgentMemoryCorrection,
   listAgentMemoryCorrectionHistory,
@@ -98,14 +103,23 @@ function correctionReason(input: UserMemoryOperationInput): string {
 
 function stateManagerAgentMemoryHost(stateManager: StateManager): AgentMemoryHost {
   const llmClient = {} as ILLMClient;
-  const store = knowledgeMemoryStoreForStateManager(stateManager);
   return {
     llmClient,
+    baseDir: stateManager.getBaseDir(),
     loadAgentMemoryStore: async () => {
-      return AgentMemoryStoreSchema.parse(await store.loadAgentMemoryStore());
+      return AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromOwner(stateManager));
     },
     saveAgentMemoryStore: async (store) => {
-      await knowledgeMemoryStoreForStateManager(stateManager).saveAgentMemoryStore(store);
+      await saveAgentMemoryStoreToOwner(stateManager, store);
+    },
+    commitAgentMemoryCorrection: async (store, result) => {
+      await commitAgentMemoryCorrectionToTruth(stateManager.getBaseDir(), {
+        store,
+        correction: result.correction,
+        target: result.target,
+        replacement: result.replacement,
+      });
+      await projectAgentMemory(stateManager, store, { persistTruth: false });
     },
   };
 }
@@ -150,12 +164,10 @@ export async function runUserMemoryOperation(
       actor: "user",
       createdAt: input.now,
       provenanceRef: "pulseed memory command",
-      beforeCommit: async (pending) => {
-        await recordMemoryCorrectionTrace(stateManager, input, pending.correction, {
-          memoryRef: { kind: "memory", ref: input.targetRef.id },
-          replacementRef: pending.replacement ? { kind: "memory", ref: pending.replacement.id } : null,
-        });
-      },
+    });
+    await recordMemoryCorrectionTraceBestEffort(stateManager, input, result.correction, {
+      memoryRef: { kind: "memory", ref: input.targetRef.id },
+      replacementRef: result.replacement ? { kind: "memory", ref: result.replacement.id } : null,
     });
     return {
       operation: input.operation,
@@ -333,7 +345,7 @@ async function recordMemoryCorrectionTrace(
         input.operation,
         memoryCorrectionTargetKey(correction.target_ref),
       ].join(":"),
-      summary: `User ${input.operation} operation invalidated memory influence for ${input.targetRef.kind}:${input.targetRef.id}.`,
+      summary: `User ${input.operation} operation committed truth maintenance for ${input.targetRef.kind}:${input.targetRef.id}.`,
       sourceRef: { kind: "memory_correction", ref: correction.correction_id },
     },
     target: {
@@ -343,7 +355,7 @@ async function recordMemoryCorrectionTrace(
       summary: correction.reason,
     },
     decision: "allow",
-    decisionReason: "User memory correction is allowed and future decisions must treat the target memory as corrected or invalidated.",
+    decisionReason: "User memory correction is allowed after the truth-maintenance commit and future decisions must treat the target memory as corrected or invalidated.",
     capabilityDecision: "available",
     capabilityRefs: [{ kind: "memory_correction_operation", ref: input.operation }],
     policyRef: { kind: "intervention_policy", ref: "policy:memory-correction-v1" },
@@ -356,7 +368,7 @@ async function recordMemoryCorrectionTrace(
     auditRefs: [{ kind: "memory_correction", ref: correction.correction_id }],
     outcomeEvent: {
       type: "memory_updated",
-      summary: "Memory correction/invalidation was recorded before the memory can influence future decisions.",
+      summary: "Memory correction/invalidation was committed before the memory can influence future decisions.",
       targetRef: refs.memoryRef,
     },
   }));
@@ -366,8 +378,26 @@ async function recordMemoryCorrectionTrace(
     correctionId: correction.correction_id,
     targetRef: `${input.targetRef.kind}:${input.targetRef.id}`,
     decidedAt: correction.created_at,
-    reason: "Memory correction was recorded before the target can influence future recall or normal projection.",
+    reason: "Memory correction was committed before the target can influence future recall or normal projection.",
     memoryWithheld: true,
     normalSurfaceProjectionRef: `normal-surface:memory-correction:${correction.correction_id}`,
   }));
+}
+
+async function recordMemoryCorrectionTraceBestEffort(
+  stateManager: StateManager,
+  input: UserMemoryOperationInput,
+  correction: MemoryCorrectionEntry,
+  refs: {
+    memoryRef: RuntimeGraphRef;
+    replacementRef: RuntimeGraphRef | null;
+  },
+): Promise<void> {
+  try {
+    await recordMemoryCorrectionTrace(stateManager, input, correction, refs);
+  } catch (error) {
+    console.warn(
+      `[memory-correction] Failed to record post-commit trace for ${correction.correction_id}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }

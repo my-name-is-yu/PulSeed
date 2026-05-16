@@ -97,9 +97,15 @@ describe("recallAgentMemory — semantic mode", () => {
     ];
     await seedMemory(km, entries);
 
-    await expect(km.recallAgentMemory("TypeScript", { semantic: true })).rejects.toThrow(
-      "semantic agent memory recall requires an embedding client"
-    );
+    await expect(km.recallAgentMemory("TypeScript", { semantic: true })).resolves.toEqual([]);
+    await expect(km.recallAgentMemoryWithProvenance("TypeScript", { semantic: true }))
+      .resolves.toMatchObject({
+        entries: [],
+        recall: {
+          mode: "semantic_unavailable",
+          semanticIndexStatus: "unavailable",
+        },
+      });
     expect(await km.recallAgentMemory("TypeScript", { mode: "lexical" })).toEqual([
       expect.objectContaining({ key: "typescript.preference" }),
     ]);

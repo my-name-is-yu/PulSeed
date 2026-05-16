@@ -4,12 +4,14 @@ import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
 import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
+import { saveAgentMemoryStoreToTruth, saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../../knowledge/memory-truth-adapter.js";
 import { AgentMemoryStoreSchema } from "../../knowledge/types/agent-memory.js";
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
 import { SoilCompiler } from "../compiler.js";
 import { rebuildSoilFromRuntime } from "../runtime-rebuild.js";
 import { SoilDoctor } from "../doctor.js";
+import { SqliteSoilRepository } from "../sqlite-repository.js";
 import {
   loadSoilOverlayQueue,
   scanAndStoreSoilOverlays,
@@ -162,6 +164,134 @@ describe("Soil runtime rebuild", () => {
       expect(schedulePage?.frontmatter.source_refs[0]?.source_type).toBe("control_db");
       expect(schedulePage?.frontmatter.source_refs[0]?.source_path).toBe("control-db:schedule_entries");
       expect(schedulePage?.body).toContain("control-db-schedule");
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("does not rebuild stale domain or shared knowledge from Soil when typed truth is inactive", async () => {
+    const baseDir = makeTempDir("soil-runtime-rebuild-inactive-truth-");
+    try {
+      const knowledgeMemoryStore = new KnowledgeMemoryStateStore(baseDir);
+      const staleEntry = {
+        entry_id: "stale-editor",
+        question: "Which editor is current?",
+        answer: "Atom",
+        sources: [{ type: "document" as const, reference: "old-note", reliability: "high" as const }],
+        confidence: 0.9,
+        acquired_at: "2026-04-11T08:00:00.000Z",
+        acquisition_task_id: "task-1",
+        superseded_by: null,
+        tags: ["editor"],
+        embedding_id: null,
+      };
+      await knowledgeMemoryStore.saveDomainKnowledge({
+        goal_id: "goal-1",
+        domain: "goal-1",
+        last_updated: "2026-04-11T09:00:00.000Z",
+        entries: [staleEntry],
+      });
+      await knowledgeMemoryStore.saveSharedKnowledgeEntries([{
+        ...staleEntry,
+        source_goal_ids: ["goal-1"],
+        domain_stability: "moderate",
+        revalidation_due_at: null,
+      }]);
+      await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+
+      await saveDomainKnowledgeToTruth(baseDir, {
+        goal_id: "goal-1",
+        domain: "goal-1",
+        last_updated: "2026-04-11T09:00:00.000Z",
+        entries: [{ ...staleEntry, superseded_by: "replacement-editor" }],
+      });
+      await saveSharedKnowledgeToTruth(baseDir, [{
+        ...staleEntry,
+        superseded_by: "replacement-editor",
+        source_goal_ids: ["goal-1"],
+        domain_stability: "moderate",
+        revalidation_due_at: null,
+      }]);
+
+      const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const domainPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "domain", "goal-1.md"));
+      const sharedPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "shared", "index.md"));
+      const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+
+      expect(rebuilt.projected.domainKnowledge).toBe(1);
+      expect(rebuilt.projected.sharedKnowledge).toBe(0);
+      expect(domainPage?.body).toContain("- Entries: 0");
+      expect(domainPage?.body).not.toContain("Atom");
+      expect(sharedPage?.body).toContain("- Entries: 0");
+      expect(sharedPage?.body).not.toContain("Atom");
+      expect(repo).not.toBeNull();
+      try {
+        const domainHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_domain_entry"] },
+        });
+        const sharedHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_shared_entry"] },
+        });
+        expect(domainHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-1:stale-editor");
+        expect(sharedHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:stale-editor");
+      } finally {
+        repo?.close();
+      }
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("rebuilds empty agent memory truth over stale Soil memory pages", async () => {
+    const baseDir = makeTempDir("soil-runtime-rebuild-agent-empty-truth-");
+    try {
+      const knowledgeMemoryStore = new KnowledgeMemoryStateStore(baseDir);
+      await knowledgeMemoryStore.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+        entries: [{
+          id: "memory-stale-editor",
+          key: "favorite-editor",
+          value: "Atom",
+          tags: ["editor"],
+          memory_type: "preference",
+          status: "compiled",
+          created_at: "2026-04-11T08:00:00.000Z",
+          updated_at: "2026-04-11T09:00:00.000Z",
+        }],
+        corrections: [],
+        last_consolidated_at: "2026-04-11T09:30:00.000Z",
+      }));
+      await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const stalePage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "index.md"));
+      expect(stalePage?.body).toContain("Atom");
+
+      await saveAgentMemoryStoreToTruth(baseDir, AgentMemoryStoreSchema.parse({
+        entries: [],
+        corrections: [],
+        last_consolidated_at: null,
+      }));
+
+      const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const memoryPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "index.md"));
+      const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+
+      expect(rebuilt.projected.agentMemory).toBe(0);
+      expect(memoryPage?.body).toContain("- Entries: 0");
+      expect(memoryPage?.body).not.toContain("Atom");
+      expect(repo).not.toBeNull();
+      try {
+        const memoryHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+        });
+        expect(memoryHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-stale-editor");
+      } finally {
+        repo?.close();
+      }
     } finally {
       cleanupTempDir(baseDir);
     }

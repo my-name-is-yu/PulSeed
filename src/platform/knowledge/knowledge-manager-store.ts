@@ -12,8 +12,11 @@ import type {
 import type { StateManager } from "../../base/state/state-manager.js";
 import type { VectorIndex } from "./vector-index.js";
 import { computeRevalidationDue } from "./knowledge-revalidation.js";
-import { loadSharedEntries } from "./knowledge-search.js";
-import { knowledgeMemoryStoreForStateManager } from "./knowledge-manager-internals.js";
+import {
+  loadSharedKnowledgeFromOwner,
+  saveDomainKnowledgeToOwner,
+  saveSharedKnowledgeToOwner,
+} from "./knowledge-manager-internals.js";
 
 export interface KnowledgeStoreHost {
   stateManager: StateManager;
@@ -43,7 +46,7 @@ export async function saveDomainKnowledgeEntry(
   }
 
   try {
-    await knowledgeMemoryStoreForStateManager(host.stateManager).saveDomainKnowledge(validated);
+    await saveDomainKnowledgeToOwner(host.stateManager, validated);
     await host.projectDomainKnowledge(goalId, validated);
   } catch (err) {
     if (host.vectorIndex) {
@@ -68,7 +71,7 @@ export async function saveSharedKnowledgeEntry(
     embedding_id: null,
   });
 
-  const all = await loadSharedEntries(host.stateManager);
+  const all = await loadSharedKnowledgeFromOwner(host.stateManager);
   const existingIdx = all.findIndex((e) => e.entry_id === entry.entry_id);
 
   let merged: SharedKnowledgeEntry;
@@ -99,7 +102,7 @@ export async function saveSharedKnowledgeEntry(
     all[targetIdx] = merged;
   }
 
-  await knowledgeMemoryStoreForStateManager(host.stateManager).saveSharedKnowledgeEntries(all);
+  await saveSharedKnowledgeToOwner(host.stateManager, all);
   await host.projectSharedKnowledge(all);
   return merged;
 }

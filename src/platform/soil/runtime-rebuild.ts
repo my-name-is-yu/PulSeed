@@ -6,6 +6,7 @@ import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { ScheduleEntryStore } from "../../runtime/schedule/entry-store.js";
 import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
+import { hasAgentMemoryTruth, hasSharedKnowledgeTruth } from "../knowledge/memory-truth-adapter.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
 import { readSoilMarkdownFile } from "./io.js";
@@ -211,12 +212,14 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
   const knowledgeMemoryStore = new KnowledgeMemoryStateStore(input.baseDir);
   for (const goalId of await knowledgeMemoryStore.listDomainKnowledgeGoalIds()) {
     const domainKnowledge = await knowledgeMemoryStore.loadDomainKnowledge(goalId);
+    await knowledgeMemoryStore.saveDomainKnowledge(domainKnowledge, { persistTruth: false });
     await projectDomainKnowledgeToSoil({ ...projectionBase, goalId, domainKnowledge });
     projected.domainKnowledge += 1;
   }
 
   const shared = await knowledgeMemoryStore.loadSharedKnowledgeEntries();
-  if (shared.length > 0) {
+  if (shared.length > 0 || await hasSharedKnowledgeTruth(input.baseDir)) {
+    await knowledgeMemoryStore.saveSharedKnowledgeEntries(shared, { persistTruth: false });
     await projectSharedKnowledgeToSoil({ ...projectionBase, entries: shared });
     projected.sharedKnowledge = shared.length;
   }
@@ -226,9 +229,13 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     agentMemory.entries.length > 0
     || agentMemory.corrections.length > 0
     || agentMemory.last_consolidated_at !== null
+    || await hasAgentMemoryTruth(input.baseDir)
   ) {
+    await knowledgeMemoryStore.saveAgentMemoryStore(agentMemory, { persistTruth: false });
     await projectAgentMemoryToSoil({ ...projectionBase, store: agentMemory });
-    projected.agentMemory = agentMemory.entries.length;
+    projected.agentMemory = agentMemory.entries.filter((entry) =>
+      (entry.status === "raw" || entry.status === "compiled") && (entry.correction_state?.active ?? true)
+    ).length;
   }
 
   const decisionRecords = [];

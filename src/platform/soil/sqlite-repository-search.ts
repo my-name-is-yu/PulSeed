@@ -296,6 +296,9 @@ export function lookupDirectCandidates(db: SqliteDatabase, input: SoilSearchRequ
       page_id,
       metadata_json: {
         ...parseJsonObject(row.metadata_json),
+        title: row.title,
+        summary: row.summary,
+        status: row.status,
         ...usageStatsMetadata(row),
       },
     });
@@ -339,6 +342,8 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
       ${pageIdSql} AS page_id,
       r.title AS title,
       r.summary AS summary,
+      r.status AS status,
+      r.metadata_json AS metadata_json,
       r.last_used_at AS last_used_at,
       r.use_count AS use_count,
       r.validated_count AS validated_count,
@@ -358,6 +363,8 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
     page_id: string | null;
     title: string;
     summary: string | null;
+    status: string;
+    metadata_json: string;
     last_used_at: string | null;
     use_count: number;
     validated_count: number;
@@ -375,7 +382,13 @@ export function searchLexicalCandidates(db: SqliteDatabase, input: SoilSearchReq
     rank: index + 1,
     score: -1 * row.score,
     snippet: buildSnippet(row.chunk_text, request.query),
-    metadata_json: { title: row.title, summary: row.summary, ...usageStatsMetadata(row) },
+    metadata_json: {
+      ...parseJsonObject(row.metadata_json),
+      title: row.title,
+      summary: row.summary,
+      status: row.status,
+      ...usageStatsMetadata(row),
+    },
   }));
   return dedupeCandidates(candidates, request.limit);
 }
@@ -433,6 +446,8 @@ export function searchDenseCandidates(
       sc.chunk_text,
       r.title,
       r.summary,
+      r.status,
+      r.metadata_json,
       r.last_used_at,
       r.use_count,
       r.validated_count,
@@ -448,6 +463,8 @@ export function searchDenseCandidates(
     chunk_text: string;
     title: string;
     summary: string | null;
+    status: string;
+    metadata_json: string;
     page_id: string | null;
   } & SoilUsageRow>;
 
@@ -477,10 +494,12 @@ export function searchDenseCandidates(
     score: similarity,
     snippet: buildSnippet(row.chunk_text, request.query),
     metadata_json: {
+      ...parseJsonObject(row.metadata_json),
       model: row.model,
       embedding_version: row.embedding_version,
       title: row.title,
       summary: row.summary,
+      status: row.status,
       ...usageStatsMetadata(row),
     },
   }));

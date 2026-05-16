@@ -20,6 +20,7 @@ import {
   type MemoryGovernanceInput,
   type MemorySensitivity,
 } from "../corrections/memory-governance.js";
+import { recordAgentMemoryRecall } from "./memory-truth-adapter.js";
 import {
   AgentMemoryEntrySchema,
   AgentMemoryStatusEnum,
@@ -37,14 +38,19 @@ export const AgentMemoryPhysicalDeleteManifestSchema = z.object({
 }).strict();
 export type AgentMemoryPhysicalDeleteManifest = z.infer<typeof AgentMemoryPhysicalDeleteManifestSchema>;
 
-export const AgentMemoryRecallModeSchema = z.enum(["exact", "lexical", "semantic"]);
+export const AgentMemoryRecallModeSchema = z.enum(["exact", "lexical", "semantic", "graph"]);
 export type AgentMemoryRecallMode = z.infer<typeof AgentMemoryRecallModeSchema>;
 
 export interface AgentMemoryHost {
   llmClient: ILLMClient;
   embeddingClient?: IEmbeddingClient;
+  baseDir?: string;
   loadAgentMemoryStore(): Promise<AgentMemoryStore>;
   saveAgentMemoryStore(store: AgentMemoryStore): Promise<void>;
+  commitAgentMemoryCorrection?(
+    store: AgentMemoryStore,
+    result: AgentMemoryCorrectionResult,
+  ): Promise<void>;
 }
 
 const inactiveAgentMemoryStatuses = new Set<AgentMemoryStatus>([
@@ -54,10 +60,12 @@ const inactiveAgentMemoryStatuses = new Set<AgentMemoryStatus>([
   "retracted",
   "forgotten",
   "quarantined",
+  "conflicted",
 ]);
 
 function isAgentMemoryEntryActive(entry: AgentMemoryEntry): boolean {
-  return !inactiveAgentMemoryStatuses.has(entry.status);
+  return !inactiveAgentMemoryStatuses.has(entry.status)
+    && (entry.correction_state?.active ?? true);
 }
 
 export async function saveAgentMemoryEntry(
@@ -132,6 +140,45 @@ export async function recallAgentMemoryEntries(
     max_sensitivity?: MemorySensitivity;
   }
 ): Promise<AgentMemoryEntry[]> {
+  return (await recallAgentMemoryEntriesWithRecord(host, query, opts)).entries;
+}
+
+export interface AgentMemoryRecallWithRecord {
+  entries: AgentMemoryEntry[];
+    recall: {
+      mode: AgentMemoryRecallMode | "semantic_unavailable";
+      semanticIndexStatus: "available" | "unavailable" | "not_requested";
+      safeForNormalProjection: boolean;
+      recallId: string | null;
+      resultClaims: Array<{
+        claim_id: string;
+        mode: AgentMemoryRecallMode | "semantic_unavailable";
+        evidence_refs: string[];
+        correction_status: string;
+        invalidation_status: string;
+        confidence: number | null;
+        trust_state: string;
+        safe_for_normal_projection: boolean;
+      }>;
+      withheldClaimIds: string[];
+    };
+}
+
+export async function recallAgentMemoryEntriesWithRecord(
+  host: AgentMemoryHost,
+  query: string,
+  opts?: {
+    mode?: AgentMemoryRecallMode;
+    exact?: boolean;
+    category?: string;
+    memory_type?: AgentMemoryType;
+    limit?: number;
+    include_archived?: boolean;
+    semantic?: boolean;
+    consent_scope?: string;
+    max_sensitivity?: MemorySensitivity;
+  }
+): Promise<AgentMemoryRecallWithRecord> {
   const store = await host.loadAgentMemoryStore();
   const {
     category,
@@ -144,39 +191,103 @@ export async function recallAgentMemoryEntries(
   const mode = opts?.mode
     ?? (opts?.exact ? "exact" : opts?.semantic ? "semantic" : "lexical");
 
-  const candidates = store.entries.filter((e) => {
-    if (!include_archived && !isAgentMemoryEntryActive(e)) return false;
+  const scopedEntries = store.entries.filter((e) => {
     if (consent_scope && !e.governance.consent.allowed_contexts.includes(consent_scope)) return false;
     if (max_sensitivity && !isSensitivityAllowed(e.governance.sensitivity, max_sensitivity)) return false;
     const matchesCategory = category ? e.category === category : true;
     const matchesType = memory_type ? e.memory_type === memory_type : true;
     return matchesCategory && matchesType;
   });
+  const candidates = scopedEntries.filter((e) => include_archived || isAgentMemoryEntryActive(e));
+  const inactiveConflicts = scopedEntries.filter((e) => !isAgentMemoryEntryActive(e) && (
+    e.status === "conflicted" || e.correction_state?.status === "conflicted"
+  ));
 
   if (mode === "semantic") {
     if (!host.embeddingClient) {
-      throw new Error("semantic agent memory recall requires an embedding client; use mode='lexical' for explicit substring lookup");
+      const recall = await maybeRecordRecall(host, {
+        mode: "semantic_unavailable",
+        query,
+        entries: [],
+        semanticIndexStatus: "unavailable",
+      });
+      return {
+        entries: [],
+        recall: {
+          mode: "semantic_unavailable",
+          semanticIndexStatus: "unavailable",
+          safeForNormalProjection: true,
+          recallId: recall?.recall_id ?? null,
+          resultClaims: recall?.result_claims ?? [],
+          withheldClaimIds: recall?.withheld_claim_ids ?? [],
+        },
+      };
     }
-    if (candidates.length === 0) return [];
-    const texts = candidates.map((e) => {
+    const semanticPool = include_archived ? scopedEntries : [...candidates, ...inactiveConflicts];
+    if (semanticPool.length === 0) {
+      const recall = await maybeRecordRecall(host, {
+        mode: "semantic",
+        query,
+        entries: [],
+        semanticIndexStatus: "available",
+      });
+      return {
+        entries: [],
+        recall: {
+          mode: "semantic",
+          semanticIndexStatus: "available",
+          safeForNormalProjection: true,
+          recallId: recall?.recall_id ?? null,
+          resultClaims: recall?.result_claims ?? [],
+          withheldClaimIds: recall?.withheld_claim_ids ?? [],
+        },
+      };
+    }
+    const texts = semanticPool.map((e) => {
       const base = `${e.key}: ${e.value}`;
       return e.summary ? `${base} (${e.summary})` : base;
     });
     const queryVec = await host.embeddingClient.embed(query);
     const candidateVecs = await host.embeddingClient.batchEmbed(texts);
-    const scored = candidates
+    const scored = semanticPool
       .map((e, i) => ({ entry: e, score: cosineSimilarity(queryVec, candidateVecs[i]!) }))
       .filter((s) => s.score >= 0.3);
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map((s) => s.entry);
+    const entries = scored
+      .filter((s) => include_archived || isAgentMemoryEntryActive(s.entry))
+      .slice(0, limit)
+      .map((s) => s.entry);
+    const withheldClaimIds = include_archived
+      ? []
+      : scored
+        .filter((s) => s.entry.status === "conflicted" || s.entry.correction_state?.status === "conflicted")
+        .map((s) => s.entry.id);
+    const recall = await maybeRecordRecall(host, {
+      mode: "semantic",
+      query,
+      entries,
+      semanticIndexStatus: "available",
+      withheldClaimIds,
+    });
+    return {
+      entries,
+      recall: {
+        mode: "semantic",
+        semanticIndexStatus: "available",
+        safeForNormalProjection: withheldClaimIds.length === 0,
+        recallId: recall?.recall_id ?? null,
+        resultClaims: recall?.result_claims ?? [],
+        withheldClaimIds: recall?.withheld_claim_ids ?? [],
+      },
+    };
   }
 
   const lower = query.toLowerCase();
   const results = candidates.filter((e) => mode === "exact"
-    ? e.key === query
-    : e.key.toLowerCase().includes(lower) ||
-      e.value.toLowerCase().includes(lower) ||
-      e.tags.some((t) => t.toLowerCase().includes(lower))
+    ? exactAgentMemoryMatch(e, query)
+    : mode === "graph"
+      ? graphAgentMemoryMatch(e, query)
+      : lexicalAgentMemoryMatch(e, lower)
   );
 
   results.sort((a, b) => {
@@ -185,7 +296,69 @@ export async function recallAgentMemoryEntries(
     if (aIsCompiled !== bIsCompiled) return aIsCompiled - bIsCompiled;
     return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
   });
-  return results.slice(0, limit);
+  const entries = results.slice(0, limit);
+  const withheldClaimIds = include_archived
+    ? []
+    : inactiveConflicts
+      .filter((e) => mode === "exact"
+        ? exactAgentMemoryMatch(e, query)
+        : mode === "graph"
+          ? graphAgentMemoryMatch(e, query)
+          : lexicalAgentMemoryMatch(e, lower))
+      .map((entry) => entry.id);
+  const recall = await maybeRecordRecall(host, {
+    mode,
+    query,
+    entries,
+    semanticIndexStatus: "not_requested",
+    withheldClaimIds,
+  });
+  return {
+    entries,
+    recall: {
+      mode,
+      semanticIndexStatus: "not_requested",
+      safeForNormalProjection: withheldClaimIds.length === 0,
+      recallId: recall?.recall_id ?? null,
+      resultClaims: recall?.result_claims ?? [],
+      withheldClaimIds: recall?.withheld_claim_ids ?? [],
+    },
+  };
+}
+
+async function maybeRecordRecall(
+  host: AgentMemoryHost,
+  input: {
+    mode: AgentMemoryRecallWithRecord["recall"]["mode"];
+    query: string;
+    entries: AgentMemoryEntry[];
+    semanticIndexStatus: AgentMemoryRecallWithRecord["recall"]["semanticIndexStatus"];
+    withheldClaimIds?: string[];
+  },
+): Promise<Awaited<ReturnType<typeof recordAgentMemoryRecall>>> {
+  if (!host.baseDir) return null;
+  return recordAgentMemoryRecall({
+    baseDir: host.baseDir,
+    mode: input.mode,
+    query: input.query,
+    entries: input.entries,
+    semanticIndexStatus: input.semanticIndexStatus,
+    withheldClaimIds: input.withheldClaimIds ?? [],
+  });
+}
+
+function exactAgentMemoryMatch(entry: AgentMemoryEntry, query: string): boolean {
+  return entry.key === query;
+}
+
+function graphAgentMemoryMatch(entry: AgentMemoryEntry, query: string): boolean {
+  return entry.id === query || entry.supersedes_memory_id === query || entry.compiled_from?.includes(query) === true;
+}
+
+function lexicalAgentMemoryMatch(entry: AgentMemoryEntry, lowerQuery: string): boolean {
+  return entry.key.toLowerCase().includes(lowerQuery)
+    || entry.value.toLowerCase().includes(lowerQuery)
+    || entry.tags.some((tag) => tag.toLowerCase().includes(lowerQuery));
 }
 
 export async function listAgentMemoryEntries(
@@ -337,10 +510,8 @@ function statusForAgentMemoryCorrection(kind: AgentMemoryCorrectionInput["correc
 
 function redactsAgentMemoryContentForGovernanceExport(entry: AgentMemoryEntry): boolean {
   return entry.governance.export_visibility === "redacted"
-    || entry.status === "forgotten"
-    || entry.status === "retracted"
-    || entry.correction_state?.status === "forgotten"
-    || entry.correction_state?.status === "retracted";
+    || !isAgentMemoryEntryActive(entry)
+    || entry.correction_state?.active === false;
 }
 
 export async function applyAgentMemoryCorrection(
@@ -420,7 +591,11 @@ export async function applyAgentMemoryCorrection(
   });
   store.entries[targetIndex] = updatedTarget;
   await input.beforeCommit?.({ correction, target: updatedTarget, replacement });
-  await host.saveAgentMemoryStore(store);
+  if (host.commitAgentMemoryCorrection) {
+    await host.commitAgentMemoryCorrection(store, { correction, target: updatedTarget, replacement });
+  } else {
+    await host.saveAgentMemoryStore(store);
+  }
   return { correction, target: updatedTarget, replacement };
 }
 

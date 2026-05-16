@@ -131,7 +131,7 @@ export async function lintAgentMemory(opts: {
 
   // 1. Load compiled entries (listAgentMemory has no status filter — filter manually)
   const allEntries = await km.listAgentMemory({ limit: 10000, include_archived: false });
-  let entries = allEntries.filter((e) => e.status === "compiled");
+  let entries = allEntries.filter((e) => e.status === "compiled" && (e.correction_state?.active ?? true));
 
   if (categories && categories.length > 0) {
     entries = entries.filter((e) => e.category && categories.includes(e.category));

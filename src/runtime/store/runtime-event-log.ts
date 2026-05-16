@@ -49,6 +49,7 @@ export const RuntimeEventTypeSchema = z.enum([
   "gateway.telegram.delivery.recorded",
   "gateway.telegram.callback.recorded",
   "memory.correction.recorded",
+  "memory.truth_maintenance.recorded",
   "schedule.wake.recorded",
   "daemon.resident_initiative.recorded",
   "interaction_authority.decision.recorded",
@@ -102,11 +103,27 @@ const RuntimeGoalTaskMutationEventPayloadSchema = z.object({
   ]),
 }).strict();
 
+const RuntimeMemoryTruthMaintenanceEventPayloadSchema = z.object({
+  schema_version: z.literal("runtime-event-payload/memory-truth-maintenance/v1"),
+  operation: z.enum(["snapshot", "correction", "recall", "projection_rebuild"]),
+  correction_ref: z.record(z.unknown()).nullable().default(null),
+  claim_ids: z.array(z.string().min(1)).default([]),
+  projection_ids: z.array(z.string().min(1)).default([]),
+  recall_ids: z.array(z.string().min(1)).default([]),
+  tombstone_ids: z.array(z.string().min(1)).default([]),
+  conflict_set_ids: z.array(z.string().min(1)).default([]),
+  owner: z.object({
+    kind: z.string().min(1),
+    scope: z.string().min(1),
+  }).strict(),
+}).strict();
+
 export const RuntimeEventPayloadSchema = z.discriminatedUnion("schema_version", [
   RuntimePersonalAgentTraceEventPayloadSchema,
   RuntimeAuthorityDecisionEventPayloadSchema,
   RuntimeProjectionRebuildEventPayloadSchema,
   RuntimeGoalTaskMutationEventPayloadSchema,
+  RuntimeMemoryTruthMaintenanceEventPayloadSchema,
 ]);
 export type RuntimeEventPayload = z.infer<typeof RuntimeEventPayloadSchema>;
 
@@ -177,6 +194,7 @@ export interface RuntimeEventProjectionRebuild {
   notification_outbox_dedupe_state: Array<Record<string, unknown>>;
   peer_delivery_state: Array<Record<string, unknown>>;
   memory_correction_invalidation_summary: Array<Record<string, unknown>>;
+  memory_truth_maintenance_summary: Array<Record<string, unknown>>;
   schedule_wake_execution_summary: Array<Record<string, unknown>>;
   tool_execution_outcome_summary: Array<Record<string, unknown>>;
 }
@@ -221,38 +239,17 @@ export class RuntimeEventLogStore {
     await this.database();
   }
 
+  async close(): Promise<void> {
+    await this.dbOwner.close();
+  }
+
   async append(input: RuntimeEventEnvelopeInput): Promise<RuntimeEventEnvelope> {
     return (await this.appendWithDisposition(input)).event;
   }
 
   async appendWithDisposition(input: RuntimeEventEnvelopeInput): Promise<RuntimeEventAppendResult> {
-    const event = RuntimeEventEnvelopeSchema.parse({
-      ...input,
-      payload_schema: input.payload_schema ?? payloadSchemaVersion(input.payload),
-      payload_version: input.payload_version ?? payloadSchemaVersion(input.payload),
-    });
     const db = await this.database();
-    let storedEvent = event;
-    let disposition: RuntimeEventAppendDisposition = "inserted";
-    db.transaction((sqlite) => {
-      const inserted = insertRuntimeEvent(sqlite, event);
-      if (inserted) {
-        upsertRuntimeGraphForEvent(sqlite, event);
-        return;
-      }
-      const eventIdMatch = readRuntimeEventById(sqlite, event.event_id);
-      if (eventIdMatch) {
-        storedEvent = eventIdMatch;
-        disposition = "deduplicated_by_event_id";
-        return;
-      }
-      const idempotencyMatch = readRuntimeEventByIdempotency(sqlite, event);
-      if (idempotencyMatch) {
-        storedEvent = idempotencyMatch;
-        disposition = "deduplicated_by_idempotency";
-      }
-    });
-    return { event: storedEvent, disposition };
+    return db.transaction((sqlite) => appendRuntimeEventEnvelopeInTransaction(sqlite, input));
   }
 
   async appendPersonalAgentTrace(traceInput: PersonalAgentDecisionTrace): Promise<RuntimeEventEnvelope> {
@@ -363,6 +360,31 @@ export class RuntimeEventLogStore {
   private async database(): Promise<ControlDatabase> {
     return this.dbOwner.database();
   }
+}
+
+export function appendRuntimeEventEnvelopeInTransaction(
+  sqlite: SqliteDatabase,
+  input: RuntimeEventEnvelopeInput,
+): RuntimeEventAppendResult {
+  const event = RuntimeEventEnvelopeSchema.parse({
+    ...input,
+    payload_schema: input.payload_schema ?? payloadSchemaVersion(input.payload),
+    payload_version: input.payload_version ?? payloadSchemaVersion(input.payload),
+  });
+  const inserted = insertRuntimeEvent(sqlite, event);
+  if (inserted) {
+    upsertRuntimeGraphForEvent(sqlite, event);
+    return { event, disposition: "inserted" };
+  }
+  const eventIdMatch = readRuntimeEventById(sqlite, event.event_id);
+  if (eventIdMatch) {
+    return { event: eventIdMatch, disposition: "deduplicated_by_event_id" };
+  }
+  const idempotencyMatch = readRuntimeEventByIdempotency(sqlite, event);
+  if (idempotencyMatch) {
+    return { event: idempotencyMatch, disposition: "deduplicated_by_idempotency" };
+  }
+  throw new Error(`runtime event append failed without a dedupe match: ${event.event_id}`);
 }
 
 export function runtimeEventFromPersonalAgentTrace(trace: PersonalAgentDecisionTrace): RuntimeEventEnvelopeInput {
@@ -874,6 +896,28 @@ function rebuildRuntimeEventProjections(
           )?.event_id),
         }))),
     ],
+    memory_truth_maintenance_summary: graphBackedEvents
+      .filter((event) => event.event_type === "memory.truth_maintenance.recorded")
+      .map((event) => {
+        const payload = event.payload.schema_version === "runtime-event-payload/memory-truth-maintenance/v1"
+          ? event.payload
+          : null;
+        return {
+          event_id: event.event_id,
+          trace_id: event.trace_id,
+          operation: payload?.operation ?? null,
+          owner: payload?.owner ?? null,
+          claim_ids: payload?.claim_ids ?? [],
+          correction_id: typeof payload?.correction_ref?.["correction_id"] === "string"
+            ? payload.correction_ref["correction_id"]
+            : null,
+          tombstone_ids: payload?.tombstone_ids ?? [],
+          conflict_set_ids: payload?.conflict_set_ids ?? [],
+          projection_ids: payload?.projection_ids ?? [],
+          recall_ids: payload?.recall_ids ?? [],
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+        };
+      }),
     schedule_wake_execution_summary: traces
       .filter((trace) => trace.situation_frame.caller_path === "scheduled_wake" || trace.situation_frame.source_kind === "schedule_wake")
       .map((trace) => ({
@@ -1340,6 +1384,7 @@ function projectionNames(_rebuild: RuntimeEventProjectionRebuild): string[] {
     "notification_outbox_dedupe_state",
     "peer_delivery_state",
     "memory_correction_invalidation_summary",
+    "memory_truth_maintenance_summary",
     "schedule_wake_execution_summary",
     "tool_execution_outcome_summary",
   ];

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 39;
+export const CONTROL_DB_SCHEMA_VERSION = 40;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2607,6 +2607,166 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_idempotency_unique_idx
   );
 `.trim();
 
+export const CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS memory_claims (
+  claim_id TEXT PRIMARY KEY,
+  owner_kind TEXT NOT NULL,
+  owner_scope TEXT NOT NULL,
+  claim_type TEXT NOT NULL CHECK (claim_type IN ('fact', 'procedure', 'preference', 'relationship', 'observation', 'knowledge', 'shared_knowledge')),
+  subject TEXT NOT NULL,
+  predicate TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'corrected', 'retracted', 'forgotten', 'conflicted', 'archived')),
+  trust_state TEXT NOT NULL CHECK (trust_state IN ('unknown', 'unverified', 'verified', 'contradicted', 'suspicious')),
+  sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'local', 'private', 'secret')),
+  consent_scope TEXT NOT NULL,
+  visible_to_normal_surface INTEGER NOT NULL CHECK (visible_to_normal_surface IN (0, 1)),
+  invalidated_by TEXT,
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  claim_json TEXT NOT NULL CHECK (json_valid(claim_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_claims_owner_idx
+  ON memory_claims(owner_kind, owner_scope, updated_at, claim_id);
+
+CREATE INDEX IF NOT EXISTS memory_claims_lifecycle_idx
+  ON memory_claims(lifecycle, visible_to_normal_surface, updated_at, claim_id);
+
+CREATE INDEX IF NOT EXISTS memory_claims_type_subject_idx
+  ON memory_claims(claim_type, subject, predicate, lifecycle, claim_id);
+
+CREATE TABLE IF NOT EXISTS memory_evidence_refs (
+  evidence_id TEXT PRIMARY KEY,
+  claim_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL,
+  owner_scope TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  reliability REAL CHECK (reliability IS NULL OR (reliability >= 0 AND reliability <= 1)),
+  created_at TEXT NOT NULL,
+  evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS memory_evidence_refs_claim_idx
+  ON memory_evidence_refs(claim_id, created_at, evidence_id);
+
+CREATE INDEX IF NOT EXISTS memory_evidence_refs_source_idx
+  ON memory_evidence_refs(source_kind, source_ref, claim_id);
+
+CREATE TABLE IF NOT EXISTS memory_correction_refs (
+  correction_id TEXT PRIMARY KEY,
+  target_claim_id TEXT NOT NULL,
+  correction_kind TEXT NOT NULL CHECK (correction_kind IN ('corrected', 'superseded', 'retracted', 'forgotten', 'quarantined')),
+  replacement_claim_id TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  correction_json TEXT NOT NULL CHECK (json_valid(correction_json)),
+  FOREIGN KEY (target_claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE,
+  FOREIGN KEY (replacement_claim_id) REFERENCES memory_claims(claim_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS memory_correction_refs_target_idx
+  ON memory_correction_refs(target_claim_id, created_at, correction_id);
+
+CREATE TABLE IF NOT EXISTS memory_forget_tombstones (
+  tombstone_id TEXT PRIMARY KEY,
+  claim_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  source_evidence_ref TEXT,
+  reason TEXT NOT NULL,
+  operator_restored_at TEXT,
+  created_at TEXT NOT NULL,
+  tombstone_json TEXT NOT NULL CHECK (json_valid(tombstone_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS memory_forget_tombstones_claim_idx
+  ON memory_forget_tombstones(claim_id, created_at, tombstone_id);
+
+CREATE INDEX IF NOT EXISTS memory_forget_tombstones_source_idx
+  ON memory_forget_tombstones(source_evidence_ref, operator_restored_at, tombstone_id);
+
+CREATE TABLE IF NOT EXISTS memory_conflict_sets (
+  conflict_set_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('unresolved', 'held', 'resolved')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  conflict_json TEXT NOT NULL CHECK (json_valid(conflict_json))
+);
+
+CREATE TABLE IF NOT EXISTS memory_conflict_claims (
+  conflict_set_id TEXT NOT NULL,
+  claim_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('primary', 'conflicting', 'replacement', 'withheld')),
+  PRIMARY KEY (conflict_set_id, claim_id, role),
+  FOREIGN KEY (conflict_set_id) REFERENCES memory_conflict_sets(conflict_set_id) ON DELETE CASCADE,
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS memory_conflict_claims_claim_idx
+  ON memory_conflict_claims(claim_id, conflict_set_id);
+
+CREATE TABLE IF NOT EXISTS memory_recall_records (
+  recall_id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL CHECK (mode IN ('exact', 'lexical', 'semantic', 'semantic_unavailable', 'graph')),
+  query_hash TEXT NOT NULL,
+  safe_for_normal_projection INTEGER NOT NULL CHECK (safe_for_normal_projection IN (0, 1)),
+  created_at TEXT NOT NULL,
+  recall_json TEXT NOT NULL CHECK (json_valid(recall_json))
+);
+
+CREATE INDEX IF NOT EXISTS memory_recall_records_mode_idx
+  ON memory_recall_records(mode, created_at, recall_id);
+
+CREATE INDEX IF NOT EXISTS memory_recall_records_query_idx
+  ON memory_recall_records(query_hash, mode, created_at, recall_id);
+
+CREATE TABLE IF NOT EXISTS memory_projection_records (
+  projection_id TEXT PRIMARY KEY,
+  claim_id TEXT,
+  owner_kind TEXT NOT NULL,
+  owner_scope TEXT NOT NULL,
+  projection_kind TEXT NOT NULL CHECK (projection_kind IN ('normal_surface', 'operator_debug', 'soil', 'knowledge_graph', 'memory_metadata')),
+  surface TEXT NOT NULL,
+  safe_for_normal_surface INTEGER NOT NULL CHECK (safe_for_normal_surface IN (0, 1)),
+  rebuilt_from_event_id TEXT,
+  replayed_from_event_id TEXT,
+  created_at TEXT NOT NULL,
+  projection_json TEXT NOT NULL CHECK (json_valid(projection_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS memory_projection_records_owner_idx
+  ON memory_projection_records(owner_kind, owner_scope, projection_kind, created_at, projection_id);
+
+CREATE INDEX IF NOT EXISTS memory_projection_records_claim_idx
+  ON memory_projection_records(claim_id, projection_kind, created_at, projection_id);
+
+CREATE TABLE IF NOT EXISTS procedure_memory_records (
+  claim_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  procedure_json TEXT NOT NULL CHECK (json_valid(procedure_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS preference_memory_records (
+  claim_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  preference_json TEXT NOT NULL CHECK (json_valid(preference_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS relationship_memory_records (
+  claim_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  relationship_json TEXT NOT NULL CHECK (json_valid(relationship_json)),
+  FOREIGN KEY (claim_id) REFERENCES memory_claims(claim_id) ON DELETE CASCADE
+);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2819,5 +2979,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     39,
     "runtime-event-log-side-effect-ref-idempotency",
     CONTROL_DB_RUNTIME_EVENT_LOG_SIDE_EFFECT_REF_IDEMPOTENCY_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    40,
+    "memory-truth-maintenance-runtime-state",
+    CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL
   ),
 ];

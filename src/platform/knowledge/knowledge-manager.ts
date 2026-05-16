@@ -62,7 +62,9 @@ import {
   listAgentMemoryEntries,
   quarantineAgentMemoryEntries,
   recallAgentMemoryEntries,
+  recallAgentMemoryEntriesWithRecord,
   saveAgentMemoryEntry,
+  type AgentMemoryCorrectionResult,
   type AgentMemoryPhysicalDeleteManifest,
   type AgentMemoryRecallMode,
 } from "./knowledge-manager-agent-memory.js";
@@ -82,6 +84,7 @@ import {
   saveDomainKnowledgeEntry,
   saveSharedKnowledgeEntry,
 } from "./knowledge-manager-store.js";
+import { commitAgentMemoryCorrectionToTruth } from "./memory-truth-adapter.js";
 
 export * from "./public-api.js";
 
@@ -268,6 +271,7 @@ export class KnowledgeManager {
     options: {
       relationshipProfileContext?: RelationshipProfileRetrievalContext;
       relationshipProfilePromptContext?: string;
+      goalId?: string;
     } = {}
   ): Promise<KnowledgeEntry[]> {
     const profileEntries = this.relationshipProfileContextToKnowledgeEntries(
@@ -283,8 +287,13 @@ export class KnowledgeManager {
     return searchKnowledge(
       { stateManager: this.stateManager, vectorIndex: this.vectorIndex },
       [query, profileQuery].filter((part) => part.trim().length > 0).join("\n"),
-      topK
+      topK,
+      { goalId: options.goalId }
     ).then((entries) => [...profileEntries, ...entries]);
+  }
+
+  hasKnowledgeSemanticIndex(): boolean {
+    return this.vectorIndex !== undefined;
   }
 
   private relationshipProfileContextToKnowledgeEntries(
@@ -513,6 +522,23 @@ export class KnowledgeManager {
     return recallAgentMemoryEntries(this.agentMemoryHost(), query, opts);
   }
 
+  async recallAgentMemoryWithProvenance(
+    query: string,
+    opts?: {
+      mode?: AgentMemoryRecallMode;
+      exact?: boolean;
+      category?: string;
+      memory_type?: AgentMemoryType;
+      limit?: number;
+      include_archived?: boolean;
+      semantic?: boolean;
+      consent_scope?: string;
+      max_sensitivity?: MemorySensitivity;
+    }
+  ): Promise<Awaited<ReturnType<typeof recallAgentMemoryEntriesWithRecord>>> {
+    return recallAgentMemoryEntriesWithRecord(this.agentMemoryHost(), query, opts);
+  }
+
   /**
    * List all agent memory entries, optionally filtered by category and/or memory_type.
    * Sorted by updated_at desc.
@@ -642,25 +668,30 @@ export class KnowledgeManager {
     await projectSharedKnowledge(this.stateManager, entries);
   }
 
-  private async _projectAgentMemoryToSoil(store: AgentMemoryStore): Promise<void> {
-    await projectAgentMemory(this.stateManager, store);
-  }
-
   async loadAgentMemoryStore(): Promise<AgentMemoryStore> {
     return this._loadAgentMemoryStore();
   }
 
   async saveAgentMemoryStore(store: AgentMemoryStore): Promise<void> {
     await saveAgentMemoryStore(this.stateManager, store);
-    await this._projectAgentMemoryToSoil(store);
   }
 
   private agentMemoryHost() {
     return {
       llmClient: this.llmClient,
       embeddingClient: this.embeddingClient,
+      baseDir: this.stateManager.getBaseDir(),
       loadAgentMemoryStore: () => this._loadAgentMemoryStore(),
       saveAgentMemoryStore: (store: AgentMemoryStore) => this.saveAgentMemoryStore(store),
+      commitAgentMemoryCorrection: async (store: AgentMemoryStore, result: AgentMemoryCorrectionResult) => {
+        await commitAgentMemoryCorrectionToTruth(this.stateManager.getBaseDir(), {
+          store,
+          correction: result.correction,
+          target: result.target,
+          replacement: result.replacement,
+        });
+        await projectAgentMemory(this.stateManager, store, { persistTruth: false });
+      },
     };
   }
 

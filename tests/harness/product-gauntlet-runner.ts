@@ -22,6 +22,14 @@ export interface ProductGauntletEvidence {
   visibleProjection?: unknown;
   normalProjection?: unknown;
   operatorDebugEvidence?: unknown;
+  ownershipBoundary?: unknown;
+  memoryClaims?: unknown;
+  evidenceRefs?: unknown;
+  corrections?: unknown;
+  tombstones?: unknown;
+  conflictSets?: unknown;
+  recallRecords?: unknown;
+  soilProjection?: unknown;
   dbSummary?: unknown;
   replaySummary?: unknown;
   safetyInvariants?: unknown;
@@ -87,6 +95,14 @@ function mergeProductGauntletEvidence(
     projectionAfterRebuild: next.projectionAfterRebuild ?? current.projectionAfterRebuild,
     normalProjection: next.normalProjection ?? next.visibleProjection ?? current.normalProjection ?? current.visibleProjection,
     operatorDebugEvidence: next.operatorDebugEvidence ?? current.operatorDebugEvidence,
+    ownershipBoundary: next.ownershipBoundary ?? current.ownershipBoundary,
+    memoryClaims: next.memoryClaims ?? current.memoryClaims,
+    evidenceRefs: next.evidenceRefs ?? current.evidenceRefs,
+    corrections: next.corrections ?? current.corrections,
+    tombstones: next.tombstones ?? current.tombstones,
+    conflictSets: next.conflictSets ?? current.conflictSets,
+    recallRecords: next.recallRecords ?? current.recallRecords,
+    soilProjection: next.soilProjection ?? current.soilProjection,
     replaySummary: next.replaySummary ?? current.replaySummary,
     safetyInvariants: next.safetyInvariants ?? current.safetyInvariants,
     expectedAuthorityDecisions: next.expectedAuthorityDecisions ?? current.expectedAuthorityDecisions,
@@ -165,6 +181,14 @@ async function writeProductGauntletEvidence(
     null,
     2,
   )}\n`, "utf8");
+  await writeJsonArtifact(dir, "ownership-boundary.json", evidence.ownershipBoundary, evidence.nextFiles);
+  await writeJsonArtifact(dir, "memory-claims.json", evidence.memoryClaims, evidence.nextFiles);
+  await writeJsonArtifact(dir, "evidence-refs.json", evidence.evidenceRefs, evidence.nextFiles);
+  await writeJsonArtifact(dir, "corrections.json", evidence.corrections, evidence.nextFiles);
+  await writeJsonArtifact(dir, "tombstones.json", evidence.tombstones, evidence.nextFiles);
+  await writeJsonArtifact(dir, "conflict-sets.json", evidence.conflictSets, evidence.nextFiles);
+  await writeJsonArtifact(dir, "recall-records.json", evidence.recallRecords, evidence.nextFiles);
+  await writeJsonArtifact(dir, "soil-projection.json", evidence.soilProjection, evidence.nextFiles);
   await fsp.writeFile(path.join(dir, "db-summary.json"), `${JSON.stringify(
     evidence.dbSummary ?? {
       note: "No DB summary was recorded before the failure.",
@@ -190,6 +214,22 @@ async function writeProductGauntletEvidence(
     ...(evidence.nextFiles ?? []).map((file) => `- ${file}`),
     "",
   ].join("\n"), "utf8");
+}
+
+async function writeJsonArtifact(
+  dir: string,
+  fileName: string,
+  evidence: unknown,
+  nextFiles: string[] | undefined,
+): Promise<void> {
+  await fsp.writeFile(path.join(dir, fileName), `${JSON.stringify(
+    evidence ?? {
+      note: `No ${fileName} evidence was recorded before the failure.`,
+      next_files: nextFiles ?? [],
+    },
+    null,
+    2,
+  )}\n`, "utf8");
 }
 
 function failurePlanFor(error: unknown, evidence: ProductGauntletEvidence | void): string {

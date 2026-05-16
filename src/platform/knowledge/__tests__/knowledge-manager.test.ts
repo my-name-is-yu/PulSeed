@@ -4,9 +4,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
-import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
+import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth-maintenance-store.js";
 import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../../../base/llm/llm-client.js";
 import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
 import type { ZodSchema } from "zod/v3";
@@ -55,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(tempDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
 });
 
@@ -432,7 +433,7 @@ describe("saveKnowledge / loadKnowledge", () => {
     );
 
     // Make the typed knowledge store write fail after vector indexing.
-    vi.spyOn(KnowledgeMemoryStateStore.prototype, "saveDomainKnowledge").mockRejectedValueOnce(
+    vi.spyOn(MemoryTruthMaintenanceStore.prototype, "saveOwnerSnapshot").mockRejectedValueOnce(
       new Error("disk full")
     );
 

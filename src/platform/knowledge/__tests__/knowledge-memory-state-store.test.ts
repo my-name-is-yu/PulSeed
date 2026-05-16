@@ -1,15 +1,23 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
-import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
+import type { KnowledgeEntry, SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { importLegacyKnowledgeMemoryState } from "../../../runtime/store/knowledge-memory-state-migration.js";
 import { openControlDatabase } from "../../../runtime/store/control-db/index.js";
+import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth-maintenance-store.js";
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
+import {
+  loadAgentMemoryStoreFromTruth,
+  saveAgentMemoryStoreToTruth,
+  saveDomainKnowledgeToTruth,
+  saveSharedKnowledgeToTruth,
+} from "../memory-truth-adapter.js";
+import { AgentMemoryStoreSchema } from "../types/agent-memory.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
 
@@ -28,10 +36,20 @@ function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeE
   };
 }
 
+function makeSharedKnowledgeEntry(overrides: Partial<SharedKnowledgeEntry> = {}): SharedKnowledgeEntry {
+  return {
+    ...makeKnowledgeEntry(overrides),
+    source_goal_ids: overrides.source_goal_ids ?? ["goal-1"],
+    domain_stability: overrides.domain_stability ?? "moderate",
+    revalidation_due_at: overrides.revalidation_due_at ?? null,
+  };
+}
+
 describe("KnowledgeMemoryStateStore database ownership", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const dir of tempDirs.splice(0)) {
       cleanupTempDir(dir);
     }
@@ -41,6 +59,61 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     const dir = makeTempDir(prefix);
     tempDirs.push(dir);
     return dir;
+  }
+
+  async function seedStaleKnowledgeSoilRecord(input: {
+    baseDir: string;
+    recordId: string;
+    soilId: string;
+    sourceType: string;
+    sourceId: string;
+    goalId: string | null;
+    entry: KnowledgeEntry | SharedKnowledgeEntry;
+  }): Promise<void> {
+    const repo = await SqliteSoilRepository.create({ rootDir: path.join(input.baseDir, "soil") });
+    try {
+      await repo.applyMutation({
+        records: [{
+          record_id: input.recordId,
+          record_key: input.recordId,
+          version: 1,
+          record_type: "fact",
+          soil_id: input.soilId,
+          title: input.entry.question,
+          summary: input.entry.answer,
+          canonical_text: `${input.entry.question}\n${input.entry.answer}`,
+          goal_id: input.goalId,
+          task_id: null,
+          status: "active",
+          confidence: input.entry.confidence,
+          importance: null,
+          source_reliability: 0.8,
+          valid_from: input.entry.acquired_at,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: input.sourceType,
+          source_id: input.sourceId,
+          metadata_json: { entry: input.entry },
+          created_at: input.entry.acquired_at,
+          updated_at: input.entry.acquired_at,
+        }],
+        chunks: [{
+          chunk_id: `${input.recordId}:chunk`,
+          record_id: input.recordId,
+          soil_id: input.soilId,
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: [],
+          chunk_text: `${input.entry.question}\n${input.entry.answer}`,
+          token_count: 8,
+          checksum: `${input.recordId}:checksum`,
+          created_at: input.entry.acquired_at,
+        }],
+      });
+    } finally {
+      repo.close();
+    }
   }
 
   it("routes KnowledgeManager domain, shared, and agent memory state to Soil SQLite without legacy JSON sidecars", async () => {
@@ -93,6 +166,284 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         record_filter: { source_types: ["knowledge_domain_entry"] },
       });
       expect(lexical.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-1:entry-1");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("saves agent memory truth once before writing Soil projection records", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-single-truth-write-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const saveSnapshotSpy = vi.spyOn(MemoryTruthMaintenanceStore.prototype, "saveOwnerSnapshot");
+
+    await manager.saveAgentMemory({
+      key: "runtime.storage.owner",
+      value: "Agent memory truth is owned by MemoryTruthMaintenanceStore.",
+      memory_type: "fact",
+    });
+
+    expect(saveSnapshotSpy).toHaveBeenCalledTimes(1);
+    expect(saveSnapshotSpy).toHaveBeenCalledWith(expect.objectContaining({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+    }));
+  });
+
+  it("does not surface domain correction refs as agent memory correction history", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-truth-owner-filter-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+
+    await manager.saveAgentMemory({
+      key: "agent.owner.filter",
+      value: "Agent correction history must only contain agent-memory corrections.",
+      memory_type: "fact",
+    });
+    await manager.saveKnowledge("goal-owner-filter", makeKnowledgeEntry({ entry_id: "domain-entry" }));
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir, { appendRuntimeEvents: false });
+    try {
+      await truthStore.applyCorrectionTransaction({
+        correction: {
+          correction_id: "correction:domain-only",
+          target_claim_id: "knowledge:domain:goal-owner-filter:domain-entry",
+          correction_kind: "retracted",
+          replacement_claim_id: null,
+          idempotency_key: "idem:domain-only",
+          actor: "system",
+          reason: "Domain-only correction must not appear in agent memory history.",
+          created_at: fixedNow,
+          evidence_refs: [],
+        },
+      });
+      await expect(truthStore.listCorrections()).resolves.toEqual([
+        expect.objectContaining({ correction_id: "correction:domain-only" }),
+      ]);
+      await expect(truthStore.listCorrections({
+        ownerKind: "agent_memory",
+        ownerScope: "default",
+      })).resolves.toEqual([]);
+    } finally {
+      await truthStore.close();
+    }
+
+    await expect(loadAgentMemoryStoreFromTruth(baseDir)).resolves.toMatchObject({
+      corrections: [],
+    });
+  });
+
+  it("loads inactive correction audit records from Soil compatibility fallback", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-soil-corrections-");
+    const correction = {
+      correction_id: "correction:soil-only",
+      target_ref: { kind: "agent_memory" as const, id: "memory-old" },
+      correction_kind: "corrected" as const,
+      replacement_ref: null,
+      actor: "user" as const,
+      reason: "Compatibility correction history must remain readable.",
+      created_at: fixedNow,
+      provenance: {
+        source: "user" as const,
+        source_ref: "test",
+        confidence: 1,
+      },
+      audit: {
+        status: "active" as const,
+        retained_for_audit: true,
+        destructive_delete_approved_at: null,
+      },
+    };
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [correction],
+      last_consolidated_at: null,
+    }), { persistTruth: false });
+
+    await expect(store.loadAgentMemoryStore()).resolves.toMatchObject({
+      entries: [],
+      corrections: [expect.objectContaining({
+        correction_id: "correction:soil-only",
+        target_ref: { kind: "agent_memory", id: "memory-old" },
+      })],
+    });
+  });
+
+  it("migrates legacy correction-only agent memory without writing orphan truth rows", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-orphan-correction-migration-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const correction = {
+      correction_id: "correction:legacy-orphan",
+      target_ref: { kind: "agent_memory" as const, id: "memory-physically-deleted" },
+      correction_kind: "forgotten" as const,
+      replacement_ref: null,
+      actor: "manual_tool" as const,
+      reason: "Legacy repair manifest physically removed this claim before truth migration.",
+      created_at: fixedNow,
+      provenance: {
+        source: "manual_tool" as const,
+        source_ref: "memory-repair-manifest:legacy",
+        confidence: 1,
+      },
+      audit: {
+        status: "destructive_delete_requested" as const,
+        retained_for_audit: true,
+        destructive_delete_approved_at: fixedNow,
+      },
+    };
+    const compatibilityStore = new KnowledgeMemoryStateStore(baseDir);
+    await compatibilityStore.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [correction],
+      last_consolidated_at: null,
+    }), { persistTruth: false });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.loadAgentMemoryStore()).resolves.toMatchObject({
+      entries: [],
+      corrections: [expect.objectContaining({ correction_id: "correction:legacy-orphan" })],
+    });
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.listCorrections("memory-physically-deleted")).resolves.toEqual([]);
+      await expect(truthStore.listTombstones("memory-physically-deleted")).resolves.toEqual([]);
+    } finally {
+      await truthStore.close();
+    }
+  });
+
+  it("does not resurrect agent memory from stale Soil when empty truth is authoritative", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const staleStore = AgentMemoryStoreSchema.parse({
+      entries: [{
+        id: "memory-stale",
+        key: "favorite-editor",
+        value: "Atom",
+        tags: ["editor"],
+        memory_type: "preference",
+        status: "compiled",
+        created_at: fixedNow,
+        updated_at: fixedNow,
+      }],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const emptyTruth = AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveAgentMemoryStore(staleStore, { persistTruth: false });
+    await saveAgentMemoryStoreToTruth(baseDir, emptyTruth);
+    await store.saveAgentMemoryStore(await store.loadAgentMemoryStore(), { persistTruth: false });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.loadAgentMemoryStore()).resolves.toEqual(emptyTruth);
+    await expect(manager.recallAgentMemory("favorite-editor", { exact: true })).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("treats correction_state inactive entries as withheld across recall, truth, and Soil", async () => {
+    const baseDir = tempHome("pulseed-knowledge-memory-inactive-state-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const inactiveStore = AgentMemoryStoreSchema.parse({
+      entries: [{
+        id: "memory-inactive",
+        key: "favorite-shell",
+        value: "The user prefers tcsh forever.",
+        tags: ["preference"],
+        memory_type: "preference",
+        status: "compiled",
+        correction_state: {
+          target_ref: { kind: "agent_memory", id: "memory-inactive" },
+          status: "corrected",
+          active: false,
+          latest_correction_id: "correction:inactive",
+          replacement_ref: null,
+          retained_for_audit: true,
+          reason: "Corrected by user.",
+          updated_at: fixedNow,
+        },
+        governance: {
+          sensitivity: "local",
+          consent: {
+            scope_id: "local",
+            allowed_contexts: ["local_planning"],
+            source_actor: "user",
+            collection_context: "chat",
+          },
+          retention: {
+            policy_id: "retain_until_retracted",
+            retain_until: null,
+            review_after: null,
+            delete_requires_approval: false,
+          },
+          export_visibility: "listed",
+          owner_ref: "user",
+        },
+        created_at: fixedNow,
+        updated_at: fixedNow,
+      }],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+
+    await manager.saveAgentMemoryStore(inactiveStore);
+
+    expect(await manager.recallAgentMemory("favorite-shell", { exact: true })).toEqual([]);
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.getClaim("memory-inactive")).resolves.toMatchObject({
+        lifecycle: "corrected",
+        visible_to_normal_surface: false,
+        invalidated_by: "correction:inactive",
+      });
+    } finally {
+      await truthStore.close();
+    }
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const [record] = await repo!.loadRecords({
+        active_only: false,
+        source_types: ["knowledge_agent_memory_entry"],
+        source_ids: ["memory-inactive"],
+      });
+      expect(record).toMatchObject({
+        status: "corrected",
+        is_active: false,
+        canonical_text: "Agent memory memory-inactive is corrected and withheld from normal Soil retrieval.",
+      });
+      const lexical = await repo!.searchLexical({
+        query: "tcsh forever",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+      });
+      expect(lexical.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-inactive");
     } finally {
       repo?.close();
     }
@@ -237,6 +588,221 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
       }));
     } finally {
       controlDb.close();
+    }
+  });
+
+  it("does not resurrect inactive domain truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-domain-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const active = makeKnowledgeEntry({
+      entry_id: "domain-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveDomainKnowledge({
+      goal_id: "goal-1",
+      domain: "goal-1",
+      entries: [active],
+      last_updated: fixedNow,
+    });
+    await saveDomainKnowledgeToTruth(baseDir, {
+      goal_id: "goal-1",
+      domain: "goal-1",
+      entries: [{ ...active, superseded_by: "domain-replacement" }],
+      last_updated: fixedNow,
+    });
+    await store.saveDomainKnowledge(await store.loadDomainKnowledge("goal-1"), { persistTruth: false });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadDomainKnowledge("goal-1")).resolves.toMatchObject({ entries: [] });
+    await expect(manager.loadKnowledge("goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-1:domain-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("does not resurrect empty domain truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-domain-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const stale = makeKnowledgeEntry({
+      entry_id: "domain-empty-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+    });
+    await seedStaleKnowledgeSoilRecord({
+      baseDir,
+      recordId: "knowledge_domain_entry:goal-empty:domain-empty-stale",
+      soilId: "knowledge/domain/goal-empty/domain-empty-stale",
+      sourceType: "knowledge_domain_entry",
+      sourceId: "goal-empty:domain-empty-stale",
+      goalId: "goal-empty",
+      entry: stale,
+    });
+    await saveDomainKnowledgeToTruth(baseDir, {
+      goal_id: "goal-empty",
+      domain: "goal-empty",
+      entries: [],
+      last_updated: fixedNow,
+    });
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveDomainKnowledge(await store.loadDomainKnowledge("goal-empty"), { persistTruth: false });
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadDomainKnowledge("goal-empty")).resolves.toMatchObject({ entries: [] });
+    await expect(manager.loadKnowledge("goal-empty")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-empty:domain-empty-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("tombstones domain knowledge truth when deleting the production domain owner", async () => {
+    const baseDir = tempHome("pulseed-domain-delete-truth-tombstone-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const entry = makeKnowledgeEntry({
+      entry_id: "entry-delete",
+      question: "Which deleted fact must not return?",
+      answer: "This domain fact was deleted.",
+      tags: ["delete"],
+    });
+
+    await manager.saveKnowledge("goal-delete", entry);
+    await expect(manager.loadKnowledge("goal-delete")).resolves.toEqual([entry]);
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.deleteDomainKnowledge("goal-delete");
+
+    await expect(manager.loadKnowledge("goal-delete")).resolves.toEqual([]);
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.listClaims({
+        ownerKind: "domain_knowledge",
+        ownerScope: "goal-delete",
+        includeInactive: true,
+      })).resolves.toEqual([
+        expect.objectContaining({
+          claim_id: "knowledge:domain:goal-delete:entry-delete",
+          lifecycle: "forgotten",
+          visible_to_normal_surface: false,
+        }),
+      ]);
+    } finally {
+      await truthStore.close();
+    }
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const lexical = await repo!.searchLexical({
+        query: "deleted fact",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(lexical.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-delete:entry-delete");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("does not resurrect inactive shared truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-shared-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const active = makeSharedKnowledgeEntry({
+      entry_id: "shared-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+      source_goal_ids: ["goal-1"],
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveSharedKnowledgeEntries([active]);
+    await saveSharedKnowledgeToTruth(baseDir, [{ ...active, superseded_by: "shared-replacement" }]);
+    await store.saveSharedKnowledgeEntries(await store.loadSharedKnowledgeEntries(), { persistTruth: false });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
+    await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_shared_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:shared-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("does not resurrect empty shared truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-shared-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const stale = makeSharedKnowledgeEntry({
+      entry_id: "shared-empty-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+      source_goal_ids: ["goal-1"],
+    });
+    await seedStaleKnowledgeSoilRecord({
+      baseDir,
+      recordId: "knowledge_shared_entry:shared-empty-stale",
+      soilId: "knowledge/shared/shared-empty-stale",
+      sourceType: "knowledge_shared_entry",
+      sourceId: "shared-empty-stale",
+      goalId: null,
+      entry: stale,
+    });
+    await saveSharedKnowledgeToTruth(baseDir, []);
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveSharedKnowledgeEntries(await store.loadSharedKnowledgeEntries(), { persistTruth: false });
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
+    await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_shared_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:shared-empty-stale");
+    } finally {
+      repo?.close();
     }
   });
 });

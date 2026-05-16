@@ -56,7 +56,15 @@ export function duplicateAgentMemoryGroups(
 ): Array<{ key: string; entries: AgentMemoryEntry[] }> {
   const byFingerprint = new Map<string, AgentMemoryEntry[]>();
   for (const entry of entries) {
-    if (entry.status === "forgotten" || entry.status === "retracted" || entry.status === "quarantined") continue;
+    if (entry.correction_state?.active === false) continue;
+    if (
+      entry.status === "forgotten"
+      || entry.status === "retracted"
+      || entry.status === "quarantined"
+      || entry.status === "corrected"
+      || entry.status === "superseded"
+      || entry.status === "conflicted"
+    ) continue;
     const fingerprint = [
       normalizeMemoryText(entry.key),
       normalizeMemoryText(entry.value),

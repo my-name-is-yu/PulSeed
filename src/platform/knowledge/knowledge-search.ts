@@ -7,7 +7,10 @@ import type { StateManager } from "../../base/state/state-manager.js";
 import type { VectorIndex } from "./vector-index.js";
 import type { DomainKnowledge } from "../../base/types/knowledge.js";
 import { DomainKnowledgeSchema } from "../../base/types/knowledge.js";
-import { KnowledgeMemoryStateStore } from "./knowledge-memory-state-store.js";
+import {
+  loadDomainKnowledgeFromOwner,
+  loadSharedKnowledgeFromOwner,
+} from "./knowledge-manager-internals.js";
 
 // ─── Deps interfaces ───
 
@@ -21,9 +24,7 @@ export interface SearchDeps {
 /** Load all SharedKnowledgeEntries from the shared KB file. */
 export async function loadSharedEntries(stateManager: StateManager): Promise<SharedKnowledgeEntry[]> {
   try {
-    return (await new KnowledgeMemoryStateStore(stateManager.getBaseDir()).loadSharedKnowledgeEntries()).map((item) =>
-      SharedKnowledgeEntrySchema.parse(item)
-    );
+    return (await loadSharedKnowledgeFromOwner(stateManager)).map((item) => SharedKnowledgeEntrySchema.parse(item));
   } catch {
     return [];
   }
@@ -34,8 +35,7 @@ export async function loadDomainKnowledge(
   stateManager: StateManager,
   goalId: string
 ): Promise<DomainKnowledge> {
-  const store = new KnowledgeMemoryStateStore(stateManager.getBaseDir());
-  return DomainKnowledgeSchema.parse(await store.loadDomainKnowledge(goalId));
+  return DomainKnowledgeSchema.parse(await loadDomainKnowledgeFromOwner(stateManager, goalId));
 }
 
 // ─── Search functions ───
@@ -53,13 +53,21 @@ export type MetadataSearchResult = {
 export async function searchKnowledge(
   deps: SearchDeps,
   query: string,
-  topK: number = 5
+  topK: number = 5,
+  options: { goalId?: string } = {},
 ): Promise<KnowledgeEntry[]> {
   if (!deps.vectorIndex) {
     return [];
   }
 
-  const results = await deps.vectorIndex.search(query, topK);
+  const vectorSize = typeof deps.vectorIndex.size === "number" && Number.isFinite(deps.vectorIndex.size)
+    ? deps.vectorIndex.size
+    : topK;
+  const candidateLimit = options.goalId
+    ? Math.max(topK, vectorSize)
+    : topK;
+  const results = (await deps.vectorIndex.search(query, candidateLimit))
+    .filter((result) => options.goalId === undefined || result.metadata["goal_id"] === options.goalId);
   const goalKnowledgeById = new Map<string, Map<string, KnowledgeEntry>>();
   const goalIds = new Set<string>();
 
@@ -89,6 +97,7 @@ export async function searchKnowledge(
     const entry = goalKnowledgeById.get(goalId)?.get(result.id);
     if (entry) {
       entries.push(entry);
+      if (entries.length >= topK) break;
     }
   }
 

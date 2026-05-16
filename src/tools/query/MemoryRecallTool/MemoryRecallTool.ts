@@ -44,7 +44,7 @@ export const MemoryRecallInputSchema = z.object({
     .default(false)
     .describe("Include archived entries in results"),
   mode: z
-    .enum(["semantic", "exact", "lexical"])
+    .enum(["semantic", "exact", "lexical", "graph"])
     .optional()
     .default("semantic")
     .describe("Recall mode: semantic for freeform memory recall, exact for key lookup, lexical for explicit substring maintenance queries"),
@@ -63,6 +63,23 @@ export type MemoryRecallInput = z.input<typeof MemoryRecallInputSchema>;
 export interface MemoryRecallOutput {
   entries: AgentMemoryEntry[];
   totalFound: number;
+  recall: {
+    mode: "semantic" | "semantic_unavailable" | "exact" | "lexical" | "graph";
+    semanticIndexStatus: "available" | "unavailable" | "not_requested";
+    safeForNormalProjection: boolean;
+    recallId?: string | null;
+    resultClaims?: Array<{
+      claim_id: string;
+      mode: "semantic" | "semantic_unavailable" | "exact" | "lexical" | "graph";
+      evidence_refs: string[];
+      correction_status: string;
+      invalidation_status: string;
+      confidence: number | null;
+      trust_state: string;
+      safe_for_normal_projection: boolean;
+    }>;
+    withheldClaimIds?: string[];
+  };
 }
 
 export class MemoryRecallTool
@@ -101,28 +118,45 @@ export class MemoryRecallTool
     const mode = parsedInput.exact === true && !hasExplicitMode ? "exact" : parsedInput.mode;
 
     try {
-      const entries = await this.knowledgeManager.recallAgentMemory(
-        parsedInput.query,
-        {
-          mode,
-          category: parsedInput.category,
-          memory_type: parsedInput.memory_type,
-          limit: parsedInput.limit,
-          include_archived: parsedInput.include_archived,
-          consent_scope: parsedInput.consent_scope,
-          max_sensitivity: parsedInput.max_sensitivity,
-        }
-      );
+      const detailed = typeof this.knowledgeManager.recallAgentMemoryWithProvenance === "function"
+        ? await this.knowledgeManager.recallAgentMemoryWithProvenance(parsedInput.query, {
+            mode,
+            category: parsedInput.category,
+            memory_type: parsedInput.memory_type,
+            limit: parsedInput.limit,
+            include_archived: parsedInput.include_archived,
+            consent_scope: parsedInput.consent_scope,
+            max_sensitivity: parsedInput.max_sensitivity,
+          })
+        : {
+            entries: await this.knowledgeManager.recallAgentMemory(parsedInput.query, {
+              mode,
+              category: parsedInput.category,
+              memory_type: parsedInput.memory_type,
+              limit: parsedInput.limit,
+              include_archived: parsedInput.include_archived,
+              consent_scope: parsedInput.consent_scope,
+              max_sensitivity: parsedInput.max_sensitivity,
+            }),
+            recall: {
+              mode,
+              semanticIndexStatus: mode === "semantic" ? "available" : "not_requested",
+              safeForNormalProjection: true,
+            } as const,
+          };
 
       const output: MemoryRecallOutput = {
-        entries,
-        totalFound: entries.length,
+        entries: detailed.entries,
+        totalFound: detailed.entries.length,
+        recall: detailed.recall,
       };
 
       return {
         success: true,
         data: output,
-        summary: `Found ${entries.length} memory entries for query "${parsedInput.query}"`,
+        summary: detailed.recall.mode === "semantic_unavailable"
+          ? `Semantic memory recall unavailable for query "${parsedInput.query}"`
+          : `Found ${detailed.entries.length} memory entries for query "${parsedInput.query}"`,
         durationMs: Date.now() - startTime,
       };
     } catch (err) {
