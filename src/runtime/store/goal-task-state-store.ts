@@ -17,6 +17,7 @@ import {
   type RuntimeGraphEdge,
   type RuntimeGraphNode,
 } from "../personal-agent/contracts.js";
+import { RuntimeEventLogStore } from "./runtime-event-log.js";
 
 export interface RawStateStoreResult {
   handled: boolean;
@@ -218,6 +219,7 @@ export class GoalTaskStateStore {
 
   async saveGoal(goal: Goal): Promise<Goal> {
     const parsed = GoalSchema.parse(goal);
+    await this.recordGoalTaskMutation({ entityKind: "goal", action: "save", goal: parsed });
     const db = await this.database();
     db.transaction((sqlite) => upsertGoal(sqlite, parsed, 0));
     return parsed;
@@ -225,6 +227,7 @@ export class GoalTaskStateStore {
 
   async saveArchivedGoal(goal: Goal): Promise<Goal> {
     const parsed = GoalSchema.parse({ ...goal, status: "archived" });
+    await this.recordGoalTaskMutation({ entityKind: "goal", action: "archive", goal: parsed });
     const db = await this.database();
     db.transaction((sqlite) => upsertGoal(sqlite, parsed, 1));
     return parsed;
@@ -282,26 +285,33 @@ export class GoalTaskStateStore {
   }
 
   async markGoalArchived(goalId: string): Promise<boolean> {
+    const goal = await this.readGoalForArchive(goalId);
+    if (!goal) return false;
+    const timestamp = nowIso();
+    const archivedGoal = GoalSchema.parse({ ...goal, status: "archived", updated_at: timestamp });
+    await this.recordGoalTaskMutation({ entityKind: "goal", action: "archive", goal: archivedGoal });
     const db = await this.database();
     return db.transaction((sqlite) => {
-      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, { includeArchived: false });
-      const row = sqlite.prepare(`
-        SELECT goal_json
-        FROM goal_records
-        WHERE goal_id = ? AND archived = 0
-      `).get(goalId) as { goal_json: string } | undefined;
-      const goal = graphGoal ?? (row ? GoalSchema.parse(parseJson(row.goal_json)) : null);
-      if (!goal) {
-        return false;
-      }
-      const timestamp = nowIso();
-      const archivedGoal = GoalSchema.parse({ ...goal, status: "archived", updated_at: timestamp });
       upsertGoal(sqlite, archivedGoal, 1);
       return true;
     });
   }
 
   async deleteGoal(goalId: string): Promise<boolean> {
+    const snapshot = await this.readGoalDeletionSnapshot(goalId);
+    if (!snapshot.goal && snapshot.taskIds.length === 0) return false;
+    if (snapshot.goal) {
+      await this.recordGoalTaskMutation({ entityKind: "goal", action: "delete", goal: snapshot.goal });
+    }
+    for (const taskId of snapshot.taskIds) {
+      await this.recordGoalTaskMutation({
+        entityKind: "task",
+        action: "delete",
+        goalId,
+        taskId,
+        task: snapshot.tasks.get(taskId) ?? null,
+      });
+    }
     const db = await this.database();
     return db.transaction((sqlite) => {
       const graphGoal = readRuntimeGraphNodeByKindRef(sqlite, "goal", goalId);
@@ -419,6 +429,13 @@ export class GoalTaskStateStore {
 
   async saveTask(task: Task): Promise<Task> {
     const parsed = TaskSchema.parse(task);
+    await this.recordGoalTaskMutation({
+      entityKind: "task",
+      action: "save",
+      goalId: parsed.goal_id,
+      taskId: parsed.id,
+      task: parsed,
+    });
     const db = await this.database();
     db.transaction((sqlite) => upsertTask(sqlite, parsed));
     return parsed;
@@ -462,6 +479,14 @@ export class GoalTaskStateStore {
   }
 
   async deleteTask(goalId: string, taskId: string): Promise<boolean> {
+    const existingTask = await this.loadTask(goalId, taskId);
+    await this.recordGoalTaskMutation({
+      entityKind: "task",
+      action: "delete",
+      goalId,
+      taskId,
+      task: existingTask,
+    });
     const db = await this.database();
     return db.transaction((sqlite) => {
       const graphTask = readTaskFromRuntimeGraph(sqlite, goalId, taskId);
@@ -987,6 +1012,51 @@ export class GoalTaskStateStore {
       dbPath: this.options.controlDbPath,
     });
     return this.dbPromise;
+  }
+
+  private async recordGoalTaskMutation(input: Parameters<RuntimeEventLogStore["appendGoalTaskMutation"]>[0]): Promise<void> {
+    const eventLog = new RuntimeEventLogStore(this.options.controlBaseDir ?? this.baseDir, this.options);
+    await eventLog.appendGoalTaskMutation(input);
+  }
+
+  private async readGoalForArchive(goalId: string): Promise<Goal | null> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, { includeArchived: false });
+      if (graphGoal) return graphGoal;
+      const row = sqlite.prepare(`
+        SELECT goal_json
+        FROM goal_records
+        WHERE goal_id = ? AND archived = 0
+      `).get(goalId) as { goal_json: string } | undefined;
+      return row ? GoalSchema.parse(parseJson(row.goal_json)) : null;
+    });
+  }
+
+  private async readGoalDeletionSnapshot(goalId: string): Promise<{
+    goal: Goal | null;
+    taskIds: string[];
+    tasks: Map<string, Task>;
+  }> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const graphGoal = readGoalFromRuntimeGraph(sqlite, goalId, { includeArchived: true });
+      const row = sqlite.prepare(`
+        SELECT goal_json
+        FROM goal_records
+        WHERE goal_id = ?
+      `).get(goalId) as { goal_json: string } | undefined;
+      const goal = graphGoal ?? (row ? GoalSchema.parse(parseJson(row.goal_json)) : null);
+      const graphTaskIds = listTaskIdsFromRuntimeGraph(sqlite, goalId);
+      const taskRows = sqlite.prepare("SELECT task_id FROM task_records WHERE goal_id = ?").all(goalId) as Array<{ task_id: string }>;
+      const taskIds = [...new Set([...graphTaskIds, ...taskRows.map((taskRow) => taskRow.task_id)])].sort();
+      const tasks = new Map<string, Task>();
+      for (const taskId of taskIds) {
+        const task = readTask(sqlite, goalId, taskId);
+        if (task) tasks.set(taskId, task);
+      }
+      return { goal, taskIds, tasks };
+    });
   }
 
   private async acquireGoalStateWriteLock(goalId: string): Promise<() => void> {

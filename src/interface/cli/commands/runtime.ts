@@ -68,6 +68,11 @@ import {
   type SituationFrame,
 } from "../../../runtime/personal-agent/index.js";
 import {
+  RuntimeEventLogStore,
+  type RuntimeEventProjectionRebuild,
+  type RuntimeGraphExplainResult,
+} from "../../../runtime/store/runtime-event-log.js";
+import {
   PeerInitiativeStore,
   applyPeerInitiativeCalibrationPolicy,
   createPeerInitiativeCalibrationReport,
@@ -465,6 +470,13 @@ function personalAgentStore(stateManager: StateManager): PersonalAgentRuntimeSto
   });
 }
 
+function runtimeEventLogStore(stateManager: StateManager): RuntimeEventLogStore {
+  const baseDir = stateManager.getBaseDir();
+  return new RuntimeEventLogStore(resolveConfiguredDaemonRuntimeRoot(baseDir), {
+    controlBaseDir: baseDir,
+  });
+}
+
 function printSituationFrame(frame: SituationFrame): void {
   console.log(`SituationFrame: ${frame.frame_id}`);
   console.log(`  Caller:      ${frame.caller_path}`);
@@ -534,6 +546,31 @@ function printRuntimeGraphNode(node: RuntimeGraphNode): void {
   console.log(`  Provenance:  ${node.provenance_refs.map((ref) => `${ref.kind}:${ref.ref}`).join(", ") || "-"}`);
 }
 
+function printRuntimeEventProjectionRebuild(rebuild: RuntimeEventProjectionRebuild): void {
+  console.log("Runtime event-log projection rebuild:");
+  console.log(`  Trace:        ${rebuild.trace_id ?? "-"}`);
+  console.log(`  Events:       ${rebuild.source_event_count}`);
+  console.log(`  Authority:    ${rebuild.interaction_authority_summary.decision_count} decision(s)`);
+  console.log(`  Approvals:    ${rebuild.approval_resume_outcomes.length}`);
+  console.log(`  Notifications:${rebuild.notification_outbox_dedupe_state.length}`);
+  console.log(`  Peer delivery:${rebuild.peer_delivery_state.length}`);
+  console.log(`  Memory:       ${rebuild.memory_correction_invalidation_summary.length}`);
+  console.log(`  Schedule:     ${rebuild.schedule_wake_execution_summary.length}`);
+  console.log(`  Tools:        ${rebuild.tool_execution_outcome_summary.length}`);
+}
+
+function printRuntimeGraphExplain(explain: RuntimeGraphExplainResult): void {
+  console.log(`RuntimeGraph explanation: ${explain.trace_id}`);
+  console.log(`  Events:       ${explain.events.length}`);
+  console.log(`  Graph:        ${explain.runtime_graph.nodes.length} node(s), ${explain.runtime_graph.edges.length} edge(s)`);
+  console.log(`  Cause refs:   ${explain.operator_debug_evidence.why_it_happened.join(", ") || "-"}`);
+  console.log(`  Decisions:    ${explain.operator_debug_evidence.admitted_or_blocked_by.join(", ") || "-"}`);
+  console.log(`  Touched:      ${explain.operator_debug_evidence.touched_refs.join(", ") || "-"}`);
+  console.log(`  Side effects: ${explain.operator_debug_evidence.side_effect_refs.join(", ") || "-"}`);
+  console.log(`  Replay keys:  ${explain.operator_debug_evidence.replay_or_dedupe_refs.join(", ") || "-"}`);
+  printRuntimeEventProjectionRebuild(explain.projection_rebuild);
+}
+
 function parseListArgs(args: string[], command: string): RuntimeListValues {
   const logger = getCliLogger();
   try {
@@ -570,6 +607,31 @@ function parseDetailArgs(args: string[], command: string): { id?: string; json?:
       strict: false,
     }) as { values: { json?: boolean; normal?: boolean }; positionals: string[] };
     return { id: positionals[0], json: values.json, normal: values.normal };
+  } catch (err) {
+    logger.error(formatOperationError(`parse runtime ${command} arguments`, err));
+    return {};
+  }
+}
+
+function parseRuntimeEventArgs(args: string[], command: string): { id?: string; trace?: string; json?: boolean; dryRun?: boolean } {
+  const logger = getCliLogger();
+  try {
+    const { values, positionals } = parseArgs({
+      args,
+      options: {
+        trace: { type: "string" },
+        json: { type: "boolean" },
+        "dry-run": { type: "boolean" },
+      },
+      allowPositionals: true,
+      strict: false,
+    }) as { values: { trace?: string; json?: boolean; "dry-run"?: boolean }; positionals: string[] };
+    return {
+      id: positionals[0],
+      trace: values.trace,
+      json: values.json,
+      dryRun: values["dry-run"],
+    };
   } catch (err) {
     logger.error(formatOperationError(`parse runtime ${command} arguments`, err));
     return {};
@@ -702,7 +764,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime graph explain <trace-id>, runtime event-log rebuild [--dry-run], runtime replay --trace <trace-id>, runtime memory-provenance");
     return 1;
   }
 
@@ -1110,6 +1172,41 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
         printTraceSummary(trace);
       }
     }
+    return 0;
+  }
+
+  if (runtimeSubcommand === "graph" && args[1] === "explain") {
+    const values = parseRuntimeEventArgs(args.slice(2), "graph explain");
+    const traceId = values.trace ?? values.id;
+    if (!traceId) {
+      logger.error("Error: trace ID is required. Usage: pulseed runtime graph explain <trace-id> [--json]");
+      return 1;
+    }
+    const explanation = await runtimeEventLogStore(stateManager).explainTrace(traceId);
+    values.json ? printJson(explanation) : printRuntimeGraphExplain(explanation);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "event-log" && args[1] === "rebuild") {
+    const values = parseRuntimeEventArgs(args.slice(2), "event-log rebuild");
+    const store = runtimeEventLogStore(stateManager);
+    const rebuild = await store.rebuildProjections({ traceId: values.trace });
+    if (values.dryRun !== true) {
+      await store.recordProjectionRebuild({ rebuild, dryRun: false });
+    }
+    values.json ? printJson(rebuild) : printRuntimeEventProjectionRebuild(rebuild);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "replay") {
+    const values = parseRuntimeEventArgs(args.slice(1), "replay");
+    const traceId = values.trace ?? values.id;
+    if (!traceId) {
+      logger.error("Error: --trace <trace-id> is required. Usage: pulseed runtime replay --trace <trace-id> [--json]");
+      return 1;
+    }
+    const explanation = await runtimeEventLogStore(stateManager).explainTrace(traceId);
+    values.json ? printJson(explanation) : printRuntimeGraphExplain(explanation);
     return 0;
   }
 

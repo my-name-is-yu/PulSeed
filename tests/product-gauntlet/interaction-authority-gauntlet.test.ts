@@ -40,6 +40,7 @@ import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait
 import { BackgroundRunLedger } from "../../src/runtime/store/background-run-store.js";
 import { RuntimeOperatorHandoffStore } from "../../src/runtime/store/operator-handoff-store.js";
 import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
+import { RuntimeEventLogStore } from "../../src/runtime/store/runtime-event-log.js";
 import { PersonalAgentRuntimeStore, type PersonalAgentDecisionTrace } from "../../src/runtime/personal-agent/index.js";
 import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
@@ -744,8 +745,46 @@ describe("interaction authority product gauntlet", () => {
         controlBaseDir: context.controlBaseDir,
       }).listDecisions({ limit: 50 });
       const outboxRecords = await outboxRestartedStore.list();
+      const eventLogStore = new RuntimeEventLogStore(context.runtimeRoot, {
+        controlBaseDir: context.controlBaseDir,
+      });
+      const eventLog = await eventLogStore.listEvents({ limit: 200 });
+      const projectionBefore = {
+        authority_decision_count: authorityDecisions.length,
+        peer_candidate_count: records.length,
+        delivered_peer_count: deliveries.filter((delivery) => delivery?.status === "delivered").length,
+        outbox_record_count: outboxRecords.length,
+        memory_correction_history_count: replayCorrection.history.length,
+      };
+      const projectionAfterRebuild = await eventLogStore.rebuildProjections();
+      const firstTraceId = eventLog[0]?.trace_id;
+      const graphExplanation = firstTraceId ? await eventLogStore.explainTrace(firstTraceId) : null;
       context.recordEvidence({
         authorityDecisions,
+        eventLog: {
+          events: eventLog,
+          event_types: eventLog.map((event) => event.event_type),
+          trace_ids: eventLog.map((event) => event.trace_id),
+          idempotency_keys: eventLog.map((event) => event.idempotency_key),
+          correlation_ids: eventLog.map((event) => event.correlation_id),
+        },
+        runtimeGraph: graphExplanation?.runtime_graph ?? {
+          nodes: [],
+          edges: [],
+          note: "No runtime event was available to explain before assertions.",
+        },
+        projectionBefore,
+        projectionAfterRebuild,
+        normalProjection: {
+          peer_delivery_visible_count: deliveries.filter((delivery) => delivery?.status === "delivered").length,
+          outbox_visible_count: outboxRecords.length,
+          raw_event_ids_visible: false,
+          raw_runtime_graph_ids_visible: false,
+          authority_internals_visible: false,
+        },
+        operatorDebugEvidence: graphExplanation?.operator_debug_evidence ?? {
+          note: "Runtime event explanation was unavailable before assertions.",
+        },
         dbSummary: {
           records,
           deliveries,
@@ -802,8 +841,40 @@ describe("interaction authority product gauntlet", () => {
       expect(outboxRecords).toHaveLength(2);
       expect(replayCorrection.correction?.correction_id).toBe(firstCorrection.correction?.correction_id);
       expect(replayCorrection.history).toHaveLength(1);
+      expect(eventLog.map((event) => event.event_type)).toEqual(expect.arrayContaining([
+        "gateway.telegram.delivery.recorded",
+        "outbox.enqueue.recorded",
+        "memory.correction.recorded",
+      ]));
+      expect(eventLog.every((event) =>
+        event.trace_id.length > 0
+        && event.correlation_id.length > 0
+        && event.idempotency_key.length > 0
+      )).toBe(true);
+      expect(projectionAfterRebuild.peer_delivery_state.length).toBeGreaterThan(0);
+      expect(projectionAfterRebuild.notification_outbox_dedupe_state.length).toBeGreaterThan(0);
+      expect(projectionAfterRebuild.memory_correction_invalidation_summary.length).toBeGreaterThan(0);
+      expect(graphExplanation?.runtime_graph.edges.length ?? 0).toBeGreaterThan(0);
       return {
         authorityDecisions,
+        eventLog: {
+          events: eventLog,
+          event_types: eventLog.map((event) => event.event_type),
+          trace_ids: eventLog.map((event) => event.trace_id),
+          idempotency_keys: eventLog.map((event) => event.idempotency_key),
+          correlation_ids: eventLog.map((event) => event.correlation_id),
+        },
+        runtimeGraph: graphExplanation?.runtime_graph ?? null,
+        projectionBefore,
+        projectionAfterRebuild,
+        normalProjection: {
+          peer_delivery_visible_count: deliveries.filter((delivery) => delivery?.status === "delivered").length,
+          outbox_visible_count: outboxRecords.length,
+          raw_event_ids_visible: false,
+          raw_runtime_graph_ids_visible: false,
+          authority_internals_visible: false,
+        },
+        operatorDebugEvidence: graphExplanation?.operator_debug_evidence ?? null,
         dbSummary: {
           records,
           deliveries,
@@ -1034,7 +1105,37 @@ describe("interaction authority product gauntlet", () => {
         && trace.situation_frame.source_ref.ref === scheduleEntry.id
       );
       const scheduleTraceIndex = order.findIndex((item) => item === "trace:scheduled_wake:execute_tool");
+      const eventLogStore = new RuntimeEventLogStore(context.runtimeRoot, {
+        controlBaseDir: context.controlBaseDir,
+      });
+      const eventLog = await eventLogStore.listEvents({ limit: 100 });
+      const projectionBefore = {
+        trace_count: traces.length,
+        runtime_control_trace_id: runtimeControlTrace?.trace_id ?? null,
+        schedule_trace_id: scheduleTrace?.trace_id ?? null,
+        runtime_control_executor_called: runtimeControlExecutor.mock.calls.length,
+        schedule_result_count: scheduleResults.length,
+      };
+      const projectionAfterRebuild = await eventLogStore.rebuildProjections();
+      const runtimeControlExplanation = runtimeControlTrace
+        ? await eventLogStore.explainTrace(runtimeControlTrace.trace_id)
+        : null;
+      const scheduleExplanation = scheduleTrace
+        ? await eventLogStore.explainTrace(scheduleTrace.trace_id)
+        : null;
       context.recordEvidence({
+        eventLog: {
+          events: eventLog,
+          event_types: eventLog.map((event) => event.event_type),
+          trace_ids: eventLog.map((event) => event.trace_id),
+          idempotency_keys: eventLog.map((event) => event.idempotency_key),
+        },
+        runtimeGraph: {
+          runtime_control: runtimeControlExplanation?.runtime_graph ?? null,
+          schedule: scheduleExplanation?.runtime_graph ?? null,
+        },
+        projectionBefore,
+        projectionAfterRebuild,
         dbSummary: {
           runtimeResult,
           scheduleResults,
@@ -1045,6 +1146,15 @@ describe("interaction authority product gauntlet", () => {
           runtimeControlTrace,
           scheduleTrace,
           traces,
+          runtime_control_explanation: runtimeControlExplanation?.operator_debug_evidence ?? null,
+          schedule_explanation: scheduleExplanation?.operator_debug_evidence ?? null,
+        },
+        normalProjection: {
+          runtime_control_visible_status: runtimeResult.success,
+          schedule_visible_result_count: scheduleResults.length,
+          raw_event_ids_visible: false,
+          raw_runtime_graph_ids_visible: false,
+          authority_internals_visible: false,
         },
         safetyInvariants: {
           runtime_control_trace_before_executor: true,
@@ -1081,7 +1191,26 @@ describe("interaction authority product gauntlet", () => {
       expect(scheduleTraceIndex).toBeGreaterThanOrEqual(0);
       expect(scheduleTraceIndex).toBeLessThan(order.indexOf("schedule:data_source_query"));
       expect(scheduleTraceIndex).toBeLessThan(order.indexOf("schedule:llm"));
+      expect(eventLog.map((event) => event.event_type)).toEqual(expect.arrayContaining([
+        "runtime_control.operation.recorded",
+        "schedule.wake.recorded",
+      ]));
+      expect(projectionAfterRebuild.schedule_wake_execution_summary.length).toBeGreaterThan(0);
+      expect(runtimeControlExplanation?.runtime_graph.edges.length ?? 0).toBeGreaterThan(0);
+      expect(scheduleExplanation?.runtime_graph.edges.length ?? 0).toBeGreaterThan(0);
       return {
+        eventLog: {
+          events: eventLog,
+          event_types: eventLog.map((event) => event.event_type),
+          trace_ids: eventLog.map((event) => event.trace_id),
+          idempotency_keys: eventLog.map((event) => event.idempotency_key),
+        },
+        runtimeGraph: {
+          runtime_control: runtimeControlExplanation?.runtime_graph ?? null,
+          schedule: scheduleExplanation?.runtime_graph ?? null,
+        },
+        projectionBefore,
+        projectionAfterRebuild,
         dbSummary: {
           runtimeResult,
           scheduleResults,
@@ -1092,6 +1221,15 @@ describe("interaction authority product gauntlet", () => {
           runtimeControlTrace,
           scheduleTrace,
           traces,
+          runtime_control_explanation: runtimeControlExplanation?.operator_debug_evidence ?? null,
+          schedule_explanation: scheduleExplanation?.operator_debug_evidence ?? null,
+        },
+        normalProjection: {
+          runtime_control_visible_status: runtimeResult.success,
+          schedule_visible_result_count: scheduleResults.length,
+          raw_event_ids_visible: false,
+          raw_runtime_graph_ids_visible: false,
+          authority_internals_visible: false,
         },
         safetyInvariants: {
           runtime_control_trace_before_executor: true,

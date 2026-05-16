@@ -150,6 +150,9 @@ pulseed runtime attention-state [--json]
 pulseed runtime intervention-decision <decision-id> [--json]
 pulseed runtime capability-decision <decision-id> [--json]
 pulseed runtime runtime-graph <node-id-or-ref> [--json]
+pulseed runtime graph explain <trace-id> [--json]
+pulseed runtime event-log rebuild [--dry-run] [--trace <trace-id>] [--json]
+pulseed runtime replay --trace <trace-id> [--json]
 pulseed runtime memory-provenance [--json]
 ```
 
@@ -166,6 +169,26 @@ records.
 They are not normal chat/status output and may include trace IDs, internal refs,
 policy reasons, and memory provenance needed to answer why a decision was
 allowed, held, blocked, suppressed, or confirmed.
+
+The runtime event log is the append-only source-of-truth path for major runtime
+event evidence and side-effect boundaries. The event envelope links each trace
+to a causation ID, correlation ID, idempotency key, caller path, actor, source
+refs, target refs, authority decision refs, RuntimeGraph refs, side-effect refs,
+and typed payload schema/version. `runtime graph explain` reads those events
+and RuntimeGraph edges to answer what caused the trace, what admitted or blocked
+it, what it touched, whether replay/dedupe was involved, and which summary
+projections can be rebuilt. `runtime event-log rebuild --dry-run`
+deterministically rebuilds the current interaction-authority, approval-resume,
+outbox/notification, peer-delivery, memory-correction, schedule-wake, and
+tool-outcome summaries from events plus RuntimeGraph evidence without writing a
+rebuild event; without `--dry-run`, the rebuild itself is recorded as a
+projection event. It does not rewrite every legacy current-state table yet.
+Goal/task mutations routed through `GoalTaskStateStore` append typed mutation
+events before their current-state projection writes. Replays with the same event
+type, idempotency key, replay policy, and side-effect ref resolve to the already
+recorded runtime event and side-effect-guarded authority callers suppress the
+duplicate boundary instead of executing it again. Distinct
+transport/side-effect refs remain append-only outcome evidence.
 
 The Interaction Authority Kernel is the shared contract for side-effect
 authority across execution-adjacent surfaces. It records whether a caller may
@@ -186,7 +209,8 @@ mutation and writes the same authority decision.
 
 RuntimeGraph nodes with `runtime_graph_role=source_of_truth` are the durable
 authority for runtime entities. Goal, task, and milestone writes update graph
-authority in the same transaction as legacy query/index projections. The
+authority in the same transaction as legacy query/index projections; goal/task
+store mutations also append runtime events before those writes. The
 runtime session registry syncs conversations, agent/coreloop/process runs,
 process sessions, artifacts, reply targets, and parent/child lineage into the
 graph, then reads the graph authority for diagnostic session/run snapshots.

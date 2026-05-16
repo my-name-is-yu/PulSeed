@@ -10,8 +10,13 @@ import {
   type RuntimeControlDbStoreOptions,
 } from "../store/control-db/index.js";
 import {
+  RuntimeEventLogStore,
+  type RuntimeEventAppendResult,
+} from "../store/runtime-event-log.js";
+import {
   ExecutionAuthorityDecisionSchema,
   ExecutionAuthoritySourceKindSchema,
+  type ExecutionAuthorityDecisionInput,
   type ExecutionAuthorityDecision,
   type ExecutionAuthoritySourceKind,
 } from "./execution-authority-decision.js";
@@ -61,6 +66,14 @@ export class InteractionAuthorityStore {
 
   async recordDecision(input: ExecutionAuthorityDecision): Promise<ExecutionAuthorityDecision> {
     const decision = ExecutionAuthorityDecisionSchema.parse(input);
+    const eventLog = new RuntimeEventLogStore(this.paths, this.dbOptions);
+    const appendResult = await eventLog.appendAuthorityDecisionWithDisposition(decision);
+    const decisionToRecord = shouldSuppressSideEffectReplay(decision, appendResult)
+      ? suppressSideEffectReplayDecision(decision, appendResult)
+      : decision;
+    if (decisionToRecord !== decision) {
+      await eventLog.appendAuthorityDecision(decisionToRecord);
+    }
     const db = await this.database();
     db.transaction((sqlite) => {
       sqlite.prepare(`
@@ -94,22 +107,22 @@ export class InteractionAuthorityStore {
           suppressed = excluded.suppressed,
           decision_json = excluded.decision_json
       `).run(
-        decision.decision_id,
-        decision.decided_at,
-        decision.source.kind,
-        decision.outcome,
-        decision.lifecycle,
-        decision.surface ?? null,
-        decision.surface_class ?? null,
-        decision.bindings.target_binding_ref ?? null,
-        decision.bindings.delivery_ref ?? decision.outbound_conversation?.delivery_ref ?? null,
-        decision.fail_closed ? 1 : 0,
-        decision.stale_target_rejected ? 1 : 0,
-        decision.suppressed ? 1 : 0,
-        JSON.stringify(decision),
+        decisionToRecord.decision_id,
+        decisionToRecord.decided_at,
+        decisionToRecord.source.kind,
+        decisionToRecord.outcome,
+        decisionToRecord.lifecycle,
+        decisionToRecord.surface ?? null,
+        decisionToRecord.surface_class ?? null,
+        decisionToRecord.bindings.target_binding_ref ?? null,
+        decisionToRecord.bindings.delivery_ref ?? decisionToRecord.outbound_conversation?.delivery_ref ?? null,
+        decisionToRecord.fail_closed ? 1 : 0,
+        decisionToRecord.stale_target_rejected ? 1 : 0,
+        decisionToRecord.suppressed ? 1 : 0,
+        JSON.stringify(decisionToRecord),
       );
     });
-    return decision;
+    return decisionToRecord;
   }
 
   async getDecision(decisionId: string): Promise<ExecutionAuthorityDecision | null> {
@@ -165,6 +178,56 @@ export class InteractionAuthorityStore {
   private async database(): Promise<ControlDatabase> {
     return this.dbOwner.database();
   }
+}
+
+function shouldSuppressSideEffectReplay(
+  decision: ExecutionAuthorityDecision,
+  appendResult: RuntimeEventAppendResult,
+): boolean {
+  if (appendResult.disposition === "inserted") return false;
+  if (decision.metadata["runtime_event_replay_suppressed"] === true) return false;
+  if (appendResult.event.replay_policy.mode !== "side_effect_guard") return false;
+  if (!appendResult.event.side_effect_ref) return false;
+  return decision.can_execute || decision.can_send || decision.can_notify;
+}
+
+function suppressSideEffectReplayDecision(
+  decision: ExecutionAuthorityDecision,
+  appendResult: RuntimeEventAppendResult,
+): ExecutionAuthorityDecision {
+  const input: ExecutionAuthorityDecisionInput = {
+    ...decision,
+    decision_id: `${decision.decision_id}:runtime-event-replay-suppressed`,
+    decided_at: new Date().toISOString(),
+    lifecycle: "terminal",
+    outcome: "suppressed",
+    reason: `Runtime event log suppressed replay of side-effect boundary ${appendResult.event.event_id}.`,
+    can_prepare: false,
+    can_execute: false,
+    can_send: false,
+    can_notify: false,
+    can_ask: false,
+    can_hold: false,
+    can_suppress: true,
+    requires_approval: false,
+    fail_closed: false,
+    suppressed: true,
+    evidence_refs: [
+      ...decision.evidence_refs,
+      `runtime-event:${appendResult.event.event_id}`,
+      `runtime-event-dedupe:${appendResult.event.idempotency_key}`,
+    ],
+    metadata: {
+      ...decision.metadata,
+      runtime_event_replay_suppressed: true,
+      runtime_event_replay_disposition: appendResult.disposition,
+      runtime_event_replay_event_id: appendResult.event.event_id,
+      runtime_event_replay_side_effect_ref: appendResult.event.side_effect_ref
+        ? `${appendResult.event.side_effect_ref.kind}:${appendResult.event.side_effect_ref.ref}`
+        : null,
+    },
+  };
+  return ExecutionAuthorityDecisionSchema.parse(input);
 }
 
 function parseDecision(value: string): ExecutionAuthorityDecision | null {

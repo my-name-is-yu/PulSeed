@@ -112,6 +112,7 @@ export const CapabilityRegistryDecisionKindSchema = z.enum([
 export type CapabilityRegistryDecisionKind = z.infer<typeof CapabilityRegistryDecisionKindSchema>;
 
 export const RuntimeGraphNodeKindSchema = z.enum([
+  "runtime_event",
   "goal",
   "session",
   "run",
@@ -125,14 +126,32 @@ export const RuntimeGraphNodeKindSchema = z.enum([
   "initiative_event",
   "task_candidate",
   "intervention_decision",
+  "authority_decision",
   "capability_decision",
   "memory_record",
+  "approval",
+  "outbox",
+  "notification",
+  "schedule_wake",
+  "tool_call",
+  "gateway_message",
+  "surface_projection",
+  "side_effect",
 ]);
 export type RuntimeGraphNodeKind = z.infer<typeof RuntimeGraphNodeKindSchema>;
 
 export const RuntimeGraphEdgeKindSchema = z.enum([
   "derived_from",
+  "caused_by",
   "decided_by",
+  "approved_by",
+  "blocked_by",
+  "projected_to",
+  "executed_by",
+  "delivered_to",
+  "invalidated_by",
+  "replayed_from",
+  "deduplicated_by",
   "requires_capability",
   "targets",
   "parent_of",

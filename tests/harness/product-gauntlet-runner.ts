@@ -15,6 +15,10 @@ export interface ProductGauntletContext {
 export interface ProductGauntletEvidence {
   authorityDecision?: unknown;
   authorityDecisions?: unknown[];
+  eventLog?: unknown;
+  runtimeGraph?: unknown;
+  projectionBefore?: unknown;
+  projectionAfterRebuild?: unknown;
   visibleProjection?: unknown;
   normalProjection?: unknown;
   operatorDebugEvidence?: unknown;
@@ -77,6 +81,10 @@ function mergeProductGauntletEvidence(
     ...current,
     ...next,
     authorityDecisions: next.authorityDecisions ?? current.authorityDecisions,
+    eventLog: next.eventLog ?? current.eventLog,
+    runtimeGraph: next.runtimeGraph ?? current.runtimeGraph,
+    projectionBefore: next.projectionBefore ?? current.projectionBefore,
+    projectionAfterRebuild: next.projectionAfterRebuild ?? current.projectionAfterRebuild,
     normalProjection: next.normalProjection ?? next.visibleProjection ?? current.normalProjection ?? current.visibleProjection,
     operatorDebugEvidence: next.operatorDebugEvidence ?? current.operatorDebugEvidence,
     replaySummary: next.replaySummary ?? current.replaySummary,
@@ -110,6 +118,38 @@ async function writeProductGauntletEvidence(
   };
   await fsp.writeFile(path.join(dir, "authority-decisions.json"), `${JSON.stringify(authoritySnapshot, null, 2)}\n`, "utf8");
   await fsp.writeFile(path.join(dir, "authority-decision.json"), `${JSON.stringify(authoritySnapshot, null, 2)}\n`, "utf8");
+  await fsp.writeFile(path.join(dir, "event-log.json"), `${JSON.stringify(
+    evidence.eventLog ?? {
+      note: "No runtime event-log evidence was recorded before the failure.",
+      next_files: evidence.nextFiles ?? [],
+    },
+    null,
+    2,
+  )}\n`, "utf8");
+  await fsp.writeFile(path.join(dir, "runtime-graph.json"), `${JSON.stringify(
+    evidence.runtimeGraph ?? {
+      note: "No RuntimeGraph evidence was recorded before the failure.",
+      next_files: evidence.nextFiles ?? [],
+    },
+    null,
+    2,
+  )}\n`, "utf8");
+  await fsp.writeFile(path.join(dir, "projection-before.json"), `${JSON.stringify(
+    evidence.projectionBefore ?? {
+      note: "No pre-rebuild projection evidence was recorded before the failure.",
+      next_files: evidence.nextFiles ?? [],
+    },
+    null,
+    2,
+  )}\n`, "utf8");
+  await fsp.writeFile(path.join(dir, "projection-after-rebuild.json"), `${JSON.stringify(
+    evidence.projectionAfterRebuild ?? {
+      note: "No projection rebuild evidence was recorded before the failure.",
+      next_files: evidence.nextFiles ?? [],
+    },
+    null,
+    2,
+  )}\n`, "utf8");
   const normalProjection = evidence.normalProjection ?? evidence.visibleProjection ?? null;
   await fsp.writeFile(path.join(dir, "normal-projection.json"), `${JSON.stringify(
     normalProjection,
@@ -159,6 +199,6 @@ function failurePlanFor(error: unknown, evidence: ProductGauntletEvidence | void
     `Failure: ${message}`,
     "",
     `Inspect ${files}.`,
-    "Compare authority-decisions.json, normal-projection.json, operator-debug-evidence.json, db-summary.json, and replay-summary.json against scenario.json safety_invariants.",
+    "Compare event-log.json, runtime-graph.json, authority-decisions.json, projection-before.json, projection-after-rebuild.json, normal-projection.json, operator-debug-evidence.json, db-summary.json, and replay-summary.json against scenario.json safety_invariants.",
   ].join("\n");
 }

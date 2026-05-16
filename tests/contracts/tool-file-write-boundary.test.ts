@@ -201,6 +201,7 @@ function makeFileWriteExecutor(root: ContractRoot, events: RecordedToolEvent[]):
   const registry = new ToolRegistry();
   registry.register(new RecordingFileWriteTool((stage, fields) => recordToolEvent(events, stage, fields)));
   const waitPlanStore = new PermissionWaitPlanStore(root.runtime, {
+    controlBaseDir: root.root,
     createEventId: () => `file-write-contract-event-${events.length + 1}`,
   });
   return {
@@ -208,6 +209,7 @@ function makeFileWriteExecutor(root: ContractRoot, events: RecordedToolEvent[]):
       registry,
       permissionManager: new ToolPermissionManager({}),
       concurrency: new ConcurrencyController(),
+      traceBaseDir: root.root,
     }),
     waitPlanStore,
   };
@@ -222,6 +224,7 @@ function makeContext(root: ContractRoot, overrides: Partial<ToolCallContext> = {
     approvalFn: async () => false,
     sessionId: "session:file-write-contract",
     turnId: "turn:file-write-contract",
+    providerConfigBaseDir: root.root,
     ...overrides,
   };
 }

@@ -341,6 +341,7 @@ async function runToolTrace(
       registry,
       permissionManager: new ToolPermissionManager({}),
       concurrency: new ConcurrencyController(),
+      traceBaseDir: stateRoot.controlDbBase,
     });
     const approvalRequests: unknown[] = [];
     const result = await executor.execute("read", { file_path: "notes.txt", limit: 1 }, {
@@ -391,6 +392,7 @@ async function runToolTrace(
       trustBalance: -50,
       preApproved: false,
       permissionWaitPlanStore: waitPlanStore,
+      providerConfigBaseDir: stateRoot.controlDbBase,
       approvalFn: async (request) => {
         approvalEvents.push({
           approval_id: request.approvalId ? "<approval-id>" : null,
@@ -419,6 +421,7 @@ async function runToolTrace(
       trustBalance: -50,
       preApproved: false,
       permissionWaitPlanStore: waitPlanStore,
+      providerConfigBaseDir: stateRoot.controlDbBase,
       approvalFn: async () => false,
       callId: "tool-call-write-denied",
       sessionId: "session:tool-write",
