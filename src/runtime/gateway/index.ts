@@ -116,6 +116,38 @@ export {
   createUnsupportedTypingIndicator,
   withTypingIndicator,
 } from "./typing-indicator.js";
+export {
+  DEFAULT_EXTERNAL_ADAPTER_BACKOFF_STEPS_MS,
+  DEFAULT_EXTERNAL_ADAPTER_CONFIG_JSON_MAX_BYTES,
+  ExternalAdapterIntervalPoller,
+  assertExternalAdapterBoolean,
+  assertExternalAdapterIntegerInRange,
+  assertExternalAdapterNonEmptyString,
+  assertExternalAdapterStringArray,
+  assertExternalAdapterStringMap,
+  formatExternalAdapterHttpFailure,
+  loadExternalAdapterConfigJson,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  readExternalAdapterHttpFailureBody,
+  resolveExternalAdapterBackoffDelay,
+  respondExternalAdapterJson,
+  runExternalAdapterBackoffLoop,
+  singleHeaderValue,
+  sleepExternalAdapter,
+  verifyOptionalEd25519Signature,
+  verifyOptionalHmacSha256Signature,
+} from "./external-adapter-shell.js";
+export type {
+  ExternalAdapterBackoffLoopOptions,
+  ExternalAdapterConfigJsonOptions,
+  ExternalAdapterEd25519SignatureInput,
+  ExternalAdapterHmacSha256SignatureInput,
+  ExternalAdapterHttpBodyResult,
+  ExternalAdapterHttpFailureMessageInput,
+  ExternalAdapterIntervalPollerOptions,
+  ExternalAdapterJsonParseResult,
+} from "./external-adapter-shell.js";
 export type { SlackChannelAdapterConfig, SlackResponse } from "./slack-channel-adapter.js";
 export { WsChannelAdapter } from "./ws-channel-adapter.js";
 export type { WsLike, WsSocketLike } from "./ws-channel-adapter.js";

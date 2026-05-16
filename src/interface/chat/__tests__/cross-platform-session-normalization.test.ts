@@ -78,6 +78,28 @@ describe("cross-platform session normalization", () => {
     });
   });
 
+  it("lets typed surface denial override stale runtime-control fields and metadata", () => {
+    const externalSurface = buildExternalSurfaceDecision(
+      { platform: "discord", senderId: "user-1", conversationId: "channel-1" },
+      { allowed: false, runtimeControlApproved: false, runtimeControlConfigured: true },
+      { metadata: {}, identityKey: "discord:user-1" }
+    );
+
+    expect(resolveRuntimeControl(
+      "plugin_gateway",
+      {
+        allowed: true,
+        approvalMode: "preapproved",
+        approval_mode: "preapproved",
+      },
+      { runtime_control_approved: true },
+      externalSurface
+    )).toEqual({
+      allowed: false,
+      approvalMode: "disallowed",
+    });
+  });
+
   it("clones metadata so loaded session snapshots cannot mutate stored references", () => {
     const original = { surface: "gateway" as const, metadata: { nested: { value: 1 } } };
     const cloned = cloneReplyTarget(original);

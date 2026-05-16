@@ -1,3 +1,5 @@
+import { formatExternalAdapterHttpFailure } from "pulseed";
+
 // ─── Types ───
 
 export interface TelegramMessage {
@@ -103,8 +105,10 @@ export class TelegramAPI {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`telegram-api: ${method} returned ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "telegram-api",
+        operation: method,
+      }));
     }
 
     const json = (await response.json()) as { ok: boolean; result: T; description?: string };

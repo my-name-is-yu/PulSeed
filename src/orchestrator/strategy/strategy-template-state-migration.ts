@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
+  hasCompletedControlLegacyImport,
   openControlDatabase,
+  recordControlLegacyImport,
   type ControlDatabase,
   type RuntimeControlDbStoreOptions,
 } from "../../runtime/store/control-db/index.js";
@@ -89,7 +91,11 @@ export async function importLegacyStrategyTemplateState(
         continue;
       }
 
-      if (hasCompletedLegacyImport(controlDb, parsed.data.template_id)) {
+      if (hasCompletedControlLegacyImport(controlDb, {
+        sourceKind: "strategy_template",
+        sourceId: parsed.data.template_id,
+        migrationName: MIGRATION_NAME,
+      })) {
         report.skippedAlreadyImported += 1;
         continue;
       }
@@ -97,7 +103,7 @@ export async function importLegacyStrategyTemplateState(
       const existingTemplate = await store.load(parsed.data.template_id);
       if (existingTemplate !== null) {
         report.retiredExistingTypedState += 1;
-        controlDb.recordLegacyImport({
+        recordControlLegacyImport(controlDb, {
           sourceKind: "strategy_template",
           sourceId: parsed.data.template_id,
           sourcePath: path.relative(baseDir, filePath),
@@ -116,7 +122,7 @@ export async function importLegacyStrategyTemplateState(
 
       await store.save(parsed.data);
       report.importedTemplates += 1;
-      controlDb.recordLegacyImport({
+      recordControlLegacyImport(controlDb, {
         sourceKind: "strategy_template",
         sourceId: parsed.data.template_id,
         sourcePath: path.relative(baseDir, filePath),
@@ -164,7 +170,7 @@ function blockImport(
   const reason = error instanceof Error ? error.message : String(error);
   const sourcePath = path.relative(baseDir, filePath);
   report.blockedSources.push({ sourceKind: "strategy_template", sourcePath, reason });
-  controlDb.recordLegacyImport({
+  recordControlLegacyImport(controlDb, {
     sourceKind: "strategy_template",
     sourceId,
     sourcePath,
@@ -175,13 +181,4 @@ function blockImport(
     status: "blocked",
     details: { reason },
   });
-}
-
-function hasCompletedLegacyImport(controlDb: ControlDatabase, sourceId: string): boolean {
-  return controlDb.listLegacyImports().some((record) =>
-    record.source_kind === "strategy_template"
-    && record.source_id === sourceId
-    && record.migration_name === MIGRATION_NAME
-    && record.status === "imported"
-  );
 }

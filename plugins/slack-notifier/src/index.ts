@@ -2,7 +2,8 @@ import type {
   INotifier,
   NotificationEvent,
   NotificationEventType,
-} from "../../../src/base/types/plugin.js";
+} from "pulseed";
+import { formatExternalAdapterHttpFailure } from "pulseed";
 
 // ─── Supported events (must match plugin.yaml) ───
 
@@ -98,10 +99,10 @@ export class SlackNotifier implements INotifier {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(
-        `slack-notifier: webhook returned ${response.status}: ${body}`
-      );
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "slack-notifier",
+        operation: "webhook",
+      }));
     }
   }
 }

@@ -9,10 +9,15 @@ import {
   buildStandaloneIngressMessageFromContext,
   loadedSessionToChatSession,
   resolveChatResumeSelector,
-  type ChatRunnerRuntimeDeps,
 } from "../chat-runner-runtime.js";
 import { buildStandaloneIngressMessage } from "../ingress-router.js";
 import { importLegacyChatAgentLoopSessionState } from "../chat-agentloop-state-migration.js";
+import {
+  makeChatRunnerRuntimeDeps,
+  makeRuntimeControlActor,
+  makeRuntimeControlChatContext,
+  makeRuntimeReplyTarget,
+} from "../../../../tests/helpers/runtime-control-fixtures.js";
 
 async function writeJsonFixture(baseDir: string, relativePath: string, value: unknown): Promise<void> {
   const filePath = path.join(baseDir, relativePath);
@@ -26,15 +31,6 @@ function trackedTempDir(): string {
   const dir = path.join(os.tmpdir(), `pulseed-chat-runtime-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   tempDirs.push(dir);
   return dir;
-}
-
-function makeDeps(overrides: Partial<ChatRunnerRuntimeDeps> = {}): ChatRunnerRuntimeDeps {
-  return {
-    stateManager: {
-      readRaw: vi.fn().mockResolvedValue(null),
-    },
-    ...overrides,
-  };
 }
 
 afterEach(async () => {
@@ -70,35 +66,21 @@ describe("chat-runner runtime helpers", () => {
   it("buildStandaloneIngressMessageFromContext prefers the current runtime reply target over stale fallback deps", () => {
     const message = buildStandaloneIngressMessageFromContext(
       "restart now",
-      {
-        actor: {
-          surface: "gateway",
-          platform: "telegram",
+      makeRuntimeControlChatContext({
+        actor: makeRuntimeControlActor({ conversation_id: "telegram-thread" }),
+        replyTarget: makeRuntimeReplyTarget({
           conversation_id: "telegram-thread",
-          identity_key: "owner",
-          user_id: "user-1",
-        },
-        replyTarget: {
-          surface: "gateway",
-          platform: "telegram",
-          conversation_id: "telegram-thread",
-          identity_key: "owner",
-          user_id: "user-1",
           message_id: "msg-new",
-          deliveryMode: "thread_reply",
           metadata: { source: "current-turn" },
-        },
+        }),
         approvalFn: async () => true,
-      },
-      makeDeps({
-        runtimeReplyTarget: {
-          surface: "gateway",
+      }),
+      makeChatRunnerRuntimeDeps({
+        runtimeReplyTarget: makeRuntimeReplyTarget({
           platform: "slack",
           conversation_id: "slack-thread",
-          identity_key: "owner",
-          user_id: "user-1",
           message_id: "msg-stale",
-        },
+        }),
       })
     );
 
@@ -136,11 +118,12 @@ describe("chat-runner runtime helpers", () => {
     const context = buildRuntimeControlContextFromIngress(
       ingress,
       {
+        ...makeRuntimeControlChatContext(),
         actor: ingress.actor,
         replyTarget: ingress.replyTarget,
         approvalFn: staleApproval,
       },
-      makeDeps({ approvalFn: depsApproval })
+      makeChatRunnerRuntimeDeps({ approvalFn: depsApproval })
     );
 
     expect(context?.actor).toEqual(ingress.actor);
@@ -167,11 +150,12 @@ describe("chat-runner runtime helpers", () => {
     const context = buildRuntimeControlContextFromIngress(
       ingress,
       {
+        ...makeRuntimeControlChatContext(),
         actor: ingress.actor,
         replyTarget: ingress.replyTarget,
         approvalFn: staleApproval,
       },
-      makeDeps()
+      makeChatRunnerRuntimeDeps()
     );
 
     expect(context?.approvalFn).toBeUndefined();

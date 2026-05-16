@@ -1,5 +1,4 @@
 import * as http from "node:http";
-import { webcrypto } from "node:crypto";
 import type { ChannelAdapter, EnvelopeHandler, TypingIndicatorCapability } from "./channel-adapter.js";
 import { loadGatewayConfigJson } from "./config-json.js";
 import {
@@ -15,7 +14,14 @@ import { DISCORD_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./
 import { DISCORD_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
-import { isPayloadTooLargeError, readBody } from "../http-body.js";
+import {
+  formatExternalAdapterHttpFailure,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  respondExternalAdapterJson,
+  singleHeaderValue,
+  verifyOptionalEd25519Signature,
+} from "./external-adapter-shell.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -146,37 +152,30 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method !== "POST") {
-      this.respondJson(res, 405, { error: "method_not_allowed" });
+      respondExternalAdapterJson(res, 405, { error: "method_not_allowed" });
       return;
     }
 
-    let body: string;
-    try {
-      body = await readBody(req);
-    } catch (error) {
-      if (isPayloadTooLargeError(error)) {
-        this.respondJson(res, 413, { error: "payload_too_large" });
-        return;
-      }
-      this.respondJson(res, 400, { error: "invalid_body" });
+    const bodyResult = await readExternalAdapterHttpBody(req);
+    if (bodyResult.status !== "ok") {
+      respondExternalAdapterJson(res, bodyResult.statusCode, bodyResult.payload);
       return;
     }
 
-    if (!(await this.verifyRequest(req, body))) {
-      this.respondJson(res, 401, { error: "invalid_signature" });
+    if (!(await this.verifyRequest(req, bodyResult.body))) {
+      respondExternalAdapterJson(res, 401, { error: "invalid_signature" });
       return;
     }
 
-    let payload: DiscordInteractionPayload;
-    try {
-      payload = JSON.parse(body) as DiscordInteractionPayload;
-    } catch {
-      this.respondJson(res, 400, { error: "invalid_json" });
+    const parsed = parseExternalAdapterJson<DiscordInteractionPayload>(bodyResult.body);
+    if (parsed.status !== "ok") {
+      respondExternalAdapterJson(res, parsed.statusCode, parsed.payload);
       return;
     }
+    const payload = parsed.value;
 
     if (payload.type === 1) {
-      this.respondJson(res, 200, { type: 1 });
+      respondExternalAdapterJson(res, 200, { type: 1 });
       return;
     }
 
@@ -186,13 +185,13 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       payload.application_id === undefined ||
       payload.data?.name !== this.config.command_name
     ) {
-      this.respondJson(res, 400, { error: "unsupported_interaction" });
+      respondExternalAdapterJson(res, 400, { error: "unsupported_interaction" });
       return;
     }
 
     const text = this.extractCommandText(payload);
     if (text === null) {
-      this.respondJson(res, 400, { error: "missing_message_text" });
+      respondExternalAdapterJson(res, 400, { error: "missing_message_text" });
       return;
     }
 
@@ -215,7 +214,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       channelContext
     );
     if (!access.allowed) {
-      this.respondJson(res, 403, { error: access.reason ?? "forbidden" });
+      respondExternalAdapterJson(res, 403, { error: access.reason ?? "forbidden" });
       return;
     }
 
@@ -249,7 +248,7 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
       },
     }).catch(() => undefined);
 
-    this.respondJson(res, 200, {
+    respondExternalAdapterJson(res, 200, {
       type: 5,
       data: this.config.ephemeral ? { flags: 64 } : undefined,
     });
@@ -350,29 +349,16 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
     if (!this.config.public_key_hex) {
       return true;
     }
-    const signature = req.headers["x-signature-ed25519"];
-    const timestamp = req.headers["x-signature-timestamp"];
-    if (typeof signature !== "string" || typeof timestamp !== "string") {
+    const timestamp = singleHeaderValue(req.headers["x-signature-timestamp"]);
+    if (timestamp === undefined) {
       return false;
     }
 
-    const publicKeyBytes = Uint8Array.from(Buffer.from(this.config.public_key_hex, "hex"));
-    let key: Awaited<ReturnType<typeof webcrypto.subtle.importKey>>;
-    try {
-      key = await webcrypto.subtle.importKey("raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]);
-    } catch {
-      return false;
-    }
-
-    const signedMessage = new TextEncoder().encode(`${timestamp}${body}`);
-    const signatureBytes = Uint8Array.from(Buffer.from(signature, "hex"));
-    return webcrypto.subtle.verify("Ed25519", key, signatureBytes, signedMessage);
-  }
-
-  private respondJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
-    res.statusCode = statusCode;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(payload));
+    return verifyOptionalEd25519Signature({
+      publicKeyHex: this.config.public_key_hex,
+      signatureHeader: req.headers["x-signature-ed25519"],
+      signedPayload: `${timestamp}${body}`,
+    });
   }
 }
 
@@ -395,7 +381,11 @@ class DiscordAPI {
       }),
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: channel send failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "channel send failed",
+        statusVerb: "with",
+      }));
     }
   }
 
@@ -411,7 +401,11 @@ class DiscordAPI {
       }),
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: follow-up send failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "follow-up send failed",
+        statusVerb: "with",
+      }));
     }
   }
 
@@ -428,7 +422,11 @@ class DiscordAPI {
       }),
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: follow-up send failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "follow-up send failed",
+        statusVerb: "with",
+      }));
     }
     const json = await response.json().catch(() => ({})) as { id?: string };
     discordSyntheticMessageId += 1;
@@ -447,7 +445,11 @@ class DiscordAPI {
       }),
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: follow-up edit failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "follow-up edit failed",
+        statusVerb: "with",
+      }));
     }
   }
 
@@ -456,7 +458,11 @@ class DiscordAPI {
       method: "DELETE",
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: follow-up delete failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "follow-up delete failed",
+        statusVerb: "with",
+      }));
     }
   }
 
@@ -468,7 +474,11 @@ class DiscordAPI {
       },
     });
     if (!response.ok) {
-      throw new Error(`discord-bot: typing failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "typing failed",
+        statusVerb: "with",
+      }));
     }
   }
 }

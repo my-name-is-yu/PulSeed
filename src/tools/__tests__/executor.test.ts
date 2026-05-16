@@ -508,6 +508,57 @@ describe("ToolExecutor", () => {
         ]);
         expect(audits[0]).not.toHaveProperty("autonomy_decision_ref");
       });
+
+      it("does not persist production execution records for approval-denied non-executed tools", async () => {
+        const runtimeRoot = makeTempDir("pulseed-capability-verification-not-executed-");
+        permissionGrantRuntimeRoots.push(runtimeRoot);
+        const store = new CapabilityVerificationStore(runtimeRoot);
+        const tool = createMockTool({
+          name: "approval-denied-write",
+          metadata: {
+            name: "approval-denied-write",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "file_modify",
+          },
+        });
+        const { executor } = createExecutor([tool]);
+        const result = await executor.execute("approval-denied-write", { value: "x" }, createMockContext({
+          approvalFn: vi.fn().mockResolvedValue(false),
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          capabilityVerificationStore: store,
+          capabilityExecution: {
+            operationId: "operation:approval-denied-write",
+            providerRef: "runtime:workspace",
+            assetRef: "workspace:/repo/README.md",
+            capabilityId: "capability:workspace:write",
+            operationKind: "write",
+            payloadClass: "workspace_write_payload",
+            riskClass: "medium",
+            sideEffectProfile: "write",
+            readinessSnapshotRefs: ["readiness:approval-denied-write"],
+            executionRefs: ["execution:approval-denied-write"],
+          },
+        }));
+
+        expect(result).toMatchObject({
+          success: false,
+          execution: {
+            status: "not_executed",
+            reason: "approval_denied",
+          },
+        });
+        expect(tool.call).not.toHaveBeenCalled();
+        await expect(store.listReadinessEvidenceSummaries()).resolves.toEqual([]);
+        await expect(store.listAudits()).resolves.toEqual([]);
+      });
     });
 
     describe("Gate 2 — Semantic validation", () => {
@@ -785,6 +836,15 @@ describe("ToolExecutor", () => {
 
         expect(result.success).toBe(true);
         expect(tool.call).toHaveBeenCalledOnce();
+        expect(tool.call).toHaveBeenCalledWith(
+          { value: "x" },
+          expect.objectContaining({
+            preApproved: true,
+            hostPolicyApproved: true,
+          }),
+        );
+        expect(ctx.preApproved).toBe(false);
+        expect(ctx.hostPolicyApproved).toBeUndefined();
         expect(approvalFn).toHaveBeenCalledWith(expect.objectContaining({
           approvalId: expect.stringMatching(/^permission-wait:/),
           permissionWaitPlanId: expect.stringMatching(/^permission-wait:/),
@@ -913,6 +973,85 @@ describe("ToolExecutor", () => {
             ]),
           }),
         ]);
+        expect(ctx.preApproved).toBe(false);
+        expect(ctx.hostPolicyApproved).toBeUndefined();
+      });
+
+      it("does not leak approved context flags to later tools when resume rejects a stale approval", async () => {
+        const firstTool = createMockTool({
+          name: "first-stale-write-tool",
+          metadata: {
+            name: "first-stale-write-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+          isConcurrencySafe: vi.fn().mockReturnValue(false),
+        });
+        const secondTool = createMockTool({
+          name: "second-write-tool",
+          metadata: {
+            name: "second-write-tool",
+            aliases: [],
+            permissionLevel: "write_local",
+            isReadOnly: false,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+          } as ITool["metadata"],
+          isConcurrencySafe: vi.fn().mockReturnValue(false),
+        });
+        const waitPlanStore = createWaitPlanStore();
+        const { executor } = createExecutor([firstTool, secondTool]);
+        const ctx = createMockContext({
+          callId: "batch-call",
+          executionPolicy: createExecutionPolicy({ approvalPolicy: "on_request" }),
+          hostToolState: {
+            currentEpoch: "epoch-1",
+          },
+          permissionWaitPlanStore: waitPlanStore,
+        });
+        const approvalFn = vi.fn()
+          .mockImplementationOnce(async () => {
+            ctx.hostToolState = { currentEpoch: "epoch-2" };
+            return true;
+          })
+          .mockResolvedValueOnce(false);
+        ctx.approvalFn = approvalFn;
+
+        const results = await executor.executeBatch([
+          { toolName: "first-stale-write-tool", input: { value: "first" } },
+          { toolName: "second-write-tool", input: { value: "second" } },
+        ], ctx);
+
+        expect(results[0]).toMatchObject({
+          success: false,
+          execution: {
+            status: "not_executed",
+            reason: "stale_state",
+          },
+        });
+        expect(results[1]).toMatchObject({
+          success: false,
+          execution: {
+            status: "not_executed",
+            reason: "approval_denied",
+          },
+        });
+        expect(firstTool.call).not.toHaveBeenCalled();
+        expect(secondTool.call).not.toHaveBeenCalled();
+        expect(approvalFn).toHaveBeenCalledTimes(2);
+        expect(ctx.preApproved).toBe(false);
+        expect(ctx.hostPolicyApproved).toBeUndefined();
       });
 
       it("does not execute escalation-required tools by ordinary approval", async () => {

@@ -2,10 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("pulseed", async () => {
   const gateway = await import("../../../src/runtime/gateway/index.js");
+  const channelPolicy = await import("../../../src/runtime/gateway/channel-policy.js");
   return {
     DISCORD_GATEWAY_DISPLAY_CONTRACT: gateway.DISCORD_GATEWAY_DISPLAY_CONTRACT,
     NonTuiDisplayProjector: gateway.NonTuiDisplayProjector,
+    buildChannelPolicyMetadata: channelPolicy.buildChannelPolicyMetadata,
+    buildExternalSurfaceDecision: channelPolicy.buildExternalSurfaceDecision,
     createGatewayDisplayPolicy: gateway.createGatewayDisplayPolicy,
+    evaluateChannelAccess: channelPolicy.evaluateChannelAccess,
+    resolveChannelRoute: channelPolicy.resolveChannelRoute,
+    parseExternalAdapterJson: gateway.parseExternalAdapterJson,
+    readExternalAdapterHttpBody: gateway.readExternalAdapterHttpBody,
+    respondExternalAdapterJson: gateway.respondExternalAdapterJson,
+    singleHeaderValue: gateway.singleHeaderValue,
+    verifyOptionalEd25519Signature: gateway.verifyOptionalEd25519Signature,
   };
 });
 
@@ -58,6 +68,9 @@ describe("DiscordWebhookServer", () => {
       expect(fetchChatReply).toHaveBeenCalledWith(
         expect.objectContaining({
           sender_id: "user-1",
+          externalSurface: expect.objectContaining({
+            runtime_control_policy: expect.objectContaining({ approval_mode: "preapproved" }),
+          }),
           metadata: expect.objectContaining({ runtime_control_approved: true }),
         })
       );

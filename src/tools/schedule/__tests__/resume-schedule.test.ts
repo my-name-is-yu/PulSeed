@@ -4,20 +4,11 @@ import {
   ResumeScheduleTool,
   type ResumeScheduleOutput,
 } from "../ResumeScheduleTool/ResumeScheduleTool.js";
-import type { ToolCallContext } from "../../types.js";
 import type { ScheduleEngine } from "../../../runtime/schedule-engine.js";
 import type { ScheduleEntry } from "../../../runtime/types/schedule.js";
+import { makeToolCallContext } from "../../../../tests/helpers/tool-call-context.js";
 
-function makeContext(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
-  return {
-    cwd: "/tmp",
-    goalId: "test-goal",
-    trustBalance: 50,
-    preApproved: false,
-    approvalFn: async () => false,
-    ...overrides,
-  };
-}
+const makeContext = makeToolCallContext;
 
 function makeEntry(
   id: string,

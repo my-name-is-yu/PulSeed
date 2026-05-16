@@ -1,40 +1,39 @@
+import { ExternalAdapterIntervalPoller } from "pulseed";
 import { SignalBridgeClient, type SignalReceivedMessage } from "./signal-client.js";
 import { dispatchChatInput, type ChatContinuationInput } from "./shared-manager.js";
 import type { SignalBridgeConfig } from "./config.js";
-import { evaluateChannelAccess, resolveChannelRoute } from "./channel-policy.js";
+import {
+  buildChannelPolicyMetadata,
+  buildExternalSurfaceDecision,
+  evaluateChannelAccess,
+  resolveChannelRoute,
+} from "pulseed";
 
 export class SignalBridgePoller {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly poller: ExternalAdapterIntervalPoller;
   private readonly seenMessageIds = new Set<string>();
 
   constructor(
     private readonly config: SignalBridgeConfig,
     private readonly client: SignalBridgeClient,
     private readonly fetchChatReply: typeof dispatchChatInput = dispatchChatInput
-  ) {}
-
-  start(): void {
-    if (this.timer !== null) {
-      return;
-    }
-
-    void this.pollOnce().catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[signal-bridge] poll failed: ${msg}`);
-    });
-    this.timer = setInterval(() => {
-      void this.pollOnce().catch((err) => {
+  ) {
+    this.poller = new ExternalAdapterIntervalPoller({
+      intervalMs: this.config.poll_interval_ms,
+      pollOnce: () => this.pollOnce(),
+      onError: (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[signal-bridge] poll failed: ${msg}`);
-      });
-    }, this.config.poll_interval_ms);
+      },
+    });
+  }
+
+  start(): void {
+    this.poller.start();
   }
 
   stop(): void {
-    if (this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this.poller.stop();
   }
 
   async pollOnce(): Promise<void> {
@@ -76,6 +75,7 @@ export class SignalBridgePoller {
         },
         channelContext
       );
+      const externalSurface = buildExternalSurfaceDecision(channelContext, access, route);
 
       const reply = await this.fetchChatReply({
         platform: "signal",
@@ -84,11 +84,11 @@ export class SignalBridgePoller {
         sender_id: normalized.senderId,
         message_id: normalized.messageId,
         text: normalized.text,
+        externalSurface,
         metadata: {
-          ...route.metadata,
+          ...buildChannelPolicyMetadata(channelContext, access, route, externalSurface),
           ...normalized.metadata,
           ...(route.goalId ? { goal_id: route.goalId } : {}),
-          ...(access.runtimeControlApproved ? { runtime_control_approved: true } : {}),
         },
       });
 

@@ -1,4 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
+  const channelPolicy = await import("../../../src/runtime/gateway/channel-policy.js");
+  return {
+    buildChannelPolicyMetadata: channelPolicy.buildChannelPolicyMetadata,
+    buildExternalSurfaceDecision: channelPolicy.buildExternalSurfaceDecision,
+    evaluateChannelAccess: channelPolicy.evaluateChannelAccess,
+    parseExternalAdapterJson: gateway.parseExternalAdapterJson,
+    readExternalAdapterHttpBody: gateway.readExternalAdapterHttpBody,
+    resolveChannelRoute: channelPolicy.resolveChannelRoute,
+    respondExternalAdapterJson: gateway.respondExternalAdapterJson,
+    verifyOptionalHmacSha256Signature: gateway.verifyOptionalHmacSha256Signature,
+  };
+});
+
 import type { WhatsAppWebhookConfig } from "../src/config.js";
 import type { WhatsAppCloudClient } from "../src/whatsapp-client.js";
 import { WhatsAppWebhookServer } from "../src/webhook-server.js";
@@ -61,6 +77,9 @@ describe("WhatsAppWebhookServer", () => {
       expect(fetchChatReply).toHaveBeenCalledWith(
         expect.objectContaining({
           sender_id: "15551234567",
+          externalSurface: expect.objectContaining({
+            runtime_control_policy: expect.objectContaining({ approval_mode: "preapproved" }),
+          }),
           metadata: expect.objectContaining({ runtime_control_approved: true }),
         })
       );

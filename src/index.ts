@@ -302,11 +302,39 @@ export {
   TELEGRAM_GATEWAY_DISPLAY_CONTRACT,
   SLACK_GATEWAY_DISPLAY_CONTRACT,
   DISCORD_GATEWAY_DISPLAY_CONTRACT,
+  DEFAULT_EXTERNAL_ADAPTER_BACKOFF_STEPS_MS,
+  DEFAULT_EXTERNAL_ADAPTER_CONFIG_JSON_MAX_BYTES,
+  ExternalAdapterIntervalPoller,
   WHATSAPP_GATEWAY_DISPLAY_CONTRACT,
   SIGNAL_GATEWAY_DISPLAY_CONTRACT,
   WEBHOOK_GATEWAY_DISPLAY_CONTRACT,
+  assertExternalAdapterBoolean,
+  assertExternalAdapterIntegerInRange,
+  assertExternalAdapterNonEmptyString,
+  assertExternalAdapterStringArray,
+  assertExternalAdapterStringMap,
+  formatExternalAdapterHttpFailure,
+  loadExternalAdapterConfigJson,
+  parseExternalAdapterJson,
+  readExternalAdapterHttpBody,
+  readExternalAdapterHttpFailureBody,
+  resolveExternalAdapterBackoffDelay,
+  respondExternalAdapterJson,
+  runExternalAdapterBackoffLoop,
+  singleHeaderValue,
+  sleepExternalAdapter,
+  verifyOptionalEd25519Signature,
+  verifyOptionalHmacSha256Signature,
 } from "./runtime/gateway/index.js";
 export type {
+  ExternalAdapterBackoffLoopOptions,
+  ExternalAdapterConfigJsonOptions,
+  ExternalAdapterEd25519SignatureInput,
+  ExternalAdapterHmacSha256SignatureInput,
+  ExternalAdapterHttpBodyResult,
+  ExternalAdapterHttpFailureMessageInput,
+  ExternalAdapterIntervalPollerOptions,
+  ExternalAdapterJsonParseResult,
   NonTuiDisplayMessageRef,
   NonTuiDisplayTransport,
   GatewayChannelDisplayContract,
@@ -590,6 +618,11 @@ export { NotifierRegistry } from "./runtime/notifier-registry.js";
 export { PluginLoader } from "./runtime/plugin-loader.js";
 export { SkillRegistry } from "./runtime/skills/skill-registry.js";
 export type { SkillRecord, SkillRegistryOptions } from "./runtime/skills/skill-registry.js";
+export type {
+  INotifier,
+  NotificationEvent,
+  NotificationEventType,
+} from "./base/types/plugin.js";
 
 // --- Iteration budget ---
 export { IterationBudget } from "./orchestrator/loop/iteration-budget.js";
@@ -602,6 +635,13 @@ export {
   ToolPermissionManager,
   ConcurrencyController,
   createBuiltinTools,
+  buildApprovedToolCallContext,
+  buildPermissionApprovalWaitPlan,
+  buildPermissionWaitCanonicalPlan,
+  buildDryRunToolResult,
+  buildNotExecutedToolResult,
+  buildToolFailureResult,
+  buildToolOutcomeSummary,
 } from "./tools/index.js";
 export type {
   ITool,
@@ -611,6 +651,12 @@ export type {
   AssembledPool,
   ToolExecutorDeps,
   PermissionRule,
+  PermissionApprovalWaitPlan,
+  PermissionWaitPlanInput,
+  ToolExecutionStatus,
+  ToolFailureResultInput,
+  ToolNotExecutedReason,
+  ToolNotExecutedResultInput,
 } from "./tools/index.js";
 
 // --- Builtin tool classes ---

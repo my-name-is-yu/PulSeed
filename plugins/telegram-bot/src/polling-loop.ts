@@ -1,3 +1,4 @@
+import { runExternalAdapterBackoffLoop } from "pulseed";
 import type { TelegramAPI } from "./telegram-api.js";
 
 // ─── Types ───
@@ -10,10 +11,6 @@ interface PollingLoopOptions {
   deniedUserIds?: number[];
   allowAll?: boolean;
 }
-
-// ─── Backoff config ───
-
-const BACKOFF_STEPS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 
 // ─── PollingLoop ───
 
@@ -56,49 +53,39 @@ export class PollingLoop {
   }
 
   private async loop(): Promise<void> {
-    let backoffIndex = 0;
-
-    while (this.running) {
-      try {
-        const updates = await this.api.getUpdates(this.offset, 30);
-        backoffIndex = 0; // reset on success
-
-        for (const update of updates) {
-          this.offset = update.update_id + 1;
-
-          const msg = update.message;
-          if (!msg?.text) continue;
-
-          const fromId = msg.from?.id;
-          const chatId = msg.chat?.id;
-          if (typeof fromId !== "number" || !Number.isInteger(fromId)) continue;
-          if (typeof chatId !== "number" || !Number.isInteger(chatId)) continue;
-          if (this.deniedUserIds.includes(fromId)) continue;
-          if (this.deniedChatIds.includes(chatId)) continue;
-          if (this.allowedChatId !== undefined && chatId !== this.allowedChatId) continue;
-          if (this.allowedChatIds.length > 0 && !this.allowedChatIds.includes(chatId)) continue;
-
-          if (!this.allowAll && !this.allowedUserIds.includes(fromId)) {
-            continue;
-          }
-
-          await this.onMessage(msg.text, fromId, chatId);
-        }
-      } catch (err) {
-        if (!this.running) break;
-
-        const delay = BACKOFF_STEPS_MS[Math.min(backoffIndex, BACKOFF_STEPS_MS.length - 1)];
-        backoffIndex++;
-
+    await runExternalAdapterBackoffLoop({
+      shouldContinue: () => this.running,
+      runOnce: () => this.pollOnce(),
+      onError: (err, delay) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[telegram-bot] polling error (retry in ${delay}ms): ${msg}`);
+      },
+    });
+  }
 
-        await sleep(delay);
+  private async pollOnce(): Promise<void> {
+    const updates = await this.api.getUpdates(this.offset, 30);
+
+    for (const update of updates) {
+      this.offset = update.update_id + 1;
+
+      const msg = update.message;
+      if (!msg?.text) continue;
+
+      const fromId = msg.from?.id;
+      const chatId = msg.chat?.id;
+      if (typeof fromId !== "number" || !Number.isInteger(fromId)) continue;
+      if (typeof chatId !== "number" || !Number.isInteger(chatId)) continue;
+      if (this.deniedUserIds.includes(fromId)) continue;
+      if (this.deniedChatIds.includes(chatId)) continue;
+      if (this.allowedChatId !== undefined && chatId !== this.allowedChatId) continue;
+      if (this.allowedChatIds.length > 0 && !this.allowedChatIds.includes(chatId)) continue;
+
+      if (!this.allowAll && !this.allowedUserIds.includes(fromId)) {
+        continue;
       }
+
+      await this.onMessage(msg.text, fromId, chatId);
     }
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

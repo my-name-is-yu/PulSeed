@@ -4,11 +4,19 @@ const mockDispatchChatInput = vi.hoisted(() => vi.fn());
 const mockServerStart = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendTextMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
-vi.mock("pulseed", () => ({
-  getGlobalCrossPlatformChatSessionManager: vi.fn().mockResolvedValue({
-    processIncomingMessage: mockDispatchChatInput,
-  }),
-}));
+vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
+  return {
+    assertExternalAdapterIntegerInRange: gateway.assertExternalAdapterIntegerInRange,
+    assertExternalAdapterNonEmptyString: gateway.assertExternalAdapterNonEmptyString,
+    assertExternalAdapterStringArray: gateway.assertExternalAdapterStringArray,
+    assertExternalAdapterStringMap: gateway.assertExternalAdapterStringMap,
+    loadExternalAdapterConfigJson: gateway.loadExternalAdapterConfigJson,
+    getGlobalCrossPlatformChatSessionManager: vi.fn().mockResolvedValue({
+      processIncomingMessage: mockDispatchChatInput,
+    }),
+  };
+});
 
 vi.mock("../src/whatsapp-client.js", () => ({
   WhatsAppCloudClient: class {

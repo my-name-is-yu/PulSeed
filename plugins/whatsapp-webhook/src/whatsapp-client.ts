@@ -1,3 +1,5 @@
+import { formatExternalAdapterHttpFailure } from "pulseed";
+
 export interface WhatsAppMessage {
   to: string;
   body: string;
@@ -31,8 +33,11 @@ export class WhatsAppCloudClient {
     );
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`whatsapp-webhook: send failed with ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "whatsapp-webhook",
+        operation: "send failed",
+        statusVerb: "with",
+      }));
     }
   }
 }

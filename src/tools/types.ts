@@ -1,5 +1,7 @@
 import { z } from "zod/v3";
 import type { ExecutionPolicy, SubagentRole } from "../orchestrator/execution/agent-loop/execution-policy.js";
+import { PermissionGrantEvaluationSchema } from "./permission-grant-evaluation.js";
+import type { PermissionGrantEvaluation } from "./permission-grant-evaluation.js";
 import type { PermissionGrantRecord } from "../runtime/store/permission-grant-store.js";
 import type {
   PermissionWaitCanonicalPlan,
@@ -397,28 +399,28 @@ export interface ApprovalRequest {
   approvalId?: string;
   permissionWaitPlanId?: string;
   canonicalPermissionPlan?: PermissionWaitCanonicalPlan;
-  permissionGrantDecision?: unknown;
+  permissionGrantDecision?: PermissionGrantEvaluation;
 }
 
 export const PermissionCheckResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("allowed"), permissionGrantDecision: z.unknown().optional() }),
+  z.object({ status: z.literal("allowed"), permissionGrantDecision: PermissionGrantEvaluationSchema.optional() }),
   z.object({
     status: z.literal("denied"),
     reason: z.string(),
     executionReason: ToolExecutionReasonSchema.optional(),
     policyDecision: z.unknown().optional(),
-    permissionGrantDecision: z.unknown().optional(),
+    permissionGrantDecision: PermissionGrantEvaluationSchema.optional(),
   }),
   z.object({
     status: z.literal("needs_approval"),
     reason: z.string(),
     executionReason: ToolExecutionReasonSchema.optional(),
     policyDecision: z.unknown().optional(),
-    permissionGrantDecision: z.unknown().optional(),
+    permissionGrantDecision: PermissionGrantEvaluationSchema.optional(),
   }),
 ]);
 
 export type PermissionCheckResult = z.infer<typeof PermissionCheckResultSchema> & {
   policyDecision?: HostToolExecutionDecision;
-  permissionGrantDecision?: unknown;
+  permissionGrantDecision?: PermissionGrantEvaluation;
 };

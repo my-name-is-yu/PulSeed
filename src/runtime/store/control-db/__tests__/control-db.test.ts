@@ -1,16 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import Database from "better-sqlite3";
+import { z } from "zod/v3";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
 import { getControlDatabasePath } from "../../../../base/utils/paths.js";
 import {
   CONTROL_DB_MIGRATIONS,
   CONTROL_DB_SCHEMA_VERSION,
+  createJsonRowCodec,
+  createRuntimeControlDatabaseOwner,
   createControlDbMigration,
+  hasCompletedControlLegacyImport,
   initializeControlDatabase,
   inspectControlDatabase,
   openControlDatabase,
+  recordControlLegacyImport,
   resolveControlDbPath,
 } from "../index.js";
 
@@ -194,6 +199,85 @@ describe("ControlDatabase", () => {
       expect(record.source_id).toBe("runtime-health:daemon");
       expect(record.details).toEqual({ rows: 1 });
       expect(database.listLegacyImports()).toEqual([record]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps injected control databases owned by the caller", async () => {
+    const baseDir = tempHome("pulseed-control-db-owner-injected-");
+    const injected = await openControlDatabase({ baseDir });
+    const owner = createRuntimeControlDatabaseOwner({ rootDir: path.join(baseDir, "runtime") }, { controlDb: injected });
+
+    try {
+      expect(await owner.database()).toBe(injected);
+      await owner.close();
+      expect(injected.schemaVersion()).toBe(CONTROL_DB_SCHEMA_VERSION);
+    } finally {
+      injected.close();
+    }
+  });
+
+  it("resets per-instance runtime control database owners without changing nested runtime path resolution", async () => {
+    const baseDir = tempHome("pulseed-runtime-control-owner-reset-");
+    const runtimeRoot = path.join(baseDir, "runtime");
+    const owner = createRuntimeControlDatabaseOwner({ rootDir: runtimeRoot });
+
+    const first = await owner.database();
+    expect(first.dbPath).toBe(path.join(baseDir, "state", "pulseed-control.sqlite"));
+
+    await owner.reset();
+    const second = await owner.database();
+    try {
+      expect(second).not.toBe(first);
+      expect(second.dbPath).toBe(path.join(baseDir, "state", "pulseed-control.sqlite"));
+    } finally {
+      await owner.close();
+    }
+  });
+
+  it("fails closed for corrupt or schema-invalid JSON rows", () => {
+    const codec = createJsonRowCodec(z.object({
+      id: z.string().min(1),
+    }).strict());
+
+    expect(codec.safeParse("{")).toBeNull();
+    expect(codec.safeParse(JSON.stringify({ id: 1 }))).toBeNull();
+    expect(codec.safeParse(JSON.stringify({ id: "row-1" }))).toEqual({ id: "row-1" });
+  });
+
+  it("recognizes completed legacy imports through the shared helper", async () => {
+    const baseDir = tempHome("pulseed-control-db-import-helper-");
+    const database = await openControlDatabase({ baseDir });
+
+    try {
+      recordControlLegacyImport(database, {
+        importId: "import-helper-1",
+        sourceKind: "runtime-health-json",
+        sourceId: "runtime-health:daemon",
+        migrationName: "runtime-health-json-import",
+        migrationVersion: 1,
+        status: "imported",
+      });
+      recordControlLegacyImport(database, {
+        importId: "import-helper-2",
+        sourceKind: "runtime-health-json",
+        sourceId: "runtime-health:components",
+        migrationName: "runtime-health-json-import",
+        migrationVersion: 1,
+        status: "blocked",
+      });
+
+      expect(hasCompletedControlLegacyImport(database, {
+        sourceKind: "runtime-health-json",
+        sourceId: "runtime-health:daemon",
+        migrationName: "runtime-health-json-import",
+      })).toBe(true);
+      expect(hasCompletedControlLegacyImport(database, {
+        sourceKind: "runtime-health-json",
+        sourceId: "runtime-health:components",
+        migrationName: "runtime-health-json-import",
+      })).toBe(false);
     } finally {
       database.close();
     }

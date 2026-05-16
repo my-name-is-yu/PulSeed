@@ -11,8 +11,11 @@ import {
 } from "./runtime-operation-companion.js";
 import { createRuntimeStorePaths, type RuntimeStorePaths } from "./runtime-paths.js";
 import {
-  openRuntimeControlDatabase,
+  createJsonRowCodec,
+  createRuntimeControlDatabaseOwner,
+  persistStateTransitionWithAudit,
   type ControlDatabase,
+  type ControlDatabaseHandleOwner,
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "./control-db/index.js";
@@ -20,6 +23,8 @@ import {
 const RuntimeEventJournalSchema = RuntimeEventSchema as z.ZodType<RuntimeEvent>;
 const RuntimeEventRecentLimitSchema = z.number().int().positive().safe().max(500);
 const RuntimeOperationRecentLimitSchema = z.number().int().positive().safe().max(500);
+const RuntimeOperationJsonCodec = createJsonRowCodec(RuntimeControlOperationSchema);
+const RuntimeEventJsonCodec = createJsonRowCodec(RuntimeEventJournalSchema);
 
 interface RuntimeOperationRow {
   operation_json: string;
@@ -36,16 +41,17 @@ export interface RuntimeOperationStoreSaveOptions {
 export class RuntimeOperationStore {
   private readonly paths: RuntimeStorePaths;
   private readonly dbOptions: RuntimeControlDbStoreOptions;
-  private dbPromise: Promise<ControlDatabase> | null = null;
+  private readonly dbOwner: ControlDatabaseHandleOwner;
 
   constructor(
     runtimeRootOrPaths?: string | RuntimeStorePaths,
     options: RuntimeControlDbStoreOptions = {}
   ) {
     this.paths = typeof runtimeRootOrPaths === "string"
-      ? createRuntimeStorePaths(runtimeRootOrPaths)
-      : runtimeRootOrPaths ?? createRuntimeStorePaths();
+        ? createRuntimeStorePaths(runtimeRootOrPaths)
+        : runtimeRootOrPaths ?? createRuntimeStorePaths();
     this.dbOptions = options;
+    this.dbOwner = createRuntimeControlDatabaseOwner(this.paths, this.dbOptions);
   }
 
   runtimeRootDir(): string {
@@ -150,19 +156,14 @@ export class RuntimeOperationStore {
     const parsed = RuntimeControlOperationSchema.parse(operation);
     const db = await this.database();
     db.transaction((sqlite) => {
-      const previousRow = sqlite.prepare(`
-        SELECT operation_json
-        FROM runtime_operations
-        WHERE operation_id = ?
-      `).get(parsed.operation_id) as RuntimeOperationRow | undefined;
-      const previous = previousRow ? parseRuntimeOperationJson(previousRow.operation_json) : null;
-      upsertRuntimeOperation(sqlite, parsed);
-      if (options.emitEvent !== false) {
-        const event = runtimeEventFromOperationTransition(parsed, previous);
-        if (event) {
-          insertRuntimeOperationEvent(sqlite, event, parsed.operation_id);
-        }
-      }
+      persistStateTransitionWithAudit({
+        current: parsed,
+        emitAudit: options.emitEvent,
+        loadPrevious: () => loadRuntimeOperation(sqlite, parsed.operation_id),
+        persistCurrent: () => upsertRuntimeOperation(sqlite, parsed),
+        buildAudit: runtimeEventFromOperationTransition,
+        persistAudit: (event) => insertRuntimeOperationEvent(sqlite, event, parsed.operation_id),
+      });
     });
     return parsed;
   }
@@ -180,17 +181,28 @@ export class RuntimeOperationStore {
   }
 
   private async database(): Promise<ControlDatabase> {
-    this.dbPromise ??= openRuntimeControlDatabase(this.paths, this.dbOptions);
-    return this.dbPromise;
+    return this.dbOwner.database();
   }
 }
 
 function parseRuntimeOperationJson(operationJson: string): RuntimeControlOperation {
-  return RuntimeControlOperationSchema.parse(JSON.parse(operationJson) as unknown);
+  return RuntimeOperationJsonCodec.parse(operationJson);
 }
 
 function parseRuntimeEventJson(eventJson: string): RuntimeEvent {
-  return RuntimeEventJournalSchema.parse(JSON.parse(eventJson) as unknown);
+  return RuntimeEventJsonCodec.parse(eventJson);
+}
+
+function loadRuntimeOperation(
+  sqlite: SqliteDatabase,
+  operationId: string
+): RuntimeControlOperation | null {
+  const row = sqlite.prepare(`
+    SELECT operation_json
+    FROM runtime_operations
+    WHERE operation_id = ?
+  `).get(operationId) as RuntimeOperationRow | undefined;
+  return row ? parseRuntimeOperationJson(row.operation_json) : null;
 }
 
 function upsertRuntimeOperation(
@@ -217,7 +229,7 @@ function upsertRuntimeOperation(
     terminal: isTerminalRuntimeControlState(operation.state) ? 1 : 0,
     requested_at: operation.requested_at,
     updated_at: operation.updated_at,
-    operation_json: JSON.stringify(operation),
+    operation_json: RuntimeOperationJsonCodec.stringify(operation),
   });
 }
 
@@ -241,7 +253,7 @@ function insertRuntimeOperationEvent(
     event_id: parsed.event_id,
     operation_id: operationId,
     occurred_at: parsed.occurred_at,
-    event_json: JSON.stringify(parsed),
+    event_json: RuntimeEventJsonCodec.stringify(parsed),
   });
 }
 

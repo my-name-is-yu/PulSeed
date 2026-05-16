@@ -118,18 +118,20 @@ export function resolveRuntimeControl(
   const surfacePreapproved = externalSurface?.runtime_control_policy.allowed === true
     && externalSurface.runtime_control_policy.approval_mode === "preapproved";
   const surfaceDenied = externalSurface?.runtime_control_policy.approval_mode === "disallowed";
-  const approvalMode = runtimeControl?.approvalMode
-    ?? (externalSurface
-      ? surfacePreapproved ? "preapproved" : "disallowed"
-      : metadata?.["runtime_control_approved"] === true
-        ? "preapproved"
-        : surfaceDenied || metadata?.["runtime_control_denied"] === true
-          ? "disallowed"
-          : channel === "tui" || channel === "cli"
-            ? "interactive"
-            : "disallowed");
+  const approvalMode = surfaceDenied
+    ? "disallowed"
+    : runtimeControl?.approvalMode
+      ?? (externalSurface
+        ? surfacePreapproved ? "preapproved" : "disallowed"
+        : metadata?.["runtime_control_approved"] === true
+          ? "preapproved"
+          : metadata?.["runtime_control_denied"] === true
+            ? "disallowed"
+            : channel === "tui" || channel === "cli"
+              ? "interactive"
+              : "disallowed");
   return {
-    allowed: runtimeControl?.allowed ?? approvalMode !== "disallowed",
+    allowed: surfaceDenied ? false : runtimeControl?.allowed ?? approvalMode !== "disallowed",
     approvalMode,
     ...(runtimeControl?.explicit === true ? { explicit: true } : {}),
   };

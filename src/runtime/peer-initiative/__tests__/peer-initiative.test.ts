@@ -12,6 +12,7 @@ import {
   selectPeerInitiativeCandidate,
 } from "../index.js";
 import { evaluateResidentOperationBoundary } from "../../capability-operation-planner.js";
+import { openControlDatabase } from "../../store/control-db/index.js";
 import type { ResidentAttentionAdmission } from "../../daemon/resident-attention-orchestrator.js";
 
 function attentionAdmission(action: "peer_initiative" = "peer_initiative"): ResidentAttentionAdmission {
@@ -371,6 +372,42 @@ describe("peer initiative contracts and gates", () => {
       structured_outcome: "less_like_this",
       feedback_id: ingestion.record.feedback_id,
     });
+  });
+
+  it("fails closed when peer initiative JSON rows are schema-invalid", async () => {
+    const tmpDir = makeTempDir("peer-invalid-json-row-");
+    const store = new PeerInitiativeStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+    await store.ensureReady();
+
+    const db = await openControlDatabase({ baseDir: tmpDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare(`
+          INSERT INTO peer_initiatives (
+            candidate_id,
+            idempotency_key,
+            kind,
+            selected_state,
+            created_at,
+            next_eligible_at,
+            record_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, json(?))
+        `).run(
+          "peer-candidate:invalid-json",
+          "peer-initiative:invalid-json",
+          "care_presence",
+          "suggested",
+          "2026-05-15T00:00:00.000Z",
+          null,
+          JSON.stringify({ candidate_id: "peer-candidate:invalid-json" }),
+        );
+      });
+    } finally {
+      db.close();
+    }
+
+    await expect(store.listRecentCandidates()).resolves.toEqual([]);
   });
 
   it("claims peer delivery before send, blocks live duplicates, and reclaims expired pending leases", async () => {

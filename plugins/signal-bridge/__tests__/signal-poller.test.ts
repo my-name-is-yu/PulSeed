@@ -1,4 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("pulseed", async () => {
+  const gateway = await import("../../../src/runtime/gateway/index.js");
+  const channelPolicy = await import("../../../src/runtime/gateway/channel-policy.js");
+  return {
+    ExternalAdapterIntervalPoller: gateway.ExternalAdapterIntervalPoller,
+    buildChannelPolicyMetadata: channelPolicy.buildChannelPolicyMetadata,
+    buildExternalSurfaceDecision: channelPolicy.buildExternalSurfaceDecision,
+    evaluateChannelAccess: channelPolicy.evaluateChannelAccess,
+    formatExternalAdapterHttpFailure: gateway.formatExternalAdapterHttpFailure,
+    resolveChannelRoute: channelPolicy.resolveChannelRoute,
+  };
+});
+
 import { SignalBridgeClient } from "../src/signal-client.js";
 import { SignalBridgePoller } from "../src/poller.js";
 
@@ -85,6 +99,9 @@ describe("SignalBridgePoller", () => {
 
     expect(replyHandler.mock.calls[0]?.[0]).toMatchObject({
       sender_id: "+15557654321",
+      externalSurface: expect.objectContaining({
+        runtime_control_policy: expect.objectContaining({ approval_mode: "preapproved" }),
+      }),
       metadata: {
         runtime_control_approved: true,
       },

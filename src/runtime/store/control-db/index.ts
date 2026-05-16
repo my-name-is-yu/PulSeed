@@ -62,3 +62,21 @@ export {
   resolveRuntimeControlDbBaseDir,
 } from "./runtime-control-db.js";
 export type { RuntimeControlDbStoreOptions } from "./runtime-control-db.js";
+
+export {
+  ControlDatabaseHandleOwner,
+  createControlDatabaseOwner,
+  createJsonRowCodec,
+  createRuntimeControlDatabaseOwner,
+  hasCompletedControlLegacyImport,
+  parseJsonRow,
+  parseJsonRows,
+  persistStateTransitionWithAudit,
+  recordControlLegacyImport,
+  stringifyJsonRow,
+} from "./store-helpers.js";
+export type {
+  CompletedControlLegacyImportQuery,
+  JsonRowCodec,
+  StateTransitionAuditInput,
+} from "./store-helpers.js";

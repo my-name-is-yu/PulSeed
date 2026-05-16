@@ -22,7 +22,6 @@ import {
   type ChatEventHandler,
   type IAdapter,
   type ILLMClient,
-  type ChatRunnerLike,
   type ChatAgentLoopRunner,
   type ProviderConfig,
   createNativeChatAgentLoopRunner,
@@ -32,6 +31,8 @@ import {
   createTextUserInput,
 } from "pulseed";
 import { TrustManager } from "pulseed";
+
+type ChatRunnerLike = InstanceType<typeof ChatRunner>;
 
 interface BootstrapResult {
   stateManager: StateManager;
@@ -165,7 +166,6 @@ export class TelegramChatRunnerProcessor {
       } as const;
       const selectedRoute = createIngressRouter().selectRoute(ingress, {
         hasAgentLoop: bootstrap.chatAgentLoopRunner !== undefined,
-        hasToolLoop: bootstrap.llmClient !== undefined,
         hasRuntimeControlService: false,
       });
       const result = await runner.executeIngressMessage(ingress, this.workspaceRoot, 120_000, selectedRoute);

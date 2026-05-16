@@ -1,3 +1,5 @@
+import { formatExternalAdapterHttpFailure } from "pulseed";
+
 export interface DiscordOutboundMessage {
   content: string;
   allowed_mentions?: {
@@ -25,7 +27,11 @@ export class DiscordAPI {
     });
 
     if (!response.ok) {
-      throw new Error(`discord-bot: channel send failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "channel send failed",
+        statusVerb: "with",
+      }));
     }
   }
 
@@ -49,7 +55,11 @@ export class DiscordAPI {
     );
 
     if (!response.ok) {
-      throw new Error(`discord-bot: follow-up send failed with ${response.status}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "discord-bot",
+        operation: "follow-up send failed",
+        statusVerb: "with",
+      }));
     }
   }
 }

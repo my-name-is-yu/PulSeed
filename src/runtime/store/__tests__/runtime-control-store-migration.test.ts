@@ -169,6 +169,17 @@ describe("importLegacyRuntimeControlStores", () => {
       operation_id: operation.operation_id,
     });
   });
+
+  it("preserves runtime operation state transition audit output", async () => {
+    const operation = makeRuntimeOperation({ operation_id: "op-transition-audit" });
+    const expectedEvent = runtimeEventFromOperationTransition(operation, null);
+    if (!expectedEvent) throw new Error("expected runtime operation event");
+
+    const store = new RuntimeOperationStore(runtimeRoot);
+    await store.save(operation);
+
+    await expect(store.listRuntimeEvents()).resolves.toEqual([expectedEvent]);
+  });
 });
 
 function makeRuntimeOperation(

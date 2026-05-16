@@ -16,6 +16,7 @@ import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./ch
 import { SLACK_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
+import { formatExternalAdapterHttpFailure } from "./external-adapter-shell.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
 
@@ -343,8 +344,10 @@ class SlackAPI {
       }),
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`slack-api: chat.postMessage returned ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "slack-api",
+        operation: "chat.postMessage",
+      }));
     }
     const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; ts?: string };
     if (json.ok === false) {
@@ -363,8 +366,10 @@ class SlackAPI {
       body: JSON.stringify({ channel, ts, text }),
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`slack-api: chat.update returned ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "slack-api",
+        operation: "chat.update",
+      }));
     }
     const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
     if (json.ok === false) {
@@ -382,8 +387,10 @@ class SlackAPI {
       body: JSON.stringify({ channel, ts }),
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "(unreadable)");
-      throw new Error(`slack-api: chat.delete returned ${response.status}: ${body}`);
+      throw new Error(await formatExternalAdapterHttpFailure(response, {
+        service: "slack-api",
+        operation: "chat.delete",
+      }));
     }
     const json = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
     if (json.ok === false) {

@@ -1,5 +1,10 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import {
+  assertExternalAdapterIntegerInRange,
+  assertExternalAdapterNonEmptyString,
+  assertExternalAdapterStringArray,
+  assertExternalAdapterStringMap,
+  loadExternalAdapterConfigJson,
+} from "pulseed";
 
 const MIN_POLL_INTERVAL_MS = 1_000;
 const MIN_RECEIVE_TIMEOUT_MS = 250;
@@ -23,25 +28,10 @@ export interface SignalBridgeConfig {
 }
 
 export function loadConfig(pluginDir: string): SignalBridgeConfig {
-  const configPath = path.join(pluginDir, "config.json");
-  let raw: unknown;
-
-  try {
-    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`signal-bridge: failed to read config.json — ${msg}`);
-  }
-
-  return validateConfig(raw);
+  return validateConfig(loadExternalAdapterConfigJson(pluginDir, "signal-bridge"));
 }
 
-function validateConfig(raw: unknown): SignalBridgeConfig {
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error("signal-bridge: config must be a JSON object");
-  }
-
-  const cfg = raw as Record<string, unknown>;
+function validateConfig(cfg: Record<string, unknown>): SignalBridgeConfig {
   const pollInterval = cfg["poll_interval_ms"] ?? 5000;
   const receiveTimeout = cfg["receive_timeout_ms"] ?? 2000;
   const runtimeControlAllowedSenderIds = cfg["runtime_control_allowed_sender_ids"] ?? [];
@@ -52,59 +42,39 @@ function validateConfig(raw: unknown): SignalBridgeConfig {
   const conversationGoalMap = cfg["conversation_goal_map"] ?? cfg["goal_routes"] ?? {};
   const senderGoalMap = cfg["sender_goal_map"] ?? {};
 
-  if (typeof cfg["bridge_url"] !== "string" || cfg["bridge_url"].length === 0) {
-    throw new Error("signal-bridge: bridge_url must be a non-empty string");
-  }
-  if (typeof cfg["account"] !== "string" || cfg["account"].length === 0) {
-    throw new Error("signal-bridge: account must be a non-empty string");
-  }
-  if (typeof cfg["recipient_id"] !== "string" || cfg["recipient_id"].length === 0) {
-    throw new Error("signal-bridge: recipient_id must be a non-empty string");
-  }
-  if (typeof cfg["identity_key"] !== "string" || cfg["identity_key"].length === 0) {
-    throw new Error("signal-bridge: identity_key must be a non-empty string");
-  }
-  if (!isIntegerInRange(pollInterval, MIN_POLL_INTERVAL_MS, MAX_SIGNAL_TIMER_MS)) {
-    throw new Error(
-      `signal-bridge: poll_interval_ms must be a safe integer between ${MIN_POLL_INTERVAL_MS} and ${MAX_SIGNAL_TIMER_MS}`
-    );
-  }
-  if (!isIntegerInRange(receiveTimeout, MIN_RECEIVE_TIMEOUT_MS, MAX_SIGNAL_TIMER_MS)) {
-    throw new Error(
-      `signal-bridge: receive_timeout_ms must be a safe integer between ${MIN_RECEIVE_TIMEOUT_MS} and ${MAX_SIGNAL_TIMER_MS}`
-    );
-  }
-  if (
-    !Array.isArray(runtimeControlAllowedSenderIds) ||
-    !runtimeControlAllowedSenderIds.every((id) => typeof id === "string" && id.length > 0)
-  ) {
-    throw new Error("signal-bridge: runtime_control_allowed_sender_ids must be an array of non-empty strings");
-  }
+  assertExternalAdapterNonEmptyString(cfg["bridge_url"], "signal-bridge: bridge_url must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["account"], "signal-bridge: account must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["recipient_id"], "signal-bridge: recipient_id must be a non-empty string");
+  assertExternalAdapterNonEmptyString(cfg["identity_key"], "signal-bridge: identity_key must be a non-empty string");
+  assertExternalAdapterIntegerInRange(
+    pollInterval,
+    MIN_POLL_INTERVAL_MS,
+    MAX_SIGNAL_TIMER_MS,
+    `signal-bridge: poll_interval_ms must be a safe integer between ${MIN_POLL_INTERVAL_MS} and ${MAX_SIGNAL_TIMER_MS}`
+  );
+  assertExternalAdapterIntegerInRange(
+    receiveTimeout,
+    MIN_RECEIVE_TIMEOUT_MS,
+    MAX_SIGNAL_TIMER_MS,
+    `signal-bridge: receive_timeout_ms must be a safe integer between ${MIN_RECEIVE_TIMEOUT_MS} and ${MAX_SIGNAL_TIMER_MS}`
+  );
+  assertExternalAdapterStringArray(runtimeControlAllowedSenderIds, "signal-bridge: runtime_control_allowed_sender_ids must be an array of non-empty strings");
   for (const [key, value] of Object.entries({
     allowed_sender_ids: allowedSenderIds,
     denied_sender_ids: deniedSenderIds,
     allowed_conversation_ids: allowedConversationIds,
     denied_conversation_ids: deniedConversationIds,
   })) {
-    if (!Array.isArray(value) || !value.every((id) => typeof id === "string" && id.length > 0)) {
-      throw new Error(`signal-bridge: ${key} must be an array of non-empty strings`);
-    }
+    assertExternalAdapterStringArray(value, `signal-bridge: ${key} must be an array of non-empty strings`);
   }
   for (const [key, value] of Object.entries({
     conversation_goal_map: conversationGoalMap,
     sender_goal_map: senderGoalMap,
   })) {
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value) ||
-      !Object.values(value).every((goalId) => typeof goalId === "string" && goalId.length > 0)
-    ) {
-      throw new Error(`signal-bridge: ${key} must be an object mapping IDs to goal IDs`);
-    }
+    assertExternalAdapterStringMap(value, `signal-bridge: ${key} must be an object mapping IDs to goal IDs`);
   }
-  if (cfg["default_goal_id"] !== undefined && (typeof cfg["default_goal_id"] !== "string" || cfg["default_goal_id"].length === 0)) {
-    throw new Error("signal-bridge: default_goal_id must be a non-empty string when set");
+  if (cfg["default_goal_id"] !== undefined) {
+    assertExternalAdapterNonEmptyString(cfg["default_goal_id"], "signal-bridge: default_goal_id must be a non-empty string when set");
   }
 
   return {
@@ -123,8 +93,4 @@ function validateConfig(raw: unknown): SignalBridgeConfig {
     poll_interval_ms: pollInterval,
     receive_timeout_ms: receiveTimeout,
   };
-}
-
-function isIntegerInRange(value: unknown, min: number, max: number): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
 }
