@@ -82,6 +82,7 @@ describe("memory truth-maintenance restart/replay invariants", () => {
       const recallRecords = await replayedTruth.listRecallRecords();
       const conflictSets = await replayedTruth.listConflictSets();
       const soilPage = await fsp.readFile(path.join(root, "soil", "memory", "index.md"), "utf8");
+      const firstReplacementId = firstCorrection.replacement!.ref.id;
 
       expect(duplicateCorrection.correction?.correction_id).toBe(firstCorrection.correction?.correction_id);
       expect(replayCorrection.correction?.correction_id).toBe(firstCorrection.correction?.correction_id);
@@ -97,6 +98,11 @@ describe("memory truth-maintenance restart/replay invariants", () => {
       expect(staleRecall).toEqual([]);
       expect(forgottenRecall).toEqual([]);
       expect(conflictSets).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: "resolved",
+          resolution_claim_id: firstReplacementId,
+          claim_ids: expect.arrayContaining([stale.id, firstReplacementId]),
+        }),
         expect.objectContaining({
           conflict_set_id: "conflict:set:timezone",
           status: "held",

@@ -57,10 +57,14 @@ fails new production raw memory, knowledge, or Soil `StateManager.writeRaw`
 callers unless they are explicitly categorized as a non-production boundary.
 
 Correction, forget, and retract operations for agent memory use one typed
-transaction that updates the correction row, replacement claim, target claim
-lifecycle, forget tombstone, conflict records, recall/projection records, and
-Runtime Event Log linkage. Post-transaction Soil projection for those correction
-paths writes projection state without re-saving truth, so `CorrectionRef`
+transaction that updates the correction row, target claim lifecycle,
+recall/projection records, and Runtime Event Log linkage. Replacement
+corrections also write the replacement claim and a resolved conflict set linking
+the stale claim to the selected replacement claim. Forget operations write a
+forget tombstone in the same transaction. Retract operations do not write a
+conflict set because they have no competing replacement claim. Post-transaction
+Soil projection for those correction paths writes projection state without
+re-saving truth, so `CorrectionRef`
 Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Later
 owner snapshots also preserve those refs when they mirror older correction
 entries. If post-commit trace persistence fails for a user memory correction,

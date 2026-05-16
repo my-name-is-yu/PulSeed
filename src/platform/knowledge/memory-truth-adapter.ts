@@ -1,12 +1,15 @@
 import {
+  ConflictSetSchema,
   CorrectionRefSchema,
   EvidenceRefSchema,
   ForgetTombstoneSchema,
   MemoryClaimSchema,
   MemoryTruthMaintenanceStore,
   ProjectionRecordSchema,
+  RecallRecordSchema,
   memoryTruthQueryHash,
   stableMemoryTruthId,
+  type ConflictSetInput,
   type CorrectionRef,
   type CorrectionRefInput,
   type EvidenceRefInput,
@@ -17,6 +20,7 @@ import {
   type MemoryTruthMaintenanceStoreOptions,
   type ProjectionRecordInput,
   type RecallRecord,
+  type RecallRecordInput,
 } from "../../runtime/store/memory-truth-maintenance-store.js";
 import {
   MemoryCorrectionTargetStateSchema,
@@ -149,6 +153,8 @@ export async function commitAgentMemoryCorrectionToTruth(
           created_at: correction.created_at,
         })
         : null,
+      conflictSets: agentMemoryCorrectionConflictInputs(correction, input.target, input.replacement),
+      recallRecords: [agentMemoryCorrectionRecallInput(correction, input.target, input.replacement)],
       projectionRecords: [
         ...agentMemoryProjectionInputs(input.target),
         ...(input.replacement ? agentMemoryProjectionInputs(input.replacement) : []),
@@ -382,6 +388,68 @@ function agentMemoryCorrectionInput(correction: MemoryCorrectionEntry): Correcti
       correction.provenance.source_ref,
     ].filter(isString),
     metadata: { memory_correction_entry: correction },
+  });
+}
+
+function agentMemoryCorrectionConflictInputs(
+  correction: MemoryCorrectionEntry,
+  target: AgentMemoryEntry,
+  replacement: AgentMemoryEntry | null,
+): ConflictSetInput[] {
+  if (!replacement) return [];
+  return [
+    ConflictSetSchema.parse({
+      conflict_set_id: stableMemoryTruthId("agent-memory-correction-conflict", {
+        correction_id: correction.correction_id,
+        target_id: target.id,
+        replacement_id: replacement.id,
+      }),
+      claim_ids: [target.id, replacement.id],
+      status: "resolved",
+      resolution_claim_id: replacement.id,
+      reason: correction.reason,
+      created_at: correction.created_at,
+      updated_at: correction.created_at,
+      operator_explanation_refs: [
+        correction.correction_id,
+        correction.provenance.source_ref,
+        correction.provenance.evidence_ref,
+      ].filter(isString),
+    }),
+  ];
+}
+
+function agentMemoryCorrectionRecallInput(
+  correction: MemoryCorrectionEntry,
+  target: AgentMemoryEntry,
+  replacement: AgentMemoryEntry | null,
+): RecallRecordInput {
+  const resultEntries = replacement && isAgentMemoryEntrySafeForNormalProjection(replacement)
+    ? [replacement]
+    : [];
+  return RecallRecordSchema.parse({
+    recall_id: stableMemoryTruthId("memory-correction-recall", {
+      correction_id: correction.correction_id,
+      target_id: target.id,
+      replacement_id: replacement?.id ?? null,
+    }),
+    mode: "graph",
+    query: `memory-correction:${correction.correction_id}`,
+    query_hash: memoryTruthQueryHash(`memory-correction:${target.id}:${correction.correction_id}`),
+    result_claims: resultEntries.map((entry) => ({
+      claim_id: entry.id,
+      mode: "graph",
+      evidence_refs: [`evidence:agent-memory:${entry.id}`],
+      correction_status: lifecycleForAgentMemory(entry),
+      invalidation_status: invalidationStatusForEntry(entry),
+      confidence: entry.provenance?.reliability ?? null,
+      trust_state: trustStateForVerification(entry.verification_status),
+      safe_for_normal_projection: isAgentMemoryEntrySafeForNormalProjection(entry),
+    })),
+    withheld_claim_ids: [target.id],
+    semantic_index_status: "not_requested",
+    safe_for_normal_projection: false,
+    created_at: correction.created_at,
   });
 }
 

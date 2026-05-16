@@ -43,6 +43,7 @@ GitHub state confirmed before implementation:
 
 - Agent memory, domain knowledge, and shared knowledge now load/save through `MemoryTruthMaintenanceStore` with `MemoryClaim`, `EvidenceRef`, `CorrectionRef`, `ForgetTombstone`, `ConflictSet`, `RecallRecord`, and `ProjectionRecord` rows.
 - Agent-memory correction/forget/retract commits now use `MemoryTruthMaintenanceStore.applyCorrectionTransaction`; Soil projection runs after the typed transaction.
+- Production agent-memory corrections write correction-impact graph recall records in the same typed transaction; replacement corrections also write resolved conflict sets linking stale claims to selected replacement claims.
 - `MemoryRecallTool` returns typed recall provenance with explicit `mode`, semantic index status, evidence refs, lifecycle/invalidation state, trust, and normal-projection safety.
 - `RuntimeEventLogStore` now accepts `memory.truth_maintenance.recorded` and exposes `memory_truth_maintenance_summary` during projection rebuild; correction events and RuntimeGraph nodes are inserted in the same control DB transaction as the truth update.
 - Post-correction Soil projection uses `persistTruth=false`, and later owner snapshots preserve existing `CorrectionRef.runtime_event_ref` and `runtime_graph_refs`, so projection or normal memory saves cannot erase typed correction transaction linkage.

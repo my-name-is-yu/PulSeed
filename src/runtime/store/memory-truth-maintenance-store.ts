@@ -851,7 +851,9 @@ function resolvedConflictClaim(claim: MemoryClaim, conflict: ConflictSet): Memor
   if (conflict.resolution_claim_id && claim.claim_id !== conflict.resolution_claim_id) {
     return MemoryClaimSchema.parse({
       ...claim,
-      lifecycle: "archived",
+      lifecycle: claim.lifecycle === "active" || claim.lifecycle === "conflicted"
+        ? "archived"
+        : claim.lifecycle,
       visible_to_normal_surface: false,
       invalidated_by: claim.invalidated_by ?? conflict.conflict_set_id,
       updated_at: conflict.updated_at,

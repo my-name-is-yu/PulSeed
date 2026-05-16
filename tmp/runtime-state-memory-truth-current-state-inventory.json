@@ -1,6 +1,6 @@
 {
   "schema_version": "runtime-state-memory-truth-current-state-inventory-v1",
-  "generated_at": "2026-05-17T02:54:00.000+09:00",
+  "generated_at": "2026-05-17T03:06:00.000+09:00",
   "repo": "/Users/yuyoshimuta/PulSeed",
   "branch": "yu/runtime-state-memory-truth-maintenance",
   "base": {
@@ -369,8 +369,9 @@
       "MemorySaveTool -> KnowledgeManager.saveAgentMemory -> MemoryTruthMaintenanceStore.saveOwnerSnapshot",
       "MemoryRecallTool -> KnowledgeManager.recallAgentMemoryWithProvenance -> typed RecallRecord",
       "MemoryCorrectionTool/cmdMemory -> runUserMemoryOperation -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
-      "KnowledgeManager.correctAgentMemory -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
-      "KnowledgeManager domain/shared knowledge load/save/query adapters -> MemoryTruthMaintenanceStore",
+        "KnowledgeManager.correctAgentMemory -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
+        "commitAgentMemoryCorrectionToTruth -> resolved ConflictSet for replacement corrections and graph RecallRecord for correction impact",
+        "KnowledgeManager domain/shared knowledge load/save/query adapters -> MemoryTruthMaintenanceStore",
       "KnowledgeQueryTool semantic requests -> explicit semantic/semantic_unavailable mode contract and goal-scoped typed owner filtering",
       "Soil agent memory projection after save/correction/forget/retract/conflict",
       "Soil runtime rebuild -> KnowledgeMemoryStateStore truth-aware loads -> MemoryTruthMaintenanceStore",
@@ -379,6 +380,7 @@
       "fresh_audit_remediation": [
         "Inactive agent-memory and correction audit records now write inactive Soil records with sanitized normal-search text plus lifecycle/status metadata; product gauntlet exercises SqliteSoilRepository.searchLexical and compileSoilContextFromRepository.",
         "Memory truth correction transactions now insert memory.truth_maintenance.recorded and RuntimeGraph nodes inside the same control DB transaction; runtime_event failure injection proves rollback leaves no truth rows or event rows.",
+        "Production agent-memory correction callers now write correction-impact graph recall records in the same transaction, and replacement corrections also write resolved conflict sets linking the stale claim to the selected replacement claim.",
         "User memory correction traces are recorded after the truth transaction succeeds, preventing authority/runtime evidence from claiming an uncommitted correction.",
         "Agent-memory user correction now returns the committed correction when post-commit trace persistence fails; the typed truth transaction remains authoritative and trace failure is logged after commit.",
         "KnowledgeManager.correctAgentMemory now supplies the typed correction commit hook, so dream_lint auto-repair uses the same correction transaction and Event Log / RuntimeGraph event path as CLI/tool memory corrections.",
@@ -409,14 +411,16 @@
         "src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts KnowledgeManager.saveAgentMemory writes the typed owner snapshot once before Soil projection",
         "src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts Soil-only compatibility fallback loads inactive correction audit records",
         "src/platform/corrections/__tests__/user-memory-operations.test.ts user correction refs retain runtime event and RuntimeGraph refs after Soil projection and a later normal KnowledgeManager.saveAgentMemory snapshot",
+        "src/platform/corrections/__tests__/user-memory-operations.test.ts production replacement correction writes resolved conflict and graph recall records in the same transaction",
         "src/platform/corrections/__tests__/user-memory-operations.test.ts committed correction is returned when post-commit trace persistence fails",
         "src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts resolved conflict clears winner lifecycle and archives losing claim",
         "src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts operator-restored tombstone allows explicit claim reactivation",
         "src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts semantic_unavailable fallback contract and goal-scoped semantic owner filtering through real KnowledgeManager typed-store path",
-      "src/platform/soil/__tests__/soil-runtime-rebuild-import.test.ts inactive domain/shared truth blocks runtime rebuild resurrection",
-      "src/interface/cli/commands/__tests__/memory.test.ts corrected memory export redaction",
-      "tests/replay/memory-truth-maintenance-replay.test.ts conflicted agent-memory restart/recall/export caller path"
-    ],
+        "src/platform/soil/__tests__/soil-runtime-rebuild-import.test.ts inactive domain/shared truth blocks runtime rebuild resurrection",
+        "src/interface/cli/commands/__tests__/memory.test.ts corrected memory export redaction",
+        "tests/replay/memory-truth-maintenance-replay.test.ts conflicted agent-memory restart/recall/export caller path",
+        "tests/replay/memory-truth-maintenance-replay.test.ts production correction conflict records survive restart"
+      ],
     "runtime_state_ownership_2_full_repo_completion": "incomplete"
   }
 }

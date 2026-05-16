@@ -83,14 +83,29 @@ describe("user memory correction operations", () => {
 
     let committedRuntimeEventRef: string | null = null;
     let committedRuntimeGraphRefs: string[] = [];
+    const replacementClaimId = result.replacement!.ref.id;
     const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
     try {
       const [correction] = await truthStore.listCorrections("memory-old");
       expect(correction).toEqual(expect.objectContaining({
-        target_claim_id: "memory-old",
-        runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
-        runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
-      }));
+          target_claim_id: "memory-old",
+          runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+          runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+        }));
+      await expect(truthStore.listConflictSets()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: "resolved",
+          resolution_claim_id: replacementClaimId,
+          claim_ids: expect.arrayContaining(["memory-old", replacementClaimId]),
+        }),
+      ]));
+      await expect(truthStore.listRecallRecords()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          mode: "graph",
+          result_claims: [expect.objectContaining({ claim_id: replacementClaimId })],
+          withheld_claim_ids: ["memory-old"],
+        }),
+      ]));
       committedRuntimeEventRef = correction?.runtime_event_ref ?? null;
       committedRuntimeGraphRefs = correction?.runtime_graph_refs ?? [];
     } finally {
