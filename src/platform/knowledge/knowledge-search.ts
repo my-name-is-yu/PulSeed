@@ -53,13 +53,21 @@ export type MetadataSearchResult = {
 export async function searchKnowledge(
   deps: SearchDeps,
   query: string,
-  topK: number = 5
+  topK: number = 5,
+  options: { goalId?: string } = {},
 ): Promise<KnowledgeEntry[]> {
   if (!deps.vectorIndex) {
     return [];
   }
 
-  const results = await deps.vectorIndex.search(query, topK);
+  const vectorSize = typeof deps.vectorIndex.size === "number" && Number.isFinite(deps.vectorIndex.size)
+    ? deps.vectorIndex.size
+    : topK;
+  const candidateLimit = options.goalId
+    ? Math.max(topK, vectorSize)
+    : topK;
+  const results = (await deps.vectorIndex.search(query, candidateLimit))
+    .filter((result) => options.goalId === undefined || result.metadata["goal_id"] === options.goalId);
   const goalKnowledgeById = new Map<string, Map<string, KnowledgeEntry>>();
   const goalIds = new Set<string>();
 
@@ -89,6 +97,7 @@ export async function searchKnowledge(
     const entry = goalKnowledgeById.get(goalId)?.get(result.id);
     if (entry) {
       entries.push(entry);
+      if (entries.length >= topK) break;
     }
   }
 

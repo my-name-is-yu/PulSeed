@@ -66,7 +66,8 @@ owner snapshots also preserve those refs when they mirror older correction
 entries. Recall results carry an explicit mode: `exact`,
 `lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
 without an embedding index returns `semantic_unavailable`; it is not reported as
-a semantic result backed by lexical matching.
+a semantic result backed by lexical matching. Goal-scoped semantic knowledge
+queries filter vector hits by typed domain owner scope before returning entries.
 
 Normal projections expose active user-facing memory only. A memory entry is
 normal-surface eligible only when its lifecycle status is active and

@@ -271,6 +271,7 @@ export class KnowledgeManager {
     options: {
       relationshipProfileContext?: RelationshipProfileRetrievalContext;
       relationshipProfilePromptContext?: string;
+      goalId?: string;
     } = {}
   ): Promise<KnowledgeEntry[]> {
     const profileEntries = this.relationshipProfileContextToKnowledgeEntries(
@@ -286,7 +287,8 @@ export class KnowledgeManager {
     return searchKnowledge(
       { stateManager: this.stateManager, vectorIndex: this.vectorIndex },
       [query, profileQuery].filter((part) => part.trim().length > 0).join("\n"),
-      topK
+      topK,
+      { goalId: options.goalId }
     ).then((entries) => [...profileEntries, ...entries]);
   }
 

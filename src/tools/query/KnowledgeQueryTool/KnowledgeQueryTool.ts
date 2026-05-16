@@ -189,7 +189,8 @@ export class KnowledgeQueryTool
     if (input.goalId) {
       const entries = await this.knowledgeManager.searchKnowledge(
         input.query,
-        input.limit
+        input.limit,
+        { goalId: input.goalId }
       );
       return {
         items: entries.map((e) => entryToItem(e, input.goalId ?? null, "semantic")),
