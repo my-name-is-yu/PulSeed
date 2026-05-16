@@ -1,10 +1,10 @@
 # Goal Tree Design
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > Related: `portfolio-management.md`, `gap-calculation.md`, `satisficing.md`, `drive-scoring.md`, `session-and-context.md`
 
-> Current implementation note: the goal tree is now scheduled by DurableLoop together with next-iteration directives emitted from bounded agentic phases. Tree nodes are not just passive decomposition artifacts; the scheduler can prefer nodes that carry pending knowledge-refresh or replanning intent.
+> Implementation alignment: the goal tree is now scheduled by DurableLoop together with next-iteration directives emitted from bounded agentic phases. Tree nodes are not just passive decomposition artifacts; the scheduler can prefer nodes that carry pending knowledge-refresh or replanning intent.
 
 ---
 

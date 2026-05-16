@@ -19,7 +19,7 @@ import { estimateDifficulty, curriculumSort } from "./subgoal-curriculum.js";
  *   - Triggering state aggregation on node completion
  *   - Detecting and cascading completion up the tree
  *
- * Design ref: docs/design/goal-tree.md §14C
+ * Design ref: docs/design/execution/goal-orchestration.md.
  */
 export class TreeLoopOrchestrator {
   /**

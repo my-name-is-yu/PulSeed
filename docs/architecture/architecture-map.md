@@ -1,5 +1,7 @@
 # Architecture Map
 
+> Status: Current architecture overview. This page maps source ownership; typed stores and runtime schemas remain the source of truth.
+
 This is the architecture map for the current codebase.
 ## 1. Top-level picture
 
@@ -205,6 +207,12 @@ Good for:
 
 PulSeed persists local-first state under `~/.pulseed/`.
 
+Current durable runtime truth is DB-first. Typed SQLite/control stores and Soil
+storage own normal runtime state; files under `~/.pulseed/` include config,
+workspace content, debug/export artifacts, bounded IPC spools, and compatibility
+inputs as well as database files. See [Runtime State](../reference/runtime-state.md)
+for the exact boundary.
+
 Publicly relevant buckets:
 
 - goals
@@ -224,6 +232,6 @@ For the documentation picture:
 - [Module Map](module-map.md) is the code navigation companion
 - `src/` is the implementation truth
 
-Historical and deep design documents now live under `docs/design/`.
-Some describe earlier stages or alternatives rather than the exact current
-runtime path.
+Public design documents now live under `docs/design/<category>/<page>.md`.
+Some describe product direction or historical migration context rather than the
+exact current runtime path.

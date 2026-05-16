@@ -1,5 +1,7 @@
 # Status
 
+> Status: Current status snapshot. This page summarizes the supported path and known boundaries for the dated package state below.
+
 Current status snapshot: 2026-05-15.
 
 This page summarizes current behavior. For exact commands, use

@@ -1,5 +1,9 @@
 # Product Design
 
+> Status: Product-design index. This section describes product direction,
+> scenario boundaries, and claim classification; use operating docs for current
+> package behavior.
+
 Use this section for product design direction, companion scenarios, and product
 boundaries that are broader than the current operating guide.
 
@@ -10,7 +14,7 @@ These pages are not the current operating guide. Use
 Current direction pages:
 
 - [Product Completion Scenario Matrix](completion-matrix.md)
-- [Product Claim Ledger](claim-ledger.json)
+- [Product Claim Ledger](claim-ledger.md)
 - [Positioning](positioning.md)
 - [Vision](vision.md)
 - [Use Cases](use-cases.md)

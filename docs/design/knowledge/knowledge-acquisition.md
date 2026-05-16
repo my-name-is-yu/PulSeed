@@ -1,13 +1,13 @@
 # Knowledge Acquisition Design
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > PulSeed does not start with all the knowledge needed to achieve a goal. But it can investigate, learn, and understand on its own.
 > This document defines the mechanism by which PulSeed actively investigates, acquires, stores, and applies knowledge in unfamiliar domains.
 
 > Related: `observation.md`, `task-lifecycle.md`, `execution-boundary.md`, `session-and-context.md`, `curiosity.md`, `stall-detection.md`
 
-> Current implementation note: knowledge acquisition now spans both deterministic DurableLoop control and bounded agentic phases. The current runtime can use direct tools, Soil, memory recall, and native AgentLoop phases before falling back to heavier investigation work.
+> Implementation alignment: knowledge acquisition now spans both deterministic DurableLoop control and bounded agentic phases. The current runtime can use direct tools, Soil, memory recall, and native AgentLoop phases before falling back to heavier investigation work.
 
 ---
 

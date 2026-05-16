@@ -1,5 +1,7 @@
 # Getting Started
 
+> Status: Current getting-started guide. This page describes the supported first-run path for the current repository and package.
+
 This page is the shortest current path from install to a first PulSeed session.
 
 For the complete docs map, see [PulSeed Documentation](../index.md).

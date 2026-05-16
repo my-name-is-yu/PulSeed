@@ -1,5 +1,7 @@
 # Configuration
 
+> Status: Current configuration guide. This page describes supported configuration keys, setup paths, and local-state boundaries.
+
 This page reflects the current configuration surface.
 
 ## First-Run Path

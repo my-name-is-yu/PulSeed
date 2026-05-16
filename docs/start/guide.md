@@ -1,5 +1,7 @@
 # Guide
 
+> Status: Current user guide. This page describes practical workflows backed by current CLI and runtime docs.
+
 Use this section when you want to operate PulSeed after installation.
 
 ## Recommended Path

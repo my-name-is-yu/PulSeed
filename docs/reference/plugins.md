@@ -1,5 +1,7 @@
 # Plugin Reference
 
+> Status: Current plugin reference. This page describes supported native plugin manifests and guarded foreign-plugin import boundaries.
+
 PulSeed supports native plugin manifests and a guarded foreign-plugin import
 path.
 

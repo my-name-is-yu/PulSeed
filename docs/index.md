@@ -11,10 +11,10 @@ PulSeed docs are organized by reader need:
 - **Reference**: look up commands, configuration, runtime state, and package
   checks.
 - **Architecture**: navigate the current source tree and stable subsystem map.
-- **Product Design**: read product design direction and product scenarios without treating them
-  as current behavior.
-- **Design**: read design documents, implementation contracts, audits,
-  and design history without treating them as operating instructions.
+- **Product Design**: read the Your Personal Agentic Friend positioning and
+  product scenarios without treating all of them as current behavior.
+- **Design**: read the public one-level design corpus, implementation contracts,
+  and migration history without treating them as operating instructions.
 
 ## First-Reader Path
 
@@ -46,6 +46,7 @@ details.
 ### Concepts
 
 - [Concepts](./concepts/index.md)
+- [Glossary](./concepts/glossary.md)
 - [Mechanism](./concepts/mechanism.md)
 
 ### Reference
@@ -64,6 +65,7 @@ details.
 
 - [Product Design Index](./product/index.md)
 - [Product Completion Scenario Matrix](./product/completion-matrix.md)
+- [Product Claim Ledger](./product/claim-ledger.md)
 - [Positioning](./product/positioning.md)
 - [Vision](./product/vision.md)
 - [Use Cases](./product/use-cases.md)
@@ -72,6 +74,11 @@ details.
 ### Design Documents
 
 - [Design Index](design/index.md)
+- [Product Spine](design/product/product-spine.md)
+- [Agentic Friend Contract](design/companion/agentic-friend.md)
+- [Attention And Presence](design/companion/attention-presence.md)
+- [Personal-Agent Runtime](design/runtime/personal-agent-runtime.md)
+- [Goal Orchestration](design/execution/goal-orchestration.md)
 
 ## Source Of Truth
 
@@ -86,8 +93,8 @@ When docs overlap, prefer the most specific page for the topic:
 - `docs/operate/status.md` for current status
 - `docs/architecture/architecture-map.md` and
   `docs/architecture/module-map.md` for code navigation
-- `docs/design/` for design documents and design history, not
-  current operating behavior
+- `docs/design/` for public design documents and design history, not current
+  operating behavior
 
 If code and docs disagree, treat the current code, CLI registry, package
 scripts, runtime schemas, and tests as the implementation truth. Fix the docs or

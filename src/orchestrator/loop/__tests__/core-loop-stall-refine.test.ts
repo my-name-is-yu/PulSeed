@@ -1,8 +1,8 @@
 /**
  * core-loop-stall-refine.test.ts
  *
- * Tests for stall-handler integration with GoalRefiner (Step 5 of
- * docs/design/goal-refinement-pipeline.md §4.5).
+ * Tests for stall-handler integration with GoalRefiner. See
+ * docs/design/execution/goal-orchestration.md for the current design map.
  *
  * Verifies:
  *   - Observation-failure stall (suggested_cause === "information_deficit")

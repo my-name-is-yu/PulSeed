@@ -1,5 +1,7 @@
 # Package Scripts
 
+> Status: Current package-scripts reference. This page lists maintained scripts for contributors and release verification.
+
 This page lists maintained npm scripts that are useful for contributors and
 release verification.
 

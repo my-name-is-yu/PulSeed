@@ -8,21 +8,23 @@
 
 ## 1. In a Nutshell
 
-PulSeed is companion software that remembers your goals, watches the world with
-you, and brings the right help into the moment.
+PulSeed is Your Personal Agentic Friend: companion software that remembers your
+goals, watches the world with you, and brings the right help into the moment.
 
-The goal is that you can tell PulSeed what you want to achieve, and it can stay
-with that goal for days, months, or years. PulSeed is not meant to be an
-"assistant waiting for instructions." It should remember what matters, observe
-what changes, and keep moving toward the life or outcome you want.
+The goal is that you can tell PulSeed what matters, and it can stay with that
+context for days, months, or years. It can still pursue explicit goals, but the
+center of the product is broader: a steady agentic friend that notices, prepares,
+asks, helps, and backs off when that is the better move. PulSeed is not meant to
+be an "assistant waiting for instructions." It should remember what matters,
+observe what changes, and keep moving toward the life or outcome you want.
 
-PulSeed's current strongest technical foundation is long-running goal orchestration:
-holding goals, delegating bounded work to agents, verifying progress, and
-keeping a local runtime alive across time. That foundation makes the broader
-companion-software contract observable: durable personal context, presence,
-proactive dialogue, safe intervention, and a growing pocket of capabilities it
-can bring to the user at the right time. See [Positioning](positioning.md) for
-the short canonical framing.
+PulSeed's current strongest technical foundation is long-running goal
+orchestration: holding goals, delegating bounded work to agents, verifying
+progress, and keeping a local runtime alive across time. That foundation now
+sits inside the broader agentic-friend contract: durable personal context,
+presence, proactive dialogue, safe intervention, and a growing pocket of
+capabilities it can bring to the user at the right time. See
+[Positioning](positioning.md) for the short canonical framing.
 
 ---
 
@@ -34,9 +36,9 @@ AI assistants answer questions. Agents execute tasks. Automation tools run workf
 
 Monitoring the health of a chronically ill dog. Doubling revenue. Getting a new business off the ground. These goals don't end with a single instruction. Situations change, new problems emerge, and strategies need to be revised. Right now, humans have to make those judgments and issue new instructions every time.
 
-What's missing is not a smarter chatbot. It is **companion software that carries
-your goals over time, understands the surrounding situation, and reaches for the
-right capability when help is needed**.
+What's missing is not a smarter chatbot. It is **a personal agentic friend that
+carries your goals and context over time, understands the surrounding situation,
+and reaches for the right capability when help is needed**.
 
 ---
 
@@ -50,31 +52,61 @@ legal, or business advice. Current behavior is documented in
 
 ### Tell It Your Goal, Then Let Go
 
-"I want to live happily with my dog." "I want to double revenue." — Just tell it your goal. PulSeed takes it on, figures out what needs to be done, delegates to agents, observes the results, and decides the next action. When a session ends, when a day passes, when a month passes — it keeps moving until the goal is achieved.
+In the product direction, a user can say "I want to live happily with my dog" or
+"I want to double revenue" and PulSeed treats that as a long-running context to
+carry, not a single prompt to answer. The intended behavior is to help clarify
+what needs to be done, coordinate bounded agent work when permitted, observe
+evidence, and suggest the next action over time.
 
 ### Operating for Years
 
-PulSeed is not a one-time task runner. If a dog owner who has a chronically ill elderly dog says, "I want to live happily with this dog," PulSeed works as a dedicated partner for three years until that dog's life comes to an end. Daily health reports, urgent notifications, stage-appropriate care recommendations. As long as the goal continues, so does PulSeed.
+PulSeed is not designed as a one-time task runner. A future companion workflow for
+an elderly dog with chronic illness would aim to preserve continuity for years:
+daily summaries if a verified data source exists, escalation suggestions when
+configured thresholds are crossed, and stage-appropriate prompts that remain
+under human and professional judgment.
 
 ### Reporting Proactively, Asking When Needed
 
-PulSeed doesn't just work silently. Morning reports, instant notifications of important changes, proposals for strategy shifts. Users don't need to check in on the situation. PulSeed reaches out at the right time with the right level of detail. In emergencies, it sends alerts immediately.
+The intended companion posture is not silent background work. Depending on
+configured permissions and risk, PulSeed should be able to prepare morning
+summaries, propose strategy shifts, and request attention when something
+important changes. Safety-sensitive or emergency-like notifications require
+explicit integrations, thresholds, and human responsibility; this page is not a
+claim that the current package provides emergency monitoring.
 
 ### Negotiating Honestly
 
-When the CEO of a SaaS company says, "I want to 10x revenue in six months," PulSeed responds: "10x will be difficult, but 2x is achievable." Rather than following blindly, it evaluates feasibility and proposes a realistic target. Once a target is agreed upon, it pursues it with full effort.
+In a business-growth scenario, PulSeed should not blindly accept unrealistic
+targets. If a user says "I want to 10x revenue in six months," the desired design
+is honest negotiation: explain uncertainty, propose a more realistic target when
+the evidence supports it, and keep consequential business decisions with the
+human operator.
 
 ### Connecting to the Real World
 
-PulSeed's activity is not confined to codebases. It reads data from wearable sensors, monitors business metrics, and integrates with external APIs. A dog's breathing pattern, a SaaS company's churn rate, conversion numbers — the metrics PulSeed tracks are not "did the tests pass?" but "are we getting closer to the goal?"
+PulSeed's product direction is not confined to codebases. With explicit
+integrations and permissions, it should be able to treat external data sources
+such as wearable sensors, business metrics, and APIs as evidence about progress.
+The architectural question is not only "did the tests pass?" but "is the goal
+state improving?"
 
 ### Acquiring Knowledge Autonomously
 
-PulSeed doesn't start with all the knowledge needed to achieve a goal. But it researches, learns, and builds understanding. About care for dogs with respiratory disease. About techniques for reducing SaaS churn. Acquiring domain knowledge is part of pursuing the goal.
+PulSeed should not pretend to start with all domain knowledge. The design calls
+for bounded research, evidence capture, correction, and user-visible uncertainty
+when a goal requires new knowledge. In regulated or safety-sensitive domains,
+that knowledge can inform questions and preparation, not replace qualified
+advice.
 
 ### Sourcing Needed Tools Autonomously
 
-If existing tools are insufficient, PulSeed instructs agents to build them. Health monitoring code for dogs, data analysis pipelines, alert notification systems. Whatever is needed to achieve the goal is built through agents. PulSeed's role is to judge what is needed and to verify when the build is complete.
+If existing tools are insufficient, the long-term design allows PulSeed to
+propose or delegate bounded tool-building work through approved agents. Health
+monitoring scripts, data analysis pipelines, and notification integrations are
+examples of possible artifacts, not bundled current workflows. PulSeed's role is
+to judge what is needed, preserve the approval boundary, and verify completion
+evidence.
 
 ### The Human Role Changes
 
@@ -108,52 +140,91 @@ that can bring tools and agents into the goal over time.
 
 ## 5. Design as an Autonomous Partner
 
+This section describes the product architecture PulSeed is designed toward. It
+is not a current-package capability list. Current supported behavior remains the
+local DurableLoop, bounded AgentLoop execution, typed tools, runtime stores, and
+operator surfaces described in [Runtime](../operate/runtime.md) and
+[Status](../operate/status.md).
+
 ### 5.1 The Scale of Goals
 
-Goals given to PulSeed are ambiguous, long-term, and require multi-stage decomposition — like "live happily with my dog" or "double revenue."
+The goals PulSeed is designed for are ambiguous, long-term, and require
+multi-stage decomposition, such as "live happily with my dog" or "double
+revenue."
 
-"Implement feature X" is not a goal. It's one task that emerges along the path to achieving a goal. PulSeed's job is to discover the path from an ambiguous high-level goal down to that task, build it, and realize it through agents.
+"Implement feature X" is not the product-level goal. It is one bounded task that
+may emerge along the path to a larger outcome. The intended PulSeed role is to
+help discover that path, propose bounded work, coordinate approved capabilities,
+and verify evidence without pretending that every domain workflow is already
+packaged.
 
 ### 5.2 Recursive Goal Tree
 
-Goals are decomposed into an N-level tree structure.
+The design model decomposes goals into an N-level tree structure.
 
-Each node has its own state, completion criteria, and satisficing threshold. The state of a parent goal is determined by aggregating the states of its child goals. The goal tree is not a static plan — it's a dynamic structure that is discovered, modified, and pruned during execution.
+Each node has its own state, completion criteria, and satisficing threshold. The
+state of a parent goal is determined by aggregating the states of its child
+goals. The goal tree is not a static plan; it is a dynamic structure that can be
+discovered, modified, and pruned during execution.
 
-Example: live happily with dog → continuous health monitoring → build monitoring code → analyze sensor data
+Example: live happily with dog -> observe health signals -> prepare a monitoring
+script -> analyze configured data with human review
+
 Example: 2x revenue → halve churn rate → improve onboarding → implement tutorial
 
 ### 5.3 Capability Registry (Dynamic Capability Management)
 
-PulSeed doesn't start with all capabilities. Each time a user grants permissions, tools, or data sources, what it can do expands.
+PulSeed should not assume all capabilities are available by default. Each time a
+user grants permissions, tools, or data sources, the capability graph can expand.
 
-Sensor data from a dog's collar, a SaaS database, the Stripe API, IoT devices, business dashboards — PulSeed understands these as "capabilities" and incorporates them into goal decomposition. When a new kind of capability is added, the architecture doesn't change.
+Sensor data from a dog's collar, a SaaS database, the Stripe API, IoT devices,
+and business dashboards are examples of possible capability sources. They become
+usable only when configured, verified, permissioned, and scoped.
 
-Furthermore, PulSeed extends its own capabilities. It instructs agents to create needed code, delegates the building of needed tools, and keeps acquiring the means needed to achieve goals. PulSeed doesn't "build" — PulSeed "has things built."
+The product direction also includes capability acquisition: PulSeed can propose
+delegating code or tool-building work to agents when the existing capability set
+is insufficient. That delegation remains behind approval, workspace policy, and
+verification.
 
 ### 5.4 Strategy Engine (Discovering and Executing Strategies)
 
-"What should be done" is not given to PulSeed. PulSeed discovers it.
+"What should be done" is not always given to PulSeed. The intended design helps
+discover candidate strategies from the goal, evidence, and constraints.
 
-It generates hypotheses, prioritizes them, experiments, measures effectiveness, and decides whether to continue, retreat, or pivot. The criterion is not "was the task completed?" but "did we get closer to the goal?"
+PulSeed should generate hypotheses, prioritize them, run bounded experiments
+when permitted, measure effectiveness, and recommend whether to continue,
+retreat, or pivot. The criterion is not only "was the task completed?" but "did
+we get closer to the goal?"
 
 "Waiting" is also a judgment. It takes time for initiatives to show results after being launched. Knowing when to measure for meaningful results — this sense of timing is also part of strategy.
 
 ### 5.5 Portfolio Management
 
-Multiple strategies are run in parallel and managed as a portfolio. Focus on what's working, cut what isn't. Not sequential execution, but optimization of resource allocation.
+The product design supports multiple strategies being tracked as a portfolio:
+focus on what is working, stop what is not, and make resource allocation
+explicit. This is a design target, not a guarantee that every strategy class is
+currently automated.
 
 ### 5.6 Time Horizon and Milestones
 
-Goals have deadlines. For "2x revenue in 6 months," at the 3-month mark the pace is evaluated, and if insufficient, the strategy is changed. Make the best use of finite time.
+Goals may have deadlines. For a scenario like "2x revenue in 6 months," the
+design should let PulSeed evaluate pace at a milestone and recommend a strategy
+change when the evidence warrants it.
 
-Some goals have no deadline. "Live happily with my dog" has no end. PulSeed can handle this kind of goal too. Precisely because there's no end, operating at a sustainable pace becomes important.
+Some goals have no clear deadline. "Live happily with my dog" is a product
+scenario for open-ended continuity, not a current veterinary workflow. Precisely
+because there is no fixed end, the design emphasizes sustainable pace, explicit
+authority, and human responsibility.
 
 ### 5.7 Observing the External World
 
-State observation is not limited to codebases.
+In the product direction, state observation is not limited to codebases.
 
-Wearable sensors, databases, analytics, APIs, IoT devices, business metrics. The indicators PulSeed tracks are "is the dog's breathing stable?" "has churn rate decreased?" "have conversions increased?" It observes changes in the real world and judges progress toward the goal.
+Wearable sensors, databases, analytics, APIs, IoT devices, and business metrics
+are possible evidence sources when configured and permissioned. The indicators
+PulSeed may reason about are goal-relative, such as stability signals, churn, or
+conversion movement. It should treat these as evidence with uncertainty, not as
+automatic advice or authority.
 
 ### 5.8 Delegation And Execution Boundary
 
@@ -187,23 +258,23 @@ User
   ├── Capabilities: sensor data, DB, API, agents, IoT, ...
   └── Constraints: "respect the vet's judgment" / "don't share customer data externally"
 
-PulSeed (autonomous partner)
+PulSeed product direction
   │
   ├── Goal Tree (recursive goal hierarchy)
   │     Live happily with dog
-  │     ├── Continuous health monitoring
-  │     │    ├── Build monitoring code
-  │     │    └── Set up emergency alerts
-  │     └── Provide optimal care
-  │          ├── Stage-appropriate care recommendations
-  │          └── Coordination with vet
+  │     ├── Observe configured health signals
+  │     │    ├── Propose monitoring script
+  │     │    └── Prepare approved escalation channel
+  │     └── Support care planning
+  │          ├── Stage-appropriate questions and summaries
+  │          └── Human/vet coordination prompts
   │
   ├── Capability Registry (catalog of delegatable capabilities)
   │     Catalog of available delegation targets
   │     - AI agents (Claude Code CLI, Claude API, OpenAI Codex CLI, ...)
   │     - Data observation (sensors, DB, Analytics, ...)
-  │     - External actions (notifications, API integrations, IoT, ...)
-  │     - Tool acquisition (instruct agents to build)
+  │     - Approved external actions (notifications, API integrations, IoT, ...)
+  │     - Approved tool-building delegation
   │
   ├── Strategy Engine (strategy discovery + portfolio)
   │     Hypothesis generation → prioritization → parallel delegation → effectiveness measurement → rebalancing

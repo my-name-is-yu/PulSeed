@@ -1,11 +1,11 @@
 # Hypothesis Verification Mechanism Design
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > Three design improvements inspired by AutoResearchClaw's PIVOT/REFINE decision loop, self-learning, and convergence detection.
 > These make PulSeed's orchestration loop more autonomous and adaptive.
 
-> Current implementation note: PulSeed now already has structured stall analysis, refine/pivot/continue branching, and bounded agentic core phases. This document should be read as the conceptual background and extension space around those implemented mechanisms, not as a description of a missing feature set.
+> Implementation alignment: PulSeed has structured stall analysis, refine/pivot/continue branching, and bounded agentic core phases. This page explains the conceptual background and extension space around those mechanisms.
 
 ---
 
@@ -233,6 +233,6 @@ type SatisficingResult =
 
 - [AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw)
 - [docs/architecture/module-map.md](../../architecture/module-map.md) — Related module boundary map
-- [docs/design/core/loop/stall-detection.md](../core/loop/stall-detection.md) — StallDetector design
-- [docs/design/core/loop/satisficing.md](../core/loop/satisficing.md) — SatisficingJudge design
-- [docs/design/knowledge/knowledge-acquisition.md](knowledge-acquisition.md) — KnowledgeManager design
+- [Stall Detection](../loop/stall-detection.md) — StallDetector design
+- [Satisficing](../loop/satisficing.md) — SatisficingJudge design
+- [Knowledge Acquisition](./knowledge-acquisition.md) — KnowledgeManager design
