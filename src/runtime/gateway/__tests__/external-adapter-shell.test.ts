@@ -155,6 +155,26 @@ describe("external adapter shell", () => {
     expect(delays).toEqual([10, 20]);
     expect(resolveExternalAdapterBackoffDelay(4, [10, 20])).toBe(20);
   });
+
+  it("re-checks the stop condition after async error handling before sleeping", async () => {
+    let running = true;
+    const sleep = vi.fn(async () => undefined);
+
+    await runExternalAdapterBackoffLoop({
+      shouldContinue: () => running,
+      runOnce: async () => {
+        throw new Error("poll failed");
+      },
+      backoffStepsMs: [60_000],
+      onError: async () => {
+        await Promise.resolve();
+        running = false;
+      },
+      sleep,
+    });
+
+    expect(sleep).not.toHaveBeenCalled();
+  });
 });
 
 function createRequest(body: string): http.IncomingMessage {

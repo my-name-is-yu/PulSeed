@@ -280,6 +280,9 @@ export async function runExternalAdapterBackoffLoop(options: ExternalAdapterBack
       const delayMs = resolveExternalAdapterBackoffDelay(backoffIndex, options.backoffStepsMs);
       backoffIndex += 1;
       await options.onError?.(error, delayMs);
+      if (!options.shouldContinue()) {
+        break;
+      }
       await (options.sleep ?? sleepExternalAdapter)(delayMs);
     }
   }
