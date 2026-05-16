@@ -3,7 +3,6 @@ import type { AttentionInput } from "./attention-input.js";
 import {
   buildCommitmentReemissionInput,
   commitmentCandidateToUrge,
-  createCommitmentAttentionInput,
   type CommitmentCandidate,
   type CommitmentReemissionTriggerKind,
 } from "./commitment-candidate.js";
@@ -46,13 +45,8 @@ export function buildCommitmentGuardAttentionFromCandidates(input: {
       candidate,
       triggerKind: input.triggerKind,
       now: input.now,
-    }) ?? createCommitmentAttentionInput({
-      candidate,
-      emittedAt: input.now,
-      replayKey: `${candidate.replay_key}:provider:${candidate.materialization_state}`,
-      payloadClass: "attention.commitment.provider.current_state",
-      summary: "Commitment guard provider projected current candidate lifecycle into attention.",
     });
+    if (!reemission) continue;
     attentionInputs.push(reemission);
     const urge = commitmentCandidateToUrge({
       candidate,

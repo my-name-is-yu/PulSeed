@@ -349,7 +349,7 @@ export async function runResidentCommitmentAttentionCycle(
     });
     return true;
   }
-  return preparedCount > 0 || blockedCount > 0 || traceOnlyCount > 0;
+  return preparedCount > 0 || blockedCount > 0;
 }
 
 function residentCommitmentAttentionStore(

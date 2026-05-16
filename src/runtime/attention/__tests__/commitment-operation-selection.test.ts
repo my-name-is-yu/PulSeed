@@ -102,6 +102,19 @@ describe("commitment operation selection", () => {
     }
   });
 
+  it("does not synthesize fallback attention inputs for suppressed commitments that cannot re-emit", () => {
+    const candidate = commitmentCandidate({ state: "quieted" });
+
+    const provider = buildCommitmentGuardAttentionFromCandidates({
+      candidates: [candidate],
+      now: NOW,
+      triggerKind: "revisit_window",
+    });
+
+    expect(provider.attentionInputs).toHaveLength(0);
+    expect(provider.urgeCandidates).toHaveLength(0);
+  });
+
   it("turns active watched commitments into commitment_guard agenda and boundary-gated followup plans", () => {
     const candidate = commitmentCandidate({ state: "active_care" });
     const provider = buildCommitmentGuardAttentionFromCandidates({

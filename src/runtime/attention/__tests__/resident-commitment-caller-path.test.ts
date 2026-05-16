@@ -44,7 +44,10 @@ function scope(): AttentionScope {
   };
 }
 
-function commitmentCandidate() {
+function commitmentCandidate(input: {
+  extraction?: Record<string, unknown>;
+  state?: "shadow_held" | "watching" | "active_care" | "quieted" | "snoozed";
+} = {}) {
   const candidate = createCommitmentCandidate({
     extraction: CommitmentCandidateExtractionSchema.parse({
       outcome: "candidate",
@@ -61,6 +64,7 @@ function commitmentCandidate() {
       allowed_memory_use: "attention_only",
       nudge_policy: "allowed",
       watch_vector: ["deadline", "related_conversation"],
+      ...(input.extraction ?? {}),
     }),
     scope: scope(),
     turnId: "turn-1",
@@ -73,7 +77,7 @@ function commitmentCandidate() {
   expect(candidate).not.toBeNull();
   return {
     ...candidate!,
-    materialization_state: "watching" as const,
+    materialization_state: input.state ?? "watching" as const,
     next_revisit_at: NOW,
   };
 }
@@ -170,5 +174,33 @@ describe("resident commitment attention caller path", () => {
     expect(handled).toBe(true);
     await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .listRecentCandidates()).resolves.toHaveLength(0);
+  });
+
+  it("records trace-only commitment cycles without consuming the resident proactive tick", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    await store.saveCommitmentCandidates([commitmentCandidate({
+      extraction: {
+        confidence: 0.5,
+        nudge_policy: "ask_first",
+        user_state: {
+          high_load: true,
+          tired: true,
+          overreach_feedback: false,
+        },
+      },
+      state: "shadow_held",
+    })]);
+    const resident = context(baseDir, store);
+
+    const handled = await runResidentCommitmentAttentionCycle(resident, NOW);
+
+    expect(handled).toBe(false);
+    await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates()).resolves.toHaveLength(0);
+    expect(resident.state.resident_activity).toMatchObject({
+      kind: "observation",
+      summary: "Resident commitment attention remained trace-only.",
+    });
   });
 });
