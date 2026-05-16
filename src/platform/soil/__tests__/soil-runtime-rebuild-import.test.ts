@@ -11,6 +11,7 @@ import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
 import { SoilCompiler } from "../compiler.js";
 import { rebuildSoilFromRuntime } from "../runtime-rebuild.js";
 import { SoilDoctor } from "../doctor.js";
+import { SqliteSoilRepository } from "../sqlite-repository.js";
 import {
   loadSoilOverlayQueue,
   scanAndStoreSoilOverlays,
@@ -215,6 +216,7 @@ describe("Soil runtime rebuild", () => {
       const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
       const domainPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "domain", "goal-1.md"));
       const sharedPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "shared", "index.md"));
+      const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
 
       expect(rebuilt.projected.domainKnowledge).toBe(1);
       expect(rebuilt.projected.sharedKnowledge).toBe(0);
@@ -222,6 +224,23 @@ describe("Soil runtime rebuild", () => {
       expect(domainPage?.body).not.toContain("Atom");
       expect(sharedPage?.body).toContain("- Entries: 0");
       expect(sharedPage?.body).not.toContain("Atom");
+      expect(repo).not.toBeNull();
+      try {
+        const domainHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_domain_entry"] },
+        });
+        const sharedHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_shared_entry"] },
+        });
+        expect(domainHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-1:stale-editor");
+        expect(sharedHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:stale-editor");
+      } finally {
+        repo?.close();
+      }
     } finally {
       cleanupTempDir(baseDir);
     }
@@ -257,10 +276,22 @@ describe("Soil runtime rebuild", () => {
 
       const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
       const memoryPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "memory", "index.md"));
+      const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
 
       expect(rebuilt.projected.agentMemory).toBe(0);
       expect(memoryPage?.body).toContain("- Entries: 0");
       expect(memoryPage?.body).not.toContain("Atom");
+      expect(repo).not.toBeNull();
+      try {
+        const memoryHits = await repo!.searchLexical({
+          query: "Atom",
+          limit: 5,
+          record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+        });
+        expect(memoryHits.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-stale-editor");
+      } finally {
+        repo?.close();
+      }
     } finally {
       cleanupTempDir(baseDir);
     }

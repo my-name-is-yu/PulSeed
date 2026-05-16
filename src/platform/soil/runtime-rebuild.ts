@@ -212,12 +212,14 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
   const knowledgeMemoryStore = new KnowledgeMemoryStateStore(input.baseDir);
   for (const goalId of await knowledgeMemoryStore.listDomainKnowledgeGoalIds()) {
     const domainKnowledge = await knowledgeMemoryStore.loadDomainKnowledge(goalId);
+    await knowledgeMemoryStore.saveDomainKnowledge(domainKnowledge, { persistTruth: false });
     await projectDomainKnowledgeToSoil({ ...projectionBase, goalId, domainKnowledge });
     projected.domainKnowledge += 1;
   }
 
   const shared = await knowledgeMemoryStore.loadSharedKnowledgeEntries();
   if (shared.length > 0 || await hasSharedKnowledgeTruth(input.baseDir)) {
+    await knowledgeMemoryStore.saveSharedKnowledgeEntries(shared, { persistTruth: false });
     await projectSharedKnowledgeToSoil({ ...projectionBase, entries: shared });
     projected.sharedKnowledge = shared.length;
   }
@@ -229,6 +231,7 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
     || agentMemory.last_consolidated_at !== null
     || await hasAgentMemoryTruth(input.baseDir)
   ) {
+    await knowledgeMemoryStore.saveAgentMemoryStore(agentMemory, { persistTruth: false });
     await projectAgentMemoryToSoil({ ...projectionBase, store: agentMemory });
     projected.agentMemory = agentMemory.entries.filter((entry) =>
       (entry.status === "raw" || entry.status === "compiled") && (entry.correction_state?.active ?? true)

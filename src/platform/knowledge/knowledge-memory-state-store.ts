@@ -532,7 +532,10 @@ export class KnowledgeMemoryStateStore {
     }
   }
 
-  async saveDomainKnowledge(domainKnowledge: DomainKnowledge): Promise<void> {
+  async saveDomainKnowledge(
+    domainKnowledge: DomainKnowledge,
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = DomainKnowledgeSchema.parse(domainKnowledge);
     const repo = await this.openRepository();
     try {
@@ -561,7 +564,9 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
-      await saveDomainKnowledgeToTruth(this.baseDir, parsed);
+      if (options.persistTruth !== false) {
+        await saveDomainKnowledgeToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }
@@ -603,7 +608,10 @@ export class KnowledgeMemoryStateStore {
     }
   }
 
-  async saveSharedKnowledgeEntries(entries: SharedKnowledgeEntry[]): Promise<void> {
+  async saveSharedKnowledgeEntries(
+    entries: SharedKnowledgeEntry[],
+    options: { persistTruth?: boolean } = {},
+  ): Promise<void> {
     const parsed = entries.map((entry) => SharedKnowledgeEntrySchema.parse(entry));
     const repo = await this.openRepository();
     try {
@@ -622,7 +630,9 @@ export class KnowledgeMemoryStateStore {
           .filter((record) => !nextSourceIds.has(record.source_id))
           .map(tombstoneForRecord),
       });
-      await saveSharedKnowledgeToTruth(this.baseDir, parsed);
+      if (options.persistTruth !== false) {
+        await saveSharedKnowledgeToTruth(this.baseDir, parsed);
+      }
     } finally {
       repo.close();
     }

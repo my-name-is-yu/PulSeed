@@ -249,6 +249,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     const store = new KnowledgeMemoryStateStore(baseDir);
     await store.saveAgentMemoryStore(staleStore, { persistTruth: false });
     await saveAgentMemoryStoreToTruth(baseDir, emptyTruth);
+    await store.saveAgentMemoryStore(await store.loadAgentMemoryStore(), { persistTruth: false });
 
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await expect(manager.loadAgentMemoryStore()).resolves.toEqual(emptyTruth);
@@ -262,7 +263,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         limit: 5,
         record_filter: { source_types: ["knowledge_agent_memory_entry"] },
       });
-      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_agent_memory_entry:memory-stale");
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_agent_memory_entry:memory-stale");
     } finally {
       repo?.close();
     }
@@ -519,6 +520,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
       entries: [{ ...active, superseded_by: "domain-replacement" }],
       last_updated: fixedNow,
     });
+    await store.saveDomainKnowledge(await store.loadDomainKnowledge("goal-1"), { persistTruth: false });
 
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await expect(store.loadDomainKnowledge("goal-1")).resolves.toMatchObject({ entries: [] });
@@ -532,7 +534,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         limit: 5,
         record_filter: { source_types: ["knowledge_domain_entry"] },
       });
-      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-1:domain-stale");
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-1:domain-stale");
     } finally {
       repo?.close();
     }
@@ -565,6 +567,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     });
 
     const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveDomainKnowledge(await store.loadDomainKnowledge("goal-empty"), { persistTruth: false });
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await expect(store.loadDomainKnowledge("goal-empty")).resolves.toMatchObject({ entries: [] });
     await expect(manager.loadKnowledge("goal-empty")).resolves.toEqual([]);
@@ -577,7 +580,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         limit: 5,
         record_filter: { source_types: ["knowledge_domain_entry"] },
       });
-      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-empty:domain-empty-stale");
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-empty:domain-empty-stale");
     } finally {
       repo?.close();
     }
@@ -647,6 +650,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     const store = new KnowledgeMemoryStateStore(baseDir);
     await store.saveSharedKnowledgeEntries([active]);
     await saveSharedKnowledgeToTruth(baseDir, [{ ...active, superseded_by: "shared-replacement" }]);
+    await store.saveSharedKnowledgeEntries(await store.loadSharedKnowledgeEntries(), { persistTruth: false });
 
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
@@ -660,7 +664,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         limit: 5,
         record_filter: { source_types: ["knowledge_shared_entry"] },
       });
-      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_shared_entry:shared-stale");
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:shared-stale");
     } finally {
       repo?.close();
     }
@@ -689,6 +693,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     await saveSharedKnowledgeToTruth(baseDir, []);
 
     const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveSharedKnowledgeEntries(await store.loadSharedKnowledgeEntries(), { persistTruth: false });
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
     await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
     await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
@@ -701,7 +706,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         limit: 5,
         record_filter: { source_types: ["knowledge_shared_entry"] },
       });
-      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_shared_entry:shared-empty-stale");
+      expect(staleSoil.map((candidate) => candidate.record_id)).not.toContain("knowledge_shared_entry:shared-empty-stale");
     } finally {
       repo?.close();
     }
