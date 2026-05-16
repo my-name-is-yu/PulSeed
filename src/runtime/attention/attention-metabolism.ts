@@ -347,6 +347,7 @@ export function createUrgeCandidate(input: UrgeCandidateAssemblyInput): UrgeCand
     uncertainty: input.uncertainty ?? Number((1 - input.confidence).toFixed(4)),
     conflictMarkers: [],
     policyEpoch: scope.policyEpoch,
+    priority_evidence: input.priority_evidence,
     modelOrClassifierVersion: input.modelOrClassifierVersion ?? null,
     replayableInputRefs: input.replayableInputRefs ?? [ref("signal_context", input.signal_context.signal_context_id)],
     audit_refs: input.audit_refs ?? [],

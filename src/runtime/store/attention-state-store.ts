@@ -8,6 +8,12 @@ import {
   type AttentionInputIntakeResult,
 } from "../attention/attention-input.js";
 import {
+  CommitmentCandidateSchema,
+  applyCommitmentLifecycleControl,
+  type CommitmentCandidate,
+  type CommitmentLifecycleControl,
+} from "../attention/commitment-candidate.js";
+import {
   runtimeItemsForAgenda,
 } from "../attention/attention-agenda.js";
 import type { AttentionAdmissionCandidate } from "../attention/attention-admission.js";
@@ -220,6 +226,18 @@ export interface AttentionAdmissionProposalListOptions {
   states?: readonly AttentionAdmissionCandidate["proposalState"][];
 }
 
+export interface CommitmentCandidateListOptions {
+  scope?: AttentionScope;
+  states?: readonly CommitmentCandidate["materialization_state"][];
+  dueBefore?: string | null;
+  includeTerminal?: boolean;
+}
+
+export interface CommitmentCandidateWriteResult {
+  accepted: CommitmentCandidate[];
+  duplicates: CommitmentCandidate[];
+}
+
 export class AttentionStateStore {
   private readonly paths: RuntimeStorePaths;
   private readonly dbOptions: RuntimeControlDbStoreOptions;
@@ -272,6 +290,59 @@ export class AttentionStateStore {
   ): Promise<AttentionInputIntakeResult> {
     const db = await this.database();
     return db.transaction((sqlite) => appendAttentionInputs(sqlite, inputs, recordedAt));
+  }
+
+  async saveCommitmentCandidates(
+    candidates: readonly CommitmentCandidate[]
+  ): Promise<CommitmentCandidateWriteResult> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const accepted: CommitmentCandidate[] = [];
+      const duplicates: CommitmentCandidate[] = [];
+      for (const raw of candidates) {
+        const candidate = CommitmentCandidateSchema.parse(raw);
+        const existing = readCommitmentCandidateByReplayKey(sqlite, candidate.replay_key);
+        if (existing && existing.commitment_id !== candidate.commitment_id) {
+          duplicates.push(existing);
+          continue;
+        }
+        upsertCommitmentCandidate(sqlite, candidate);
+        accepted.push(candidate);
+      }
+      return { accepted, duplicates };
+    });
+  }
+
+  async listCommitmentCandidates(
+    options: CommitmentCandidateListOptions = {}
+  ): Promise<CommitmentCandidate[]> {
+    const db = await this.database();
+    return db.read((sqlite) => listCommitmentCandidates(sqlite, options));
+  }
+
+  async applyCommitmentControl(input: {
+    commitmentId: string;
+    control: CommitmentLifecycleControl;
+    now: string;
+    feedbackRef?: string | null;
+    snoozeUntil?: string | null;
+    reason?: string;
+  }): Promise<CommitmentCandidate | null> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const existing = readCommitmentCandidate(sqlite, input.commitmentId);
+      if (!existing) return null;
+      const updated = applyCommitmentLifecycleControl({
+        candidate: existing,
+        control: input.control,
+        now: input.now,
+        feedbackRef: input.feedbackRef,
+        snoozeUntil: input.snoozeUntil,
+        reason: input.reason,
+      });
+      upsertCommitmentCandidate(sqlite, updated);
+      return updated;
+    });
   }
 
   async listAttentionInputs(): Promise<AttentionInput[]> {
@@ -1163,6 +1234,123 @@ function appendAttentionInputs(
   }
 
   return intake;
+}
+
+function upsertCommitmentCandidate(sqlite: SqliteDatabase, raw: CommitmentCandidate): void {
+  const candidate = CommitmentCandidateSchema.parse(raw);
+  sqlite.prepare(`
+    INSERT INTO attention_commitment_candidates (
+      commitment_id,
+      source_ref,
+      target_ref,
+      replay_key,
+      source_epoch,
+      source_high_watermark,
+      policy_epoch,
+      scope_key,
+      lifecycle,
+      nudge_policy,
+      materialization_id,
+      next_revisit_at,
+      due_start,
+      due_end,
+      priority_score,
+      suppression_ref_count,
+      feedback_ref_count,
+      created_at,
+      updated_at,
+      candidate_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(commitment_id) DO UPDATE SET
+      source_ref = excluded.source_ref,
+      target_ref = excluded.target_ref,
+      replay_key = excluded.replay_key,
+      source_epoch = excluded.source_epoch,
+      source_high_watermark = excluded.source_high_watermark,
+      policy_epoch = excluded.policy_epoch,
+      scope_key = excluded.scope_key,
+      lifecycle = excluded.lifecycle,
+      nudge_policy = excluded.nudge_policy,
+      materialization_id = excluded.materialization_id,
+      next_revisit_at = excluded.next_revisit_at,
+      due_start = excluded.due_start,
+      due_end = excluded.due_end,
+      priority_score = excluded.priority_score,
+      suppression_ref_count = excluded.suppression_ref_count,
+      feedback_ref_count = excluded.feedback_ref_count,
+      updated_at = excluded.updated_at,
+      candidate_json = excluded.candidate_json
+  `).run(
+    candidate.commitment_id,
+    refKey(candidate.source_ref),
+    refKey(candidate.target_ref),
+    candidate.replay_key,
+    candidate.source_epoch,
+    candidate.source_high_watermark,
+    candidate.policy_epoch,
+    scopeKey(candidate.scope),
+    candidate.materialization_state,
+    candidate.nudge_policy,
+    candidate.materialization_id,
+    candidate.next_revisit_at,
+    candidate.due.window_start,
+    candidate.due.window_end,
+    candidate.priority_evidence.total_score ?? null,
+    candidate.suppression_refs.length,
+    candidate.feedback_refs.length,
+    candidate.created_at,
+    candidate.updated_at,
+    JSON.stringify(candidate)
+  );
+}
+
+function readCommitmentCandidate(sqlite: SqliteDatabase, commitmentId: string): CommitmentCandidate | null {
+  const row = sqlite.prepare(`
+    SELECT candidate_json
+    FROM attention_commitment_candidates
+    WHERE commitment_id = ?
+  `).get(commitmentId) as { candidate_json: string } | undefined;
+  return row ? parseStored<CommitmentCandidate>(row.candidate_json, CommitmentCandidateSchema)[0] ?? null : null;
+}
+
+function readCommitmentCandidateByReplayKey(sqlite: SqliteDatabase, replayKey: string): CommitmentCandidate | null {
+  const row = sqlite.prepare(`
+    SELECT candidate_json
+    FROM attention_commitment_candidates
+    WHERE replay_key = ?
+  `).get(replayKey) as { candidate_json: string } | undefined;
+  return row ? parseStored<CommitmentCandidate>(row.candidate_json, CommitmentCandidateSchema)[0] ?? null : null;
+}
+
+function listCommitmentCandidates(
+  sqlite: SqliteDatabase,
+  options: CommitmentCandidateListOptions,
+): CommitmentCandidate[] {
+  const states = options.states ?? [];
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (options.scope) {
+    where.push("scope_key = ?");
+    params.push(scopeKey(options.scope));
+  }
+  if (states.length > 0) {
+    where.push(`lifecycle IN (${states.map(() => "?").join(", ")})`);
+    params.push(...states);
+  } else if (!options.includeTerminal) {
+    where.push("lifecycle NOT IN ('resolved', 'rejected', 'tombstoned')");
+  }
+  if (options.dueBefore) {
+    where.push("(next_revisit_at IS NULL OR next_revisit_at <= ?)");
+    params.push(options.dueBefore);
+  }
+  const rows = sqlite.prepare(`
+    SELECT candidate_json
+    FROM attention_commitment_candidates
+    ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+    ORDER BY updated_at ASC, commitment_id ASC
+  `).all(...params) as Array<{ candidate_json: string }>;
+  return rows.flatMap((row) => parseStored<CommitmentCandidate>(row.candidate_json, CommitmentCandidateSchema));
 }
 
 function upsertAttentionInput(

@@ -13,6 +13,7 @@ const CompanionAutonomyRefKinds = [
   "surface",
   "memory",
   "memory_candidate",
+  "commitment",
   "permission_grant",
   "relationship_permission",
   "approval",
@@ -110,6 +111,38 @@ export const AttentionRiskAssessmentSchema = z.object({
   evidence_refs: z.array(CompanionAutonomySourceRefSchema).default([]),
 }).strict();
 export type AttentionRiskAssessment = z.infer<typeof AttentionRiskAssessmentSchema>;
+
+export const AttentionPriorityEvidenceComponentSchema = z.object({
+  score: z.number().min(0).max(1),
+  refs: z.array(CompanionAutonomySourceRefSchema).default([]),
+  reason: z.string().min(1),
+}).strict();
+export type AttentionPriorityEvidenceComponent = z.infer<typeof AttentionPriorityEvidenceComponentSchema>;
+
+export const AttentionPriorityEvidenceSchema = z.object({
+  evidence_id: z.string().min(1),
+  source_ref: CompanionAutonomySourceRefSchema,
+  target_ref: CompanionAutonomyRefSchema,
+  agenda_item_ref: refWithKind("agent_agenda_item").optional(),
+  evaluated_at: z.string().datetime(),
+  policy_epoch: z.string().min(1),
+  components: z.object({
+    urgency: AttentionPriorityEvidenceComponentSchema,
+    importance: AttentionPriorityEvidenceComponentSchema,
+    commitment_relevance: AttentionPriorityEvidenceComponentSchema,
+    emotional_weight: AttentionPriorityEvidenceComponentSchema,
+    novelty: AttentionPriorityEvidenceComponentSchema,
+    recency: AttentionPriorityEvidenceComponentSchema,
+    interruptibility_penalty: AttentionPriorityEvidenceComponentSchema,
+    recent_nudge_penalty: AttentionPriorityEvidenceComponentSchema,
+    risk_penalty: AttentionPriorityEvidenceComponentSchema,
+    confidence: AttentionPriorityEvidenceComponentSchema,
+  }).strict(),
+  total_score: z.number().min(0).max(1).optional(),
+  rank_bucket: z.enum(["trace_only", "low", "normal", "high", "hold"]).optional(),
+  audit_refs: z.array(CompanionAutonomyRefSchema).default([]),
+}).strict();
+export type AttentionPriorityEvidence = z.infer<typeof AttentionPriorityEvidenceSchema>;
 
 export const AttentionSensitivitySchema = z.enum([
   "public",
@@ -508,6 +541,7 @@ export const UrgeCandidateSchema = z.object({
   uncertainty: z.number().min(0).max(1).default(1),
   conflictMarkers: z.array(AttentionConflictSchema).default([]),
   policyEpoch: z.string().min(1).default("unknown"),
+  priority_evidence: AttentionPriorityEvidenceSchema.optional(),
   modelOrClassifierVersion: z.string().min(1).nullable().default(null),
   replayableInputRefs: z.array(CompanionAutonomyRefSchema).default([]),
   audit_refs: z.array(AuditTraceRefSchema).default([]),
@@ -591,7 +625,17 @@ export type AgentCarePosture = z.infer<typeof AgentCarePostureSchema>;
 
 export const AttentionCommitmentLifecycleSchema = z.enum([
   "uncommitted",
+  "candidate",
+  "shadow_held",
+  "ask_confirmation",
   "watching",
+  "active_care",
+  "quieted",
+  "snoozed",
+  "resolved",
+  "rejected",
+  "tombstoned",
+  "stale",
   "held",
   "proposed",
   "admitted",
@@ -682,6 +726,7 @@ export const AgentAgendaItemSchema = z.object({
   abandonmentCondition: AttentionRevisitConditionSchema.optional(),
   suppressionReason: z.string().min(1).nullable().default(null),
   commitmentLifecycle: AttentionCommitmentLifecycleSchema.default("held"),
+  priority_evidence: AttentionPriorityEvidenceSchema.optional(),
   needsRegrounding: z.boolean().default(true),
   scope: AttentionScopeSchema.default(DEFAULT_ATTENTION_SCOPE),
   policyEpoch: z.string().min(1).default("unknown"),
@@ -721,6 +766,8 @@ export const AgendaDecompositionSchema = z.object({
   id: z.string().min(1),
   agendaRef: AgentAgendaRefSchema,
   clusterRef: AttentionClusterRefSchema,
+  agendaKind: AgentAgendaItemKindSchema.default("self_maintenance"),
+  commitmentLifecycle: AttentionCommitmentLifecycleSchema.default("held"),
   scope: AttentionScopeSchema,
   children: z.array(AgendaDecompositionChildSchema).default([]),
   status: z.enum(["open", "partially_admitted", "closed", "suppressed", "needs_regrounding"]),

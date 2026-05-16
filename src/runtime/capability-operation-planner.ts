@@ -38,6 +38,7 @@ export type ResidentOperationPlanAction =
   | "investigate"
   | "preemptive_check"
   | "peer_initiative"
+  | "commitment"
   | "curiosity"
   | "curiosity_noop";
 
@@ -574,9 +575,132 @@ function residentPlanConfig(
       };
     case "peer_initiative":
       return residentPeerInitiativePlanConfig(details, goalId);
+    case "commitment":
+      return residentCommitmentPlanConfig(details);
     case "sleep":
     case "curiosity_noop":
       return null;
+  }
+}
+
+function residentCommitmentPlanConfig(details: Record<string, unknown> | undefined): ResidentPlanConfig {
+  const family = commitmentOperationFamily(details);
+  switch (family) {
+    case "attention.commitment.watch":
+      return {
+        capabilityId: "capability:attention_commitment_watch",
+        operationIdPrefix: "attention.commitment.watch",
+        operationKind: "hint",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: "attention.commitment.watch",
+        sideEffectProfile: "none",
+        riskClass: "low",
+        privacyProfile: "local_private",
+        reversibility: "reversible",
+        advisoryOnly: true,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Commitment watch remains trace-only and cannot notify or write memory.",
+      };
+    case "attention.commitment.prepare_followup":
+      return {
+        capabilityId: "capability:attention_commitment_prepare_followup",
+        operationIdPrefix: "attention.commitment.prepare_followup",
+        operationKind: "prepare",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: "attention.commitment.prepare_followup",
+        sideEffectProfile: "write",
+        riskClass: "low",
+        privacyProfile: "local_private",
+        reversibility: "draft_only",
+        advisoryOnly: false,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Commitment follow-up may prepare a local reminder or follow-up candidate only.",
+      };
+    case "attention.commitment.digest":
+      return {
+        capabilityId: "capability:attention_commitment_digest",
+        operationIdPrefix: "attention.commitment.digest",
+        operationKind: "hint",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: "attention.commitment.digest",
+        sideEffectProfile: "none",
+        riskClass: "low",
+        privacyProfile: "local_private",
+        reversibility: "reversible",
+        advisoryOnly: true,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Commitment digest may add a low-pressure digest candidate after attention gates allow it.",
+      };
+    case "attention.commitment.ask_if_still_relevant":
+      return {
+        capabilityId: "capability:attention_commitment_ask_relevance",
+        operationIdPrefix: "attention.commitment.ask_if_still_relevant",
+        operationKind: "hint",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: "attention.commitment.ask_if_still_relevant",
+        sideEffectProfile: "none",
+        riskClass: "low",
+        privacyProfile: "local_private",
+        reversibility: "reversible",
+        advisoryOnly: true,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Commitment relevance check may only prepare a low-pressure ask candidate after boundary gates allow it.",
+      };
+    case "attention.unresolved_decision.prepare_options":
+    case "attention.capability_fit.prepare_once":
+      return {
+        capabilityId: "capability:attention_commitment_prepare_once",
+        operationIdPrefix: family,
+        operationKind: "prepare",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: family,
+        sideEffectProfile: "write",
+        riskClass: "low",
+        privacyProfile: "local_private",
+        reversibility: "draft_only",
+        advisoryOnly: false,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Attention may prepare a one-time local option or capability-fit artifact without execution authority.",
+      };
+    case "attention.memory_conflict.ask_correction":
+      return {
+        capabilityId: "capability:attention_memory_conflict_ask_correction",
+        operationIdPrefix: "attention.memory_conflict.ask_correction",
+        operationKind: "hint",
+        providerRef: "attention:commitment-operation-adapter",
+        payloadClass: "attention.memory_conflict.ask_correction",
+        sideEffectProfile: "none",
+        riskClass: "medium",
+        privacyProfile: "local_private",
+        reversibility: "reversible",
+        advisoryOnly: true,
+        preparableWhenBlocked: true,
+        requiresRuntimeControl: false,
+        requiredPermissionCapabilities: [],
+        requiredApprovals: [],
+        externalActionAuthority: false,
+        userVisibleSummary: "Memory conflict can prepare a correction question only; accepted memory writes remain with the owning store.",
+      };
   }
 }
 
@@ -696,6 +820,26 @@ function residentOperationPlanFailClosedReason(
     }
     return null;
   }
+  if (input.admission.action === "commitment") {
+    if (!input.admission.branch_admitted) {
+      return "Commitment operation requires admitted attention evidence before any peer or digest projection.";
+    }
+    const family = commitmentOperationFamily(input.details);
+    if (family === "attention.commitment.watch") return null;
+    if (
+      finalOutcome !== "prepare_silently"
+      && finalOutcome !== "add_to_digest"
+      && finalOutcome !== "express_to_user"
+      && finalOutcome !== "request_approval"
+      && finalOutcome !== "keep_watching"
+    ) {
+      return `Commitment operation cannot prepare from attention outcome ${finalOutcome}.`;
+    }
+    if (finalOutcome === "request_approval" && input.details?.["explicit_permission"] !== true) {
+      return "Commitment action candidate requires explicit permission evidence before approval request preparation.";
+    }
+    return null;
+  }
   if (!input.admission.branch_admitted) {
     return "Resident operation plan requires an admitted attention outcome before preparing a proposal.";
   }
@@ -757,6 +901,12 @@ function residentPreparationSteps(action: ResidentOperationPlanAction): string[]
         "Route visible delivery through attention outcome, proactive threshold, expression, visibility, and gateway outbound conversation gates.",
         "Do not execute external actions from the peer initiative operation plan.",
       ];
+    case "commitment":
+      return [
+        "Keep watch and silence outcomes trace-only.",
+        "Prepare follow-up, digest, or ask candidates only after admission and autonomy boundary evidence exists.",
+        "Do not send notifications, write memory, or execute external actions from the commitment operation adapter.",
+      ];
     case "sleep":
     case "curiosity_noop":
       return [];
@@ -792,6 +942,29 @@ function peerActionPlanDetails(details?: Record<string, unknown>): {
     };
   }
   return { mode: "care_only" };
+}
+
+function commitmentOperationFamily(details?: Record<string, unknown>):
+  | "attention.commitment.watch"
+  | "attention.commitment.prepare_followup"
+  | "attention.commitment.digest"
+  | "attention.commitment.ask_if_still_relevant"
+  | "attention.unresolved_decision.prepare_options"
+  | "attention.memory_conflict.ask_correction"
+  | "attention.capability_fit.prepare_once" {
+  const raw = details?.["commitment_operation_family"];
+  switch (raw) {
+    case "attention.commitment.watch":
+    case "attention.commitment.prepare_followup":
+    case "attention.commitment.digest":
+    case "attention.commitment.ask_if_still_relevant":
+    case "attention.unresolved_decision.prepare_options":
+    case "attention.memory_conflict.ask_correction":
+    case "attention.capability_fit.prepare_once":
+      return raw;
+    default:
+      return "attention.commitment.watch";
+  }
 }
 
 function operationKindForPeerExternalAction(actionKind?: string): ResidentPlanConfig["operationKind"] {

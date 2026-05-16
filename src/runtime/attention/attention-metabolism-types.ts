@@ -16,6 +16,7 @@ import type {
   AttentionMaturationTransitionCause,
   AttentionMove,
   AttentionPriority,
+  AttentionPriorityEvidence,
   AttentionRiskAssessment,
   AttentionSensitivity,
   AutonomyCheck,
@@ -137,6 +138,7 @@ export type UrgeCandidateAssemblyInput = {
   evidenceStrength?: AttentionEvidenceStrength;
   uncertainty?: number;
   policyEpoch?: string;
+  priority_evidence?: AttentionPriorityEvidence;
   modelOrClassifierVersion?: string | null;
   replayableInputRefs?: CompanionAutonomyRef[];
 };

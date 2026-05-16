@@ -36,6 +36,8 @@ import type { EventSubscriber } from "./event-subscriber.js";
 import type { UserInput } from "./user-input.js";
 import type { CompanionCognitionService } from "../../runtime/cognition/companion-cognition-service.js";
 import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
+import type { CommitmentCandidateClassifier } from "../../runtime/attention/index.js";
+import type { AttentionStateStore } from "../../runtime/store/attention-state-store.js";
 
 export type ChatRunnerTelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -112,6 +114,8 @@ export interface ChatRunnerDeps {
   gatewaySetupStatusProvider?: ChatRunnerGatewaySetupStatusProvider;
   companionCognitionService?: Pick<CompanionCognitionService, "evaluateTurn">;
   personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  commitmentCandidateClassifier?: CommitmentCandidateClassifier;
+  attentionStateStore?: Pick<AttentionStateStore, "saveCommitmentCandidates" | "saveCycle">;
 }
 
 export interface ChatRunResult {
