@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/v3";
 import type {
   ProactiveInterventionSummary,
@@ -12,6 +13,7 @@ const PeerInitiativeDiagnosticSurfaceSchema = z.enum([
   "whatsapp",
   "slack",
   "gui",
+  "gateway",
 ]);
 
 export const PeerInitiativeCurrentCapabilityProjectionSchema = z.object({
@@ -30,6 +32,19 @@ export const PeerInitiativeCurrentCapabilityProjectionSchema = z.object({
   capability_internals_visible: z.literal(false).default(false),
 }).strict();
 export type PeerInitiativeCurrentCapabilityProjection = z.infer<typeof PeerInitiativeCurrentCapabilityProjectionSchema>;
+
+export const PeerInitiativeRelationshipReviewItemSchema = z.object({
+  schema_version: z.literal("peer-initiative-relationship-review-item/v1"),
+  review_item_id: z.string().min(1),
+  source_surface: PeerInitiativeDiagnosticSurfaceSchema,
+  kind: z.string().min(1),
+  created_at: z.string().datetime(),
+  review_reason: z.literal("wrong_read_feedback"),
+  normal_summary: z.string().min(1),
+  relationship_profile_write_performed: z.literal(false).default(false),
+  raw_refs_visible: z.literal(false).default(false),
+}).strict();
+export type PeerInitiativeRelationshipReviewItem = z.infer<typeof PeerInitiativeRelationshipReviewItemSchema>;
 
 export const PeerInitiativeCalibrationReportSchema = z.object({
   schema_version: z.literal("peer-initiative-calibration-report/v1"),
@@ -61,6 +76,13 @@ export const PeerInitiativeCalibrationReportSchema = z.object({
   ]),
   automatic_threshold_change_performed: z.literal(false).default(false),
   relationship_profile_write_performed: z.literal(false).default(false),
+  relationship_review: z.object({
+    review_item_count: z.number().int().nonnegative(),
+    pending_wrong_read_count: z.number().int().nonnegative(),
+    items: z.array(PeerInitiativeRelationshipReviewItemSchema).default([]),
+    raw_refs_visible: z.literal(false).default(false),
+    relationship_profile_write_performed: z.literal(false).default(false),
+  }).strict(),
   raw_refs_visible: z.literal(false).default(false),
 }).strict();
 export type PeerInitiativeCalibrationReport = z.infer<typeof PeerInitiativeCalibrationReportSchema>;
@@ -96,6 +118,7 @@ export function createPeerInitiativeCalibrationReport(input: {
   peerFeedbackProjections: readonly PeerFeedbackProjection[];
 }): PeerInitiativeCalibrationReport {
   const peerCounts = countPeerFeedback(input.peerFeedbackProjections);
+  const relationshipReviewItems = createPeerInitiativeRelationshipReviewItems(input.peerFeedbackProjections);
   const accepted = input.proactiveSummary.accepted_count + peerCounts.more_like_this_count;
   const dismissed = input.proactiveSummary.dismissed_count
     + peerCounts.less_like_this_count
@@ -129,8 +152,33 @@ export function createPeerInitiativeCalibrationReport(input: {
     }),
     automatic_threshold_change_performed: false,
     relationship_profile_write_performed: false,
+    relationship_review: {
+      review_item_count: relationshipReviewItems.length,
+      pending_wrong_read_count: relationshipReviewItems.length,
+      items: relationshipReviewItems,
+      raw_refs_visible: false,
+      relationship_profile_write_performed: false,
+    },
     raw_refs_visible: false,
   });
+}
+
+export function createPeerInitiativeRelationshipReviewItems(
+  projections: readonly PeerFeedbackProjection[]
+): PeerInitiativeRelationshipReviewItem[] {
+  return projections
+    .filter((projection) => projection.structured_outcome === "wrong_read")
+    .map((projection) => PeerInitiativeRelationshipReviewItemSchema.parse({
+      schema_version: "peer-initiative-relationship-review-item/v1",
+      review_item_id: `relationship-review:${stableToken(projection.projection_id)}`,
+      source_surface: projection.source_surface,
+      kind: projection.kind,
+      created_at: projection.projected_at,
+      review_reason: "wrong_read_feedback",
+      normal_summary: "User marked this proactive read as wrong; review the relationship reading before changing stable memory.",
+      relationship_profile_write_performed: false,
+      raw_refs_visible: false,
+    }));
 }
 
 function countPeerFeedback(projections: readonly PeerFeedbackProjection[]) {
@@ -176,4 +224,8 @@ function recommendationFor(input: {
   if (input.dismissed + input.overreach > input.accepted) return "raise_threshold_or_narrow_scope";
   if (input.accepted > input.dismissed + input.corrected + input.overreach) return "keep_or_lower_threshold_cautiously";
   return "keep_threshold_pending_more_feedback";
+}
+
+function stableToken(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }

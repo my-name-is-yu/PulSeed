@@ -1,4 +1,4 @@
-// ─── pulseed runtime commands (read-only) ───
+// ─── pulseed runtime commands ───
 
 import { parseArgs } from "node:util";
 import * as path from "node:path";
@@ -25,6 +25,16 @@ import {
   ProactiveOverreachIndicatorSchema,
   type ProactiveInterventionSummary,
 } from "../../../runtime/store/proactive-intervention-store.js";
+import {
+  ProactivePolicyStateStore,
+  DEFAULT_RESIDENT_ACTIVATION_DAILY_NOTIFY_BUDGET,
+  DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  ResidentActivationMaxDeliveryKindSchema,
+  ResidentActivationStore,
+  type ResidentActivationBinding,
+  type ResidentActivationProposal,
+  type ResidentActivationStatusProjection,
+} from "../../../runtime/store/index.js";
 import { FeedbackIngestionStore } from "../../../runtime/store/feedback-ingestion-store.js";
 import {
   inspectAttentionContinuity,
@@ -59,8 +69,10 @@ import {
 } from "../../../runtime/personal-agent/index.js";
 import {
   PeerInitiativeStore,
+  applyPeerInitiativeCalibrationPolicy,
   createPeerInitiativeCalibrationReport,
   projectPeerInitiativeCurrentCapability,
+  type PeerInitiativeCalibrationApplication,
   type PeerInitiativeCalibrationReport,
   type PeerInitiativeCurrentCapabilityProjection,
 } from "../../../runtime/peer-initiative/index.js";
@@ -76,6 +88,17 @@ type RuntimeListValues = {
   json?: boolean;
   active?: boolean;
   attention?: boolean;
+  applyPolicy?: boolean;
+};
+
+type RuntimeResidentActivationValues = {
+  action?: string;
+  id?: string;
+  json?: boolean;
+  maxDelivery?: string;
+  reason?: string;
+  hours?: string;
+  maxNotify?: string;
 };
 
 type RuntimeDreamReviewValues = {
@@ -360,7 +383,53 @@ function printPeerInitiativeCalibrationReport(report: PeerInitiativeCalibrationR
   console.log(`  Not now:       ${evidence.not_now_count}`);
   console.log(`  Mute kind:     ${evidence.mute_this_kind_count}`);
   console.log(`  Recommendation: ${report.recommendation}`);
+  console.log(`  Review items:  ${report.relationship_review.review_item_count}`);
   console.log(`  Mutated:       ${report.mutation_performed ? "yes" : "no"}`);
+}
+
+function printPeerInitiativeCalibrationApplication(application: PeerInitiativeCalibrationApplication): void {
+  console.log("Policy application:");
+  console.log(`  Policy:        ${application.policy_id}`);
+  console.log(`  Applied:       ${application.policy_state_result.applied_event_count}`);
+  console.log(`  Skipped:       ${application.policy_state_result.skipped_existing_event_count}`);
+  console.log(`  Max delivery:  ${application.policy_state_projection.max_delivery_kind}`);
+  console.log(`  Cooldowns:     ${application.policy_state_projection.cooldown_ref_count}`);
+  console.log(`  Budget debits: ${application.policy_state_projection.budget_debit_count}`);
+  console.log(`  Authority:     ${application.authority_escalation_performed ? "expanded" : "unchanged"}`);
+}
+
+function printResidentActivationStatus(status: ResidentActivationStatusProjection): void {
+  console.log("Resident activation:");
+  console.log(`  Scope:         ${status.scope}`);
+  console.log(`  Surface:       ${status.surface}`);
+  console.log(`  Active:        ${status.active ? "yes" : "no"}`);
+  console.log(`  Pending:       ${status.pending_proposal_count}`);
+  if (status.active_binding) {
+    console.log(`  Binding:       ${status.active_binding.binding_id}`);
+    console.log(`  Max delivery:  ${status.active_binding.max_delivery_kind}`);
+    console.log(`  Notify budget: ${status.active_binding.budget.max_notify}`);
+    console.log(`  Expires:       ${status.active_binding.expires_at}`);
+  }
+}
+
+function printResidentActivationProposal(proposal: ResidentActivationProposal): void {
+  console.log(`Resident activation proposal: ${proposal.proposal_id}`);
+  console.log(`  Status:        ${proposal.status}`);
+  console.log(`  Surface:       ${proposal.surface}`);
+  console.log(`  Max delivery:  ${proposal.requested_max_delivery_kind}`);
+  console.log(`  Notify budget: ${proposal.daily_budget.max_notify}`);
+  console.log(`  Hours:         ${proposal.dogfood_duration_hours}`);
+  console.log(`  Claim:         ${proposal.normal_surface_claim}`);
+}
+
+function printResidentActivationBinding(binding: ResidentActivationBinding): void {
+  console.log(`Resident activation binding: ${binding.binding_id}`);
+  console.log(`  Status:        ${binding.status}`);
+  console.log(`  Surface:       ${binding.surface}`);
+  console.log(`  Max delivery:  ${binding.max_delivery_kind}`);
+  console.log(`  Notify budget: ${binding.interruption_budget.max_notify}`);
+  console.log(`  Expires:       ${binding.expires_at}`);
+  console.log(`  Authority:     ${binding.runtime_authority ? "expanded" : "unchanged"}`);
 }
 
 function printAttentionContinuitySummary(inspection: AttentionContinuityInspection): void {
@@ -474,10 +543,14 @@ function parseListArgs(args: string[], command: string): RuntimeListValues {
         json: { type: "boolean" },
         active: { type: "boolean" },
         attention: { type: "boolean" },
+        "apply-policy": { type: "boolean" },
       },
       strict: false,
-    }) as { values: RuntimeListValues };
-    return values;
+    }) as { values: RuntimeListValues & { "apply-policy"?: boolean } };
+    return {
+      ...values,
+      applyPolicy: values["apply-policy"] === true,
+    };
   } catch (err) {
     logger.error(formatOperationError(`parse runtime ${command} arguments`, err));
     return {};
@@ -571,12 +644,65 @@ function parseProactiveFeedbackArgs(args: string[]): RuntimeProactiveFeedbackVal
   }
 }
 
+function parseResidentActivationArgs(args: string[]): RuntimeResidentActivationValues {
+  const logger = getCliLogger();
+  try {
+    const { values, positionals } = parseArgs({
+      args,
+      options: {
+        json: { type: "boolean" },
+        "max-delivery": { type: "string" },
+        reason: { type: "string" },
+        hours: { type: "string" },
+        "max-notify": { type: "string" },
+      },
+      allowPositionals: true,
+      strict: false,
+    }) as {
+      values: {
+        json?: boolean;
+        "max-delivery"?: string;
+        reason?: string;
+        hours?: string;
+        "max-notify"?: string;
+      };
+      positionals: string[];
+    };
+    return {
+      action: positionals[0],
+      id: positionals[1],
+      json: values.json,
+      maxDelivery: values["max-delivery"],
+      reason: values.reason,
+      hours: values.hours,
+      maxNotify: values["max-notify"],
+    };
+  } catch (err) {
+    logger.error(formatOperationError("parse runtime resident-activation arguments", err));
+    return {};
+  }
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number | null {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || !Number.isSafeInteger(parsed)) return null;
+  return parsed;
+}
+
+function parseNonnegativeInteger(value: string | undefined, fallback: number): number | null {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || !Number.isSafeInteger(parsed)) return null;
+  return parsed;
+}
+
 export async function cmdRuntime(stateManager: StateManager, args: string[]): Promise<number> {
   const logger = getCliLogger();
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
     return 1;
   }
 
@@ -785,7 +911,9 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     const values = parseListArgs(args.slice(1), "proactive-calibration");
     const baseDir = stateManager.getBaseDir();
     const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(baseDir);
-    const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: baseDir }).summarize();
+    const proactiveStore = new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: baseDir });
+    const proactiveEvents = await proactiveStore.list(500);
+    const proactiveSummary = await proactiveStore.summarize();
     const peerFeedbackProjections = await new PeerInitiativeStore(runtimeRoot, { controlBaseDir: baseDir })
       .listFeedbackProjections({ limit: 500 });
     const report = createPeerInitiativeCalibrationReport({
@@ -793,8 +921,72 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       proactiveSummary,
       peerFeedbackProjections,
     });
+    if (values.applyPolicy) {
+      const application = await applyPeerInitiativeCalibrationPolicy({
+        policyStore: new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: baseDir }),
+        generatedAt: report.generated_at,
+        proactiveEvents,
+        peerFeedbackProjections,
+      });
+      if (values.json) {
+        printJson({ report, policy_application: application });
+      } else {
+        printPeerInitiativeCalibrationReport(report);
+        printPeerInitiativeCalibrationApplication(application);
+      }
+      return 0;
+    }
     values.json ? printJson(report) : printPeerInitiativeCalibrationReport(report);
     return 0;
+  }
+
+  if (runtimeSubcommand === "resident-activation") {
+    const values = parseResidentActivationArgs(args.slice(1));
+    const baseDir = stateManager.getBaseDir();
+    const store = new ResidentActivationStore(resolveConfiguredDaemonRuntimeRoot(baseDir), { controlBaseDir: baseDir });
+    const action = values.action ?? "status";
+    if (action === "status") {
+      const status = await store.projectStatus();
+      values.json ? printJson(status) : printResidentActivationStatus(status);
+      return 0;
+    }
+    if (action === "propose") {
+      const maxDelivery = values.maxDelivery
+        ? ResidentActivationMaxDeliveryKindSchema.safeParse(values.maxDelivery)
+        : ResidentActivationMaxDeliveryKindSchema.safeParse(DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND);
+      if (!maxDelivery.success) {
+        logger.error("Error: --max-delivery must be digest, suggest, or notify.");
+        return 1;
+      }
+      const hours = parsePositiveInteger(values.hours, 24);
+      const maxNotify = parseNonnegativeInteger(
+        values.maxNotify,
+        maxDelivery.data === "notify" ? DEFAULT_RESIDENT_ACTIVATION_DAILY_NOTIFY_BUDGET : 0,
+      );
+      if (!hours || maxNotify === null) {
+        logger.error("Error: --hours must be positive and --max-notify must be nonnegative.");
+        return 1;
+      }
+      const proposal = await store.propose({
+        requestedMaxDeliveryKind: maxDelivery.data,
+        dogfoodDurationHours: hours,
+        dailyBudget: { max_notify: maxNotify },
+        reason: values.reason,
+      });
+      values.json ? printJson(proposal) : printResidentActivationProposal(proposal);
+      return 0;
+    }
+    if (action === "accept") {
+      if (!values.id) {
+        logger.error("Error: proposal ID is required. Usage: pulseed runtime resident-activation accept <proposal-id> [--json]");
+        return 1;
+      }
+      const binding = await store.accept(values.id);
+      values.json ? printJson(binding) : printResidentActivationBinding(binding);
+      return 0;
+    }
+    logger.error("Error: unknown resident-activation action. Available: status, propose, accept");
+    return 1;
   }
 
   if (runtimeSubcommand === "peer-initiative-capability") {
@@ -991,7 +1183,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
   return 1;
 }
 

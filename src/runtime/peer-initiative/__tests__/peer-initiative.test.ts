@@ -67,6 +67,7 @@ describe("peer initiative contracts and gates", () => {
     expect(selection.selected_candidate_id).toBe(candidate.candidate_id);
     expect(selection.selection_reason).toBe("care_presence_budget");
     expect(candidate.reply_required).toBe(false);
+    expect(candidate.max_delivery_kind).toBe("notify");
     expect(candidate.external_action_authority).toBe(false);
   });
 

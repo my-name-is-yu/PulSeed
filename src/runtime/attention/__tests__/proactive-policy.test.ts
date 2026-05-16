@@ -190,8 +190,9 @@ describe("proactive policy state", () => {
 
     expect(state.default_profile).toMatchObject({
       profile_id: "helpful_nudge",
-      default_max_delivery_kind: "suggest",
+      default_max_delivery_kind: "notify",
     });
+    expect(state.max_delivery_kind).toBe("notify");
     expect(decision).toMatchObject({
       requested_delivery_kind: "suggest",
       allowed_delivery_kind: "suggest",

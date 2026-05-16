@@ -10,6 +10,10 @@ import type {
 } from "../../gateway/index.js";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import { PeerInitiativeStore } from "../../peer-initiative/index.js";
+import {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  ProactivePolicyStateStore,
+} from "../../store/index.js";
 import { ref } from "../../attention/attention-refs.js";
 import { evaluateResidentOperationBoundary } from "../../capability-operation-planner.js";
 import { OutcomeDecisionSchema } from "../../types/companion-autonomy.js";
@@ -176,6 +180,7 @@ describe("resident peer initiative caller path", () => {
     expect(state.resident_activity).toMatchObject({
       kind: "observation",
       peer_initiative_delivery_status: "delivered",
+      peer_initiative_threshold_delivery_kind: "notify",
       peer_prepared_artifact_ref: "peer-artifact:min-plan",
     });
     const records = await new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
@@ -183,7 +188,7 @@ describe("resident peer initiative caller path", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       kind: "attention_preparation",
-      selected_state: "suggested",
+      selected_state: "notified",
       delivered_at: expect.any(String),
     });
 
@@ -302,6 +307,125 @@ describe("resident peer initiative caller path", () => {
     const records = await new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .listRecentCandidates();
     expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: "care_presence",
+      selected_state: "digested",
+    });
+  });
+
+  it("uses persisted proactive policy feedback in the resident peer initiative caller path", async () => {
+    const baseDir = makeTempDir("resident-peer-initiative-policy-state-");
+    const gatewayPort = new FakeOutboundConversationPort();
+    await new ProactivePolicyStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .applyEvents({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: "2026-05-15T00:00:00.000Z",
+        maxDeliveryKind: "suggest",
+        events: [{
+          kind: "feedback",
+          feedback_ref: { kind: "peer_feedback_projection", ref: "peer-feedback:not-now" },
+          feedback_kind: "dismissed",
+          recorded_at: "2026-05-15T00:00:01.000Z",
+        }],
+      });
+    const state = DaemonStateSchema.parse({
+      pid: 123,
+      started_at: "2026-05-15T00:00:00.000Z",
+      last_loop_at: null,
+      loop_count: 4,
+      active_goals: [],
+      status: "idle",
+      runtime_root: path.join(baseDir, "runtime"),
+      last_resident_at: null,
+      resident_activity: null,
+    });
+    const details = {
+      peer_initiative: {
+        kind: "care_presence",
+        message: "今日も頑張ってね。",
+        max_delivery_kind: "notify",
+        action_plan: {
+          mode: "care_only",
+          permission_required: false,
+        },
+        worthiness: {
+          can_be_valuable_without_reply: true,
+          user_cognitive_load: "low",
+          reply_pressure: "none",
+          care_value: "high",
+          attention_fit: "strong",
+          concrete_helpfulness: "high",
+          self_serving_risk: "none",
+          tutorial_risk: "none",
+        },
+      },
+    };
+    const outcomeDecision = OutcomeDecisionSchema.parse({
+      outcome_decision_id: "outcome:peer:policy-state",
+      initiative_decision_ref: ref("initiative_gate_decision", "gate:peer:policy-state"),
+      decided_at: "2026-05-15T00:00:00.000Z",
+      requested_outcome: "express_to_user",
+      admission_status: "admitted",
+      final_outcome: "express_to_user",
+      visibility_policy_ref: ref("visibility_policy", "visibility:peer:policy-state"),
+    });
+    const attentionAdmission = {
+      action: "peer_initiative",
+      source_kind: "resident_proactive_maintenance",
+      attention_input_id: "attention:peer:policy-state",
+      signal_context_id: "signal:peer:policy-state",
+      urge_id: "urge:peer:policy-state",
+      agenda_item_id: "agenda:peer:policy-state",
+      inhibition_decision_id: "inhibition:peer:policy-state",
+      initiative_gate_decision_id: "gate:peer:policy-state",
+      outcome_decision_id: outcomeDecision.outcome_decision_id,
+      outcome_decision: outcomeDecision,
+      replay_disposition: "accepted",
+      requested_outcome: "express_to_user",
+      admission_status: "admitted",
+      final_outcome: "express_to_user",
+      branch_admitted: true,
+      summary: "Resident peer initiative admitted for expression, then downgraded by stored feedback state.",
+    };
+    const operationBoundary = evaluateResidentOperationBoundary({
+      admission: attentionAdmission as never,
+      assembledAt: "2026-05-15T00:00:00.000Z",
+      details,
+    });
+
+    await triggerResidentPeerInitiative(
+      {
+        baseDir,
+        config: DaemonConfigSchema.parse({
+          proactive_mode: true,
+          proactive_interval_ms: 1,
+          goal_review_interval_ms: 7 * 24 * 60 * 60 * 1000,
+          runtime_root: path.join(baseDir, "runtime"),
+        }),
+        state,
+        logger: logger() as never,
+        saveDaemonState: vi.fn(async () => {}),
+        gateway: {
+          getOutboundConversationPort: (surface: OutboundConversationSurface) => surface === "telegram" ? gatewayPort : undefined,
+        },
+      },
+      details,
+      {
+        attentionAdmission: attentionAdmission as never,
+        operationBoundary,
+        selectionSurfaceRef: "surface:relationship-profile:peer:policy-state",
+        metadata: {},
+      },
+    );
+
+    expect(gatewayPort.messages).toHaveLength(0);
+    expect(state.resident_activity).toMatchObject({
+      kind: "skipped",
+      peer_initiative_delivery_status: "held",
+      peer_initiative_threshold_delivery_kind: "digest",
+    });
+    const records = await new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates();
     expect(records[0]).toMatchObject({
       kind: "care_presence",
       selected_state: "digested",

@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 34;
+export const CONTROL_DB_SCHEMA_VERSION = 35;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2449,6 +2449,48 @@ CREATE INDEX IF NOT EXISTS peer_feedback_projection_candidate_idx
   ON peer_feedback_projection(candidate_id, projected_at, projection_id);
 `.trim();
 
+export const CONTROL_DB_PROACTIVE_CALIBRATION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS proactive_policy_states (
+  policy_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL,
+  state_json TEXT NOT NULL CHECK (json_valid(state_json))
+);
+
+CREATE INDEX IF NOT EXISTS proactive_policy_states_updated_idx
+  ON proactive_policy_states(updated_at, policy_id);
+
+CREATE TABLE IF NOT EXISTS resident_activation_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json))
+);
+
+CREATE INDEX IF NOT EXISTS resident_activation_proposals_scope_idx
+  ON resident_activation_proposals(scope, surface, status, updated_at);
+
+CREATE TABLE IF NOT EXISTS resident_activation_bindings (
+  binding_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  status TEXT NOT NULL,
+  activated_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  binding_json TEXT NOT NULL CHECK (json_valid(binding_json))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS resident_activation_bindings_active_scope_idx
+  ON resident_activation_bindings(scope, surface)
+  WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS resident_activation_bindings_scope_idx
+  ON resident_activation_bindings(scope, surface, status, updated_at);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2636,5 +2678,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     34,
     "peer-initiative-runtime-state",
     CONTROL_DB_PEER_INITIATIVE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    35,
+    "proactivity-calibration-runtime-state",
+    CONTROL_DB_PROACTIVE_CALIBRATION_SCHEMA_SQL
   ),
 ];

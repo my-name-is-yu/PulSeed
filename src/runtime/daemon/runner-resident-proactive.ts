@@ -66,6 +66,13 @@ import {
   triggerResidentInvestigation,
 } from "./runner-resident-curiosity.js";
 import {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  ProactivePolicyStateStore,
+  ResidentActivationStore,
+  applyResidentActivationBindingToPolicyState,
+} from "../store/index.js";
+import {
   PersonalAgentRuntimeStore,
   buildPersonalAgentDecisionTrace,
   type CapabilityRegistryDecisionKind,
@@ -382,10 +389,13 @@ export async function triggerResidentPeerInitiative(
   },
 ): Promise<void> {
   const now = new Date().toISOString();
+  const runtimeRoot = resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root);
   const store = new PeerInitiativeStore(
-    resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
+    runtimeRoot,
     { controlBaseDir: context.baseDir },
   );
+  const policyStore = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: context.baseDir });
+  const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: context.baseDir });
   const candidates = generatePeerInitiativeCandidates({
     details,
     attentionSignalRefs: [
@@ -417,10 +427,24 @@ export async function triggerResidentPeerInitiative(
     selectedState: "held",
   });
   const artifactRef = await persistPreparedPeerArtifact(store, selected, now);
+  const basePolicyState = await policyStore.loadOrCreate({
+    policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+    now,
+    maxDeliveryKind: DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  });
+  const activationBinding = await activationStore.loadActiveBinding();
+  const policyState = activationBinding
+    ? await policyStore.save(applyResidentActivationBindingToPolicyState({
+        state: basePolicyState,
+        binding: activationBinding,
+        now,
+      }))
+    : basePolicyState;
   const boundary = mapPeerInitiativeBoundary({
     candidate: selected,
     attentionAdmission: input.attentionAdmission,
     operationBoundary: input.operationBoundary,
+    policyState,
     now,
   });
   const peerMetadata = {
@@ -527,6 +551,16 @@ export async function triggerResidentPeerInitiative(
     ),
     deliveredAt: delivery.status === "delivered" ? delivery.delivered_at ?? now : undefined,
   });
+  if (
+    boundary.thresholdDecision.budget_debit > 0
+    && (delivery.status === "delivered" || delivery.status === "pending_send")
+  ) {
+    await policyStore.recordBudgetDebit({
+      policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+      amount: boundary.thresholdDecision.budget_debit,
+      debitedAt: delivery.delivered_at ?? now,
+    });
+  }
   await persistResidentActivity(context, {
     kind: delivery.status === "delivered" ? "observation" : "skipped",
     trigger: "proactive_tick",

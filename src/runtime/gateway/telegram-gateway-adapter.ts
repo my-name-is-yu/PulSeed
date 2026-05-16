@@ -27,8 +27,14 @@ import {
 import { PluginChannelRuntimeStateStore, type GatewayChannelTimingSnapshot } from "../store/plugin-channel-runtime-state-store.js";
 import { FeedbackIngestionStore } from "../store/feedback-ingestion-store.js";
 import {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  ProactivePolicyStateStore,
+} from "../store/index.js";
+import {
   PeerInitiativeStore,
   peerInitiativeFeedbackToIngestionInput,
+  peerFeedbackProjectionToProactivePolicyEvent,
   projectPeerInitiativeFeedback,
   type PeerDeliveryRecord,
 } from "../peer-initiative/index.js";
@@ -208,6 +214,7 @@ interface TelegramGatewayRuntimeOptions {
   runtimeBaseDir?: string;
   controlBaseDir?: string;
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
+  proactivePolicyStateStore?: Pick<ProactivePolicyStateStore, "applyEvents">;
   peerInitiativeStore?: Pick<
     PeerInitiativeStore,
     "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
@@ -324,6 +331,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
+  private readonly proactivePolicyStateStore: Pick<ProactivePolicyStateStore, "applyEvents">;
   private readonly peerInitiativeStore: Pick<
     PeerInitiativeStore,
     "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
@@ -341,6 +349,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(runtimeBaseDir, { controlBaseDir });
     this.feedbackIngestionStore = options.feedbackIngestionStore
       ?? new FeedbackIngestionStore(runtimeBaseDir, { controlBaseDir });
+    this.proactivePolicyStateStore = options.proactivePolicyStateStore
+      ?? new ProactivePolicyStateStore(runtimeBaseDir, { controlBaseDir });
     this.peerInitiativeStore = options.peerInitiativeStore
       ?? new PeerInitiativeStore(runtimeBaseDir, { controlBaseDir });
     this.timing = new TelegramGatewayTimingRecorder(this.name);
@@ -583,12 +593,22 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         recordedAt: now,
         surfaceRef: telegramOutboundTargetBindingRef(chatId),
       }), { now });
-      await this.peerInitiativeStore.appendFeedbackProjection(projectPeerInitiativeFeedback({
+      const projection = await this.peerInitiativeStore.appendFeedbackProjection(projectPeerInitiativeFeedback({
         action: feedbackAction,
         result,
         sourceSurface: "telegram",
         projectedAt: now,
       }));
+      await this.proactivePolicyStateStore.applyEvents({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now,
+        maxDeliveryKind: DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+        events: [peerFeedbackProjectionToProactivePolicyEvent(projection)],
+      }).catch(async (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("TelegramGatewayAdapter: failed to apply peer feedback calibration policy", message);
+        await this.recordHealth({ last_error: message });
+      });
       await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
         this.api.answerCallbackQuery(query.id, telegramPeerFeedbackAckText(feedbackAction.action))
       );

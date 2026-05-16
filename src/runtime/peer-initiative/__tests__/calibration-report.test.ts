@@ -99,6 +99,17 @@ describe("peer initiative diagnostics", () => {
         not_now_count: 1,
       },
       recommendation: "review_relationship_reading",
+      relationship_review: {
+        review_item_count: 1,
+        pending_wrong_read_count: 1,
+        relationship_profile_write_performed: false,
+        raw_refs_visible: false,
+        items: [expect.objectContaining({
+          review_reason: "wrong_read_feedback",
+          relationship_profile_write_performed: false,
+          raw_refs_visible: false,
+        })],
+      },
     });
     expect(JSON.stringify(report)).not.toContain("candidate:1");
   });

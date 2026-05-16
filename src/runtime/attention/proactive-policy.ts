@@ -16,7 +16,7 @@ const DateTimeStringSchema = z.string().datetime();
 
 const ProactivityDefaultProfileSchema = z.object({
   profile_id: z.literal("helpful_nudge"),
-  default_max_delivery_kind: z.literal("suggest"),
+  default_max_delivery_kind: z.literal("notify"),
   digest_bias: z.literal("low_value_or_recently_dismissed"),
   notify_requires: z.literal("high_urgency_or_deadline_risk"),
   ask_requires: z.literal("missing_user_decision_or_exact_approval"),
@@ -27,7 +27,7 @@ export type ProactivityDefaultProfile = z.infer<typeof ProactivityDefaultProfile
 
 export const HelpfulNudgeProactivityProfile: ProactivityDefaultProfile = {
   profile_id: "helpful_nudge",
-  default_max_delivery_kind: "suggest",
+  default_max_delivery_kind: "notify",
   digest_bias: "low_value_or_recently_dismissed",
   notify_requires: "high_urgency_or_deadline_risk",
   ask_requires: "missing_user_decision_or_exact_approval",
@@ -138,7 +138,7 @@ export function createProactivePolicyState(input: {
     schema_version: "proactive-policy-state/v1",
     policy_id: input.policyId,
     mode: input.mode ?? "active",
-    max_delivery_kind: input.maxDeliveryKind ?? "suggest",
+    max_delivery_kind: input.maxDeliveryKind ?? HelpfulNudgeProactivityProfile.default_max_delivery_kind,
     default_profile: HelpfulNudgeProactivityProfile,
     ...(input.budget ? { interruption_budget: input.budget } : {}),
     cooldown_refs: [],
