@@ -9,6 +9,9 @@ import { createTextUserInput } from "../user-input.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { runResidentCommitmentAttentionCycle } from "../../../runtime/daemon/runner-resident-proactive.js";
+import type { DaemonRunnerResidentContext } from "../../../runtime/daemon/runner-resident-shared.js";
+import { PeerInitiativeStore } from "../../../runtime/peer-initiative/index.js";
 import { AttentionStateStore } from "../../../runtime/store/attention-state-store.js";
 import {
   CommitmentCandidateExtractionSchema,
@@ -139,6 +142,28 @@ function turnContext(text: string) {
   });
 }
 
+function residentContext(baseDir: string, store: AttentionStateStore): Pick<
+  DaemonRunnerResidentContext,
+  "baseDir" | "config" | "state" | "logger" | "saveDaemonState" | "attentionStateStore"
+> {
+  return {
+    baseDir,
+    config: { runtime_root: "runtime" } as DaemonRunnerResidentContext["config"],
+    state: {
+      started_at: "2026-05-17T00:00:00.000Z",
+      loop_count: 3,
+    } as DaemonRunnerResidentContext["state"],
+    logger: {
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    } as never,
+    saveDaemonState: vi.fn(async () => {}),
+    attentionStateStore: store,
+  };
+}
+
 describe("chat commitment attention bridge", () => {
   it("records from the real ChatRunner gateway caller path without changing response generation", async () => {
     const baseDir = tmpDir();
@@ -202,6 +227,105 @@ describe("chat commitment attention bridge", () => {
       expect.objectContaining({
         summary: "Fix the pitch deck by tomorrow.",
         materialization_state: "shadow_held",
+        scope: expect.objectContaining({
+          permissionScope: "read_only",
+        }),
+      }),
+    ]);
+  });
+
+  it("lets a ChatRunner-created due commitment re-enter resident operation selection without hand-seeded scope", async () => {
+    const baseDir = tmpDir();
+    const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+    await stateManager.init();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: adapter(),
+      llmClient: llmClient("Visible gateway response."),
+      commitmentCandidateClassifier: classifierForExtraction({
+        outcome: "candidate",
+        summary: "Review the pitch deck today.",
+        due: {
+          window_start: "2026-05-17T00:00:00.000Z",
+          window_end: "2026-05-17T01:00:00.000Z",
+          uncertainty: "medium",
+          reason: "current test window",
+        },
+        owner: "user",
+        confidence: 0.88,
+        sensitivity: "internal",
+        allowed_memory_use: "attention_only",
+        nudge_policy: "allowed",
+        watch_vector: ["deadline", "related_conversation"],
+      }),
+      attentionStateStore: store,
+    });
+
+    const result = await runner.executeIngressMessage({
+      ingress_id: "ingress-1",
+      received_at: "2026-05-17T00:00:00.000Z",
+      channel: "plugin_gateway",
+      platform: "telegram",
+      identity_key: "telegram:user-1",
+      conversation_id: "chat-1",
+      message_id: "message-1",
+      user_id: "user-1",
+      text: "今日ピッチ資料を見る",
+      userInput: createTextUserInput("今日ピッチ資料を見る"),
+      actor: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: "chat-1",
+        identity_key: "telegram:user-1",
+        user_id: "user-1",
+      },
+      runtimeControl: {
+        allowed: false,
+        approvalMode: "disallowed",
+      },
+      metadata: { gateway_message: true },
+      replyTarget: {
+        surface: "gateway",
+        platform: "telegram",
+        conversation_id: "chat-1",
+        identity_key: "telegram:user-1",
+        user_id: "user-1",
+        deliveryMode: "reply",
+      },
+    }, "/repo", 30_000, {
+      kind: "gateway_model_loop",
+      reason: "direct_model_tool_loop",
+      replyTargetPolicy: "turn_reply_target",
+      eventProjectionPolicy: "turn_only",
+      concurrencyPolicy: "session_serial",
+    });
+    expect(result.success).toBe(true);
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({
+        summary: "Review the pitch deck today.",
+        materialization_state: "watching",
+        scope: expect.objectContaining({
+          permissionScope: "read_only",
+        }),
+      }),
+    ]);
+
+    await expect(runResidentCommitmentAttentionCycle(
+      residentContext(baseDir, store),
+      "2026-05-17T00:00:00.000Z",
+    )).resolves.toBe(true);
+    await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({
+        selected_state: "held",
+        candidate: expect.objectContaining({
+          max_delivery_kind: "suggest",
+          action_plan: expect.objectContaining({
+            mode: "internal_preparation",
+            preparation_kind: "followup_candidate",
+          }),
+        }),
       }),
     ]);
   });
@@ -220,6 +344,9 @@ describe("chat commitment attention bridge", () => {
       materialization_state: "shadow_held",
       nudge_policy: "ask_first",
       allowed_memory_use: "attention_only",
+      scope: expect.objectContaining({
+        permissionScope: "read_only",
+      }),
     });
     expect(result.attentionInputIntake?.accepted[0]).toMatchObject({
       source: expect.objectContaining({

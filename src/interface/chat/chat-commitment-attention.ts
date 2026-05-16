@@ -177,7 +177,7 @@ function commitmentScopeForTurn(input: {
     sessionId: session.sessionId ?? null,
     surfaceClass: surfaceClassForRoute(input.routeKind, runtime.replyTarget?.platform),
     surfaceRef: input.surfaceRef?.id ?? null,
-    permissionScope: "local_only",
+    permissionScope: "read_only",
     sensitivity: "medium",
     memoryOwner: null,
     policyEpoch: input.policyEpoch,
