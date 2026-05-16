@@ -107,7 +107,13 @@ function soilRecordStatusForAgentMemoryStatus(status: AgentMemoryStatus): SoilRe
       return "forgotten";
     case "quarantined":
       return "quarantined";
+    case "conflicted":
+      return "conflicted";
   }
+}
+
+function isActiveAgentMemoryStatus(status: AgentMemoryStatus): boolean {
+  return status === "raw" || status === "compiled";
 }
 
 function soilRecordStatusForLearnedPattern(confidence: number): SoilRecordStatus {
@@ -334,9 +340,9 @@ function buildRecordFromAgentMemory(
     goal_id: null,
     task_id: null,
     status: recordStatus,
-    is_active: entry.status !== "archived",
+    is_active: isActiveAgentMemoryStatus(entry.status),
     valid_from: createdAt,
-    valid_to: entry.status === "archived" ? updatedAt : null,
+    valid_to: isActiveAgentMemoryStatus(entry.status) ? null : updatedAt,
     source_type: "agent_memory",
     source_id: entry.id,
     confidence: DEFAULT_CONFIDENCE,
@@ -401,12 +407,12 @@ function buildRecordFromAgentMemory(
   });
 
   const tombstone: SoilTombstone | null =
-    entry.status === "archived"
+    !isActiveAgentMemoryStatus(entry.status)
       ? SoilTombstoneSchema.parse({
           record_id: previous?.is_active ? previous.record_id : recordId,
           record_key: previous?.is_active ? previous.record_key : record.record_key,
           version: previous?.is_active ? previous.version : record.version,
-          reason: "archived agent memory entry",
+          reason: `${entry.status} agent memory entry`,
           deleted_at: updatedAt,
         })
       : null;

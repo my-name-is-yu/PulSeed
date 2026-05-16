@@ -372,7 +372,8 @@
       "KnowledgeManager.correctAgentMemory -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
       "KnowledgeManager domain/shared knowledge load/save/query adapters -> MemoryTruthMaintenanceStore",
       "KnowledgeQueryTool semantic requests -> explicit semantic/semantic_unavailable mode contract",
-      "Soil agent memory projection after save/correction/forget/retract",
+      "Soil agent memory projection after save/correction/forget/retract/conflict",
+      "Soil runtime rebuild -> KnowledgeMemoryStateStore truth-aware loads -> MemoryTruthMaintenanceStore",
       "RuntimeEventLogStore memory.truth_maintenance.recorded event and rebuild summary"
     ],
     "fresh_audit_remediation": [
@@ -381,7 +382,10 @@
       "User memory correction traces are recorded after the truth transaction succeeds, preventing authority/runtime evidence from claiming an uncommitted correction.",
       "KnowledgeManager.correctAgentMemory now supplies the typed correction commit hook, so dream_lint auto-repair uses the same correction transaction and Event Log / RuntimeGraph event path as CLI/tool memory corrections.",
       "Domain/shared knowledge owner loads now treat inactive truth rows as authoritative truth presence, so stale Soil compatibility records cannot resurrect superseded knowledge when active truth is empty.",
-      "KnowledgeQueryTool semantic requests now report semantic_unavailable with lexicalFallbackUsed=true when the semantic index is unavailable and do not silently return keyword results as semantic results."
+      "KnowledgeQueryTool semantic requests now report semantic_unavailable with lexicalFallbackUsed=true when the semantic index is unavailable and do not silently return keyword results as semantic results.",
+      "KnowledgeMemoryStateStore direct compatibility loads and Soil runtime rebuild now treat inactive domain/shared truth as authoritative, merge typed truth goal scopes, and overwrite stale shared/domain projections with empty active output instead of resurrecting stale Soil records.",
+      "CLI governance export redacts all inactive agent-memory content, including corrected, superseded, archived, quarantined, forgotten, retracted, and conflicted entries.",
+      "Conflicted agent-memory claims are typed as conflicted, load through the production KnowledgeManager API after restart, remain withheld from normal recall, and record withheld claim IDs with safeForNormalProjection=false."
     ],
     "guardrail_added": "check:database-first-legacy-stores fails production memory/knowledge/Soil StateManager.writeRaw calls through memory-knowledge-raw-state-manager-write.",
     "representative_tests_added": [
@@ -392,7 +396,10 @@
       "src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts exact/lexical/semantic/graph provenance caller path",
       "src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts production KnowledgeManager.correctAgentMemory transaction/event-log path",
       "src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts inactive truth blocks stale Soil fallback",
-      "src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts semantic_unavailable fallback contract"
+      "src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts semantic_unavailable fallback contract",
+      "src/platform/soil/__tests__/soil-runtime-rebuild-import.test.ts inactive domain/shared truth blocks runtime rebuild resurrection",
+      "src/interface/cli/commands/__tests__/memory.test.ts corrected memory export redaction",
+      "tests/replay/memory-truth-maintenance-replay.test.ts conflicted agent-memory restart/recall/export caller path"
     ],
     "runtime_state_ownership_2_full_repo_completion": "incomplete"
   }

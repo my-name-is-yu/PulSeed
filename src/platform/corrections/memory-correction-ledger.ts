@@ -84,7 +84,7 @@ export type MemoryCorrectionLedgerFile = z.infer<typeof MemoryCorrectionLedgerFi
 
 export const MemoryCorrectionTargetStateSchema = z.object({
   target_ref: MemoryCorrectionTargetRefSchema,
-  status: z.enum(["active", "corrected", "superseded", "retracted", "forgotten", "quarantined"]),
+  status: z.enum(["active", "corrected", "superseded", "retracted", "forgotten", "quarantined", "conflicted"]),
   active: z.boolean(),
   latest_correction_id: z.string().min(1).nullable().default(null),
   replacement_ref: MemoryCorrectionTargetRefSchema.nullable().default(null),

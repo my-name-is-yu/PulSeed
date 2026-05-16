@@ -13,6 +13,7 @@ const UserFacingMemoryInspectStateSchema = z.enum([
   "forgotten",
   "retracted",
   "suppressed",
+  "conflicted",
   "unknown",
 ]);
 
@@ -124,6 +125,8 @@ function stateFromAgentMemoryStatus(status: AgentMemoryEntry["status"]): z.infer
       return "retracted";
     case "quarantined":
       return "suppressed";
+    case "conflicted":
+      return "conflicted";
   }
 }
 
@@ -134,6 +137,7 @@ function stateFromCorrectionStatus(status: string): z.infer<typeof UserFacingMem
   if (status === "forgotten") return "forgotten";
   if (status === "retracted") return "retracted";
   if (status === "quarantined") return "suppressed";
+  if (status === "conflicted") return "conflicted";
   return "unknown";
 }
 

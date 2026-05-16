@@ -41,6 +41,9 @@
 - Fresh audit blocker: `KnowledgeManager.correctAgentMemory` could fall back to owner snapshots instead of the correction transaction. Fix: `KnowledgeManager.agentMemoryHost()` now provides `commitAgentMemoryCorrection`, and `knowledge-manager-lint.test.ts` proves the dream_lint production caller path writes `memory_correction_refs` plus a `memory.truth_maintenance.recorded` event.
 - Fresh audit blocker: domain/shared knowledge loads could fall back to stale Soil rows when typed truth contained only inactive claims. Fix: `hasDomainKnowledgeTruth` and `hasSharedKnowledgeTruth` make inactive truth authoritative for owner loads, and `knowledge-memory-state-store.test.ts` proves old Soil rows are not resurrected.
 - Fresh audit blocker: `KnowledgeQueryTool` semantic requests could silently return keyword fallback results. Fix: semantic queries now return `mode=semantic_unavailable`, `semanticIndexStatus=unavailable`, and `lexicalFallbackUsed=true` when no semantic index exists; when an index exists, empty semantic results remain empty and do not call keyword fallback.
+- Fresh audit blocker: `rebuildSoilFromRuntime` could reproject stale domain/shared knowledge through direct `KnowledgeMemoryStateStore` fallback. Fix: the compatibility store now treats inactive typed truth as authoritative, lists typed truth goal scopes, and runtime rebuild writes empty shared/domain projections when only inactive truth remains.
+- Fresh audit blocker: corrected agent memory was exportable through `cmdMemory export`. Fix: governance export redacts all inactive agent-memory statuses and the CLI command test proves corrected stale key/value content is absent while the active replacement remains visible.
+- Fresh audit blocker: conflicted agent-memory truth could not load through production memory APIs. Fix: typed correction state, agent-memory status, Soil status, recall records, and inspect projection now represent `conflicted`; replay coverage proves conflicted claims restart, load, stay withheld from normal recall, and redact from export.
 
 ## Verification Plan
 
@@ -51,6 +54,8 @@ Targeted first:
 - `npx vitest run --config vitest.product-gauntlet.config.ts tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts`
 - `npx vitest run src/platform/corrections/__tests__/user-memory-operations.test.ts src/platform/knowledge/__tests__/knowledge-manager-semantic-recall.test.ts src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts src/tools/execution/MemoryCorrectionTool/__tests__/MemoryCorrectionTool.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
 - `npx vitest run --config vitest.unit.config.ts src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts`
+- `npx vitest run --config vitest.unit.config.ts src/interface/cli/commands/__tests__/memory.test.ts src/platform/soil/__tests__/soil-runtime-rebuild-import.test.ts`
+- `npx vitest run --config vitest.replay.config.ts tests/replay/memory-truth-maintenance-replay.test.ts`
 
 Full required lane before final report:
 

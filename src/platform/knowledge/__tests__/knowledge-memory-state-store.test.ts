@@ -275,6 +275,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     });
 
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadDomainKnowledge("goal-1")).resolves.toMatchObject({ entries: [] });
     await expect(manager.loadKnowledge("goal-1")).resolves.toEqual([]);
 
     const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
@@ -307,6 +308,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     await saveSharedKnowledgeToTruth(baseDir, [{ ...active, superseded_by: "shared-replacement" }]);
 
     const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
     await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
 
     const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });

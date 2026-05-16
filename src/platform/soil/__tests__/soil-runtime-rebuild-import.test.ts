@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { writeJsonFileAtomic } from "../../../base/utils/json-io.js";
 import { KnowledgeMemoryStateStore } from "../../knowledge/knowledge-memory-state-store.js";
+import { saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../../knowledge/memory-truth-adapter.js";
 import { AgentMemoryStoreSchema } from "../../knowledge/types/agent-memory.js";
 import { ScheduleEntryStore } from "../../../runtime/schedule/entry-store.js";
 import { ScheduleEntrySchema } from "../../../runtime/types/schedule.js";
@@ -162,6 +163,65 @@ describe("Soil runtime rebuild", () => {
       expect(schedulePage?.frontmatter.source_refs[0]?.source_type).toBe("control_db");
       expect(schedulePage?.frontmatter.source_refs[0]?.source_path).toBe("control-db:schedule_entries");
       expect(schedulePage?.body).toContain("control-db-schedule");
+    } finally {
+      cleanupTempDir(baseDir);
+    }
+  });
+
+  it("does not rebuild stale domain or shared knowledge from Soil when typed truth is inactive", async () => {
+    const baseDir = makeTempDir("soil-runtime-rebuild-inactive-truth-");
+    try {
+      const knowledgeMemoryStore = new KnowledgeMemoryStateStore(baseDir);
+      const staleEntry = {
+        entry_id: "stale-editor",
+        question: "Which editor is current?",
+        answer: "Atom",
+        sources: [{ type: "document" as const, reference: "old-note", reliability: "high" as const }],
+        confidence: 0.9,
+        acquired_at: "2026-04-11T08:00:00.000Z",
+        acquisition_task_id: "task-1",
+        superseded_by: null,
+        tags: ["editor"],
+        embedding_id: null,
+      };
+      await knowledgeMemoryStore.saveDomainKnowledge({
+        goal_id: "goal-1",
+        domain: "goal-1",
+        last_updated: "2026-04-11T09:00:00.000Z",
+        entries: [staleEntry],
+      });
+      await knowledgeMemoryStore.saveSharedKnowledgeEntries([{
+        ...staleEntry,
+        source_goal_ids: ["goal-1"],
+        domain_stability: "moderate",
+        revalidation_due_at: null,
+      }]);
+      await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+
+      await saveDomainKnowledgeToTruth(baseDir, {
+        goal_id: "goal-1",
+        domain: "goal-1",
+        last_updated: "2026-04-11T09:00:00.000Z",
+        entries: [{ ...staleEntry, superseded_by: "replacement-editor" }],
+      });
+      await saveSharedKnowledgeToTruth(baseDir, [{
+        ...staleEntry,
+        superseded_by: "replacement-editor",
+        source_goal_ids: ["goal-1"],
+        domain_stability: "moderate",
+        revalidation_due_at: null,
+      }]);
+
+      const rebuilt = await rebuildSoilFromRuntime({ baseDir, clock: fixedClock });
+      const domainPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "domain", "goal-1.md"));
+      const sharedPage = await readSoilMarkdownFile(path.join(baseDir, "soil", "knowledge", "shared", "index.md"));
+
+      expect(rebuilt.projected.domainKnowledge).toBe(1);
+      expect(rebuilt.projected.sharedKnowledge).toBe(0);
+      expect(domainPage?.body).toContain("- Entries: 0");
+      expect(domainPage?.body).not.toContain("Atom");
+      expect(sharedPage?.body).toContain("- Entries: 0");
+      expect(sharedPage?.body).not.toContain("Atom");
     } finally {
       cleanupTempDir(baseDir);
     }

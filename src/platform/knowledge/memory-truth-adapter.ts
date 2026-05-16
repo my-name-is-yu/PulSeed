@@ -220,6 +220,20 @@ export async function hasDomainKnowledgeTruth(baseDir: string, goalId: string): 
   }
 }
 
+export async function listDomainKnowledgeTruthGoalIds(baseDir: string): Promise<string[]> {
+  const store = createMemoryTruthStore(baseDir);
+  try {
+    const claims = await store.listClaims({
+      ownerKind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+      claimType: "knowledge",
+      includeInactive: true,
+    });
+    return [...new Set(claims.map((claim) => claim.owner_scope))].sort((left, right) => left.localeCompare(right));
+  } finally {
+    await store.close();
+  }
+}
+
 export async function saveDomainKnowledgeToTruth(baseDir: string, input: DomainKnowledge): Promise<void> {
   const parsed = DomainKnowledgeSchema.parse(input);
   const store = createMemoryTruthStore(baseDir, { appendRuntimeEvents: true });
@@ -291,6 +305,7 @@ export async function recordAgentMemoryRecall(input: {
   query: string;
   entries: AgentMemoryEntry[];
   semanticIndexStatus?: "available" | "unavailable" | "not_requested";
+  withheldClaimIds?: string[];
 }): Promise<RecallRecord | null> {
   const store = createMemoryTruthStore(input.baseDir);
   const now = new Date().toISOString();
@@ -315,9 +330,10 @@ export async function recordAgentMemoryRecall(input: {
         trust_state: trustStateForVerification(entry.verification_status),
         safe_for_normal_projection: entry.status === "raw" || entry.status === "compiled",
       })),
-      withheld_claim_ids: [],
+      withheld_claim_ids: input.withheldClaimIds ?? [],
       semantic_index_status: input.semanticIndexStatus ?? "not_requested",
-      safe_for_normal_projection: input.entries.every((entry) => entry.status === "raw" || entry.status === "compiled"),
+      safe_for_normal_projection: (input.withheldClaimIds ?? []).length === 0
+        && input.entries.every((entry) => entry.status === "raw" || entry.status === "compiled"),
       created_at: now,
     });
   } finally {
@@ -686,6 +702,7 @@ function lifecycleForAgentMemory(entry: AgentMemoryEntry): MemoryClaimLifecycle 
   if (entry.status === "corrected" || entry.status === "superseded") return "corrected";
   if (entry.status === "retracted") return "retracted";
   if (entry.status === "forgotten") return "forgotten";
+  if (entry.status === "conflicted") return "conflicted";
   if (entry.status === "archived" || entry.status === "quarantined") return "archived";
   return "active";
 }
@@ -704,6 +721,7 @@ function agentMemoryStatusForLifecycle(lifecycle: MemoryClaim["lifecycle"], fall
   if (lifecycle === "corrected") return fallback === "superseded" ? "superseded" : "corrected";
   if (lifecycle === "forgotten") return "forgotten";
   if (lifecycle === "retracted") return "retracted";
+  if (lifecycle === "conflicted") return "conflicted";
   if (lifecycle === "archived") return fallback === "quarantined" ? "quarantined" : "archived";
   return fallback;
 }

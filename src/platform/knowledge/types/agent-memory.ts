@@ -22,7 +22,7 @@ export type AgentMemoryType = z.infer<typeof AgentMemoryTypeEnum>;
 
 // --- AgentMemoryStatus ---
 
-export const AgentMemoryStatusEnum = z.enum(["raw", "compiled", "archived", "corrected", "superseded", "retracted", "forgotten", "quarantined"]);
+export const AgentMemoryStatusEnum = z.enum(["raw", "compiled", "archived", "corrected", "superseded", "retracted", "forgotten", "quarantined", "conflicted"]);
 export type AgentMemoryStatus = z.infer<typeof AgentMemoryStatusEnum>;
 
 // --- AgentMemoryEntry ---

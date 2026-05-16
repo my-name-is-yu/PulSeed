@@ -49,6 +49,9 @@ GitHub state confirmed before implementation:
 - `KnowledgeManager.correctAgentMemory` now uses the typed correction commit hook, so dream_lint/runtime repair callers use the same transaction/event path as CLI and tool memory corrections.
 - Domain/shared knowledge owner loads treat inactive typed truth rows as authoritative truth presence and do not fall back to stale Soil compatibility records when active truth is empty.
 - `KnowledgeQueryTool` reports `semantic_unavailable` and `lexicalFallbackUsed=true` for semantic requests without a semantic index; available semantic searches that return no matches do not silently use keyword results.
+- `KnowledgeMemoryStateStore` and `rebuildSoilFromRuntime` use typed truth presence before compatibility Soil reads, so runtime rebuild does not reproject stale domain/shared knowledge when typed truth contains only inactive claims.
+- CLI memory export redacts inactive corrected/superseded/forgotten/retracted/quarantined/archived/conflicted memory content; active replacements remain visible through normal governance filters.
+- Conflicted agent-memory claims are represented in typed state, withheld from normal recall with `safeForNormalProjection=false`, and inspect/export paths do not expose the conflicting raw values on normal surfaces.
 - `check:database-first-legacy-stores` now has a negative guard for production memory/knowledge/Soil `StateManager.writeRaw`.
 
 Repo-wide completion can only be claimed after a later pass proves every non-memory domain has no production raw owner. This PR's completion target is Memory / Soil / Knowledge.

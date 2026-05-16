@@ -131,12 +131,72 @@ describe("memory truth-maintenance restart/replay invariants", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("restarts with conflicted agent-memory claims held out of normal recall and export", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "pulseed-memory-truth-conflict-replay-"));
+    try {
+      const truthStore = new MemoryTruthMaintenanceStore(root, { appendRuntimeEvents: false });
+      await truthStore.saveOwnerSnapshot({
+        ownerKind: "agent_memory",
+        ownerScope: "default",
+        claims: [
+          conflictClaim("conflict:one", "timezone", "UTC", "agent_memory"),
+          conflictClaim("conflict:two", "timezone", "Asia/Tokyo", "agent_memory"),
+        ],
+        conflictSets: [{
+          conflict_set_id: "conflict:set:timezone",
+          claim_ids: ["conflict:one", "conflict:two"],
+          status: "held",
+          resolution_claim_id: null,
+          reason: "Two timezone claims conflict and must stay held after restart.",
+          created_at: "2026-05-16T00:12:00.000Z",
+          updated_at: "2026-05-16T00:12:00.000Z",
+          operator_explanation_refs: ["operator:memory-conflict"],
+        }],
+        emitRuntimeEvent: false,
+      });
+
+      const restartedState = new StateManager(root, undefined, { walEnabled: false });
+      await restartedState.init();
+      const restartedManager = new KnowledgeManager(restartedState, {} as ILLMClient);
+      const store = await restartedManager.loadAgentMemoryStore();
+      const recall = await restartedManager.recallAgentMemoryWithProvenance("timezone", { mode: "lexical" });
+      const exported = await restartedManager.exportAgentMemoryGovernance();
+
+      expect(store.entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "conflict:one",
+          status: "conflicted",
+          correction_state: expect.objectContaining({ status: "conflicted", active: false }),
+        }),
+        expect.objectContaining({
+          id: "conflict:two",
+          status: "conflicted",
+          correction_state: expect.objectContaining({ status: "conflicted", active: false }),
+        }),
+      ]));
+      expect(recall.entries).toEqual([]);
+      expect(recall.recall).toMatchObject({
+        mode: "lexical",
+        safeForNormalProjection: false,
+        withheldClaimIds: expect.arrayContaining(["conflict:one", "conflict:two"]),
+      });
+      expect(exported).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "conflict:one", key: "[redacted]", summary: null, status: "conflicted" }),
+        expect.objectContaining({ id: "conflict:two", key: "[redacted]", summary: null, status: "conflicted" }),
+      ]));
+      expect(JSON.stringify(exported)).not.toContain("Asia/Tokyo");
+      expect(JSON.stringify(exported)).not.toContain("UTC");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
-function conflictClaim(claimId: string, subject: string, value: string) {
+function conflictClaim(claimId: string, subject: string, value: string, ownerKind = "agent_memory_conflict_replay") {
   return {
     claim_id: claimId,
-    owner_kind: "agent_memory_conflict_replay",
+    owner_kind: ownerKind,
     owner_scope: "default",
     claim_type: "fact" as const,
     subject,

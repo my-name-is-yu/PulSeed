@@ -25,6 +25,9 @@ import {
   type MemoryCorrectionEntry,
 } from "../corrections/memory-correction-ledger.js";
 import {
+  hasDomainKnowledgeTruth,
+  hasSharedKnowledgeTruth,
+  listDomainKnowledgeTruthGoalIds,
   loadAgentMemoryStoreFromTruth,
   loadDomainKnowledgeFromTruth,
   loadSharedKnowledgeFromTruth,
@@ -148,6 +151,7 @@ function soilStatusForAgentMemory(entry: AgentMemoryEntry): SoilRecord["status"]
     case "retracted": return "retracted";
     case "forgotten": return "forgotten";
     case "quarantined": return "quarantined";
+    case "conflicted": return "conflicted";
     case "raw":
     case "compiled":
       return "active";
@@ -162,6 +166,7 @@ function isActiveAgentMemoryEntry(entry: AgentMemoryEntry): boolean {
 function lifecycleStateForAgentMemory(entry: AgentMemoryEntry): "active" | "superseded" | "archived" | "tombstoned" {
   if (entry.status === "corrected" || entry.status === "superseded") return "superseded";
   if (entry.status === "forgotten" || entry.status === "retracted") return "tombstoned";
+  if (entry.status === "conflicted") return "archived";
   if (entry.status === "archived" || entry.status === "quarantined") return "archived";
   return "active";
 }
@@ -465,6 +470,7 @@ export class KnowledgeMemoryStateStore {
   async loadDomainKnowledge(goalId: string): Promise<DomainKnowledge> {
     const truth = await loadDomainKnowledgeFromTruth(this.baseDir, goalId);
     if (truth.entries.length > 0) return truth;
+    if (await hasDomainKnowledgeTruth(this.baseDir, goalId)) return truth;
     const repo = await this.openRepository();
     try {
       const stateRecords = await repo.loadRecords({
@@ -500,9 +506,10 @@ export class KnowledgeMemoryStateStore {
   async listDomainKnowledgeGoalIds(): Promise<string[]> {
     const repo = await this.openRepository();
     try {
-      return (await repo.loadRecords({ source_types: [SOURCE_DOMAIN_STATE] }))
+      const soilGoalIds = (await repo.loadRecords({ source_types: [SOURCE_DOMAIN_STATE] }))
         .map((record) => record.source_id)
-        .sort((left, right) => left.localeCompare(right));
+      const truthGoalIds = await listDomainKnowledgeTruthGoalIds(this.baseDir);
+      return [...new Set([...soilGoalIds, ...truthGoalIds])].sort((left, right) => left.localeCompare(right));
     } finally {
       repo.close();
     }
@@ -559,6 +566,7 @@ export class KnowledgeMemoryStateStore {
   async loadSharedKnowledgeEntries(): Promise<SharedKnowledgeEntry[]> {
     const truth = await loadSharedKnowledgeFromTruth(this.baseDir);
     if (truth.length > 0) return truth;
+    if (await hasSharedKnowledgeTruth(this.baseDir)) return truth;
     const repo = await this.openRepository();
     try {
       const entries = (await repo.loadRecords({ source_types: [SOURCE_SHARED_ENTRY] }))

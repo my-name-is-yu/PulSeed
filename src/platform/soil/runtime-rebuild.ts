@@ -6,6 +6,7 @@ import { DecisionRecordSchema } from "../../base/types/knowledge.js";
 import { readJsonFileOrNull } from "../../base/utils/json-io.js";
 import { ScheduleEntryStore } from "../../runtime/schedule/entry-store.js";
 import { KnowledgeMemoryStateStore } from "../knowledge/knowledge-memory-state-store.js";
+import { hasSharedKnowledgeTruth } from "../knowledge/memory-truth-adapter.js";
 import type { SoilIndexSnapshot } from "./index-store.js";
 import { rebuildSoilIndex } from "./index-store.js";
 import { readSoilMarkdownFile } from "./io.js";
@@ -216,7 +217,7 @@ export async function rebuildSoilFromRuntime(input: SoilRuntimeRebuildInput): Pr
   }
 
   const shared = await knowledgeMemoryStore.loadSharedKnowledgeEntries();
-  if (shared.length > 0) {
+  if (shared.length > 0 || await hasSharedKnowledgeTruth(input.baseDir)) {
     await projectSharedKnowledgeToSoil({ ...projectionBase, entries: shared });
     projected.sharedKnowledge = shared.length;
   }
