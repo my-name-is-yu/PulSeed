@@ -97,8 +97,8 @@ pulseed runtime proactive-feedback --intervention <id> --outcome overreach --ove
 Valid overreach indicators are `too_frequent`, `wrong_context`, `sensitive`, and
 `unwanted_timing`.
 `peer-initiative-capability` is a current-claim diagnostic: outbound peer
-initiative delivery is Telegram MVP only until channel budgets, explicit opt-in,
-and feedback calibration exist for other surfaces.
+initiative delivery is Telegram-only until channel budgets, explicit opt-in, and
+feedback calibration exist for other surfaces.
 
 ## Schedules
 

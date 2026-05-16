@@ -1,6 +1,6 @@
 # Section 9 Companion Surface Closure
 
-Status: accepted 2026-05-16
+> Status: accepted 2026-05-16
 
 This note closes the design-first decisions from
 `tmp/pulseed-doraemon-software-gap-and-design-research-20260514.md` Section 9.
@@ -57,6 +57,6 @@ ids.
 
 ## Peer Initiative Current Claim
 
-Peer initiative current capability is Telegram MVP only. Future surfaces remain
-contract-only until channel budgets, explicit opt-in, and feedback calibration
-exist.
+Peer initiative current capability is Telegram-only outbound delivery. Future
+surfaces remain contract-only until channel budgets, explicit opt-in, and
+feedback calibration exist.

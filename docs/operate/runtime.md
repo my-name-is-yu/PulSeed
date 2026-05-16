@@ -154,7 +154,7 @@ pulseed runtime memory-provenance [--json]
 These are operator and debugging surfaces. They may expose raw IDs and
 diagnostic labels that normal user-facing chat should hide by default.
 `peer-initiative-capability` is the exception that deliberately narrows the
-current product claim: resident peer initiative delivery is Telegram MVP only.
+current product claim: resident peer initiative delivery is Telegram-only.
 
 The personal-agent diagnostic commands inspect the durable decision trace:
 SituationFrame, InitiativeEvent sequence, attention transitions, TaskCandidate,
