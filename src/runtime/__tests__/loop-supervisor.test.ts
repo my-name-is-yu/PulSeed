@@ -204,6 +204,37 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("releases reserved worker slots when admission tracing fails before DurableLoop execution", async () => {
+    const recordTrace = vi.fn()
+      .mockRejectedValueOnce(new Error("trace unavailable"))
+      .mockResolvedValue({} as never);
+    const { supervisor, mockCoreLoop, deps, runtimeRoot } = makeSupervisor(
+      async (goalId: string) => makeLoopResult({ goalId }),
+      { personalAgentRuntime: { recordTrace } },
+      { concurrency: 1, pollIntervalMs: 20 }
+    );
+    try {
+      await supervisor.start(["g-trace-retry"]);
+      await waitFor(() =>
+        recordTrace.mock.calls.length >= 2
+        && mockCoreLoop.run.mock.calls.some((call: unknown[]) => call[0] === "g-trace-retry")
+      );
+      await supervisor.shutdown();
+
+      expect(recordTrace).toHaveBeenCalledTimes(2);
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        "Failed to prepare durable goal execution",
+        expect.objectContaining({
+          goalId: "g-trace-retry",
+          error: "trace unavailable",
+        })
+      );
+      expect(supervisor.getState().workers.every((worker) => worker.goalId === null)).toBe(true);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("prefers durableLoopFactory over legacy coreLoopFactory", async () => {
     const durableLoop = {
       run: vi.fn().mockResolvedValue(makeLoopResult({ goalId: "g-durable-factory" })),
@@ -639,11 +670,16 @@ describe("LoopSupervisor", () => {
 
   it("runs at most N workers simultaneously", async () => {
     let concurrent = 0; let max = 0;
+    const slowAdmissionTrace = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 70));
+    });
     const { deps, runtimeRoot } = makeSupervisor(async () => {
       concurrent++; max = Math.max(max, concurrent);
       await new Promise((r) => setTimeout(r, 30));
       concurrent--;
       return makeLoopResult();
+    }, {
+      personalAgentRuntime: { recordTrace: slowAdmissionTrace },
     });
     const sv = new LoopSupervisor(deps, {
       concurrency: 2, pollIntervalMs: 20, maxCrashCount: 3,
@@ -653,8 +689,9 @@ describe("LoopSupervisor", () => {
     });
     try {
       await sv.start(["g1", "g2", "g3"]);
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 260));
       await sv.shutdown();
+      expect(slowAdmissionTrace).toHaveBeenCalled();
       expect(max).toBeLessThanOrEqual(2);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });

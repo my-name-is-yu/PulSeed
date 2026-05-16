@@ -239,7 +239,7 @@ export class LoopSupervisor {
     return {
       workers: this.workers.map(w => {
         const backgroundRun = this.activeBackgroundRuns.get(w.id);
-        const goalId = this.shutdownRelinquishedWorkerIds.has(w.id) ? null : w.getCurrentGoalId();
+        const goalId = this.shutdownRelinquishedWorkerIds.has(w.id) ? null : this.goalIdForWorker(w);
         return {
           workerId: w.id,
           goalId,
@@ -351,7 +351,7 @@ export class LoopSupervisor {
     if (!this.running || this.polling) return;
     this.polling = true;
 
-    const idleWorkers = this.workers.filter(w => w.isIdle());
+    const idleWorkers = this.workers.filter(w => w.isIdle() && !this.hasAssignedGoal(w));
 
     try {
       for (const worker of idleWorkers) {
@@ -408,6 +408,23 @@ export class LoopSupervisor {
     } finally {
       this.polling = false;
     }
+  }
+
+  private hasAssignedGoal(worker: GoalWorker): boolean {
+    for (const activeWorker of this.activeGoals.values()) {
+      if (activeWorker === worker) return true;
+    }
+    return false;
+  }
+
+  private goalIdForWorker(worker: GoalWorker): string | null {
+    const currentGoalId = worker.getCurrentGoalId();
+    if (currentGoalId) return currentGoalId;
+
+    for (const [goalId, activeWorker] of this.activeGoals.entries()) {
+      if (activeWorker === worker) return goalId;
+    }
+    return null;
   }
 
   private async claimNextDispatch(workerId: string): Promise<GoalActivation | null> {
@@ -520,15 +537,17 @@ export class LoopSupervisor {
   private async executeWorker(worker: GoalWorker, activation: GoalActivation, abortSignal?: AbortSignal): Promise<void> {
     const { goalId } = activation;
     let ownershipLost = false;
-    this.installWriteFence(activation);
-    const stopRenewal = this.startLeaseRenewLoop(activation, () => {
-      ownershipLost = true;
-    });
-    this.setActiveBackgroundRun(worker, activation);
-    await this.recordGoalRunAdmission(worker, activation);
-    await this.markBackgroundRunStarted(activation, worker);
+    let stopRenewal: (() => void) | null = null;
 
     try {
+      this.installWriteFence(activation);
+      stopRenewal = this.startLeaseRenewLoop(activation, () => {
+        ownershipLost = true;
+      });
+      this.setActiveBackgroundRun(worker, activation);
+      await this.recordGoalRunAdmission(worker, activation);
+      await this.markBackgroundRunStarted(activation, worker);
+
       const result: WorkerResult = await worker.execute(goalId, {
         ...(activation.backgroundRun ? { backgroundRun: activation.backgroundRun } : {}),
         ...(activation.waitResume ? { waitResume: activation.waitResume } : {}),
@@ -590,8 +609,17 @@ export class LoopSupervisor {
 
       await this.markBackgroundRunTerminal(activation, result);
       await this.completeClaim(activation, ownershipLost);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.deps.logger?.warn('Failed to prepare durable goal execution', {
+        goalId,
+        claimToken: activation.claim.claimToken,
+        workerId: worker.id,
+        error: reason,
+      });
+      await this.failClaim(activation, reason, true, ownershipLost);
     } finally {
-      stopRenewal();
+      stopRenewal?.();
       this.clearWriteFence(goalId);
       await this.releaseExecutionLease(activation);
       this.activeGoals.delete(goalId);
