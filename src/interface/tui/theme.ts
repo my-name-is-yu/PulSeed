@@ -1,7 +1,7 @@
 // ─── Theme ───
 //
 // Centralized brand color palette and semantic theme for all TUI components.
-// Based on docs/design/personality/brand.md hex values.
+// Based on the public PulSeed brand colors used by the docs/product surface.
 // seedy-art.ts already uses hex directly and is excluded from this system.
 
 import type { Report } from "../../base/types/report.js";

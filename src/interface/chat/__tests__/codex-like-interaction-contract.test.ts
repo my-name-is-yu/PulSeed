@@ -29,7 +29,7 @@ interface InteractionContract {
 function loadContract(): InteractionContract {
   const contractPath = path.join(
     process.cwd(),
-    "docs/design/execution/codex-like-interaction-contract.golden.json",
+    "tests/fixtures/codex-like-interaction-contract.golden.json",
   );
   return JSON.parse(fs.readFileSync(contractPath, "utf8")) as InteractionContract;
 }

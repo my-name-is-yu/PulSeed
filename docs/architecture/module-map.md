@@ -1,5 +1,7 @@
 # Module Map
 
+> Status: Current module map. This page is a navigation aid for the current source tree.
+
 This is the current module map for the reorganized codebase.
 It is intentionally oriented around stable directories and major entry points rather than an exhaustive per-file inventory.
 

@@ -1,5 +1,7 @@
 # Concepts
 
+> Status: Current concepts index. This page explains code-backed concepts before readers enter design history.
+
 Use this page when you want to understand how PulSeed works before reading
 design documents or source code.
 
@@ -15,6 +17,10 @@ PulSeed's current implementation has a small set of code-backed concepts:
   closer to completion."
 - **Runtime surfaces** expose the same core state through CLI, TUI, daemon,
   schedules, gateway channels, and diagnostics.
+
+Terminology bridge:
+
+- [Glossary](glossary.md)
 
 Read next:
 

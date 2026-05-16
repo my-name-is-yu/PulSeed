@@ -10,19 +10,19 @@ context.
 
 ## One-Sentence Definition
 
-PulSeed is companion software that remembers what matters to a person, follows
-changing context over time, and brings the right capability into the moment when
-help is needed.
+PulSeed is Your Personal Agentic Friend: companion software that remembers what
+matters to a person, follows changing context over time, and brings the right
+capability into the moment when help is needed.
 
 ## What PulSeed Is
 
 PulSeed is designed for goals and life contexts that do not fit into a single
 chat session, automation trigger, or task ticket.
 
-It is designed to stay with one person over long periods, carry durable context about
-their goals, preferences, relationship, and situation, notice important changes,
-and act or ask at the right time. The target category is closer to a practical
-everyday companion with a pocket of capabilities than to a task runner.
+It is designed to stay with one person over long periods, carry durable context
+about their goals, preferences, relationship, and situation, notice important
+changes, and act or ask at the right time. The target category is closer to a
+practical everyday friend with a pocket of capabilities than to a task runner.
 
 ## Implemented Foundation
 
@@ -34,8 +34,9 @@ progress, preserve state under `~/.pulseed/`, and keep work moving through
 surfaces such as chat, CLI, TUI, daemon, and schedules.
 
 That foundation is the first practical expression of the category, not the whole
-category. Long-running task execution is the engine PulSeed uses to make
-companion software observable, inspectable, and useful from a local machine.
+category. Long-running task execution is the engine PulSeed uses to make the
+agentic-friend contract observable, inspectable, and useful from a local
+machine.
 
 ## What PulSeed Is Not
 
@@ -67,16 +68,17 @@ PulSeed's product contract is durable everyday companionship:
   boundaries
 - learn from outcomes, corrections, and preference changes over time
 
-In short: orchestration is the engine; dependable everyday companionship is the
-category PulSeed is designed to define.
+In short: orchestration is the engine; dependable everyday agentic friendship is
+the category PulSeed is designed to define.
 
 ## How To Summarize PulSeed
 
 Good short summary:
 
-> PulSeed is companion software for goals that take time. Its current foundation is
-> long-running goal orchestration: it remembers goals, brings in tools and
-> agents, verifies progress, and keeps moving across time.
+> PulSeed is your personal agentic friend for goals and situations that take
+> time. Its current foundation is long-running goal orchestration: it remembers
+> goals, brings in tools and agents, verifies progress, and keeps moving across
+> time.
 
 Incomplete summary:
 

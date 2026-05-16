@@ -1,14 +1,14 @@
 # Soil System Design
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > Soil is PulSeed's human-readable knowledge surface and retrieval interface.
 > Runtime stores remain authoritative for writes; Soil keeps a typed retrieval
 > store plus Markdown projections for inspection, audit, and agent context.
 
-> Related: `memory-lifecycle.md`, `learning-pipeline.md`, `knowledge-acquisition.md`, `../core/dream-mode.md`
+> Related: `memory-lifecycle.md`, `learning-pipeline.md`, `knowledge-acquisition.md`, `../companion/dream-mode.md`
 
-> Current implementation note: Soil is not just a documentation surface. `soil_query` is now available to the native AgentLoop and to selected DurableLoop phases such as `knowledge_refresh`, `replanning_options`, and `verification_evidence`, making Soil part of live execution rather than a passive export.
+> Implementation alignment: Soil is not just a documentation surface. `soil_query` is now available to the native AgentLoop and to selected DurableLoop phases such as `knowledge_refresh`, `replanning_options`, and `verification_evidence`, making Soil part of live execution rather than a passive export.
 
 ---
 

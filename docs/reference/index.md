@@ -1,5 +1,7 @@
 # Reference
 
+> Status: Current reference index. Use linked pages for exact command and state details.
+
 Use this section when you need exact command, configuration, runtime, or package
 details.
 

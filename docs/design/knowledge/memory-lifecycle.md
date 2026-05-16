@@ -1,13 +1,13 @@
 # Memory Lifecycle Design
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > PulSeed runs for years. Data accumulates without bound, but LLM context windows are finite.
 > This document defines how to manage accumulating data hierarchically, and how to surface the right memories at the right time.
 
 > Related: `session-and-context.md`, `knowledge-acquisition.md`, `reporting.md`, `state-vector.md`, `drive-system.md`, `curiosity.md`, `stall-detection.md`
 
-> Current implementation note: long-term memory is now consumed not only by session context builders but also by the native AgentLoop and Soil query path. Memory should be read as part of a shared substrate used by DurableLoop, AgentLoop, chat, and Soil rather than as a passive store behind one flat loop.
+> Implementation alignment: long-term memory is now consumed not only by session context builders but also by the native AgentLoop and Soil query path. Memory should be read as part of a shared substrate used by DurableLoop, AgentLoop, chat, and Soil rather than as a passive store behind one flat loop.
 
 ---
 

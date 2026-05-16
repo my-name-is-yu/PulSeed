@@ -1,5 +1,7 @@
 # Mechanism
 
+> Status: Current mechanism overview. This page explains the implemented execution model at a conceptual level.
+
 This page explains the current PulSeed execution model. For commands, see
 [Runtime](../operate/runtime.md) and [CLI Reference](../reference/cli.md).
 

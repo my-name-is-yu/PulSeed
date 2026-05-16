@@ -75,20 +75,15 @@ const docsWithRequiredStatus = [
   {
     label: 'design document',
     matches: (relativePath) =>
-      [
-        'docs/design/core/',
-        'docs/design/execution/',
-        'docs/design/goal/',
-        'docs/design/infrastructure/',
-        'docs/design/knowledge/',
-        'docs/design/personality/',
-      ].some((dir) => relativePath.startsWith(dir)) && relativePath.endsWith('.md'),
+      relativePath.startsWith('docs/design/') &&
+      relativePath !== 'docs/design/index.md' &&
+      relativePath.endsWith('.md'),
   },
   {
-    label: 'archived design note',
+    label: 'current public document',
     matches: (relativePath) =>
-      relativePath.startsWith('docs/design/archive/') &&
-      relativePath !== 'docs/design/archive/index.md',
+      relativePath.endsWith('.md') &&
+      publicCurrentDirs.some((dir) => relativePath.startsWith(dir)),
   },
 ];
 const stagingTermPatterns = [
@@ -109,8 +104,54 @@ const stagingTermPatterns = [
   /\bwave\s*[0-9]+\b/i,
   /\bstage\s*14[A-Z-]*\b/i,
 ];
+const publicPolishPatterns = [
+  {
+    pattern: /\bDesign document\. Verify behavior\b/i,
+    message: 'public docs should use a public status banner, not an internal verification warning',
+  },
+  {
+    pattern: /\bArchived design document\b/i,
+    message: 'historical docs should use public historical-context wording, not archived-internal wording',
+  },
+  {
+    pattern: /\bCurrent implementation note:/i,
+    message: 'public docs should use implementation-alignment wording, not internal note wording',
+  },
+  {
+    pattern: /^> Status:.*\b(?:issue\s+#\d+|contract slice|regression slice|projection slice)\b/i,
+    message: 'status banners should describe public maturity, not internal issue or slice bookkeeping',
+  },
+  {
+    pattern: /\bPlanned Commits\b/i,
+    message: 'public docs should not expose an internal commit plan',
+  },
+  {
+    pattern: /\bissue-to-module\b/i,
+    message: 'public docs should describe contract ownership, not issue-to-module handoff language',
+  },
+  {
+    pattern: /\bSuggested slices\b/i,
+    message: 'public docs should describe implementation order or boundaries, not internal slices',
+  },
+  {
+    pattern: /\bcontract-first implementation slices\b/i,
+    message: 'public docs should use implementation increments/boundaries wording, not slice bookkeeping',
+  },
+  {
+    pattern: /\bimplementation slices\b/i,
+    message: 'public docs should use implementation sequence/boundary wording, not slice bookkeeping',
+  },
+  {
+    pattern: /\bslice-map\b/i,
+    message: 'public docs should use neutral implementation-checkpoint wording, not slice-map bookkeeping',
+  },
+  {
+    pattern: /\bSlice\s+\d+\b/,
+    message: 'public docs should avoid internal slice numbers unless quoted as historical context with a public explanation',
+  },
+];
 const productCompletionMatrixPath = 'docs/product/completion-matrix.md';
-const productClaimLedgerPath = 'docs/product/claim-ledger.json';
+const productClaimLedgerPath = 'docs/product/claim-ledger.md';
 const productClaimLedgerSchemaVersion = 'pulseed-product-claim-ledger/v1';
 const productClaimClassifications = new Set([
   'current_operating_behavior',
@@ -137,6 +178,10 @@ const requiredClaimSourceRoots = [
 const markdownFiles = collectMarkdownFiles(repoRoot);
 const issues = [];
 
+for (const relativePath of collectNonMarkdownDocsFiles(repoRoot)) {
+  issues.push(formatIssue(relativePath, 1, 'public docs files must be Markdown; move machine fixtures outside docs or embed them in a Markdown page'));
+}
+
 for (const retiredDir of retiredThinDocDirs) {
   if (directoryExists(path.join(repoRoot, retiredDir))) {
     issues.push(formatIssue(retiredDir, 1, 'retired thin docs directory was recreated; link to the flattened page instead'));
@@ -147,6 +192,15 @@ for (const filePath of markdownFiles) {
   const relativePath = toPosixPath(path.relative(repoRoot, filePath) || path.basename(filePath));
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
+
+  if (
+    relativePath.startsWith('docs/design/') &&
+    relativePath !== 'docs/design/index.md' &&
+    relativePath.endsWith('.md') &&
+    relativePath.split('/').length !== 4
+  ) {
+    issues.push(formatIssue(relativePath, 1, 'design documents must use docs/design/<category>/<page>.md with no deeper nesting'));
+  }
 
   if (retiredThinDocPaths.has(relativePath)) {
     issues.push(formatIssue(relativePath, 1, 'retired thin docs path was recreated; link to the flattened page instead'));
@@ -215,6 +269,19 @@ for (const filePath of markdownFiles) {
           issues.push(formatIssue(relativePath, lineNumber, 'docs should describe design/spec behavior, not MVP or phased implementation staging'));
         }
       }
+
+      for (const rule of publicPolishPatterns) {
+        if (rule.pattern.test(markdownLine)) {
+          issues.push(formatIssue(relativePath, lineNumber, rule.message));
+        }
+      }
+
+      if (
+        relativePath.startsWith('docs/design/history/') &&
+        /^##\s+Current\b/.test(markdownLine)
+      ) {
+        issues.push(formatIssue(relativePath, lineNumber, 'historical design pages should use dated snapshot wording instead of current-status headings'));
+      }
     }
 
     for (const target of findMarkdownLinkTargets(markdownLine)) {
@@ -258,6 +325,42 @@ if (issues.length > 0) {
 function collectMarkdownFiles(rootDir) {
   const results = [];
   walk(rootDir, results);
+  return results.sort((a, b) => a.localeCompare(b));
+}
+
+function collectNonMarkdownDocsFiles(rootDir) {
+  const results = [];
+  const docsRoot = path.join(rootDir, 'docs');
+  if (!directoryExists(docsRoot)) {
+    return results;
+  }
+
+  const walkDocs = (currentDir) => {
+    const relativeDir = toPosixPath(path.relative(repoRoot, currentDir));
+    if (ignoredRelativeDirs.has(relativeDir)) {
+      return;
+    }
+
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.dist-delete-')) {
+          continue;
+        }
+        walkDocs(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      if (!entry.name.endsWith('.md')) {
+        results.push(toPosixPath(path.relative(repoRoot, entryPath)));
+      }
+    }
+  };
+
+  walkDocs(docsRoot);
   return results.sort((a, b) => a.localeCompare(b));
 }
 
@@ -358,9 +461,8 @@ function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
   if (!isPublicCurrentDoc(sourceRelativePath)) {
     return null;
   }
-
-  if (targetRelativePath.startsWith('docs/design/archive/')) {
-    return `current operating doc links directly to archived design material: ${targetRelativePath}`;
+  if (sourceRelativePath === 'docs/index.md') {
+    return null;
   }
 
   if (
@@ -381,7 +483,7 @@ function checkProductCompletionMatrix(issueList) {
   }
 
   const content = fs.readFileSync(matrixFilePath, 'utf8');
-  if (!content.includes('(claim-ledger.json)')) {
+  if (!content.includes('(claim-ledger.md)')) {
     issueList.push(formatIssue(productCompletionMatrixPath, 1, 'product-completion scenario matrix must link the machine-checkable product claim ledger'));
   }
   if (!content.includes('| Scenario | Class | Current coverage | Product boundary |')) {
@@ -398,9 +500,9 @@ function checkProductClaimLedger(issueList) {
 
   let ledger;
   try {
-    ledger = JSON.parse(fs.readFileSync(ledgerFilePath, 'utf8'));
+    ledger = parseProductClaimLedgerMarkdown(fs.readFileSync(ledgerFilePath, 'utf8'));
   } catch (error) {
-    issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger is not valid JSON: ${error instanceof Error ? error.message : String(error)}`));
+    issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger Markdown does not contain valid fenced JSON: ${error instanceof Error ? error.message : String(error)}`));
     return;
   }
 
@@ -517,6 +619,14 @@ function checkProductClaimLedger(issueList) {
       issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger must include at least one claim from ${root.label}`));
     }
   }
+}
+
+function parseProductClaimLedgerMarkdown(content) {
+  const match = content.match(/```json\s*\n([\s\S]*?)\n```/);
+  if (!match) {
+    throw new Error('missing fenced json block');
+  }
+  return JSON.parse(match[1]);
 }
 
 function validateEvidenceRef(ref, packageJson) {

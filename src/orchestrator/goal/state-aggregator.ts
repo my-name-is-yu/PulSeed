@@ -27,7 +27,7 @@ export interface AggregatedState {
  * downward propagation (parent → children) of goal state, plus cascade
  * completion detection.
  *
- * Design ref: docs/design/goal-tree.md §5 (state aggregation) and §6 (state propagation).
+ * Design ref: docs/design/execution/goal-orchestration.md.
  */
 export class StateAggregator {
   private readonly stateManager: StateManager;

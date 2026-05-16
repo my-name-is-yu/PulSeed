@@ -1,5 +1,7 @@
 # Runtime
 
+> Status: Current operating guide. This page describes runtime surfaces and operator boundaries for the current implementation.
+
 This page describes the current runtime surfaces. For exact command
 syntax, see [CLI Reference](../reference/cli.md).
 

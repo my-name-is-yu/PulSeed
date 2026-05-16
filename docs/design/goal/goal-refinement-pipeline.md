@@ -1,10 +1,10 @@
 # Goal Refinement Pipeline
 
-> Status: Design document. Verify behavior against source code and current operating docs before treating this as implementation guidance.
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
 
 > Related: `goal-tree.md`, `gap-calculation.md`, `satisficing.md`
 
-> Current implementation note: parts of this design have been implemented, but this document still mixes proposal text with older file paths. The current code lives under `src/orchestrator/goal/` and `src/orchestrator/loop/`. Read this as the design rationale for unifying goal negotiation, decomposition, and runtime re-refinement.
+> Implementation alignment: this page is the design rationale for unifying goal negotiation, decomposition, and runtime re-refinement. Current owners live under `src/orchestrator/goal/` and `src/orchestrator/loop/`.
 
 ---
 

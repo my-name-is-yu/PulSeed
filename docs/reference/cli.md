@@ -1,5 +1,7 @@
 # CLI Reference
 
+> Status: Current CLI reference. This page should track the CLI registry and help surface.
+
 This page lists the current `pulseed` command surface. It is derived from
 the CLI command registry and help text.
 

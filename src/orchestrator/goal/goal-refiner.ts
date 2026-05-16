@@ -4,7 +4,7 @@
  * Unified entry point that composes feasibility checks and GoalTreeManager
  * decomposition without replacing them.
  *
- * See docs/design/goal-refinement-pipeline.md §3 for the full algorithm.
+ * See docs/design/execution/goal-orchestration.md for the current design map.
  */
 
 import type { StateManager } from "../../base/state/state-manager.js";

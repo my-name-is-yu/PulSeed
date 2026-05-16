@@ -1,5 +1,7 @@
 # Architecture
 
+> Status: Current architecture index. Source code and tests remain the implementation truth.
+
 Use this page when you need the current source-tree map or stable subsystem
 orientation.
 

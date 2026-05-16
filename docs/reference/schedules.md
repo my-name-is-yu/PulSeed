@@ -1,5 +1,7 @@
 # Schedule Reference
 
+> Status: Current schedule reference. This page describes ScheduleEngine layers, triggers, and boundaries.
+
 PulSeed schedules are managed by the ScheduleEngine.
 
 ## Layers
