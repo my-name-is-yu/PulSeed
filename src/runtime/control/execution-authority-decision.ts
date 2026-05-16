@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/v3";
 import { ToolExecutionReasonSchema, type HostToolExecutionDecision } from "../../tools/types.js";
 import {
@@ -7,6 +8,10 @@ import {
 import { AdmissionPolicyEvaluationSchema, type AdmissionPolicyEvaluation } from "./admission-policy.js";
 import { AutonomyDecisionSchema, type AutonomyDecision } from "./autonomy-governor.js";
 import type { ResidentOperationBoundaryResult } from "../capability-operation-planner.js";
+import type {
+  PermissionWaitCanonicalPlan,
+  PermissionWaitPlanResumeResult,
+} from "../store/permission-wait-plan-store.js";
 import {
   OutboundConversationDeliveryReceiptSchema,
   OutboundConversationMessageSchema,
@@ -618,6 +623,67 @@ export function projectTelegramCallbackAuthority(input: {
   });
 }
 
+export function projectApprovalResumeAuthority(input: {
+  waitPlanId: string;
+  resumeResult: PermissionWaitPlanResumeResult;
+  expectedCanonicalPlan?: PermissionWaitCanonicalPlan;
+  actualCanonicalPlan: PermissionWaitCanonicalPlan;
+  reason?: string;
+  decidedAt?: string;
+  decisionId?: string;
+}): ExecutionAuthorityDecision {
+  const resumed = input.resumeResult.status === "resumed";
+  const record = input.resumeResult.status === "not_found" ? null : input.resumeResult.record;
+  const mismatchReasons = input.resumeResult.status === "mismatch_rejected"
+    ? input.resumeResult.mismatch_reasons
+    : [];
+  const expectedPlan = input.expectedCanonicalPlan ?? record?.canonical_plan ?? input.actualCanonicalPlan;
+  const actualPlan = input.actualCanonicalPlan;
+  const targetBindingRef = approvalTargetBindingRef(actualPlan);
+  const sourceRef = `approval:${input.waitPlanId}:resume`;
+  return createExecutionAuthorityDecision({
+    schema_version: "execution-authority-decision/v1",
+    decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
+    decided_at: input.decidedAt ?? new Date().toISOString(),
+    lifecycle: resumed ? "approved" : "terminal",
+    outcome: resumed ? "allowed" : "fail_closed",
+    reason: input.reason ?? approvalResumeReason(input.resumeResult.status, mismatchReasons),
+    can_execute: resumed,
+    requires_approval: true,
+    fail_closed: !resumed,
+    stale_target_rejected: !resumed,
+    source: {
+      kind: "approval",
+      ref: sourceRef,
+      stage: "execute",
+    },
+    bindings: {
+      approval_ref: record?.approval_id ?? input.waitPlanId,
+      target_binding_ref: targetBindingRef,
+      target_refs: uniqueStrings([
+        targetBindingRef,
+        ...approvalPlanTargetRefs(expectedPlan, "expected"),
+        ...approvalPlanTargetRefs(actualPlan, "actual"),
+      ]),
+    },
+    evidence_refs: [
+      `approval:${record?.approval_id ?? input.waitPlanId}`,
+      `permission-wait-plan:${input.waitPlanId}`,
+      record?.state ? `permission-wait-state:${record.state}` : null,
+      ...mismatchReasons.map((reason) => `approval-mismatch:${reason}`),
+    ].filter(isString),
+    invalidation_refs: mismatchReasons.map((reason) => `approval-mismatch:${reason}`),
+    metadata: {
+      resume_status: input.resumeResult.status,
+      mismatch_reasons: mismatchReasons,
+      expected_target_binding_ref: approvalTargetBindingRef(expectedPlan),
+      actual_target_binding_ref: targetBindingRef,
+      expected_input_ref: approvalInputRef(expectedPlan),
+      actual_input_ref: approvalInputRef(actualPlan),
+    },
+  });
+}
+
 export function projectNotificationAuthority(input: {
   reportId: string;
   reportType: string;
@@ -696,6 +762,74 @@ export function projectMemoryCorrectionAuthority(input: {
       `memory-target:${input.targetRef}`,
     ],
   });
+}
+
+function approvalResumeReason(
+  status: PermissionWaitPlanResumeResult["status"],
+  mismatchReasons: readonly string[],
+): string {
+  if (status === "resumed") {
+    return "Approval resume matched the stored canonical plan before tool execution.";
+  }
+  if (status === "mismatch_rejected") {
+    return `Approval resume rejected stale or mismatched canonical plan: ${mismatchReasons.join(", ")}`;
+  }
+  if (status === "expired") {
+    return "Approval resume rejected an expired approval before tool execution.";
+  }
+  if (status === "not_approved") {
+    return "Approval resume rejected a wait plan that is not approved.";
+  }
+  return "Approval resume rejected a missing wait plan.";
+}
+
+function approvalPlanTargetRefs(plan: PermissionWaitCanonicalPlan, prefix: "expected" | "actual"): string[] {
+  return [
+    `approval-${prefix}-tool:${plan.tool_name}`,
+    plan.target.goal_id ? `approval-${prefix}-goal:${plan.target.goal_id}` : null,
+    plan.target.run_id ? `approval-${prefix}-run:${plan.target.run_id}` : null,
+    plan.target.session_id ? `approval-${prefix}-session:${plan.target.session_id}` : null,
+    plan.target.turn_id ? `approval-${prefix}-turn:${plan.target.turn_id}` : null,
+    plan.target.tool_call_id ? `approval-${prefix}-tool-call:${plan.target.tool_call_id}` : null,
+    plan.state_epoch ? `approval-${prefix}-state-epoch:${plan.state_epoch}` : null,
+    approvalInputRef(plan),
+  ].filter(isString);
+}
+
+function approvalTargetBindingRef(plan: PermissionWaitCanonicalPlan): string {
+  return `permission-wait-target:${stableAuthorityHash({
+    tool_name: plan.tool_name,
+    cwd: plan.cwd,
+    target: plan.target,
+    permission: plan.permission,
+    state_epoch: plan.state_epoch ?? null,
+  })}`;
+}
+
+function approvalInputRef(plan: PermissionWaitCanonicalPlan): string {
+  return `approval-input:${stableAuthorityHash(plan.input)}`;
+}
+
+function stableAuthorityHash(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex").slice(0, 16);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortJson((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function hostOutcome(status: HostToolExecutionDecision["status"]): ExecutionAuthorityOutcome {

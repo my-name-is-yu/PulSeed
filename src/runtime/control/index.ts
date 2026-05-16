@@ -75,6 +75,7 @@ export {
 export {
   createExecutionAuthorityDecision,
   projectAdmissionAuthority,
+  projectApprovalResumeAuthority,
   projectAutonomyAuthority,
   projectHostToolExecutionAuthority,
   projectMemoryCorrectionAuthority,

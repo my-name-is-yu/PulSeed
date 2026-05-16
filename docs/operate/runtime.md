@@ -172,9 +172,14 @@ authority across execution-adjacent surfaces. It records whether a caller may
 prepare, execute, send, notify, ask, hold, or suppress, and it records typed
 refs for target binding, channel policy, approval, feedback, quieting, delivery,
 transport message, and normal-surface projection. Current Telegram peer
-initiative delivery, Telegram callbacks, notification suppression, approval
-resume checks, ToolExecutor admission, memory correction projection, and
-resident daemon peer delivery write or project this contract before mutation.
+initiative delivery, Telegram callbacks, notification suppression, ToolExecutor
+approval resume checks, ToolExecutor admission, memory correction save/recall/
+inspect, and resident daemon peer delivery write or project this contract before
+mutation. Runtime-control and schedule execution are current operating behavior
+through PersonalAgentRuntimeStore projection evidence: they record typed
+SituationFrame, TaskCandidate, CapabilityDecision, and InterventionDecision
+before executor handoff, schedule data-source queries, model calls, report
+generation, baseline updates, notification attempts, or daemon resident work.
 Non-Telegram peer initiative surfaces are not current delivery implementations;
 they are contract-only future surfaces until a production caller path owns
 mutation and writes the same authority decision.
@@ -271,7 +276,8 @@ gauntlet uses fake providers/transports and temp `PULSEED_HOME` roots, so it
 does not require real Telegram, network access, LLM calls, or user secrets. In
 debug mode it writes failure artifacts under
 `tmp/eval-failures/<scenario-id>/`: the scenario input, authority decision
-snapshot, visible projection, DB table summary, and a short candidate fix plan.
+snapshot, normal projection, operator/debug evidence, DB table summary, replay
+summary, and a short candidate fix plan.
 
 ## Gateway Channels
 

@@ -4,7 +4,7 @@
   "source_checkout": {
     "cwd": "/Users/yuyoshimuta/PulSeed",
     "branch": "codex/interaction-authority-kernel-eval-lab",
-    "head": "c844361f9f289cbb8f077d341335cfc534847f4d",
+    "head": "4062a052712369a0dcdc695d25152d89810c74cb",
     "origin_main": "c844361f9f289cbb8f077d341335cfc534847f4d",
     "node": "v24.15.0"
   },
@@ -137,14 +137,14 @@
     {
       "id": "approval_broker_permission_wait",
       "owner": "approval",
-      "caller_path": "src/runtime/approval-broker.ts and src/tools/permission-wait-plan.ts",
-      "current_decision_type": "typed pending approval and canonical permission wait plan",
-      "side_effect": "approval state transition, permission wait plan resume/deny/expire/cancel",
-      "durable_trace_presence": "ApprovalStore and PermissionWaitPlanStore persist request state and resume matching",
-      "stale_target_behavior": "resumeApproved rejects mismatched or stale canonical plan before tool execution",
+      "caller_path": "src/tools/executor.ts -> requestPermissionApproval -> PermissionWaitPlanStore.resumeApproved",
+      "current_decision_type": "typed pending approval, canonical permission wait plan, and ExecutionAuthorityDecision approval-resume projection",
+      "side_effect": "approval state transition and tool.call only after exact canonical resume match",
+      "durable_trace_presence": "PermissionWaitPlanStore persists request/resume state; ToolExecutor records InteractionAuthorityStore approval decisions for resumed and fail-closed approval resumes",
+      "stale_target_behavior": "resumeApproved rejects mismatched target/args/permission/state epoch or expired approvals before tool execution; ToolExecutor records fail_closed/stale_target_rejected authority evidence",
       "surface_redaction_behavior": "approval summaries are user-facing; diagnostic store rows expose exact refs",
-      "test_coverage": "src/tools/__tests__/executor.test.ts, tests/golden-traces approval fixtures",
-      "risk": "medium: old approval rejection exists but is not projected into ExecutionAuthorityDecision vocabulary",
+      "test_coverage": "tests/product-gauntlet/interaction-authority-gauntlet.test.ts scenario old_approval_cannot_execute plus src/tools/__tests__/executor.test.ts and golden approval fixtures",
+      "risk": "low: approval resume now enters the shared authority vocabulary on the actual ToolExecutor boundary; direct store-only tests are no longer the completion proof",
       "semantic_shortcuts": []
     },
     {
@@ -166,24 +166,24 @@
       "caller_path": "src/runtime/control/runtime-control-service.ts",
       "current_decision_type": "typed RuntimeControlRequest/Operation and RuntimeItem authority/staleness",
       "side_effect": "runtime operation mutation, companion state inspection/resume/control changes",
-      "durable_trace_presence": "RuntimeOperationStore and PersonalAgentRuntimeStore trace runtime-control decisions",
+      "durable_trace_presence": "RuntimeOperationStore and PersonalAgentRuntimeStore trace runtime-control decisions before executor handoff; product gauntlet checks the durable projection evidence",
       "stale_target_behavior": "runtime item staleness selectors block non-current authority before resume/action",
       "surface_redaction_behavior": "normal summaries omit hidden runtime facts; diagnostic commands can expose refs",
-      "test_coverage": "src/runtime/control/__tests__/runtime-control-service.test.ts, golden/replay runtime-control fixtures",
-      "risk": "medium: runtime-control has strong typed authority but not yet connected to shared can_send/can_notify vocabulary",
+      "test_coverage": "tests/product-gauntlet/interaction-authority-gauntlet.test.ts scenario runtime_control_schedule_authority_boundaries, src/runtime/control/__tests__/runtime-control-service.test.ts, golden/replay runtime-control fixtures",
+      "risk": "medium: runtime-control remains projection-evidence-backed by PersonalAgentRuntimeStore rather than InteractionAuthorityStore because the mutation owner is RuntimeOperationStore, not a transport sender",
       "semantic_shortcuts": []
     },
     {
       "id": "memory_correction",
       "owner": "memory-correction",
       "caller_path": "src/platform/corrections/user-memory-operations.ts, memory-correction-ledger.ts, memory-inspect-projection.ts",
-      "current_decision_type": "typed correction ledger and user-facing memory inspect projection",
+      "current_decision_type": "typed correction ledger, user-facing memory inspect projection, personal-agent trace, and ExecutionAuthorityDecision memory-correction projection",
       "side_effect": "memory correction entry, replacement memory, quarantine/retraction/forget logical state",
-      "durable_trace_presence": "ledger plus PersonalAgent relationship memory audits in caller paths",
+      "durable_trace_presence": "runUserMemoryOperation records personal-agent memory-correction trace and InteractionAuthorityStore memory_withheld decision before the correction can influence later recall",
       "stale_target_behavior": "corrected/superseded/retracted/forgotten memory is inactive for later recall and planning",
       "surface_redaction_behavior": "UserFacingMemoryInspectProjection sets raw_content_visible/raw_refs_visible/sensitive_content_visible false",
-      "test_coverage": "tests/slow/memory-correction-retrieval-eval.test.ts, src/runtime/cognition/__tests__/memory-context.test.ts, tests/contracts/personal-agent-runtime.test.ts",
-      "risk": "medium: memory withheld is typed but not part of ExecutionAuthorityDecision",
+      "test_coverage": "tests/product-gauntlet/interaction-authority-gauntlet.test.ts scenario memory_correction_later_recall_projection, tests/slow/memory-correction-retrieval-eval.test.ts, src/runtime/cognition/__tests__/memory-context.test.ts",
+      "risk": "low: normal projection and recall are production-path tested; operator/debug evidence remains explicit",
       "semantic_shortcuts": []
     },
     {
@@ -192,11 +192,11 @@
       "caller_path": "src/tools/executor.ts",
       "current_decision_type": "host policy, tool permission, permission manager, sanitizer, concurrency gate",
       "side_effect": "tool.call, capability execution records, personal-agent action_outcome trace",
-      "durable_trace_presence": "personal-agent trace is recorded for admitted/blocked known tools; missing tool currently returns before trace",
+      "durable_trace_presence": "personal-agent trace is recorded for admitted/blocked known tools, missing tools, and approval resume; approval resume also records InteractionAuthorityStore decisions",
       "stale_target_behavior": "host policy can fail closed on stale typed state epoch; permission wait plan rejects stale approval resume",
       "surface_redaction_behavior": "tool output projection handled by caller; action outcome trace is internal",
-      "test_coverage": "src/tools/__tests__/executor.test.ts, tests/contracts/tool-file-write-boundary.test.ts",
-      "risk": "high: denied/missing tool path can end without action_outcome trace and must not fall back to direct adapter execution",
+      "test_coverage": "tests/product-gauntlet/interaction-authority-gauntlet.test.ts scenarios tool_executor_denial_no_direct_fallback and old_approval_cannot_execute, src/tools/__tests__/executor.test.ts, tests/contracts/tool-file-write-boundary.test.ts",
+      "risk": "medium: ToolExecutor is now the admission owner; any future adapter must keep tool.call behind this boundary",
       "semantic_shortcuts": []
     },
     {
@@ -205,11 +205,11 @@
       "caller_path": "src/runtime/schedule/engine.ts and tests/harness replay/golden schedule traces",
       "current_decision_type": "typed schedule entry due/idempotency/wait-resume decisions",
       "side_effect": "scheduled tool/run execution, history records, wait resume",
-      "durable_trace_presence": "schedule entries and history rows in control DB; replay fixtures assert no duplicate side effects",
+      "durable_trace_presence": "schedule entries/history rows plus PersonalAgentRuntimeStore scheduled_wake traces before cron/probe data, model, report, baseline, and notification side effects",
       "stale_target_behavior": "same due idempotency dedupes retries; stale/mismatched resume rejected by schedule history",
       "surface_redaction_behavior": "schedule reports are projected through CLI/docs surfaces",
-      "test_coverage": "tests/golden-traces, tests/replay, src/runtime/schedule/__tests__",
-      "risk": "medium: idempotency is durable but not named as can_execute/can_notify authority",
+      "test_coverage": "tests/product-gauntlet/interaction-authority-gauntlet.test.ts scenario runtime_control_schedule_authority_boundaries, tests/contracts/personal-agent-runtime.test.ts, tests/golden-traces, tests/replay, src/runtime/schedule/__tests__",
+      "risk": "medium: ScheduleEngine uses personal-agent projection evidence instead of InteractionAuthorityStore because ScheduleEngine is not a normal surface or transport sender",
       "semantic_shortcuts": []
     },
     {

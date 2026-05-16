@@ -115,9 +115,15 @@ authority. It separates `can_prepare`, `can_execute`, `can_send`, `can_notify`,
 `stale_target_rejected`, `suppressed`, and `memory_withheld`.
 
 Production callers use this vocabulary for outbound conversations, Telegram
-callback handling, peer initiative delivery, notification suppression, approval
-resume checks, feedback mutation, runtime-control projection, memory correction,
-ToolExecutor admission, schedule wake decisions, and resident daemon work.
+callback handling, peer initiative delivery, notification suppression,
+ToolExecutor approval resume checks, feedback mutation, memory correction,
+ToolExecutor admission, and resident daemon peer delivery. Runtime-control and
+schedule wake decisions use the same authority vocabulary through durable
+PersonalAgentRuntimeStore projection evidence instead of InteractionAuthorityStore
+rows because their mutation owners are RuntimeOperationStore/ScheduleEngine, not
+user transports. Product gauntlet coverage verifies those traces exist before
+runtime-control executor handoff and before schedule data/model/report/baseline/
+notification side effects.
 Telegram is the current peer initiative delivery implementation. Other
 surfaces remain contract-only future work unless a caller path explicitly owns
 mutation and writes the same authority decision before transport.

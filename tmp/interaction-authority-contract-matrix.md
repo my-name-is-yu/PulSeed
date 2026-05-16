@@ -6,7 +6,7 @@ Generated from `/Users/yuyoshimuta/PulSeed` at `c844361f9f289cbb8f077d341335cfc5
 
 | Contract | Current role | Mutation owner | Projection-only surfaces |
 | --- | --- | --- | --- |
-| `ExecutionAuthorityDecision` | Cross-cutting authority snapshot for host/tool/admission/autonomy/resident/outbound/notification/callback/memory-correction decisions. It now carries the shared interaction authority vocabulary and durable evidence refs. | Runtime-control / caller that owns the side effect. | Normal surfaces may receive only redacted summaries derived from it. |
+| `ExecutionAuthorityDecision` | Cross-cutting authority snapshot for host/tool/admission/autonomy/resident/outbound/notification/callback/approval-resume/memory-correction decisions. It carries the shared interaction authority vocabulary and durable evidence refs. | Caller that owns the side effect or delivery boundary. | Normal surfaces may receive only redacted summaries derived from it. |
 | `InterventionDecision` | Personal-agent decision: allow, hold, block, suppress, confirm_required. | PersonalAgentRuntimeStore records the durable trace. | `PersonalAgentNormalSurfaceProjection` converts it to normal user text. |
 | `SituationFrame` | Typed evidence input for a caller path, including current/stale/withheld refs. | PersonalAgentRuntimeStore. | Normal surfaces see `normal_surface_trace_visible=false`. |
 | `InitiativeEvent` | Append-only event sequence for signal, policy decision, action request/outcome, memory update, resume. | PersonalAgentRuntimeStore. | Normal surfaces see summaries, not raw event ids. |
@@ -44,11 +44,11 @@ The kernel vocabulary is intentionally split so one grant cannot imply another:
 | Telegram peer outbound | Interaction authority + PeerInitiativeStore + Telegram outbound port | Telegram port sends only after authority row | Message text/buttons only; no policy/evidence refs. |
 | Telegram callback feedback | Interaction authority + PeerDeliveryRecord | FeedbackIngestionStore and PeerInitiativeStore | Callback ack only; stale/wrong callback mutates nothing. |
 | Notification dispatch | Interaction authority + personal-agent trace | NotificationDispatcher channel/plugin send | Suppressed/held decisions are not normal raw policy output. |
-| Approval resume | PermissionWaitPlanStore / ApprovalStore | ToolExecutor/runtime owner after exact resume match | Approval prompt summary; diagnostic store for exact refs. |
-| Runtime-control | RuntimeControlService | RuntimeOperationStore / service action | Normal summary vs operator/debug diagnostic split. |
-| Memory correction | MemoryCorrectionLedger / KnowledgeManager / PersonalAgent memory audits | Correction operation owner | User-facing memory inspect projection redacts raw/sensitive refs. |
-| ToolExecutor | Host policy + permission manager + personal-agent trace | Tool.call only after admission | Tool results surfaced by caller; action_outcome remains internal evidence. |
-| Schedule/daemon resident | ScheduleEngine/Resident attention+operation boundary | Schedule or resident action owner | Reports/diagnostics via explicit surfaces. |
+| Approval resume | ToolExecutor approval boundary + PermissionWaitPlanStore + InteractionAuthorityStore | Tool.call only after exact canonical resume match | Approval prompt summary; diagnostic store for exact refs. |
+| Runtime-control | RuntimeControlService + RuntimeOperationStore + PersonalAgentRuntimeStore | RuntimeOperationStore / service action | Normal summary vs operator/debug diagnostic split. Uses personal-agent projection evidence rather than InteractionAuthorityStore because the mutation owner is the runtime operation store, not a transport sender. |
+| Memory correction | runUserMemoryOperation + MemoryCorrectionLedger / KnowledgeManager + PersonalAgentRuntimeStore + InteractionAuthorityStore | Correction operation owner | User-facing memory inspect projection redacts raw/sensitive refs; operator/debug history remains explicit. |
+| ToolExecutor | Host policy + permission manager + personal-agent trace + approval-resume authority | Tool.call only after admission | Tool results surfaced by caller; action_outcome remains internal evidence. |
+| Schedule/daemon resident | ScheduleEngine/Resident attention+operation boundary + PersonalAgentRuntimeStore | Schedule or resident action owner | Reports/diagnostics via explicit surfaces. Schedule uses personal-agent projection evidence because it owns durable schedule/history state rather than a user transport. |
 
 ## Implemented Contract Extension
 
@@ -60,4 +60,12 @@ The kernel vocabulary is intentionally split so one grant cannot imply another:
 - `target_binding_ref`, `channel_policy_ref`, `delivery_ref`, `transport_message_ref`
 - `feedback_ref`, `approval_ref`, `quieting_ref`, `normal_surface_projection_ref`
 
-The production caller paths connected in this slice record or project authority before direct Telegram transport, peer feedback mutation, notification suppression/send, ToolExecutor admission fallback handling, and memory-correction projection. Normal surfaces may render only redacted projections. Operator/debug surfaces may inspect authority rows explicitly or use product-gauntlet failure artifacts.
+The production caller paths connected in this slice record or project authority before direct Telegram transport, peer feedback mutation, notification suppression/send, ToolExecutor approval resume, ToolExecutor admission fallback handling, memory-correction save/recall/inspect, runtime-control mutation, schedule cron/probe execution, and runtime outbox enqueue. Normal surfaces may render only redacted projections. Operator/debug surfaces may inspect authority rows, personal-agent traces, RuntimeGraph evidence, or product-gauntlet failure artifacts explicitly.
+
+## Production-Path Evidence Requirements
+
+- Approval resume completion evidence must come from `ToolExecutor.requestPermissionApproval()` reaching `PermissionWaitPlanStore.resumeApproved()` and recording an approval `ExecutionAuthorityDecision`; direct `PermissionWaitPlanStore` checks alone are insufficient.
+- Memory correction completion evidence must come from `runUserMemoryOperation()` and later `KnowledgeManager` recall / `inspectUserMemory()` projection. Direct `projectMemoryCorrectionAuthority()` tests alone are insufficient.
+- Normal-surface redaction evidence must pass through ChatRunner `/status`, TUI-adjacent `SharedManagerTuiChatSurface`, and CLI status/report production callers. Hand-assembled `PersonalAgentNormalSurfaceProjection` objects are not accepted as product-wide proof.
+- Runtime-control and schedule remain PersonalAgentRuntimeStore projection-evidence paths unless they are sending to a user transport. Their completion evidence is a durable SituationFrame/InitiativeEvent/InterventionDecision before the RuntimeControl executor or schedule side effects.
+- Telegram is the current peer initiative delivery implementation. Non-Telegram peer initiative surfaces remain contract-only future work.

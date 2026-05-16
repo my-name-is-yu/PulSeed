@@ -7,6 +7,7 @@ import type {
   PermissionWaitCanonicalPlan,
   PermissionWaitPlanStore,
 } from "../runtime/store/permission-wait-plan-store.js";
+import type { ExecutionAuthorityDecision } from "../runtime/control/execution-authority-decision.js";
 import type {
   CapabilityAuditRecord,
   CapabilityOperationKind,
@@ -327,6 +328,10 @@ export interface ToolCallContext {
     PermissionWaitPlanStore,
     "createWaiting" | "markApproved" | "markDenied" | "markExpired" | "resumeApproved"
   >;
+  /** Durable interaction-authority evidence for approval/tool execution gates. */
+  interactionAuthorityStore?: {
+    recordDecision(decision: ExecutionAuthorityDecision): Promise<ExecutionAuthorityDecision>;
+  };
   /** Durable operation evidence store for capability runtime production executions. */
   capabilityVerificationStore?: {
     saveVerification(record: CapabilityVerificationRef): Promise<CapabilityVerificationRef>;

@@ -61,8 +61,11 @@ Product-completion coverage should remain deterministic and local:
   restart/recovery, replay, and packaged artifacts
 - include the Interaction Authority product gauntlet for Telegram peer delivery,
   stale callback rejection, callback failure offset progress, digest-only holds,
-  old approval rejection, quiet-mode suppression, memory correction propagation,
-  ToolExecutor non-execution, replay dedupe, and normal-surface redaction
+  ToolExecutor approval-resume old/stale/expired rejection, quiet-mode
+  suppression, memory correction propagation through save/recall/inspect,
+  ToolExecutor non-execution, restart/replay dedupe across peer delivery,
+  runtime outbox, and memory correction, production caller-path normal-surface
+  redaction, and runtime-control/schedule projection evidence before mutation
 - keep docs/current-claim truth checks in `npm run check:docs`
 - delete or convert weak tests only when replacement production-path evidence
   exists in the same checkout

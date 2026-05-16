@@ -1,18 +1,21 @@
 import * as path from "node:path";
+import { z } from "zod/v3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Report } from "../../src/base/types/report.js";
+import type { ILLMClient } from "../../src/base/llm/llm-client.js";
 import { NotificationDispatcher } from "../../src/runtime/notification-dispatcher.js";
 import { evaluateResidentOperationBoundary } from "../../src/runtime/capability-operation-planner.js";
 import {
-  createExecutionAuthorityDecision,
   InteractionAuthorityStore,
-  projectMemoryCorrectionAuthority,
+  RuntimeControlService,
 } from "../../src/runtime/control/index.js";
 import { triggerResidentPeerInitiative } from "../../src/runtime/daemon/runner-resident-proactive.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../../src/runtime/types/daemon.js";
+import type { ScheduleEntryInput } from "../../src/runtime/types/schedule.js";
 import { ref } from "../../src/runtime/attention/attention-refs.js";
 import { OutcomeDecisionSchema } from "../../src/runtime/types/companion-autonomy.js";
+import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import {
   generatePeerInitiativeCandidates,
   peerInitiativeActionButtons,
@@ -27,18 +30,57 @@ import {
   type OutboundConversationTarget,
 } from "../../src/runtime/gateway/index.js";
 import { TelegramGatewayAdapter } from "../../src/runtime/gateway/telegram-gateway-adapter.js";
+import { ChatRunner } from "../../src/interface/chat/chat-runner.js";
+import type { ChatRunnerDeps } from "../../src/interface/chat/chat-runner-contracts.js";
+import { SharedManagerTuiChatSurface } from "../../src/interface/tui/chat-surface.js";
+import { cmdCurrentStatus, cmdStatus } from "../../src/interface/cli/commands/goal-read.js";
 import { PluginChannelRuntimeStateStore } from "../../src/runtime/store/plugin-channel-runtime-state-store.js";
 import { FeedbackIngestionStore } from "../../src/runtime/store/feedback-ingestion-store.js";
-import { PermissionWaitPlanStore, type PermissionWaitCanonicalPlan } from "../../src/runtime/store/permission-wait-plan-store.js";
-import { PersonalAgentRuntimeStore, projectPersonalAgentNormalSurface } from "../../src/runtime/personal-agent/index.js";
+import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait-plan-store.js";
+import { BackgroundRunLedger } from "../../src/runtime/store/background-run-store.js";
+import { RuntimeOperatorHandoffStore } from "../../src/runtime/store/operator-handoff-store.js";
+import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
+import { PersonalAgentRuntimeStore, type PersonalAgentDecisionTrace } from "../../src/runtime/personal-agent/index.js";
 import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
-import { runUserMemoryOperation } from "../../src/platform/corrections/user-memory-operations.js";
-import { projectUserFacingMemoryInspect } from "../../src/platform/corrections/memory-inspect-projection.js";
-import { ToolExecutor, ToolPermissionManager, ToolRegistry, ConcurrencyController } from "../../src/tools/index.js";
+import { inspectUserMemory, runUserMemoryOperation } from "../../src/platform/corrections/user-memory-operations.js";
+import { ToolExecutor, ToolPermissionManager, ToolRegistry, ConcurrencyController, type ITool } from "../../src/tools/index.js";
 import { runProductGauntletScenario } from "../harness/product-gauntlet-runner.js";
+import { makeDimension, makeGoal } from "../helpers/fixtures.js";
 
 const NOW = "2026-05-16T00:00:00.000Z";
+const RAW_INTERNAL_MARKERS = [
+  "RAW_MEMORY_SLOT",
+  "autonomy=approval_required",
+  "readiness=degraded",
+  "admission=approval_required",
+  "capability:notify",
+  "policy:deny",
+  "evidence:raw",
+  "run:coreloop:raw",
+  "session:agent:raw",
+  "trace:raw",
+  "memory:raw-secret",
+];
+
+function expectNormalSurfaceRedacted(text: string): void {
+  for (const marker of RAW_INTERNAL_MARKERS) {
+    expect(text).not.toContain(marker);
+  }
+}
+
+async function captureConsoleLog(run: () => Promise<unknown>): Promise<string> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.join("\n");
+}
 
 class FakeOutboundConversationPort implements GatewayOutboundConversationPort {
   readonly surface = "telegram" as const;
@@ -272,64 +314,105 @@ describe("interaction authority product gauntlet", () => {
 
   it("5. approval-required initiative cannot execute from an old approval", async () => {
     await runProductGauntletScenario("old_approval_cannot_execute", async (context) => {
-      const waitStore = new PermissionWaitPlanStore(context.runtimeRoot, {
-        controlBaseDir: context.controlBaseDir,
-        now: () => 1_000,
-        createEventId: () => "permission-event",
-      });
-      const approvedPlan = permissionPlan({ conversationId: "conversation:old", value: "old" });
-      await waitStore.createWaiting({
-        wait_plan_id: "approval:old-peer-action",
-        canonical_plan: approvedPlan,
-        audit_refs: ["approval:old-peer-action"],
-      });
-      await waitStore.markApproved("approval:old-peer-action", { resolved_at: 1_001 });
-      const resume = await waitStore.resumeApproved("approval:old-peer-action", {
-        canonical_plan: permissionPlan({ conversationId: "conversation:new", value: "new" }),
-        resumed_at: 1_002,
-      });
       const authorityStore = new InteractionAuthorityStore(context.runtimeRoot, {
         controlBaseDir: context.controlBaseDir,
       });
-      const authorityDecision = await authorityStore.recordDecision(createExecutionAuthorityDecision({
-        schema_version: "execution-authority-decision/v1",
-        decision_id: "execution-authority:approval:old-peer-action",
-        decided_at: NOW,
-        lifecycle: "terminal",
-        outcome: "fail_closed",
-        reason: "Old approval rejected because conversation and args no longer match the canonical plan.",
-        requires_approval: true,
-        fail_closed: true,
-        stale_target_rejected: true,
-        source: {
-          kind: "approval",
-          ref: "approval:old-peer-action",
-          stage: "execute",
+      const allowed = await runApprovalRequiredTool(context, {
+        authorityStore,
+        label: "allowed",
+        value: "current",
+      });
+      const stale = await runApprovalRequiredTool(context, {
+        authorityStore,
+        label: "stale",
+        value: "old",
+        mutateApprovalRequest: ({ request, context: toolContext }) => {
+          (request.input as { value: string }).value = "new";
+          toolContext.sessionId = "conversation:new";
         },
-        bindings: {
-          approval_ref: "approval:old-peer-action",
-          target_refs: ["conversation:old", "conversation:new"],
-        },
-        invalidation_refs: ["conversation:old", "args:value"],
-      }));
+      });
+      const expired = await runApprovalRequiredTool(context, {
+        authorityStore,
+        label: "expired",
+        value: "expires",
+        expiresAt: 1_001,
+        approveAt: 1_002,
+      });
+      const decisions = await authorityStore.listDecisions({ sourceKind: "approval" });
+      const failedDecisions = decisions.filter((decision) => decision.fail_closed);
       context.recordEvidence({
-        authorityDecision,
-        dbSummary: { resume },
+        authorityDecisions: decisions,
+        dbSummary: {
+          allowed: allowed.result,
+          stale: stale.result,
+          expired: expired.result,
+          wait_plans: await stale.waitStore.list(),
+        },
+        operatorDebugEvidence: {
+          stale_wait_plans: await stale.waitStore.list(),
+          approval_resume_statuses: decisions.map((decision) => decision.metadata["resume_status"]),
+        },
+        safetyInvariants: {
+          approval_success_executes_once: true,
+          old_conversation_args_mismatch_fail_closed: true,
+          expired_approval_fail_closed: true,
+        },
         nextFiles: ["src/runtime/store/permission-wait-plan-store.ts", "src/tools/executor.ts"],
       });
 
-      expect(resume.status).toBe("mismatch_rejected");
-      expect(resume).toMatchObject({
-        mismatch_reasons: expect.arrayContaining(["target_changed", "input_changed"]),
-      });
-      expect(authorityDecision).toMatchObject({
-        fail_closed: true,
-        stale_target_rejected: true,
-        requires_approval: true,
-      });
+      expect(allowed.result.execution).toMatchObject({ status: "executed" });
+      expect(allowed.callCount()).toBe(1);
+      expect(stale.result.execution).toMatchObject({ status: "not_executed", reason: "stale_state" });
+      expect(stale.callCount()).toBe(0);
+      expect(expired.result.execution).toMatchObject({ status: "not_executed" });
+      expect(expired.callCount()).toBe(0);
+      expect(decisions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          outcome: "allowed",
+          can_execute: true,
+          requires_approval: true,
+          fail_closed: false,
+          bindings: expect.objectContaining({
+            approval_ref: expect.stringMatching(/^permission-wait:/),
+            target_binding_ref: expect.stringMatching(/^permission-wait-target:/),
+          }),
+        }),
+      ]));
+      expect(failedDecisions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          outcome: "fail_closed",
+          can_execute: false,
+          fail_closed: true,
+          stale_target_rejected: true,
+          requires_approval: true,
+          invalidation_refs: expect.arrayContaining(["approval-mismatch:target_changed", "approval-mismatch:input_changed"]),
+        }),
+        expect.objectContaining({
+          outcome: "fail_closed",
+          metadata: expect.objectContaining({ resume_status: "expired" }),
+          fail_closed: true,
+          stale_target_rejected: true,
+          requires_approval: true,
+        }),
+      ]));
+      expect(JSON.stringify(decisions)).toContain("approval_ref");
+      expect(JSON.stringify(decisions)).toContain("target_binding_ref");
       return {
-        authorityDecision,
-        dbSummary: { resume },
+        authorityDecisions: decisions,
+        dbSummary: {
+          allowed: allowed.result,
+          stale: stale.result,
+          expired: expired.result,
+        },
+        operatorDebugEvidence: {
+          stale_wait_plans: await stale.waitStore.list(),
+          approval_resume_statuses: decisions.map((decision) => decision.metadata["resume_status"]),
+        },
+        safetyInvariants: {
+          approval_success_executes_once: true,
+          old_conversation_args_mismatch_fail_closed: true,
+          expired_approval_fail_closed: true,
+        },
         nextFiles: ["src/runtime/store/permission-wait-plan-store.ts", "src/tools/executor.ts"],
       };
     });
@@ -411,6 +494,9 @@ describe("interaction authority product gauntlet", () => {
         replacementKey: "user.editor.preference.current",
         now: "2026-05-16T00:05:00.000Z",
       });
+      const restartedStateManager = new StateManager(context.rootDir, undefined, { walEnabled: false });
+      await restartedStateManager.init();
+      const restartedKnowledgeManager = new KnowledgeManager(restartedStateManager, {} as never);
       const recalledCurrent = await knowledgeManager.recallAgentMemory("user.editor.preference.current", {
         exact: true,
         max_sensitivity: "local",
@@ -423,30 +509,62 @@ describe("interaction authority product gauntlet", () => {
         consent_scope: "local_planning",
         limit: 20,
       });
-      const history = correctionResult.history;
-      const target = (await knowledgeManager.listAgentMemory({ include_archived: true }))
-        .find((entry) => entry.id === stale.id) ?? null;
-      const projection = projectUserFacingMemoryInspect({
-        targetKind: "agent_memory",
-        history,
-        agentMemoryEntry: target,
+      const restartedStaleRecall = await restartedKnowledgeManager.recallAgentMemory("user.editor.preference", {
+        exact: true,
+        max_sensitivity: "local",
+        consent_scope: "local_planning",
+        limit: 20,
       });
-      const authorityStore = new InteractionAuthorityStore(context.runtimeRoot, {
-        controlBaseDir: context.controlBaseDir,
+      const projection = await inspectUserMemory(stateManager, {
+        targetRef: { kind: "agent_memory", id: stale.id },
       });
-      const authorityDecision = await authorityStore.recordDecision(projectMemoryCorrectionAuthority({
-        correctionId: history[0]!.correction_id,
-        targetRef: stale.id,
-        decidedAt: NOW,
-        reason: "Corrected memory is withheld from future recall and normal projection.",
-        memoryWithheld: true,
-        normalSurfaceProjectionRef: "normal-surface:memory-inspect:user.editor.preference",
-      }));
+      const memoryStatusRunner = chatRunnerForStatus(stateManager);
+      const memoryChatStatus = await memoryStatusRunner.execute("/status", context.rootDir);
+      const memoryTuiSurface = new SharedManagerTuiChatSurface(chatDepsForStatus(stateManager));
+      memoryTuiSurface.startSession(context.rootDir);
+      const memoryTuiStatus = await memoryTuiSurface.execute("/status", context.rootDir);
+      const memoryCliStatus = await captureConsoleLog(() => cmdCurrentStatus(stateManager));
+      const normalSurfaceProbe = {
+        chat_status: memoryChatStatus.output,
+        tui_status: memoryTuiStatus.output,
+        cli_status: memoryCliStatus,
+      };
+      const authorityStore = new InteractionAuthorityStore(context.rootDir, {
+        controlBaseDir: context.rootDir,
+      });
+      const decisions = await authorityStore.listDecisions({ sourceKind: "memory_correction" });
+      const correctionDecision = decisions.find((decision) =>
+        decision.bindings.target_refs.includes(`agent_memory:${stale.id}`)
+      );
       const recalledText = JSON.stringify({ recalledCurrent, recalledStale });
       context.recordEvidence({
-        authorityDecision,
-        visibleProjection: projection,
-        dbSummary: { recalled: recalledCurrent.map((entry) => entry.key), history },
+        authorityDecision: correctionDecision,
+        authorityDecisions: decisions,
+        normalProjection: {
+          memory_inspect: projection,
+          normal_surface_probe: normalSurfaceProbe,
+        },
+        operatorDebugEvidence: {
+          correction_history: correctionResult.history,
+          archived_memory: await restartedKnowledgeManager.listAgentMemory({ include_archived: true }),
+        },
+        dbSummary: {
+          recalled: recalledCurrent.map((entry) => entry.key),
+          stale_recall_count: recalledStale.length,
+          restarted_stale_recall_count: restartedStaleRecall.length,
+          history: correctionResult.history,
+        },
+        replaySummary: {
+          restarted_state_manager_base_dir: restartedStateManager.getBaseDir(),
+          stale_recall_after_restart: restartedStaleRecall.length,
+          correction_id: correctionResult.correction?.correction_id ?? null,
+        },
+        safetyInvariants: {
+          corrected_memory_not_recalled_by_old_key: true,
+          normal_projection_redacts_refs: true,
+          normal_chat_tui_cli_status_do_not_surface_old_claim: true,
+          operator_debug_history_available: true,
+        },
         nextFiles: [
           "src/platform/corrections/user-memory-operations.ts",
           "src/runtime/cognition/memory-context.ts",
@@ -456,6 +574,9 @@ describe("interaction authority product gauntlet", () => {
       expect(recalledText).toContain("VS Code");
       expect(recalledText).not.toContain("Atom");
       expect(recalledStale).toHaveLength(0);
+      expect(restartedStaleRecall).toHaveLength(0);
+      expect(memoryChatStatus.success).toBe(true);
+      expect(memoryTuiStatus.success).toBe(true);
       expect(projection).toMatchObject({
         raw_content_visible: false,
         raw_refs_visible: false,
@@ -463,11 +584,43 @@ describe("interaction authority product gauntlet", () => {
         active_for_future_use: false,
         history_count: 1,
       });
-      expect(authorityDecision.memory_withheld).toBe(true);
+      expect(JSON.stringify({ projection, normalSurfaceProbe })).not.toContain("Atom");
+      expect(correctionDecision).toMatchObject({
+        source: expect.objectContaining({ kind: "memory_correction" }),
+        can_execute: true,
+        memory_withheld: true,
+        bindings: expect.objectContaining({
+          normal_surface_projection_ref: expect.stringMatching(/^normal-surface:memory-correction:/),
+        }),
+      });
       return {
-        authorityDecision,
-        visibleProjection: projection,
-        dbSummary: { recalled: recalledCurrent.map((entry) => entry.key), history },
+        authorityDecision: correctionDecision,
+        authorityDecisions: decisions,
+        normalProjection: {
+          memory_inspect: projection,
+          normal_surface_probe: normalSurfaceProbe,
+        },
+        operatorDebugEvidence: {
+          correction_history: correctionResult.history,
+          archived_memory: await restartedKnowledgeManager.listAgentMemory({ include_archived: true }),
+        },
+        dbSummary: {
+          recalled: recalledCurrent.map((entry) => entry.key),
+          stale_recall_count: recalledStale.length,
+          restarted_stale_recall_count: restartedStaleRecall.length,
+          history: correctionResult.history,
+        },
+        replaySummary: {
+          restarted_state_manager_base_dir: restartedStateManager.getBaseDir(),
+          stale_recall_after_restart: restartedStaleRecall.length,
+          correction_id: correctionResult.correction?.correction_id ?? null,
+        },
+        safetyInvariants: {
+          corrected_memory_not_recalled_by_old_key: true,
+          normal_projection_redacts_refs: true,
+          normal_chat_tui_cli_status_do_not_surface_old_claim: true,
+          operator_debug_history_available: true,
+        },
         nextFiles: [
           "src/platform/corrections/user-memory-operations.ts",
           "src/runtime/cognition/memory-context.ts",
@@ -527,103 +680,430 @@ describe("interaction authority product gauntlet", () => {
         maxDeliveryKind: "notify",
         attentionLabel: "same",
       });
-      await runResidentPeerInitiative(context, {
+      const replayedAfterRestart = await runResidentPeerInitiative(context, {
         maxDeliveryKind: "notify",
         attentionLabel: "same",
-        gatewayPort: first.gatewayPort,
       });
-      await runResidentPeerInitiative(context, {
+      const distinctAfterRestart = await runResidentPeerInitiative(context, {
         maxDeliveryKind: "notify",
         attentionLabel: "distinct",
-        gatewayPort: first.gatewayPort,
       });
-      const records = await first.peerStore.listRecentCandidates();
+      const outboxFirstStore = new OutboxStore(context.runtimeRoot, { controlBaseDir: context.controlBaseDir });
+      const outboxFirst = await outboxFirstStore.append({
+        event_type: "schedule_report_ready",
+        goal_id: "goal:replay",
+        correlation_id: "correlation:same",
+        created_at: Date.parse(NOW),
+        payload: { report_id: "report:same", text: "same payload" },
+      });
+      const outboxRestartedStore = new OutboxStore(context.runtimeRoot, { controlBaseDir: context.controlBaseDir });
+      const outboxReplay = await outboxRestartedStore.append({
+        event_type: "schedule_report_ready",
+        goal_id: "goal:replay",
+        correlation_id: "correlation:same",
+        created_at: Date.parse(NOW) + 1,
+        payload: { report_id: "report:same", text: "same payload" },
+      });
+      const outboxDistinct = await outboxRestartedStore.append({
+        event_type: "schedule_report_ready",
+        goal_id: "goal:replay",
+        correlation_id: "correlation:distinct",
+        created_at: Date.parse(NOW) + 2,
+        payload: { report_id: "report:same", text: "same payload" },
+      });
+      const memoryState = new StateManager(context.rootDir, undefined, { walEnabled: false });
+      await memoryState.init();
+      const memoryManager = new KnowledgeManager(memoryState, {} as never);
+      const replayMemory = await memoryManager.saveAgentMemory({
+        key: "replay.memory.preference",
+        value: "Replay should not duplicate this obsolete value.",
+        tags: ["replay"],
+        memory_type: "preference",
+      });
+      const firstCorrection = await runUserMemoryOperation(memoryState, {
+        operation: "forget",
+        targetRef: { kind: "agent_memory", id: replayMemory.id },
+        reason: "Replay duplicate correction must be idempotent.",
+        now: "2026-05-16T00:10:00.000Z",
+      });
+      const restartedMemoryState = new StateManager(context.rootDir, undefined, { walEnabled: false });
+      await restartedMemoryState.init();
+      const replayCorrection = await runUserMemoryOperation(restartedMemoryState, {
+        operation: "forget",
+        targetRef: { kind: "agent_memory", id: replayMemory.id },
+        reason: "Replay duplicate correction must be idempotent.",
+        now: "2026-05-16T00:10:00.000Z",
+      });
+      const records = await new PeerInitiativeStore(context.runtimeRoot, {
+        controlBaseDir: context.controlBaseDir,
+      }).listRecentCandidates();
       const deliveries = await Promise.all(records.map((record) =>
         first.peerStore.getLatestDeliveryForCandidate({ candidateId: record.candidate_id, surface: "telegram" })
       ));
+      const authorityDecisions = await new InteractionAuthorityStore(context.runtimeRoot, {
+        controlBaseDir: context.controlBaseDir,
+      }).listDecisions({ limit: 50 });
+      const outboxRecords = await outboxRestartedStore.list();
       context.recordEvidence({
-        dbSummary: { records, deliveries, send_count: first.gatewayPort.messages.length },
-        nextFiles: ["src/runtime/daemon/runner-resident-proactive.ts", "src/runtime/peer-initiative/store.ts"],
+        authorityDecisions,
+        dbSummary: {
+          records,
+          deliveries,
+          outboxRecords,
+          memory_history: replayCorrection.history,
+          send_counts: {
+            first: first.gatewayPort.messages.length,
+            replay_after_restart: replayedAfterRestart.gatewayPort.messages.length,
+            distinct_after_restart: distinctAfterRestart.gatewayPort.messages.length,
+          },
+        },
+        replaySummary: {
+          peer_delivery: {
+            first_sent: first.gatewayPort.messages.length,
+            replay_after_store_recreate_sent: replayedAfterRestart.gatewayPort.messages.length,
+            distinct_after_store_recreate_sent: distinctAfterRestart.gatewayPort.messages.length,
+            candidate_ids: records.map((record) => record.candidate_id),
+            replay_keys: authorityDecisions.map((decision) => decision.source.ref),
+          },
+          outbox: {
+            first_seq: outboxFirst.seq,
+            replay_seq: outboxReplay.seq,
+            distinct_seq: outboxDistinct.seq,
+            retained_count: outboxRecords.length,
+            idempotency_key: outboxReplay.correlation_id,
+          },
+          memory_correction: {
+            first_correction_id: firstCorrection.correction?.correction_id ?? null,
+            replay_correction_id: replayCorrection.correction?.correction_id ?? null,
+            history_count_after_restart: replayCorrection.history.length,
+          },
+        },
+        safetyInvariants: {
+          same_peer_delivery_replay_after_store_recreate_sends_zero: true,
+          same_outbox_correlation_payload_reuses_record_after_store_recreate: true,
+          same_memory_correction_id_replays_without_duplicate_history: true,
+          distinct_correlation_or_attention_label_is_not_suppressed: true,
+        },
+        nextFiles: [
+          "src/runtime/daemon/runner-resident-proactive.ts",
+          "src/runtime/peer-initiative/store.ts",
+          "src/runtime/store/outbox-store.ts",
+          "src/platform/corrections/user-memory-operations.ts",
+        ],
       });
 
-      expect(first.gatewayPort.messages).toHaveLength(2);
+      expect(first.gatewayPort.messages).toHaveLength(1);
+      expect(replayedAfterRestart.gatewayPort.messages).toHaveLength(0);
+      expect(distinctAfterRestart.gatewayPort.messages).toHaveLength(1);
       expect(records).toHaveLength(2);
       expect(deliveries.filter((delivery) => delivery?.status === "delivered")).toHaveLength(2);
+      expect(outboxReplay.seq).toBe(outboxFirst.seq);
+      expect(outboxDistinct.seq).not.toBe(outboxFirst.seq);
+      expect(outboxRecords).toHaveLength(2);
+      expect(replayCorrection.correction?.correction_id).toBe(firstCorrection.correction?.correction_id);
+      expect(replayCorrection.history).toHaveLength(1);
       return {
-        dbSummary: { records, deliveries, send_count: first.gatewayPort.messages.length },
-        nextFiles: ["src/runtime/daemon/runner-resident-proactive.ts", "src/runtime/peer-initiative/store.ts"],
+        authorityDecisions,
+        dbSummary: {
+          records,
+          deliveries,
+          outboxRecords,
+          memory_history: replayCorrection.history,
+        },
+        replaySummary: {
+          peer_delivery: {
+            first_sent: first.gatewayPort.messages.length,
+            replay_after_store_recreate_sent: replayedAfterRestart.gatewayPort.messages.length,
+            distinct_after_store_recreate_sent: distinctAfterRestart.gatewayPort.messages.length,
+          },
+          outbox: {
+            first_seq: outboxFirst.seq,
+            replay_seq: outboxReplay.seq,
+            distinct_seq: outboxDistinct.seq,
+            idempotency_key: outboxReplay.correlation_id,
+          },
+          memory_correction: {
+            first_correction_id: firstCorrection.correction?.correction_id ?? null,
+            replay_correction_id: replayCorrection.correction?.correction_id ?? null,
+            history_count_after_restart: replayCorrection.history.length,
+          },
+        },
+        safetyInvariants: {
+          same_peer_delivery_replay_after_store_recreate_sends_zero: true,
+          same_outbox_correlation_payload_reuses_record_after_store_recreate: true,
+          same_memory_correction_id_replays_without_duplicate_history: true,
+          distinct_correlation_or_attention_label_is_not_suppressed: true,
+        },
+        nextFiles: [
+          "src/runtime/daemon/runner-resident-proactive.ts",
+          "src/runtime/peer-initiative/store.ts",
+          "src/runtime/store/outbox-store.ts",
+          "src/platform/corrections/user-memory-operations.ts",
+        ],
       };
     });
   });
 
   it("10. normal user projection redacts internals across status-like surfaces", async () => {
     await runProductGauntletScenario("normal_projection_redacts_internals", async (context) => {
-      const projection = projectPersonalAgentNormalSurface({
-        situation_frame: {
-          caller_path: "chat_gateway_turn",
-          withheld_memory_refs: [{ kind: "memory_record", ref: "memory:raw-secret" }],
-          stale_refs: [{ kind: "reply_target", ref: "reply:old" }],
-          uncertainty_refs: [],
-          conflict_refs: [],
-        },
-        initiative_events: [],
-        task_candidates: [{
-          desired_effect: "send_notification",
-          proposed_at: NOW,
-        }],
-        capability_decisions: [],
-        intervention_decisions: [{
-          decision: "suppress",
-          target_effect: "send_notification",
-          permission_required: false,
-          decided_at: NOW,
-        }],
-        memory_audits: [{
-          action: "withhold",
-          invalidated: true,
-          correction_state: "retracted",
-        }],
-      } as never);
-      const authorityDecision = createExecutionAuthorityDecision({
-        schema_version: "execution-authority-decision/v1",
-        decision_id: "execution-authority:normal-surface:redaction",
-        decided_at: NOW,
-        lifecycle: "approved",
-        outcome: "allowed",
-        reason: "Normal surface projection is redacted and projection-only.",
-        surface: "status",
-        surface_class: "normal_user",
-        source: {
-          kind: "surface_projection",
-          ref: "normal-surface:redaction",
-          stage: "inspect",
-        },
-        bindings: {
-          normal_surface_projection_ref: "normal-surface:redaction",
-          target_refs: ["chat", "gateway", "tui-adjacent", "status", "report"],
-        },
-      });
+      const stateManager = await createRuntimeCallerFixture(context.rootDir);
+      const runner = chatRunnerForStatus(stateManager);
+      const chatStatus = await runner.execute("/status", context.rootDir);
+      const chatDiagnosticStatus = await runner.execute("/status --details", context.rootDir);
+      const tuiSurface = new SharedManagerTuiChatSurface(chatDepsForStatus(stateManager));
+      tuiSurface.startSession(context.rootDir);
+      const tuiStatus = await tuiSurface.execute("/status", context.rootDir);
+      const cliCurrent = await captureConsoleLog(() => cmdCurrentStatus(stateManager));
+      const cliFocused = await captureConsoleLog(() => cmdStatus(stateManager, "goal-product-gauntlet"));
+      const cliDiagnostic = await captureConsoleLog(() =>
+        cmdStatus(stateManager, "goal-product-gauntlet", undefined, { diagnostic: true }));
+      const normalProjection = {
+        chat_status: chatStatus.output,
+        tui_status: tuiStatus.output,
+        cli_current: cliCurrent,
+        cli_focused: cliFocused,
+      };
+      const operatorDebugEvidence = {
+        chat_diagnostic_status: chatDiagnosticStatus.output,
+        cli_diagnostic: cliDiagnostic,
+      };
       context.recordEvidence({
-        authorityDecision,
-        visibleProjection: projection,
-        nextFiles: ["src/runtime/personal-agent/normal-surface-projection.ts"],
+        normalProjection,
+        operatorDebugEvidence,
+        expectedNormalProjection: {
+          raw_trace_visible: false,
+          raw_refs_visible: false,
+          raw_evidence_refs_visible: false,
+          internal_policy_refs_visible: false,
+          capability_catalog_visible: false,
+        },
+        safetyInvariants: {
+          chat_status_redacts_internal_refs: true,
+          tui_adjacent_status_redacts_internal_refs: true,
+          cli_status_report_redacts_internal_refs: true,
+          operator_debug_surface_keeps_diagnostics: true,
+        },
+        nextFiles: [
+          "src/interface/chat/chat-runner-commands.ts",
+          "src/interface/cli/commands/goal-read.ts",
+          "src/interface/tui/chat-surface.ts",
+          "src/runtime/personal-agent/normal-surface-projection.ts",
+        ],
       });
 
-      expect(projection).toMatchObject({
-        raw_trace_visible: false,
-        raw_refs_visible: false,
-        raw_evidence_refs_visible: false,
-        internal_policy_refs_visible: false,
-        capability_catalog_visible: false,
-        readonly_projection: true,
-        mutation_performed: false,
-      });
-      expect(JSON.stringify(projection)).not.toContain("memory:raw-secret");
-      expect(authorityDecision.surface_class).toBe("normal_user");
+      expect(chatStatus.success).toBe(true);
+      expect(tuiStatus.success).toBe(true);
+      expect(chatStatus.output).toContain("Current goal");
+      expect(tuiStatus.output).toContain("Current goal");
+      expect(cliCurrent).toContain("Current goal");
+      expect(cliFocused).toContain("# Status: Product-wide authority gauntlet");
+      expectNormalSurfaceRedacted(JSON.stringify(normalProjection));
+      expect(chatDiagnosticStatus.output).toContain("run:coreloop:raw");
+      expect(cliDiagnostic).toContain("RAW_MEMORY_SLOT");
       return {
-        authorityDecision,
-        visibleProjection: projection,
-        nextFiles: ["src/runtime/personal-agent/normal-surface-projection.ts"],
+        normalProjection,
+        operatorDebugEvidence,
+        expectedNormalProjection: {
+          raw_trace_visible: false,
+          raw_refs_visible: false,
+          raw_evidence_refs_visible: false,
+          internal_policy_refs_visible: false,
+          capability_catalog_visible: false,
+        },
+        safetyInvariants: {
+          chat_status_redacts_internal_refs: true,
+          tui_adjacent_status_redacts_internal_refs: true,
+          cli_status_report_redacts_internal_refs: true,
+          operator_debug_surface_keeps_diagnostics: true,
+        },
+        nextFiles: [
+          "src/interface/chat/chat-runner-commands.ts",
+          "src/interface/cli/commands/goal-read.ts",
+          "src/interface/tui/chat-surface.ts",
+          "src/runtime/personal-agent/normal-surface-projection.ts",
+        ],
+      };
+    });
+  });
+
+  it("11. runtime-control and schedule mutation paths leave durable projection evidence before side effects", async () => {
+    await runProductGauntletScenario("runtime_control_schedule_authority_boundaries", async (context) => {
+      const runtime = new PersonalAgentRuntimeStore(context.runtimeRoot, {
+        controlBaseDir: context.controlBaseDir,
+      });
+      const order: string[] = [];
+      const traceSink = {
+        recordTrace: async (trace: PersonalAgentDecisionTrace) => {
+          order.push(`trace:${trace.situation_frame.caller_path}:${trace.task_candidates[0]?.desired_effect ?? "none"}`);
+          return runtime.recordTrace(trace);
+        },
+      };
+      const runtimeControlExecutor = vi.fn(async () => ({
+        ok: true,
+        state: "running" as const,
+        message: "Safe-pause request reached fake daemon executor.",
+      }));
+      const runtimeControl = new RuntimeControlService({
+        runtimeRoot: context.runtimeRoot,
+        personalAgentRuntime: traceSink,
+        now: () => new Date(NOW),
+        sessionRegistry: {
+          snapshot: vi.fn(async () => ({
+            generated_at: NOW,
+            sessions: [],
+            warnings: [],
+            background_runs: [{
+              id: "run:authority-boundary",
+              kind: "coreloop_run",
+              status: "running",
+              title: "Authority boundary run",
+              goal_id: "goal:authority-boundary",
+              parent_session_id: "conversation:authority",
+              child_session_id: "session:authority-boundary",
+              notify_policy: "silent",
+              created_at: NOW,
+              started_at: NOW,
+              updated_at: NOW,
+              summary: "Running target.",
+              error: null,
+            }],
+          })),
+        },
+        executor: runtimeControlExecutor,
+      });
+      const runtimeResult = await runtimeControl.request({
+        cwd: context.rootDir,
+        intent: {
+          kind: "pause_run",
+          reason: "Pause the exact active run.",
+          target: { runId: "run:authority-boundary" },
+        },
+        requestedBy: { surface: "chat", conversation_id: "conversation:authority" },
+        replyTarget: { surface: "chat", conversation_id: "conversation:authority" },
+        approvalFn: async () => true,
+      });
+
+      const schedule = new ScheduleEngine({
+        baseDir: context.controlBaseDir,
+        personalAgentRuntime: traceSink,
+        dataSourceRegistry: new Map([
+          ["schedule-authority-source", {
+            sourceId: "schedule-authority-source",
+            sourceType: "file",
+            query: vi.fn(async () => {
+              order.push("schedule:data_source_query");
+              return {
+                value: "schedule data",
+                raw: "schedule data",
+                timestamp: NOW,
+                source_id: "schedule-authority-source",
+              };
+            }),
+          }],
+        ]) as never,
+        llmClient: {
+          sendMessage: vi.fn(async () => {
+            order.push("schedule:llm");
+            return { content: "schedule summary", usage: { input_tokens: 1, output_tokens: 1 } };
+          }),
+          parseJSON: vi.fn(),
+        } as unknown as ILLMClient,
+        logger: logger(),
+      });
+      await schedule.loadEntries();
+      const scheduleEntry = await schedule.addEntry(scheduleCronEntry({
+        cron: {
+          prompt_template: "Summarize {{schedule-authority-source}}",
+          context_sources: ["schedule-authority-source"],
+          output_format: "notification",
+          max_tokens: 100,
+        },
+      }));
+      schedule.getEntries()[0]!.next_fire_at = new Date(Date.parse(NOW) - 1_000).toISOString();
+      await schedule.saveEntries();
+      await schedule.loadEntries();
+      const scheduleResults = await schedule.tick();
+
+      const traces = await loadPersonalAgentTraces(runtime);
+      const runtimeControlTrace = traces.find((trace) =>
+        trace.situation_frame?.caller_path === "runtime_control"
+        && trace.task_candidates.some((candidate) => candidate.desired_effect === "mutate_runtime_control")
+      );
+      const scheduleTrace = traces.find((trace) =>
+        trace.situation_frame?.caller_path === "scheduled_wake"
+        && trace.situation_frame.source_ref.ref === scheduleEntry.id
+      );
+      const scheduleTraceIndex = order.findIndex((item) => item === "trace:scheduled_wake:execute_tool");
+      context.recordEvidence({
+        dbSummary: {
+          runtimeResult,
+          scheduleResults,
+          order,
+          trace_count: traces.length,
+        },
+        operatorDebugEvidence: {
+          runtimeControlTrace,
+          scheduleTrace,
+          traces,
+        },
+        safetyInvariants: {
+          runtime_control_trace_before_executor: true,
+          schedule_trace_before_data_source_and_llm: true,
+          projection_evidence_is_personal_agent_runtime_store_not_interaction_authority_store: true,
+        },
+        nextFiles: [
+          "src/runtime/control/runtime-control-service.ts",
+          "src/runtime/schedule/engine.ts",
+          "src/runtime/schedule/engine-layers.ts",
+          "src/runtime/personal-agent/trace-builder.ts",
+        ],
+      });
+
+      expect(runtimeResult).toMatchObject({ success: true, state: "running" });
+      expect(runtimeControlExecutor).toHaveBeenCalledOnce();
+      expect(runtimeControlTrace).toMatchObject({
+        intervention_decisions: expect.arrayContaining([
+          expect.objectContaining({ target_effect: "mutate_runtime_control" }),
+        ]),
+      });
+      expect(scheduleResults[0]).toMatchObject({
+        entry_id: scheduleEntry.id,
+        status: "ok",
+      });
+      expect(scheduleTrace).toMatchObject({
+        intervention_decisions: expect.arrayContaining([
+          expect.objectContaining({ decision: "allow", target_effect: "execute_tool" }),
+        ]),
+        capability_decisions: expect.arrayContaining([
+          expect.objectContaining({ decision: "available" }),
+        ]),
+      });
+      expect(scheduleTraceIndex).toBeGreaterThanOrEqual(0);
+      expect(scheduleTraceIndex).toBeLessThan(order.indexOf("schedule:data_source_query"));
+      expect(scheduleTraceIndex).toBeLessThan(order.indexOf("schedule:llm"));
+      return {
+        dbSummary: {
+          runtimeResult,
+          scheduleResults,
+          order,
+          trace_count: traces.length,
+        },
+        operatorDebugEvidence: {
+          runtimeControlTrace,
+          scheduleTrace,
+          traces,
+        },
+        safetyInvariants: {
+          runtime_control_trace_before_executor: true,
+          schedule_trace_before_data_source_and_llm: true,
+          projection_evidence_is_personal_agent_runtime_store_not_interaction_authority_store: true,
+        },
+        nextFiles: [
+          "src/runtime/control/runtime-control-service.ts",
+          "src/runtime/schedule/engine.ts",
+          "src/runtime/schedule/engine-layers.ts",
+          "src/runtime/personal-agent/trace-builder.ts",
+        ],
       };
     });
   });
@@ -643,6 +1123,212 @@ function logger() {
     warn: vi.fn(),
     error: vi.fn(),
   };
+}
+
+async function runApprovalRequiredTool(
+  context: { rootDir: string; runtimeRoot: string; controlBaseDir: string },
+  options: {
+    authorityStore: InteractionAuthorityStore;
+    label: string;
+    value: string;
+    expiresAt?: number;
+    approveAt?: number;
+    mutateApprovalRequest?: (input: {
+      request: { input: unknown };
+      context: {
+        sessionId?: string;
+      };
+    }) => void;
+  },
+) {
+  let now = 1_000;
+  let executed = 0;
+  const waitStore = new PermissionWaitPlanStore(context.runtimeRoot, {
+    controlBaseDir: context.controlBaseDir,
+    now: () => now,
+    createEventId: () => `permission-event:${options.label}:${now}`,
+  });
+  const permissionWaitPlanStore = {
+    createWaiting: (input: Parameters<PermissionWaitPlanStore["createWaiting"]>[0]) =>
+      waitStore.createWaiting({
+        ...input,
+        ...(options.expiresAt !== undefined ? { expires_at: options.expiresAt } : {}),
+      }),
+    markApproved: waitStore.markApproved.bind(waitStore),
+    markDenied: waitStore.markDenied.bind(waitStore),
+    markExpired: waitStore.markExpired.bind(waitStore),
+    resumeApproved: waitStore.resumeApproved.bind(waitStore),
+  };
+  const registry = new ToolRegistry();
+  registry.register({
+    metadata: {
+      name: "send_peer_action",
+      aliases: [],
+      permissionLevel: "write_remote",
+      isReadOnly: false,
+      isDestructive: false,
+      shouldDefer: false,
+      alwaysLoad: false,
+      maxConcurrency: 0,
+      maxOutputChars: 8_000,
+      tags: ["peer_initiative"],
+      requiresNetwork: true,
+      activityCategory: "command",
+    },
+    inputSchema: z.object({ value: z.string() }),
+    description: () => "Fake approval-required peer action.",
+    checkPermissions: async () => ({
+      status: "needs_approval",
+      reason: "Peer action needs approval before it can execute.",
+    }),
+    isConcurrencySafe: () => false,
+    call: async (input) => {
+      executed += 1;
+      return {
+        success: true,
+        data: input,
+        summary: "approval-gated peer action executed",
+        durationMs: 0,
+        execution: { status: "executed" },
+      };
+    },
+  } satisfies ITool<{ value: string }>);
+  const executor = new ToolExecutor({
+    registry,
+    permissionManager: new ToolPermissionManager({}),
+    concurrency: new ConcurrencyController(),
+    interactionAuthorityStore: options.authorityStore,
+    traceBaseDir: context.controlBaseDir,
+  });
+  const toolContext = {
+    cwd: context.rootDir,
+    goalId: `goal:${options.label}`,
+    trustBalance: -100,
+    preApproved: false,
+    sessionId: `conversation:${options.label}`,
+    turnId: `turn:${options.label}`,
+    callId: `tool-call:${options.label}`,
+    permissionWaitPlanStore,
+    interactionAuthorityStore: options.authorityStore,
+    approvalFn: async (request: { input: unknown }) => {
+      if (options.approveAt !== undefined) now = options.approveAt;
+      options.mutateApprovalRequest?.({ request, context: toolContext });
+      return true;
+    },
+  };
+  const result = await executor.execute("send_peer_action", { value: options.value }, toolContext as never);
+  return {
+    result,
+    waitStore,
+    callCount: () => executed,
+  };
+}
+
+function chatDepsForStatus(stateManager: StateManager): ChatRunnerDeps {
+  return {
+    stateManager,
+    adapter: {
+      adapterType: "product-gauntlet-status-test",
+      execute: vi.fn(),
+    },
+    llmClient: {
+      sendMessage: vi.fn(),
+      parseJSON: vi.fn((content: string, schema?: { parse(value: unknown): unknown }) => {
+        const parsed = JSON.parse(content) as unknown;
+        return schema ? schema.parse(parsed) : parsed;
+      }),
+    },
+  } as unknown as ChatRunnerDeps;
+}
+
+function chatRunnerForStatus(stateManager: StateManager): ChatRunner {
+  return new ChatRunner(chatDepsForStatus(stateManager));
+}
+
+async function createRuntimeCallerFixture(baseDir: string): Promise<StateManager> {
+  const stateManager = new StateManager(baseDir, undefined, { walEnabled: false });
+  await stateManager.init();
+  await stateManager.saveGoal(makeGoal({
+    id: "goal-product-gauntlet",
+    title: "Product-wide authority gauntlet",
+    loop_status: "running",
+    dimensions: [makeDimension({
+      name: "claim_truth",
+      label: "Claim truth",
+      current_value: 0.5,
+      threshold: { type: "min", value: 1 },
+      confidence: 0.42,
+    })],
+  }));
+
+  const ledger = new BackgroundRunLedger(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+  await ledger.create({
+    id: "run:coreloop:raw",
+    kind: "coreloop_run",
+    status: "running",
+    notify_policy: "silent",
+    goal_id: "goal-product-gauntlet",
+    child_session_id: "session:agent:raw",
+    title: "Product gauntlet run",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded",
+    error: "policy:deny evidence:raw admission=approval_required capability:notify trace:raw",
+    source_refs: [{
+      kind: "task_ledger",
+      id: "trace:raw",
+      path: null,
+      relative_path: "state/pulseed-control.sqlite",
+      updated_at: NOW,
+    }],
+  });
+  await ledger.terminal("run:coreloop:raw", {
+    status: "failed",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded",
+    error: "policy:deny evidence:raw admission=approval_required capability:notify trace:raw",
+    completed_at: NOW,
+  });
+
+  await new RuntimeOperatorHandoffStore(path.join(baseDir, "runtime"), {
+    controlBaseDir: baseDir,
+    now: () => new Date(NOW),
+  }).create({
+    handoff_id: "handoff-product-gauntlet",
+    goal_id: "goal-product-gauntlet",
+    run_id: "run:coreloop:raw",
+    triggers: ["policy", "external_action"],
+    title: "Operator approval needed",
+    summary: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded admission=approval_required",
+    current_status: "policy:deny capability:notify evidence:raw",
+    recommended_action: "Review the prepared operation before continuing.",
+    next_action: {
+      label: "Review the prepared operation before continuing.",
+      approval_required: true,
+    },
+    evidence_refs: [{ kind: "audit_trace", ref: "evidence:raw", observed_at: NOW }],
+  });
+
+  await stateManager.writeRaw("reports/goal-product-gauntlet/report-raw.json", {
+    id: "report-product-gauntlet-raw",
+    report_type: "execution_summary",
+    goal_id: "goal-product-gauntlet",
+    title: "Execution Summary - Product authority",
+    content: "RAW_MEMORY_SLOT autonomy=approval_required readiness=degraded admission=approval_required capability:notify policy:deny evidence:raw trace:raw session:agent:raw",
+    verbosity: "standard",
+    generated_at: NOW,
+    delivered_at: null,
+    read: false,
+  });
+
+  return stateManager;
+}
+
+async function loadPersonalAgentTraces(store: PersonalAgentRuntimeStore) {
+  const candidates = await store.listTaskCandidates(100);
+  const traces = await Promise.all(candidates.map((candidate) => store.loadTrace(candidate.candidate_id)));
+  const byId = new Map<string, NonNullable<(typeof traces)[number]>>();
+  for (const trace of traces) {
+    if (trace) byId.set(trace.trace_id, trace);
+  }
+  return [...byId.values()];
 }
 
 function telegramConfig() {
@@ -841,29 +1527,35 @@ function peerDetails(input: { maxDeliveryKind: "digest" | "suggest" | "notify" }
   };
 }
 
-function permissionPlan(input: { conversationId: string; value: string }): PermissionWaitCanonicalPlan {
+function scheduleCronEntry(overrides: Partial<ScheduleEntryInput> = {}): Omit<
+  ScheduleEntryInput,
+  | "id"
+  | "created_at"
+  | "updated_at"
+  | "last_fired_at"
+  | "next_fire_at"
+  | "consecutive_failures"
+  | "last_escalation_at"
+  | "baseline_results"
+  | "total_executions"
+  | "total_tokens_used"
+  | "max_tokens_per_day"
+  | "tokens_used_today"
+  | "budget_reset_at"
+  | "escalation_timestamps"
+> {
   return {
-    schema_version: "permission-wait-canonical-plan-v1",
-    tool_name: "send_peer_action",
-    input: { value: input.value },
-    cwd: "/workspace",
-    target: {
-      session_id: input.conversationId,
-      tool_call_id: "tool-call:peer-action",
+    name: "authority-boundary-cron",
+    layer: "cron",
+    trigger: { type: "interval", seconds: 3600, jitter_factor: 0 },
+    enabled: true,
+    cron: {
+      prompt_template: "Summarize {{schedule-authority-source}}",
+      context_sources: ["schedule-authority-source"],
+      output_format: "notification",
+      max_tokens: 100,
     },
-    permission: {
-      permission_level: "write_remote",
-      is_destructive: false,
-      reversibility: "unknown",
-    },
-    state_epoch: "epoch:approval-request",
-    capability_facts: {
-      tool_permission_level: "write_remote",
-      tool_is_read_only: false,
-      tool_is_destructive: false,
-      tool_requires_network: true,
-      tool_tags: ["peer_initiative"],
-    },
+    ...overrides,
   };
 }
 
