@@ -11,7 +11,12 @@ import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
-import { saveAgentMemoryStoreToTruth, saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../memory-truth-adapter.js";
+import {
+  loadAgentMemoryStoreFromTruth,
+  saveAgentMemoryStoreToTruth,
+  saveDomainKnowledgeToTruth,
+  saveSharedKnowledgeToTruth,
+} from "../memory-truth-adapter.js";
 import { AgentMemoryStoreSchema } from "../types/agent-memory.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
@@ -184,6 +189,50 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
       ownerKind: "agent_memory",
       ownerScope: "default",
     }));
+  });
+
+  it("does not surface domain correction refs as agent memory correction history", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-truth-owner-filter-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+
+    await manager.saveAgentMemory({
+      key: "agent.owner.filter",
+      value: "Agent correction history must only contain agent-memory corrections.",
+      memory_type: "fact",
+    });
+    await manager.saveKnowledge("goal-owner-filter", makeKnowledgeEntry({ entry_id: "domain-entry" }));
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir, { appendRuntimeEvents: false });
+    try {
+      await truthStore.applyCorrectionTransaction({
+        correction: {
+          correction_id: "correction:domain-only",
+          target_claim_id: "knowledge:domain:goal-owner-filter:domain-entry",
+          correction_kind: "retracted",
+          replacement_claim_id: null,
+          idempotency_key: "idem:domain-only",
+          actor: "system",
+          reason: "Domain-only correction must not appear in agent memory history.",
+          created_at: fixedNow,
+          evidence_refs: [],
+        },
+      });
+      await expect(truthStore.listCorrections()).resolves.toEqual([
+        expect.objectContaining({ correction_id: "correction:domain-only" }),
+      ]);
+      await expect(truthStore.listCorrections({
+        ownerKind: "agent_memory",
+        ownerScope: "default",
+      })).resolves.toEqual([]);
+    } finally {
+      await truthStore.close();
+    }
+
+    await expect(loadAgentMemoryStoreFromTruth(baseDir)).resolves.toMatchObject({
+      corrections: [],
+    });
   });
 
   it("loads inactive correction audit records from Soil compatibility fallback", async () => {

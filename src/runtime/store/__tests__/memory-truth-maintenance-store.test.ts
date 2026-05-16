@@ -174,6 +174,48 @@ describe("MemoryTruthMaintenanceStore", () => {
     await expect(eventLog.listEvents({ limit: 20 })).resolves.toEqual([]);
   });
 
+  it("includes snapshot-generated forgets in runtime event payloads", async () => {
+    const baseDir = makeTmpDir();
+    const store = new MemoryTruthMaintenanceStore(baseDir, {
+      runtimeRoot: path.join(baseDir, "runtime"),
+      appendRuntimeEvents: true,
+    });
+    await seedClaim(store);
+
+    await store.saveOwnerSnapshot({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+      claims: [],
+      evidenceRefs: [],
+      tombstoneReason: "Snapshot delete must be visible to replay consumers.",
+    });
+
+    await expect(store.getClaim("claim:old")).resolves.toMatchObject({
+      lifecycle: "forgotten",
+      visible_to_normal_surface: false,
+    });
+    await expect(store.listTombstones("claim:old")).resolves.toEqual([
+      expect.objectContaining({
+        claim_id: "claim:old",
+        reason: "Snapshot delete must be visible to replay consumers.",
+      }),
+    ]);
+
+    const eventLog = new RuntimeEventLogStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    const events = await eventLog.listEvents({ limit: 20 });
+    expect(events).toEqual([
+      expect.objectContaining({
+        event_type: "memory.truth_maintenance.recorded",
+        target_refs: [expect.objectContaining({ kind: "memory_claim", ref: "claim:old" })],
+        payload: expect.objectContaining({
+          operation: "snapshot",
+          claim_ids: ["claim:old"],
+          tombstone_ids: [expect.stringMatching(/^tombstone-memory-truth-snapshot-forget-/)],
+        }),
+      }),
+    ]);
+  });
+
   it("clears conflicted lifecycle when resolving a conflict set", async () => {
     const baseDir = makeTmpDir();
     const store = new MemoryTruthMaintenanceStore(baseDir, { appendRuntimeEvents: false });

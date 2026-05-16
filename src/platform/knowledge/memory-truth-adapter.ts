@@ -66,7 +66,10 @@ export async function loadAgentMemoryStoreFromTruth(baseDir: string): Promise<Ag
       ownerScope: AGENT_MEMORY_OWNER_SCOPE,
       includeInactive: true,
     });
-    const corrections = await store.listCorrections();
+    const corrections = await store.listCorrections({
+      ownerKind: AGENT_MEMORY_OWNER_KIND,
+      ownerScope: AGENT_MEMORY_OWNER_SCOPE,
+    });
     const destructiveDeleteClaimIds = new Set(
       corrections
         .filter((correction) => correction.correction_kind === "forgotten")
