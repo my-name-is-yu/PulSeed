@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 35;
+export const CONTROL_DB_SCHEMA_VERSION = 36;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2491,6 +2491,36 @@ CREATE INDEX IF NOT EXISTS resident_activation_bindings_scope_idx
   ON resident_activation_bindings(scope, surface, status, updated_at);
 `.trim();
 
+export const CONTROL_DB_INTERACTION_AUTHORITY_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS interaction_authority_decisions (
+  decision_id TEXT PRIMARY KEY,
+  decided_at TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  lifecycle TEXT NOT NULL,
+  surface TEXT,
+  surface_class TEXT,
+  target_binding_ref TEXT,
+  delivery_ref TEXT,
+  fail_closed INTEGER NOT NULL CHECK (fail_closed IN (0, 1)),
+  stale_target_rejected INTEGER NOT NULL CHECK (stale_target_rejected IN (0, 1)),
+  suppressed INTEGER NOT NULL CHECK (suppressed IN (0, 1)),
+  decision_json TEXT NOT NULL CHECK (json_valid(decision_json))
+);
+
+CREATE INDEX IF NOT EXISTS interaction_authority_decisions_source_idx
+  ON interaction_authority_decisions(source_kind, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS interaction_authority_decisions_surface_idx
+  ON interaction_authority_decisions(surface, surface_class, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS interaction_authority_decisions_target_idx
+  ON interaction_authority_decisions(target_binding_ref, delivery_ref, decided_at, decision_id);
+
+CREATE INDEX IF NOT EXISTS interaction_authority_decisions_fail_closed_idx
+  ON interaction_authority_decisions(fail_closed, stale_target_rejected, suppressed, decided_at, decision_id);
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2683,5 +2713,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     35,
     "proactivity-calibration-runtime-state",
     CONTROL_DB_PROACTIVE_CALIBRATION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    36,
+    "interaction-authority-runtime-state",
+    CONTROL_DB_INTERACTION_AUTHORITY_SCHEMA_SQL
   ),
 ];
