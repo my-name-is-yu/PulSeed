@@ -24,6 +24,10 @@ export const replayInclude = [
   "tests/replay/**/*.test.ts",
 ];
 
+export const productGauntletInclude = [
+  "tests/product-gauntlet/**/*.test.ts",
+];
+
 export const slowInclude = [
   "tests/slow/**/*.test.ts",
   "tests/test_native_*.ts",
