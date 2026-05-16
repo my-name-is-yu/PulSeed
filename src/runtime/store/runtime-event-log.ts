@@ -248,33 +248,8 @@ export class RuntimeEventLogStore {
   }
 
   async appendWithDisposition(input: RuntimeEventEnvelopeInput): Promise<RuntimeEventAppendResult> {
-    const event = RuntimeEventEnvelopeSchema.parse({
-      ...input,
-      payload_schema: input.payload_schema ?? payloadSchemaVersion(input.payload),
-      payload_version: input.payload_version ?? payloadSchemaVersion(input.payload),
-    });
     const db = await this.database();
-    let storedEvent = event;
-    let disposition: RuntimeEventAppendDisposition = "inserted";
-    db.transaction((sqlite) => {
-      const inserted = insertRuntimeEvent(sqlite, event);
-      if (inserted) {
-        upsertRuntimeGraphForEvent(sqlite, event);
-        return;
-      }
-      const eventIdMatch = readRuntimeEventById(sqlite, event.event_id);
-      if (eventIdMatch) {
-        storedEvent = eventIdMatch;
-        disposition = "deduplicated_by_event_id";
-        return;
-      }
-      const idempotencyMatch = readRuntimeEventByIdempotency(sqlite, event);
-      if (idempotencyMatch) {
-        storedEvent = idempotencyMatch;
-        disposition = "deduplicated_by_idempotency";
-      }
-    });
-    return { event: storedEvent, disposition };
+    return db.transaction((sqlite) => appendRuntimeEventEnvelopeInTransaction(sqlite, input));
   }
 
   async appendPersonalAgentTrace(traceInput: PersonalAgentDecisionTrace): Promise<RuntimeEventEnvelope> {
@@ -385,6 +360,31 @@ export class RuntimeEventLogStore {
   private async database(): Promise<ControlDatabase> {
     return this.dbOwner.database();
   }
+}
+
+export function appendRuntimeEventEnvelopeInTransaction(
+  sqlite: SqliteDatabase,
+  input: RuntimeEventEnvelopeInput,
+): RuntimeEventAppendResult {
+  const event = RuntimeEventEnvelopeSchema.parse({
+    ...input,
+    payload_schema: input.payload_schema ?? payloadSchemaVersion(input.payload),
+    payload_version: input.payload_version ?? payloadSchemaVersion(input.payload),
+  });
+  const inserted = insertRuntimeEvent(sqlite, event);
+  if (inserted) {
+    upsertRuntimeGraphForEvent(sqlite, event);
+    return { event, disposition: "inserted" };
+  }
+  const eventIdMatch = readRuntimeEventById(sqlite, event.event_id);
+  if (eventIdMatch) {
+    return { event: eventIdMatch, disposition: "deduplicated_by_event_id" };
+  }
+  const idempotencyMatch = readRuntimeEventByIdempotency(sqlite, event);
+  if (idempotencyMatch) {
+    return { event: idempotencyMatch, disposition: "deduplicated_by_idempotency" };
+  }
+  throw new Error(`runtime event append failed without a dedupe match: ${event.event_id}`);
 }
 
 export function runtimeEventFromPersonalAgentTrace(trace: PersonalAgentDecisionTrace): RuntimeEventEnvelopeInput {

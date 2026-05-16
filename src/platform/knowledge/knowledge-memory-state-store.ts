@@ -154,6 +154,18 @@ function soilStatusForAgentMemory(entry: AgentMemoryEntry): SoilRecord["status"]
   }
 }
 
+function isActiveAgentMemoryEntry(entry: AgentMemoryEntry): boolean {
+  return (entry.status === "raw" || entry.status === "compiled")
+    && (entry.correction_state?.active ?? true);
+}
+
+function lifecycleStateForAgentMemory(entry: AgentMemoryEntry): "active" | "superseded" | "archived" | "tombstoned" {
+  if (entry.status === "corrected" || entry.status === "superseded") return "superseded";
+  if (entry.status === "forgotten" || entry.status === "retracted") return "tombstoned";
+  if (entry.status === "archived" || entry.status === "quarantined") return "archived";
+  return "active";
+}
+
 function recordForDomainState(domainKnowledge: DomainKnowledge): SoilRecordInput {
   const sourceId = domainKnowledge.goal_id;
   const id = recordId(SOURCE_DOMAIN_STATE, sourceId);
@@ -202,7 +214,10 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
   const sourceId = `${goalId}:${entry.entry_id}`;
   const id = recordId(SOURCE_DOMAIN_ENTRY, sourceId);
   const acquiredAt = isoOrNow(entry.acquired_at);
-  const canonical = nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Knowledge entry ${entry.entry_id}`);
+  const active = entry.superseded_by === null;
+  const canonical = active
+    ? nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Knowledge entry ${entry.entry_id}`)
+    : `Knowledge entry ${entry.entry_id} is superseded and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_DOMAIN_ENTRY, sourceId),
@@ -210,7 +225,9 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
     record_type: "fact",
     soil_id: `knowledge/domain/${goalId}/${entry.entry_id}`,
     title: nonEmptyText(entry.question, `Knowledge entry ${entry.entry_id}`),
-    summary: nonEmptyText(entry.answer, `Knowledge entry ${entry.entry_id}`),
+    summary: active
+      ? nonEmptyText(entry.answer, `Knowledge entry ${entry.entry_id}`)
+      : `Superseded knowledge entry ${entry.entry_id}`,
     canonical_text: canonical,
     goal_id: goalId,
     task_id: entry.acquisition_task_id,
@@ -221,12 +238,15 @@ function recordForDomainEntry(goalId: string, entry: KnowledgeEntry, sortOrder: 
     valid_from: acquiredAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_DOMAIN_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status: entry.superseded_by ? "superseded" : "active",
+      lifecycle_state: entry.superseded_by ? "superseded" : "active",
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${domainSourceRef(goalId)}#${entry.entry_id}`,
     },
@@ -243,7 +263,10 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
   const sourceId = entry.entry_id;
   const id = recordId(SOURCE_SHARED_ENTRY, sourceId);
   const acquiredAt = isoOrNow(entry.acquired_at);
-  const canonical = nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Shared knowledge entry ${entry.entry_id}`);
+  const active = entry.superseded_by === null;
+  const canonical = active
+    ? nonEmptyText(`${entry.question}\n\n${entry.answer}`, `Shared knowledge entry ${entry.entry_id}`)
+    : `Shared knowledge entry ${entry.entry_id} is superseded and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_SHARED_ENTRY, sourceId),
@@ -251,7 +274,9 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
     record_type: "fact",
     soil_id: `knowledge/shared/${entry.entry_id}`,
     title: nonEmptyText(entry.question, `Shared knowledge entry ${entry.entry_id}`),
-    summary: nonEmptyText(entry.answer, `Shared knowledge entry ${entry.entry_id}`),
+    summary: active
+      ? nonEmptyText(entry.answer, `Shared knowledge entry ${entry.entry_id}`)
+      : `Superseded shared knowledge entry ${entry.entry_id}`,
     canonical_text: canonical,
     goal_id: null,
     task_id: entry.acquisition_task_id,
@@ -262,12 +287,15 @@ function recordForSharedEntry(entry: SharedKnowledgeEntry, sortOrder: number): S
     valid_from: acquiredAt,
     valid_to: isoOrNull(entry.revalidation_due_at),
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_SHARED_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status: entry.superseded_by ? "superseded" : "active",
+      lifecycle_state: entry.superseded_by ? "superseded" : "active",
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${sharedSourceRef()}#${entry.entry_id}`,
     },
@@ -285,7 +313,11 @@ function recordForAgentMemoryEntry(entry: AgentMemoryEntry, sortOrder: number): 
   const id = recordId(SOURCE_AGENT_MEMORY_ENTRY, sourceId);
   const createdAt = isoOrNow(entry.created_at);
   const updatedAt = isoOrNow(entry.updated_at);
-  const canonical = nonEmptyText(`${entry.key}\n\n${entry.summary ?? ""}\n\n${entry.value}`, `Agent memory ${entry.id}`);
+  const active = isActiveAgentMemoryEntry(entry);
+  const status = soilStatusForAgentMemory(entry);
+  const canonical = active
+    ? nonEmptyText(`${entry.key}\n\n${entry.summary ?? ""}\n\n${entry.value}`, `Agent memory ${entry.id}`)
+    : `Agent memory ${entry.id} is ${status} and withheld from normal Soil retrieval.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_AGENT_MEMORY_ENTRY, sourceId),
@@ -297,23 +329,28 @@ function recordForAgentMemoryEntry(entry: AgentMemoryEntry, sortOrder: number): 
         : entry.memory_type,
     soil_id: `memory/agent/${entry.id}`,
     title: nonEmptyText(entry.key, `Agent memory ${entry.id}`),
-    summary: entry.summary ?? entry.value,
+    summary: active
+      ? entry.summary ?? entry.value
+      : `Agent memory ${status}; retained for operator audit.`,
     canonical_text: canonical,
     goal_id: null,
     task_id: null,
-    status: soilStatusForAgentMemory(entry),
+    status,
     confidence: null,
     importance: null,
     source_reliability: null,
     valid_from: createdAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: active,
     source_type: SOURCE_AGENT_MEMORY_ENTRY,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       entry,
+      status,
+      lifecycle_state: lifecycleStateForAgentMemory(entry),
+      visible_to_normal_surface: active,
       sort_order: sortOrder,
       source_ref: `${agentMemorySourceRef()}#${entry.id}`,
     },
@@ -330,10 +367,7 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
   const sourceId = correction.correction_id;
   const id = recordId(SOURCE_AGENT_MEMORY_CORRECTION, sourceId);
   const createdAt = isoOrNow(correction.created_at);
-  const canonical = nonEmptyText(
-    `${correction.correction_kind}: ${correction.reason}`,
-    `Agent memory correction ${correction.correction_id}`,
-  );
+  const canonical = `Agent memory correction ${correction.correction_id} is retained for operator audit.`;
   return {
     record_id: id,
     record_key: recordKey(SOURCE_AGENT_MEMORY_CORRECTION, sourceId),
@@ -341,7 +375,7 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
     record_type: "state",
     soil_id: `memory/agent/corrections/${correction.correction_id}`,
     title: `Agent memory correction: ${correction.correction_id}`,
-    summary: correction.reason,
+    summary: `Agent memory correction ${correction.correction_kind}; operator audit only.`,
     canonical_text: canonical,
     goal_id: null,
     task_id: null,
@@ -352,12 +386,19 @@ function recordForAgentMemoryCorrection(correction: MemoryCorrectionEntry, sortO
     valid_from: createdAt,
     valid_to: null,
     supersedes_record_id: null,
-    is_active: true,
+    is_active: false,
     source_type: SOURCE_AGENT_MEMORY_CORRECTION,
     source_id: sourceId,
     metadata_json: {
       schema_version: STATE_SCHEMA_VERSION,
       correction,
+      status: correction.correction_kind,
+      lifecycle_state: correction.correction_kind === "forgotten" || correction.correction_kind === "retracted"
+        ? "tombstoned"
+        : correction.correction_kind === "corrected" || correction.correction_kind === "superseded"
+          ? "superseded"
+          : "archived",
+      visible_to_normal_surface: false,
       sort_order: sortOrder,
       source_ref: `${agentMemorySourceRef()}#correction:${correction.correction_id}`,
     },

@@ -14,13 +14,13 @@
 | --- | --- | --- | --- |
 | memory save | `MemorySaveTool.call` -> `KnowledgeManager.saveAgentMemory` -> `saveAgentMemoryEntry` | `KnowledgeMemoryStateStore.saveAgentMemoryStore` into Soil SQLite records | Save typed `MemoryClaim` and `EvidenceRef`; write Soil projection record; no raw StateManager write |
 | memory recall | `MemoryRecallTool.call` -> `KnowledgeManager.recallAgentMemory` -> `recallAgentMemoryEntries` | loads AgentMemoryStore from Soil records, filters in memory | Return typed recall provenance/record with mode, evidence, lifecycle, confidence, projection safety; old API adapts entries |
-| memory correction | `cmdMemory`, `MemoryCorrectionTool`, `runUserMemoryOperation` -> `applyAgentMemoryCorrection` | rewrites AgentMemoryStore corrections and entries; authority/event trace recorded before commit | Atomic correction/replacement/tombstone/projection/event-log linkage in typed unit-of-work |
+| memory correction | `cmdMemory`, `MemoryCorrectionTool`, `runUserMemoryOperation` -> `applyAgentMemoryCorrection` | typed truth transaction followed by post-commit authority trace | Atomic correction/replacement/tombstone/projection/event-log linkage in typed unit-of-work |
 | memory forget | same as correction | status becomes `forgotten`, content retained in store for audit with redaction | Add first-class `ForgetTombstone`; old evidence reimport/rebuild blocked unless operator-restored |
 | memory inspect/history/export | `cmdMemory inspect/history/export`, `inspectUserMemory`, `exportAgentMemoryGovernance` | projection built from AgentMemoryStore and corrections | Normal projection redacts internals; operator/debug shows evidence/correction/forget/conflict and recall mode |
 | chat/gateway memory use | `ChatRunner`, `runtime/cognition/memory-context`, `KnowledgeManager` where injected | governed memory context from current stores | Production caller path must use typed recall/projection filtering |
 | CLI status/report projection | `/status`, TUI status, CLI status tests in product gauntlet | current status paths use redacted normal surface | Add memory-truth scenario ensuring stale facts do not leak |
 | Dream/Reflection/AgentLoop planning | reflection modules, durable loop context, Soil query | `KnowledgeManager` and Soil context | Planning gets valid projections only; conflicts are held/uncertain |
-| Soil query/open/publish | Soil tools and schedule publish job | Soil SQLite/Markdown artifacts | Soil query/rebuild respects claim invalidation; publish/import/debug remain explicit artifacts |
+| Soil query/open/publish | Soil tools and schedule publish job | Soil SQLite/Markdown artifacts | Soil query/rebuild/fallback context respects claim invalidation; publish/import/debug remain explicit artifacts |
 | runtime event/replay | `RuntimeEventLogStore`, `InteractionAuthorityStore`, `PersonalAgentRuntimeStore` | control DB runtime events and RuntimeGraph | Memory truth mutation events/refs link to RuntimeGraph because #1997 is merged |
 | product gauntlet | `tests/product-gauntlet/interaction-authority-gauntlet.test.ts` | existing memory correction and replay scenarios | Add truth-maintenance scenario artifacts and invariants |
 
@@ -32,8 +32,8 @@
 | memory recall | `MemoryRecallTool.call` -> `KnowledgeManager.recallAgentMemoryWithProvenance` -> typed `RecallRecord` | exact/lexical/semantic/graph caller-path test in `MemoryRecallTool.test.ts` |
 | memory correction/forget/retract | `MemoryCorrectionTool` / `cmdMemory` -> `runUserMemoryOperation` -> `commitAgentMemoryCorrectionToTruth` -> `applyCorrectionTransaction` | `user-memory-operations.test.ts`; store rollback/idempotency test; replay test |
 | memory inspect/history/export | `inspectUserMemory` and governance export load typed truth records through KnowledgeManager adapters | `user-memory-operations.test.ts`; product gauntlet operator evidence |
-| Soil projection/rebuild | agent-memory save/correction/forget/retract triggers Soil projection from typed truth store output | replay test and product gauntlet assert Soil page contains active replacement and excludes stale/forgotten facts |
-| Runtime Event Log / RuntimeGraph | `memory.truth_maintenance.recorded` event and `memory_truth_maintenance_summary` rebuild output | store contract test and product gauntlet event evidence |
+| Soil projection/rebuild/search | agent-memory save/correction/forget/retract triggers Soil projection from typed truth store output; inactive memory/correction records are not active Soil search candidates | replay test and product gauntlet assert Soil page and production Soil lexical/context fallback contain active replacement and exclude stale/forgotten facts |
+| Runtime Event Log / RuntimeGraph | `memory.truth_maintenance.recorded` event and `memory_truth_maintenance_summary` rebuild output, inserted in the same control DB transaction as the truth update | store contract test, runtime-event rollback test, and product gauntlet event evidence |
 | guardrail | `check:database-first-legacy-stores` blocks production memory/knowledge/Soil raw `StateManager.writeRaw` | `database-first-legacy-store-check.test.ts` negative fixture and guard command |
 
 ## Current StateManager And File Exceptions
@@ -62,7 +62,8 @@ Explicit file boundaries retained:
 - Contract test: exact, lexical, semantic, semantic unavailable, and graph recall return explicit mode and consistent invalidation filtering. Added in `MemoryRecallTool.test.ts` and semantic recall tests.
 - Caller-path test: `MemorySaveTool`, `MemoryRecallTool`, `MemoryCorrectionTool`, and `cmdMemory` exercise production routing. Tool paths covered directly; CLI command coverage is through existing command tests plus `runUserMemoryOperation` production path.
 - Caller-path test: normal projection does not expose corrected/forgotten stale facts or raw internals. Added in product gauntlet normal projection evidence.
-- Soil test: rebuild/query does not resurrect forgotten/corrected claims. Added in replay and product gauntlet Soil projection assertions.
+- Soil test: rebuild/query/context fallback does not resurrect forgotten/corrected claims. Added in replay and product gauntlet Soil projection plus `SqliteSoilRepository.searchLexical` / `compileSoilContextFromRepository` assertions.
+- RuntimeGraph atomicity test: injected runtime-event failure leaves no correction, replacement, tombstone, projection, or event rows. Added in `src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts`.
 - Replay test: recreated stores/runtime preserve tombstones, replacements, conflicts, recall records, and idempotency. Added in `tests/replay/memory-truth-maintenance-replay.test.ts`.
 - Product gauntlet: failure artifacts include ownership-boundary, memory-claims, evidence-refs, corrections, tombstones, conflict-sets, recall-records, Soil projection, normal projection, operator evidence, replay summary, and candidate fix plan. Added in `tests/harness/product-gauntlet-runner.ts` and `tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts`.
 - Guardrail negative test: production memory/knowledge raw `StateManager.writeRaw` causes check failure. Added in `database-first-legacy-store-check.test.ts`.

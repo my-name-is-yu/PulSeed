@@ -82,7 +82,7 @@ describe("user memory correction operations", () => {
     expect(store.corrections).toHaveLength(1);
   });
 
-  it("records durable admission before committing agent memory correction effects", async () => {
+  it("records durable admission after committing agent memory correction effects", async () => {
     await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],
       corrections: [],
@@ -112,17 +112,19 @@ describe("user memory correction operations", () => {
     });
 
     expect(order.indexOf("trace")).toBeGreaterThanOrEqual(0);
-    expect(order.indexOf("trace")).toBeLessThan(order.indexOf("truth-transaction"));
+    expect(order.indexOf("truth-transaction")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("truth-transaction")).toBeLessThan(order.indexOf("trace"));
   });
 
-  it("does not commit agent memory correction when durable admission fails", async () => {
+  it("does not record durable admission when the truth transaction fails", async () => {
     await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],
       corrections: [],
       last_consolidated_at: null,
     });
-    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
-      .mockRejectedValueOnce(new Error("trace unavailable"));
+    const traceSpy = vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace");
+    vi.spyOn(MemoryTruthMaintenanceStore.prototype, "applyCorrectionTransaction")
+      .mockRejectedValueOnce(new Error("truth unavailable"));
 
     await expect(runUserMemoryOperation(stateManager, {
       operation: "correct",
@@ -131,11 +133,12 @@ describe("user memory correction operations", () => {
       replacementValue: "The user prefers VS Code.",
       replacementKey: "favorite-editor-current",
       now: "2026-05-02T01:00:00.000Z",
-    })).rejects.toThrow("trace unavailable");
+    })).rejects.toThrow("truth unavailable");
 
     const store = await new KnowledgeMemoryStateStore(tmpDir).loadAgentMemoryStore();
     expect(store.entries).toEqual([memoryEntry()]);
     expect(store.corrections).toEqual([]);
+    expect(traceSpy).not.toHaveBeenCalled();
   });
 
   it("replays the same agent memory correction input without duplicate correction effects", async () => {

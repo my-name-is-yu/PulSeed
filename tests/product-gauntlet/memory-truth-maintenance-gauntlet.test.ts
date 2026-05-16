@@ -8,6 +8,10 @@ import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager
 import { inspectUserMemory } from "../../src/platform/corrections/user-memory-operations.js";
 import { MemoryTruthMaintenanceStore } from "../../src/runtime/store/memory-truth-maintenance-store.js";
 import { RuntimeEventLogStore } from "../../src/runtime/store/runtime-event-log.js";
+import {
+  compileSoilContextFromRepository,
+  SqliteSoilRepository,
+} from "../../src/platform/soil/index.js";
 import { MemorySaveTool } from "../../src/tools/execution/MemorySaveTool/MemorySaveTool.js";
 import { MemoryCorrectionTool } from "../../src/tools/execution/MemoryCorrectionTool/MemoryCorrectionTool.js";
 import { MemoryRecallTool } from "../../src/tools/query/MemoryRecallTool/MemoryRecallTool.js";
@@ -73,6 +77,17 @@ describe("memory truth-maintenance product gauntlet", () => {
       const recallRecords = await truthStore.listRecallRecords();
       const projectionRecords = await truthStore.listProjectionRecords();
       const soilProjection = await fsp.readFile(path.join(context.pulseedHome, "soil", "memory", "index.md"), "utf8");
+      const soilRepo = await SqliteSoilRepository.openExisting({ rootDir: path.join(context.pulseedHome, "soil") });
+      expect(soilRepo).not.toBeNull();
+      const staleSoilLexical = await soilRepo!.searchLexical({ query: "Atom old city", limit: 10 });
+      const activeSoilLexical = await soilRepo!.searchLexical({ query: "VS Code", limit: 10 });
+      const compiledStaleSoilContext = await compileSoilContextFromRepository({
+        retrievalId: "memory-truth-product-gauntlet-stale-soil",
+        fallbackQuery: "Atom old city",
+        fallbackCandidates: staleSoilLexical,
+        now: () => new Date("2026-05-16T00:00:00.000Z"),
+      }, soilRepo!);
+      soilRepo!.close();
       const eventLog = new RuntimeEventLogStore(context.runtimeRoot, { controlBaseDir: context.controlBaseDir });
       const events = await eventLog.listEvents({ limit: 50 });
       const rebuild = await eventLog.rebuildProjections();
@@ -100,6 +115,9 @@ describe("memory truth-maintenance product gauntlet", () => {
         soilProjection: {
           path: path.join(context.pulseedHome, "soil", "memory", "index.md"),
           text: soilProjection,
+          stale_lexical_candidates: staleSoilLexical,
+          active_lexical_candidates: activeSoilLexical,
+          compiled_stale_context: compiledStaleSoilContext,
         },
         normalProjection: {
           entries: (recall.data as { entries: unknown[] }).entries,
@@ -158,6 +176,9 @@ describe("memory truth-maintenance product gauntlet", () => {
       expect(soilProjection).toContain("VS Code");
       expect(soilProjection).not.toContain("Atom");
       expect(soilProjection).not.toContain("old-location");
+      expect(staleSoilLexical).toEqual([]);
+      expect(activeSoilLexical.map((candidate) => candidate.snippet).join("\n")).toContain("VS Code");
+      expect(compiledStaleSoilContext.items).toEqual([]);
       expect(events.map((event) => event.event_type)).toEqual(expect.arrayContaining([
         "memory.truth_maintenance.recorded",
       ]));

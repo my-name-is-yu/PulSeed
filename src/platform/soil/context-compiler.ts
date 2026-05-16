@@ -137,7 +137,17 @@ function fallbackRejectionReason(candidate: SoilCandidate, minScore: number): st
     return `lifecycle state ${lifecycleState} is excluded from default context`;
   }
   const recordStatus = metadataString(candidate, "status");
-  if (recordStatus && ["archived", "deleted", "expired", "rejected", "superseded"].includes(recordStatus)) {
+  if (recordStatus && [
+    "archived",
+    "corrected",
+    "deleted",
+    "expired",
+    "forgotten",
+    "quarantined",
+    "rejected",
+    "retracted",
+    "superseded",
+  ].includes(recordStatus)) {
     return `record status ${recordStatus} is excluded from default context`;
   }
   if (candidate.metadata_json["schema_compatible"] === false) {

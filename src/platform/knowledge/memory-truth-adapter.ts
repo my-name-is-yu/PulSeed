@@ -128,7 +128,7 @@ export async function commitAgentMemoryCorrectionToTruth(
     correction: MemoryCorrectionEntry;
     target: AgentMemoryEntry;
     replacement: AgentMemoryEntry | null;
-    failureAfterStep?: "replacement_claim" | "correction" | "target_update" | "tombstone" | "conflict" | "recall" | "projection";
+    failureAfterStep?: "replacement_claim" | "correction" | "target_update" | "tombstone" | "conflict" | "recall" | "projection" | "runtime_event";
   },
 ): Promise<void> {
   const parsedStore = AgentMemoryStoreSchema.parse(input.store);
@@ -190,7 +190,6 @@ export async function loadDomainKnowledgeFromTruth(baseDir: string, goalId: stri
     const claims = await store.listClaims({
       ownerKind: DOMAIN_KNOWLEDGE_OWNER_KIND,
       ownerScope: goalId,
-      includeInactive: true,
       claimType: "knowledge",
     });
     const entries = claims.map(knowledgeEntryFromClaim).filter(isKnowledgeEntry);
@@ -230,7 +229,6 @@ export async function loadSharedKnowledgeFromTruth(baseDir: string): Promise<Sha
     const claims = await store.listClaims({
       ownerKind: SHARED_KNOWLEDGE_OWNER_KIND,
       ownerScope: "global",
-      includeInactive: true,
       claimType: "shared_knowledge",
     });
     return claims.map(sharedKnowledgeEntryFromClaim).filter(isSharedKnowledgeEntry);

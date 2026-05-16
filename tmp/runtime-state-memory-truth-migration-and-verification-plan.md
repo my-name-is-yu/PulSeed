@@ -25,14 +25,19 @@
    - `RecallRecord`
    - `ProjectionRecord`
    Status: complete in `src/runtime/store/memory-truth-maintenance-store.ts`.
-3. Add transaction APIs for correction, replacement claim, tombstone/conflict, recall/projection updates, RuntimeGraph/event-log refs, and failure injection tests. Status: complete with rollback/idempotency tests.
+3. Add transaction APIs for correction, replacement claim, tombstone/conflict, recall/projection updates, RuntimeGraph/event-log refs, and failure injection tests. Status: complete with rollback/idempotency tests, including runtime-event insertion failure rollback inside the same control DB transaction.
 4. Adapt `KnowledgeManager` agent memory save/recall/list/correct/history/export to use the typed truth store as production truth. Status: complete for save/recall/correction/forget/retract/history/inspect/export.
 5. Adapt domain/shared knowledge save/load/query to the typed truth store. Status: complete through `memory-truth-adapter.ts` and KnowledgeManager store/search callers.
 6. Keep `KnowledgeMemoryStateStore` as compatibility/migration/debug and Soil projection helper, not production truth for `KnowledgeManager`. Status: complete; legacy store is fallback/import compatibility when truth store is empty.
-7. Add Soil projection consumption of memory truth projection metadata and block corrected/forgotten/conflicted source claims during rebuild/query/publish. Status: complete for agent memory Soil projection caller paths; import/publish artifacts stay explicit boundaries.
-8. Add Runtime Event Log/RuntimeGraph event payload support for memory truth maintenance or link memory truth rows through existing authority/source refs. Status: complete with `memory.truth_maintenance.recorded` and rebuild summary.
+7. Add Soil projection consumption of memory truth projection metadata and block corrected/forgotten/conflicted source claims during rebuild/query/publish. Status: complete for agent memory Soil projection caller paths and production Soil lexical/context fallback retrieval; import/publish artifacts stay explicit boundaries.
+8. Add Runtime Event Log/RuntimeGraph event payload support for memory truth maintenance or link memory truth rows through existing authority/source refs. Status: complete with `memory.truth_maintenance.recorded`, rebuild summary, and same-transaction event/runtime graph insertion for correction commits.
 9. Add guardrails that fail on new production memory/knowledge raw `StateManager.writeRaw`, direct file truth writes, or untyped JSON truth tables without an owned allowlist entry. Status: complete for raw StateManager memory/knowledge/Soil writes; existing direct-file guard remains active.
-10. Update docs after tests prove behavior. Status: pending until final verification pass finishes.
+10. Update docs after tests prove behavior. Status: complete after verification pass.
+
+## Fresh Audit Remediation
+
+- Fresh audit blocker: inactive agent-memory entries were still written to Soil chunks with active search eligibility. Fix: corrected/forgotten/retracted/quarantined memory and correction audit records now write `is_active=false`, sanitized normal-search text, lifecycle/status metadata, and product-gauntlet coverage through `SqliteSoilRepository.searchLexical` plus `compileSoilContextFromRepository`.
+- Fresh audit blocker: memory truth correction rows committed before Event Log / RuntimeGraph insertion. Fix: `MemoryTruthMaintenanceStore.applyCorrectionTransaction` now inserts the memory truth event and RuntimeGraph nodes inside the same control DB transaction and proves rollback with `failureAfterStep: "runtime_event"`.
 
 ## Verification Plan
 

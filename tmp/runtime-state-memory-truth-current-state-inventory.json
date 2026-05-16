@@ -373,6 +373,11 @@
       "Soil agent memory projection after save/correction/forget/retract",
       "RuntimeEventLogStore memory.truth_maintenance.recorded event and rebuild summary"
     ],
+    "fresh_audit_remediation": [
+      "Inactive agent-memory and correction audit records now write inactive Soil records with sanitized normal-search text plus lifecycle/status metadata; product gauntlet exercises SqliteSoilRepository.searchLexical and compileSoilContextFromRepository.",
+      "Memory truth correction transactions now insert memory.truth_maintenance.recorded and RuntimeGraph nodes inside the same control DB transaction; runtime_event failure injection proves rollback leaves no truth rows or event rows.",
+      "User memory correction traces are recorded after the truth transaction succeeds, preventing authority/runtime evidence from claiming an uncommitted correction."
+    ],
     "guardrail_added": "check:database-first-legacy-stores fails production memory/knowledge/Soil StateManager.writeRaw calls through memory-knowledge-raw-state-manager-write.",
     "representative_tests_added": [
       "src/runtime/store/__tests__/memory-truth-maintenance-store.test.ts",

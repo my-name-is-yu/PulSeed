@@ -164,12 +164,10 @@ export async function runUserMemoryOperation(
       actor: "user",
       createdAt: input.now,
       provenanceRef: "pulseed memory command",
-      beforeCommit: async (pending) => {
-        await recordMemoryCorrectionTrace(stateManager, input, pending.correction, {
-          memoryRef: { kind: "memory", ref: input.targetRef.id },
-          replacementRef: pending.replacement ? { kind: "memory", ref: pending.replacement.id } : null,
-        });
-      },
+    });
+    await recordMemoryCorrectionTrace(stateManager, input, result.correction, {
+      memoryRef: { kind: "memory", ref: input.targetRef.id },
+      replacementRef: result.replacement ? { kind: "memory", ref: result.replacement.id } : null,
     });
     return {
       operation: input.operation,
@@ -347,7 +345,7 @@ async function recordMemoryCorrectionTrace(
         input.operation,
         memoryCorrectionTargetKey(correction.target_ref),
       ].join(":"),
-      summary: `User ${input.operation} operation invalidated memory influence for ${input.targetRef.kind}:${input.targetRef.id}.`,
+      summary: `User ${input.operation} operation committed truth maintenance for ${input.targetRef.kind}:${input.targetRef.id}.`,
       sourceRef: { kind: "memory_correction", ref: correction.correction_id },
     },
     target: {
@@ -357,7 +355,7 @@ async function recordMemoryCorrectionTrace(
       summary: correction.reason,
     },
     decision: "allow",
-    decisionReason: "User memory correction is allowed and future decisions must treat the target memory as corrected or invalidated.",
+    decisionReason: "User memory correction is allowed after the truth-maintenance commit and future decisions must treat the target memory as corrected or invalidated.",
     capabilityDecision: "available",
     capabilityRefs: [{ kind: "memory_correction_operation", ref: input.operation }],
     policyRef: { kind: "intervention_policy", ref: "policy:memory-correction-v1" },
@@ -370,7 +368,7 @@ async function recordMemoryCorrectionTrace(
     auditRefs: [{ kind: "memory_correction", ref: correction.correction_id }],
     outcomeEvent: {
       type: "memory_updated",
-      summary: "Memory correction/invalidation was recorded before the memory can influence future decisions.",
+      summary: "Memory correction/invalidation was committed before the memory can influence future decisions.",
       targetRef: refs.memoryRef,
     },
   }));
@@ -380,7 +378,7 @@ async function recordMemoryCorrectionTrace(
     correctionId: correction.correction_id,
     targetRef: `${input.targetRef.kind}:${input.targetRef.id}`,
     decidedAt: correction.created_at,
-    reason: "Memory correction was recorded before the target can influence future recall or normal projection.",
+    reason: "Memory correction was committed before the target can influence future recall or normal projection.",
     memoryWithheld: true,
     normalSurfaceProjectionRef: `normal-surface:memory-correction:${correction.correction_id}`,
   }));

@@ -138,6 +138,40 @@ describe("MemoryTruthMaintenanceStore", () => {
       }),
     ]));
   });
+
+  it("rolls back truth rows when runtime event integration fails inside the transaction", async () => {
+    const baseDir = makeTmpDir();
+    const store = new MemoryTruthMaintenanceStore(baseDir, {
+      runtimeRoot: path.join(baseDir, "runtime"),
+      appendRuntimeEvents: true,
+    });
+    await seedClaim(store);
+
+    await expect(store.applyCorrectionTransaction({
+      correction: {
+        ...correctionInput("correction:event-rollback", "idem:event-rollback"),
+        replacement_claim_id: "claim:event-rollback",
+      },
+      replacementClaim: replacementClaimInput("claim:event-rollback"),
+      replacementEvidenceRefs: [evidenceInput("evidence:event-rollback", "claim:event-rollback")],
+      tombstone: tombstoneInput("tombstone:event-rollback", "claim:old", "idem:event-rollback"),
+      projectionRecords: [projectionInput("projection:event-rollback", "claim:event-rollback")],
+      failureAfterStep: "runtime_event",
+    })).rejects.toThrow("injected memory truth transaction failure after runtime_event");
+
+    await expect(store.getClaim("claim:old")).resolves.toMatchObject({
+      lifecycle: "active",
+      invalidated_by: null,
+      visible_to_normal_surface: true,
+    });
+    await expect(store.getClaim("claim:event-rollback")).resolves.toBeNull();
+    await expect(store.listCorrections()).resolves.toEqual([]);
+    await expect(store.listTombstones()).resolves.toEqual([]);
+    await expect(store.listProjectionRecords({ claimId: "claim:event-rollback" })).resolves.toEqual([]);
+
+    const eventLog = new RuntimeEventLogStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    await expect(eventLog.listEvents({ limit: 20 })).resolves.toEqual([]);
+  });
 });
 
 async function seedClaim(store: MemoryTruthMaintenanceStore): Promise<void> {

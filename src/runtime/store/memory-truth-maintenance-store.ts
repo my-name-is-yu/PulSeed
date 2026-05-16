@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod/v3";
 import {
@@ -8,7 +7,10 @@ import {
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "./control-db/index.js";
-import { RuntimeEventLogStore } from "./runtime-event-log.js";
+import {
+  appendRuntimeEventEnvelopeInTransaction,
+  type RuntimeEventEnvelopeInput,
+} from "./runtime-event-log.js";
 import type { RuntimeGraphRef } from "../personal-agent/contracts.js";
 import type { MemoryCorrectionKind } from "../../platform/corrections/memory-correction-ledger.js";
 
@@ -244,7 +246,7 @@ export interface MemoryCorrectionTransactionInput {
   conflictSets?: ConflictSetInput[];
   recallRecords?: RecallRecordInput[];
   projectionRecords?: ProjectionRecordInput[];
-  failureAfterStep?: "replacement_claim" | "correction" | "target_update" | "tombstone" | "conflict" | "recall" | "projection";
+  failureAfterStep?: "replacement_claim" | "correction" | "target_update" | "tombstone" | "conflict" | "recall" | "projection" | "runtime_event";
   emitRuntimeEvent?: boolean;
 }
 
@@ -266,14 +268,12 @@ const relationshipCodec = createJsonRowCodec(RelationshipMemorySchema);
 
 export class MemoryTruthMaintenanceStore {
   private readonly dbOwner;
-  private readonly runtimeRoot: string;
 
   constructor(
     private readonly baseDir: string,
     private readonly options: MemoryTruthMaintenanceStoreOptions = {},
   ) {
     this.dbOwner = createControlDatabaseOwner(baseDir, options);
-    this.runtimeRoot = options.runtimeRoot ?? path.join(baseDir, "runtime");
   }
 
   async ensureReady(): Promise<void> {
@@ -352,27 +352,27 @@ export class MemoryTruthMaintenanceStore {
         if (projection.claim_id && !acceptedClaimIds.has(projection.claim_id)) continue;
         upsertProjection(sqlite, projection);
       }
+      if (input.emitRuntimeEvent ?? this.options.appendRuntimeEvents) {
+        appendRuntimeEventEnvelopeInTransaction(sqlite, this.memoryTruthRuntimeEventInput({
+          traceId: `memory-truth:snapshot:${ownerKind}:${stableId(ownerScope)}`,
+          correlationId: `memory-truth:snapshot:${ownerKind}:${stableId(ownerScope)}`,
+          idempotencyKey: `memory-truth:snapshot:${ownerKind}:${ownerScope}:${stableId(acceptedClaims.map((claim) => `${claim.claim_id}:${claim.updated_at}:${claim.lifecycle}`).join("|"))}`,
+          sourceRef: { kind: "memory_truth_owner", ref: `${ownerKind}:${ownerScope}` },
+          targetRefs: acceptedClaims.map((claim) => ({ kind: "memory_claim", ref: claim.claim_id })),
+          payload: {
+            schema_version: "runtime-event-payload/memory-truth-maintenance/v1",
+            operation: "snapshot",
+            correction_ref: null,
+            claim_ids: acceptedClaims.map((claim) => claim.claim_id),
+            projection_ids: projections.map((projection) => projection.projection_id),
+            recall_ids: [],
+            tombstone_ids: tombstones.map((tombstone) => tombstone.tombstone_id),
+            conflict_set_ids: conflictSets.map((conflict) => conflict.conflict_set_id),
+            owner: { kind: ownerKind, scope: ownerScope },
+          },
+        }));
+      }
     });
-    if (input.emitRuntimeEvent ?? this.options.appendRuntimeEvents) {
-      await this.appendRuntimeEvent({
-        traceId: `memory-truth:snapshot:${ownerKind}:${stableId(ownerScope)}`,
-        correlationId: `memory-truth:snapshot:${ownerKind}:${stableId(ownerScope)}`,
-        idempotencyKey: `memory-truth:snapshot:${ownerKind}:${ownerScope}:${stableId(claims.map((claim) => `${claim.claim_id}:${claim.updated_at}:${claim.lifecycle}`).join("|"))}`,
-        sourceRef: { kind: "memory_truth_owner", ref: `${ownerKind}:${ownerScope}` },
-        targetRefs: claims.map((claim) => ({ kind: "memory_claim", ref: claim.claim_id })),
-        payload: {
-          schema_version: "runtime-event-payload/memory-truth-maintenance/v1",
-          operation: "snapshot",
-          correction_ref: null,
-          claim_ids: claims.map((claim) => claim.claim_id),
-          projection_ids: projections.map((projection) => projection.projection_id),
-          recall_ids: [],
-          tombstone_ids: tombstones.map((tombstone) => tombstone.tombstone_id),
-          conflict_set_ids: conflictSets.map((conflict) => conflict.conflict_set_id),
-          owner: { kind: ownerKind, scope: ownerScope },
-        },
-      });
-    }
   }
 
   async applyCorrectionTransaction(input: MemoryCorrectionTransactionInput): Promise<MemoryCorrectionTransactionResult> {
@@ -426,40 +426,42 @@ export class MemoryTruthMaintenanceStore {
       maybeFail(input.failureAfterStep, "recall");
       for (const projection of projectionRecords) upsertProjection(sqlite, projection);
       maybeFail(input.failureAfterStep, "projection");
-    });
-    if (disposition === "inserted" && (input.emitRuntimeEvent ?? this.options.appendRuntimeEvents)) {
-      const event = await this.appendRuntimeEvent({
-        traceId: `memory-truth:correction:${correction.correction_id}`,
-        correlationId: correction.idempotency_key,
-        idempotencyKey: correction.idempotency_key,
-        sourceRef: { kind: "memory_correction", ref: correction.correction_id },
-        targetRefs: [
-          { kind: "memory_claim", ref: correction.target_claim_id },
-          ...(replacementClaim ? [{ kind: "memory_claim", ref: replacementClaim.claim_id } satisfies RuntimeGraphRef] : []),
-        ],
-        payload: {
-          schema_version: "runtime-event-payload/memory-truth-maintenance/v1",
-          operation: "correction",
-          correction_ref: correction,
-          claim_ids: unique([correction.target_claim_id, replacementClaim?.claim_id].filter(isString)),
-          projection_ids: projectionRecords.map((projection) => projection.projection_id),
-          recall_ids: recallRecords.map((recall) => recall.recall_id),
-          tombstone_ids: tombstone ? [tombstone.tombstone_id] : [],
-          conflict_set_ids: conflictSets.map((conflict) => conflict.conflict_set_id),
-          owner: {
-            kind: "memory_truth",
-            scope: correction.target_claim_id,
+      if (input.emitRuntimeEvent ?? this.options.appendRuntimeEvents) {
+        const eventResult = appendRuntimeEventEnvelopeInTransaction(sqlite, this.memoryTruthRuntimeEventInput({
+          traceId: `memory-truth:correction:${correction.correction_id}`,
+          correlationId: correction.idempotency_key,
+          idempotencyKey: correction.idempotency_key,
+          sourceRef: { kind: "memory_correction", ref: correction.correction_id },
+          targetRefs: [
+            { kind: "memory_claim", ref: correction.target_claim_id },
+            ...(replacementClaim ? [{ kind: "memory_claim", ref: replacementClaim.claim_id } satisfies RuntimeGraphRef] : []),
+          ],
+          payload: {
+            schema_version: "runtime-event-payload/memory-truth-maintenance/v1",
+            operation: "correction",
+            correction_ref: correction,
+            claim_ids: unique([correction.target_claim_id, replacementClaim?.claim_id].filter(isString)),
+            projection_ids: projectionRecords.map((projection) => projection.projection_id),
+            recall_ids: recallRecords.map((recall) => recall.recall_id),
+            tombstone_ids: tombstone ? [tombstone.tombstone_id] : [],
+            conflict_set_ids: conflictSets.map((conflict) => conflict.conflict_set_id),
+            owner: {
+              kind: "memory_truth",
+              scope: correction.target_claim_id,
+            },
           },
-        },
-      });
-      const updated = CorrectionRefSchema.parse({
-        ...correction,
-        runtime_event_ref: event.event_id,
-        runtime_graph_refs: [event.runtime_graph_node_ref?.ref].filter(isString),
-      });
-      db.transaction((sqlite) => upsertCorrection(sqlite, updated));
-      storedCorrection = updated;
-    }
+        }));
+        maybeFail(input.failureAfterStep, "runtime_event");
+        const event = eventResult.event;
+        const updated = CorrectionRefSchema.parse({
+          ...correction,
+          runtime_event_ref: event.event_id,
+          runtime_graph_refs: [event.runtime_graph_node_ref?.ref].filter(isString),
+        });
+        upsertCorrection(sqlite, updated);
+        storedCorrection = updated;
+      }
+    });
     return { correction: storedCorrection, disposition };
   }
 
@@ -564,7 +566,7 @@ export class MemoryTruthMaintenanceStore {
     return this.dbOwner.database();
   }
 
-  private async appendRuntimeEvent(input: {
+  private memoryTruthRuntimeEventInput(input: {
     traceId: string;
     correlationId: string;
     idempotencyKey: string;
@@ -581,47 +583,39 @@ export class MemoryTruthMaintenanceStore {
       conflict_set_ids: string[];
       owner: { kind: string; scope: string };
     };
-  }) {
-    const log = new RuntimeEventLogStore(this.runtimeRoot, {
-      controlBaseDir: this.options.controlBaseDir ?? this.baseDir,
-      controlDb: this.options.controlDb,
-      controlDbPath: this.options.controlDbPath,
-    });
-    try {
-      return await log.append({
-        schema_version: "runtime-event-envelope/v1",
-        event_id: `runtime-event:memory-truth:${stableId(`${input.traceId}:${input.idempotencyKey}`)}`,
-        event_type: "memory.truth_maintenance.recorded",
-        occurred_at: new Date().toISOString(),
-        trace_id: input.traceId,
-        causation_id: null,
-        correlation_id: input.correlationId,
-        idempotency_key: input.idempotencyKey,
-        actor: { kind: "runtime" },
-        caller_path: "memory_correction",
-        surface: "operator_debug",
-        goal_id: null,
-        task_id: null,
-        run_id: null,
-        session_id: null,
-        source_ref: input.sourceRef,
-        target_refs: input.targetRefs,
-        authority_decision_ref: null,
-        runtime_graph_node_ref: null,
-        runtime_graph_edge_refs: [],
-        side_effect_ref: null,
-        replay_policy: {
-          mode: "dedupe_by_idempotency_key",
-          duplicate_side_effect_policy: "projection_only",
-          idempotency_scope: "memory_truth_maintenance",
-        },
-        payload_schema: "runtime-event-payload/memory-truth-maintenance/v1",
-        payload_version: "runtime-event-payload/memory-truth-maintenance/v1",
-        payload: input.payload,
-      });
-    } finally {
-      await log.close();
-    }
+  }): RuntimeEventEnvelopeInput {
+    const eventId = `runtime-event:memory-truth:${stableId(`${input.traceId}:${input.idempotencyKey}`)}`;
+    return {
+      schema_version: "runtime-event-envelope/v1",
+      event_id: eventId,
+      event_type: "memory.truth_maintenance.recorded",
+      occurred_at: new Date().toISOString(),
+      trace_id: input.traceId,
+      causation_id: null,
+      correlation_id: input.correlationId,
+      idempotency_key: input.idempotencyKey,
+      actor: { kind: "runtime" },
+      caller_path: "memory_correction",
+      surface: "operator_debug",
+      goal_id: null,
+      task_id: null,
+      run_id: null,
+      session_id: null,
+      source_ref: input.sourceRef,
+      target_refs: input.targetRefs,
+      authority_decision_ref: null,
+      runtime_graph_node_ref: { kind: "runtime_event", ref: eventId },
+      runtime_graph_edge_refs: [],
+      side_effect_ref: null,
+      replay_policy: {
+        mode: "dedupe_by_idempotency_key",
+        duplicate_side_effect_policy: "projection_only",
+        idempotency_scope: "memory_truth_maintenance",
+      },
+      payload_schema: "runtime-event-payload/memory-truth-maintenance/v1",
+      payload_version: "runtime-event-payload/memory-truth-maintenance/v1",
+      payload: input.payload,
+    };
   }
 }
 
