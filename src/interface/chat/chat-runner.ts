@@ -112,7 +112,6 @@ import {
 } from "./feedback-ingestion.js";
 import {
   createFeedbackIngestion,
-  StructuredCommitmentCandidateClassifier,
   type CommitmentCandidateClassifier,
 } from "../../runtime/attention/index.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime-root.js";
@@ -247,8 +246,7 @@ export class ChatRunner {
     this.personalAgentRuntime = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(this.providerConfigBaseDir(), {
       controlBaseDir: this.providerConfigBaseDir(),
     });
-    this.commitmentCandidateClassifier = deps.commitmentCandidateClassifier
-      ?? (deps.llmClient ? new StructuredCommitmentCandidateClassifier(deps.llmClient) : null);
+    this.commitmentCandidateClassifier = deps.commitmentCandidateClassifier ?? null;
     this.attentionStateStore = deps.attentionStateStore
       ?? new AttentionStateStore(resolveConfiguredDaemonRuntimeRoot(this.providerConfigBaseDir()), {
         controlBaseDir: this.providerConfigBaseDir(),
@@ -1055,7 +1053,9 @@ export class ChatRunner {
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
       try {
         await this.recordShadowCognition(turnContext, history);
-        await this.recordShadowCommitmentAttention(turnContext, eventContext);
+        if (this.commitmentCandidateClassifier) {
+          await this.recordShadowCommitmentAttention(turnContext, eventContext);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const elapsed_ms = Date.now() - start;

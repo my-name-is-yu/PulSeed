@@ -108,6 +108,7 @@ export function createAttentionClusterFromUrge(urge: UrgeCandidate, now: string)
     sourceDiversity,
     maturation: urge.maturation,
     lifecycle: lifecycleForSeedUrge(urge),
+    priority_evidence: urge.priority_evidence,
     conflicts: urge.conflictMarkers,
     splitCandidates: [],
     mergeHistory: [],
@@ -199,11 +200,23 @@ function mergeUrgeIntoCluster(input: {
       sourceDiversity: sourceDiversityForSourceRefs(allSignalRefs),
       maturation: strongerMaturation(input.cluster.maturation, input.urge.maturation, input.now),
       lifecycle: lifecycleAfterMerge(input.cluster, input.urge),
+      priority_evidence: strongerPriorityEvidence(input.cluster, input.urge),
       conflicts: uniqueBy([...input.cluster.conflicts, ...input.urge.conflictMarkers], (conflict) => conflict.conflict_id),
       mergeHistory: [...input.cluster.mergeHistory, event],
       updatedAt: input.now,
     }),
   };
+}
+
+function strongerPriorityEvidence(
+  cluster: AttentionCluster,
+  urge: UrgeCandidate,
+): AttentionCluster["priority_evidence"] {
+  if (!cluster.priority_evidence) return urge.priority_evidence;
+  if (!urge.priority_evidence) return cluster.priority_evidence;
+  return (urge.priority_evidence.total_score ?? 0) > (cluster.priority_evidence.total_score ?? 0)
+    ? urge.priority_evidence
+    : cluster.priority_evidence;
 }
 
 function lifecycleForSeedUrge(urge: UrgeCandidate): AttentionCluster["lifecycle"] {

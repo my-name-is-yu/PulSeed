@@ -570,6 +570,7 @@ export const AttentionClusterSchema = z.object({
   sourceDiversity: SourceDiversitySummarySchema,
   maturation: AttentionMaturationSchema,
   lifecycle: AttentionClusterLifecycleSchema,
+  priority_evidence: AttentionPriorityEvidenceSchema.optional(),
   conflicts: z.array(AttentionConflictSchema).default([]),
   splitCandidates: z.array(AttentionSplitCandidateSchema).default([]),
   mergeHistory: z.array(AttentionMergeEventSchema).default([]),

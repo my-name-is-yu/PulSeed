@@ -370,7 +370,7 @@ function createAgendaItemFromCluster(
       : { kind: "staleness_change", refs: [clusterRef], reason: "cluster must be regrounded when source state changes" },
     suppressionReason: cluster.suppression?.reason ?? null,
     commitmentLifecycle: cluster.lifecycle === "mature" ? "proposed" : cluster.lifecycle === "forgotten" ? "terminal" : "held",
-    priority_evidence: existing?.priority_evidence,
+    priority_evidence: existing?.priority_evidence ?? cluster.priority_evidence,
     needsRegrounding: cluster.lifecycle === "needs_regrounding" || cluster.scope.policyEpoch === "unknown",
     scope: cluster.scope,
     policyEpoch: cluster.scope.policyEpoch,
@@ -403,7 +403,7 @@ function agendaKindForUrge(urge: UrgeCandidate): AgentAgendaItemKind {
 function agendaKindForCluster(cluster: AttentionCluster): AgentAgendaItemKind {
   const refs = cluster.theme.structuredRefs.map((structuredRef) => structuredRef.ref.kind);
   if (refs.includes("goal")) return "goal_stewardship";
-  if (refs.includes("wait") || refs.includes("schedule_tick")) return "commitment_guard";
+  if (refs.includes("commitment") || refs.includes("wait") || refs.includes("schedule_tick")) return "commitment_guard";
   if (refs.includes("memory")) return "memory_conflict";
   if (refs.includes("surface")) return "surface_staleness";
   return "self_maintenance";

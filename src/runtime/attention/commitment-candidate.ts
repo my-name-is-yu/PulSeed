@@ -18,7 +18,7 @@ import {
   createUrgeCandidate,
 } from "./attention-metabolism.js";
 import { createAttentionInput, type AttentionInput } from "./attention-input.js";
-import { ref, sourceRef, stableId, uniqueRefs } from "./attention-refs.js";
+import { ref, sourceRef, stableId } from "./attention-refs.js";
 
 export const CommitmentCareLifecycleSchema = z.enum([
   "candidate",
@@ -290,8 +290,7 @@ export function createCommitmentAttentionInput(input: {
     current_session_refs: [ref("session", input.candidate.scope.sessionId ?? input.candidate.source_epoch)],
     user_activity_refs: [ref("user_activity", input.candidate.source_ref.id)],
     audit_refs: [
-      ref("commitment", input.candidate.commitment_id),
-      ref("policy", input.candidate.policy_epoch),
+      ref("audit_trace", `attention.commitment.candidate:${input.candidate.commitment_id}`),
     ],
   });
 }
@@ -354,7 +353,6 @@ export function commitmentCandidateToUrge(input: {
     forbidden_moves: visibleSuppressed ? ["ask", "speak", "external_side_effect"] : ["external_side_effect"],
     maturation_state: maturationForCommitment(input.candidate),
     expires_at: input.candidate.materialization_state === "stale" ? input.now : undefined,
-    audit_refs: [ref("commitment", input.candidate.commitment_id)],
     scope: input.candidate.scope,
     signalRefs: [sourceRef("user_activity", input.candidate.source_ref.id)],
     structuredRefs: [
@@ -367,6 +365,7 @@ export function commitmentCandidateToUrge(input: {
     priority_evidence: input.candidate.priority_evidence,
     modelOrClassifierVersion: "commitment-candidate-contract-v1",
     replayableInputRefs: [ref("commitment", input.candidate.commitment_id)],
+    audit_refs: [ref("audit_trace", `attention.commitment.urge:${input.candidate.commitment_id}`)],
   });
 }
 
@@ -415,10 +414,7 @@ export function buildCommitmentReemissionInput(input: {
     },
     current_session_refs: [ref("session", input.candidate.scope.sessionId ?? input.candidate.source_epoch)],
     runtime_state_refs: [ref("runtime_event", `commitment-reemit:${input.candidate.commitment_id}:${input.triggerKind}`)],
-    audit_refs: uniqueRefs([
-      ref("commitment", input.candidate.commitment_id),
-      ...(input.relatedRefs ?? []),
-    ]),
+    audit_refs: [ref("audit_trace", `attention.commitment.reemit:${input.candidate.commitment_id}:${input.triggerKind}`)],
     stale_refs: input.candidate.materialization_state === "stale"
       ? [ref("commitment", input.candidate.commitment_id)]
       : [],

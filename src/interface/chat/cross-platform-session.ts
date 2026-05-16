@@ -47,8 +47,10 @@ import {
 import { createCapabilityExecutionResolver } from "../../runtime/capability-execution-resolver.js";
 import { ApprovalBroker } from "../../runtime/approval-broker.js";
 import { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
+import { StructuredCommitmentCandidateClassifier } from "../../runtime/attention/index.js";
 import {
   ApprovalStore,
+  AttentionStateStore,
   CapabilityVerificationStore,
   PermissionGrantCapabilitySchema,
   PermissionGrantExcludedCapabilitySchema,
@@ -1460,6 +1462,7 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
   const personalAgentRuntime = new PersonalAgentRuntimeStore(stateManager.getBaseDir(), {
     controlBaseDir: stateManager.getBaseDir(),
   });
+  const attentionStateStore = new AttentionStateStore(runtimeRoot, controlDbOptions);
   const runtimeControlService = new RuntimeControlService({
     runtimeRoot,
     stateManager,
@@ -1534,6 +1537,8 @@ async function createGlobalCrossPlatformChatSessionManager(): Promise<CrossPlatf
     capabilityExecutionResolver,
     runtimeControlService,
     personalAgentRuntime,
+    commitmentCandidateClassifier: new StructuredCommitmentCandidateClassifier(llmClient),
+    attentionStateStore,
   });
 }
 
