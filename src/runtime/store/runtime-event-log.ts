@@ -436,6 +436,7 @@ export function runtimeEventFromAuthorityDecision(decision: ExecutionAuthorityDe
       "authority",
       parsed.source.kind,
       parsed.source.ref,
+      parsed.source.stage,
       parsed.bindings.delivery_ref
         ?? parsed.bindings.approval_ref
         ?? parsed.bindings.feedback_ref

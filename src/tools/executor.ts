@@ -567,6 +567,7 @@ export class ToolExecutor {
       expectedCanonicalPlan: input.expectedCanonicalPlan,
       actualCanonicalPlan: input.actualCanonicalPlan,
       resumeResult,
+      resumePhase: "before_mutation",
       reason: "Approval resume request was durably appended before mutating the wait-plan approval state.",
       decisionId: `execution-authority:approval:${input.waitPlanId}:resume:before-mutation`,
     }));

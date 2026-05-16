@@ -32,6 +32,7 @@ import {
   ToolPermissionManager,
   ToolRegistry,
   type ITool,
+  type ToolCallContext,
 } from "../../src/tools/index.js";
 import { makeGoal, makeTask } from "../helpers/fixtures.js";
 
@@ -281,6 +282,97 @@ describe("runtime event log source-of-truth contract", () => {
       ]));
     } finally {
       appendSpy.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps pre-mutation approval resume evidence distinct from final mismatch outcomes", async () => {
+    const root = fixtureRoot();
+    const runtimeRoot = path.join(root, "runtime");
+    let callCount = 0;
+    const waitStore = new PermissionWaitPlanStore(runtimeRoot, {
+      controlBaseDir: root,
+      now: () => 1_000,
+      createEventId: () => "wait-event:approval-mismatch",
+    });
+    try {
+      const registry = new ToolRegistry();
+      registry.register(approvalRequiredTool(() => {
+        callCount += 1;
+      }));
+      const executor = new ToolExecutor({
+        registry,
+        permissionManager: new ToolPermissionManager({}),
+        concurrency: new ConcurrencyController(),
+        traceBaseDir: root,
+      });
+      const context: ToolCallContext = {
+        cwd: root,
+        goalId: "approval-mismatch-goal",
+        trustBalance: -100,
+        preApproved: false,
+        providerConfigBaseDir: root,
+        callId: "tool-call:approval-mismatch",
+        sessionId: "session:approval-mismatch",
+        hostToolState: { currentEpoch: "epoch-before" },
+        permissionWaitPlanStore: waitStore,
+        approvalFn: async () => {
+          context.hostToolState = { currentEpoch: "epoch-after" };
+          return true;
+        },
+      };
+
+      const result = await executor.execute("approval_order_contract", { value: "send" }, context);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("state_epoch_changed");
+      expect(callCount).toBe(0);
+      const eventLog = new RuntimeEventLogStore(root, { controlBaseDir: root });
+      const approvalEvents = await eventLog.listEvents({ eventType: "approval.resume.recorded", limit: 20 });
+      const approvalDecisions = approvalEvents.flatMap((event) =>
+        event.payload.schema_version === "runtime-event-payload/authority-decision/v1"
+          ? [event.payload.decision]
+          : []
+      );
+      const beforeMutation = approvalDecisions.find((decision) =>
+        decision.decision_id.endsWith(":resume:before-mutation")
+      );
+      const finalMismatch = approvalDecisions.find((decision) =>
+        decision.metadata["resume_status"] === "mismatch_rejected"
+      );
+      expect(beforeMutation).toBeTruthy();
+      expect(finalMismatch).toBeTruthy();
+      expect(beforeMutation).toMatchObject({
+        lifecycle: "evidence",
+        outcome: "prepare_only",
+        can_prepare: true,
+        can_execute: false,
+        fail_closed: false,
+        source: { stage: "prepare" },
+        metadata: { resume_phase: "before_mutation", resume_status: "not_approved" },
+      });
+      expect(finalMismatch).toMatchObject({
+        lifecycle: "terminal",
+        outcome: "fail_closed",
+        can_execute: false,
+        fail_closed: true,
+        source: { stage: "execute" },
+        metadata: {
+          resume_phase: "outcome",
+          resume_status: "mismatch_rejected",
+          mismatch_reasons: expect.arrayContaining(["state_epoch_changed"]),
+        },
+      });
+      const beforeMutationEvent = approvalEvents.find((event) =>
+        event.authority_decision_ref?.ref === beforeMutation!.decision_id
+      );
+      const finalMismatchEvent = approvalEvents.find((event) =>
+        event.authority_decision_ref?.ref === finalMismatch!.decision_id
+      );
+      expect(beforeMutationEvent?.idempotency_key).toBeTruthy();
+      expect(finalMismatchEvent?.idempotency_key).toBeTruthy();
+      expect(finalMismatchEvent?.idempotency_key).not.toBe(beforeMutationEvent?.idempotency_key);
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

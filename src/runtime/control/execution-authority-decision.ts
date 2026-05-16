@@ -628,10 +628,12 @@ export function projectApprovalResumeAuthority(input: {
   resumeResult: PermissionWaitPlanResumeResult;
   expectedCanonicalPlan?: PermissionWaitCanonicalPlan;
   actualCanonicalPlan: PermissionWaitCanonicalPlan;
+  resumePhase?: "before_mutation" | "outcome";
   reason?: string;
   decidedAt?: string;
   decisionId?: string;
 }): ExecutionAuthorityDecision {
+  const beforeMutation = input.resumePhase === "before_mutation";
   const resumed = input.resumeResult.status === "resumed";
   const record = input.resumeResult.status === "not_found" ? null : input.resumeResult.record;
   const mismatchReasons = input.resumeResult.status === "mismatch_rejected"
@@ -645,17 +647,18 @@ export function projectApprovalResumeAuthority(input: {
     schema_version: "execution-authority-decision/v1",
     decision_id: input.decisionId ?? `execution-authority:${sourceRef}`,
     decided_at: input.decidedAt ?? new Date().toISOString(),
-    lifecycle: resumed ? "approved" : "terminal",
-    outcome: resumed ? "allowed" : "fail_closed",
+    lifecycle: beforeMutation ? "evidence" : resumed ? "approved" : "terminal",
+    outcome: beforeMutation ? "prepare_only" : resumed ? "allowed" : "fail_closed",
     reason: input.reason ?? approvalResumeReason(input.resumeResult.status, mismatchReasons),
-    can_execute: resumed,
+    can_prepare: beforeMutation,
+    can_execute: !beforeMutation && resumed,
     requires_approval: true,
-    fail_closed: !resumed,
-    stale_target_rejected: !resumed,
+    fail_closed: !beforeMutation && !resumed,
+    stale_target_rejected: !beforeMutation && !resumed,
     source: {
       kind: "approval",
       ref: sourceRef,
-      stage: "execute",
+      stage: beforeMutation ? "prepare" : "execute",
     },
     bindings: {
       approval_ref: record?.approval_id ?? input.waitPlanId,
@@ -674,6 +677,7 @@ export function projectApprovalResumeAuthority(input: {
     ].filter(isString),
     invalidation_refs: mismatchReasons.map((reason) => `approval-mismatch:${reason}`),
     metadata: {
+      resume_phase: beforeMutation ? "before_mutation" : "outcome",
       resume_status: input.resumeResult.status,
       mismatch_reasons: mismatchReasons,
       expected_target_binding_ref: approvalTargetBindingRef(expectedPlan),
