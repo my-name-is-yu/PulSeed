@@ -537,15 +537,17 @@ export class LoopSupervisor {
   private async executeWorker(worker: GoalWorker, activation: GoalActivation, abortSignal?: AbortSignal): Promise<void> {
     const { goalId } = activation;
     let ownershipLost = false;
-    this.installWriteFence(activation);
-    const stopRenewal = this.startLeaseRenewLoop(activation, () => {
-      ownershipLost = true;
-    });
-    this.setActiveBackgroundRun(worker, activation);
-    await this.recordGoalRunAdmission(worker, activation);
-    await this.markBackgroundRunStarted(activation, worker);
+    let stopRenewal: (() => void) | null = null;
 
     try {
+      this.installWriteFence(activation);
+      stopRenewal = this.startLeaseRenewLoop(activation, () => {
+        ownershipLost = true;
+      });
+      this.setActiveBackgroundRun(worker, activation);
+      await this.recordGoalRunAdmission(worker, activation);
+      await this.markBackgroundRunStarted(activation, worker);
+
       const result: WorkerResult = await worker.execute(goalId, {
         ...(activation.backgroundRun ? { backgroundRun: activation.backgroundRun } : {}),
         ...(activation.waitResume ? { waitResume: activation.waitResume } : {}),
@@ -607,8 +609,17 @@ export class LoopSupervisor {
 
       await this.markBackgroundRunTerminal(activation, result);
       await this.completeClaim(activation, ownershipLost);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.deps.logger?.warn('Failed to prepare durable goal execution', {
+        goalId,
+        claimToken: activation.claim.claimToken,
+        workerId: worker.id,
+        error: reason,
+      });
+      await this.failClaim(activation, reason, true, ownershipLost);
     } finally {
-      stopRenewal();
+      stopRenewal?.();
       this.clearWriteFence(goalId);
       await this.releaseExecutionLease(activation);
       this.activeGoals.delete(goalId);
