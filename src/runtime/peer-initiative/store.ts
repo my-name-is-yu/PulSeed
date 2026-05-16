@@ -1,4 +1,5 @@
 import { z } from "zod/v3";
+import { ExecutionAuthorityDecisionSchema } from "../control/execution-authority-decision.js";
 import { OutboundConversationMessageSchema } from "../gateway/outbound-conversation.js";
 import {
   createRuntimeStorePaths,
@@ -48,6 +49,8 @@ export const PeerDeliveryRecordSchema = z.object({
   visibility_policy_ref: z.string().min(1).optional(),
   failure_reason: z.string().min(1).optional(),
   outbound_message: OutboundConversationMessageSchema.optional(),
+  authority_decision_ref: z.string().min(1).optional(),
+  authority_decision: ExecutionAuthorityDecisionSchema.optional(),
 }).strict();
 export type PeerDeliveryRecord = z.infer<typeof PeerDeliveryRecordSchema>;
 
@@ -67,6 +70,7 @@ export const PeerFeedbackProjectionSchema = z.object({
   feedback_id: z.string().min(1).optional(),
   feedback_effect_refs: z.array(z.string().min(1)).default([]),
   next_eligible_at: z.string().datetime().optional(),
+  authority_decision_ref: z.string().min(1).optional(),
 }).strict();
 export type PeerFeedbackProjection = z.infer<typeof PeerFeedbackProjectionSchema>;
 

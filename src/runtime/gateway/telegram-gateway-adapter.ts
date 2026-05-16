@@ -15,6 +15,11 @@ import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDispla
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
 import { formatExternalAdapterHttpFailure, runExternalAdapterBackoffLoop } from "./external-adapter-shell.js";
 import {
+  projectOutboundConversationAuthority,
+  projectTelegramCallbackAuthority,
+} from "../control/execution-authority-decision.js";
+import { InteractionAuthorityStore } from "../control/interaction-authority-store.js";
+import {
   OutboundConversationDeliveryReceiptSchema,
   OutboundConversationMessageSchema,
   type PeerInitiativeFeedbackAction,
@@ -215,6 +220,7 @@ interface TelegramGatewayRuntimeOptions {
   controlBaseDir?: string;
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
   proactivePolicyStateStore?: Pick<ProactivePolicyStateStore, "applyEvents">;
+  interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   peerInitiativeStore?: Pick<
     PeerInitiativeStore,
     "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
@@ -256,6 +262,7 @@ class TelegramOutboundConversationPort implements GatewayOutboundConversationPor
       last_error: string | null;
       last_timing: GatewayChannelTimingSnapshot;
     }>) => Promise<void>,
+    private readonly interactionAuthorityStore: Pick<InteractionAuthorityStore, "recordDecision">,
   ) {}
 
   async resolveDefaultTarget(): Promise<OutboundConversationTarget | null> {
@@ -277,12 +284,21 @@ class TelegramOutboundConversationPort implements GatewayOutboundConversationPor
     }
     const target = await this.resolveDefaultTarget();
     if (!target) {
+      await this.interactionAuthorityStore.recordDecision(projectOutboundConversationAuthority({
+        message: parsed,
+        currentTarget: null,
+        deliveryRef: parsed.message_id,
+        surfaceClass: "transport",
+      }));
       throw new Error("telegram outbound conversation: no home chat configured. Send /sethome from the target Telegram chat.");
     }
-    if (
-      parsed.target_binding_ref !== target.target_binding_ref
-      || parsed.channel_policy_ref !== target.channel_policy_ref
-    ) {
+    const authorityDecision = await this.interactionAuthorityStore.recordDecision(projectOutboundConversationAuthority({
+      message: parsed,
+      currentTarget: target,
+      deliveryRef: parsed.message_id,
+      surfaceClass: "transport",
+    }));
+    if (!authorityDecision.can_send) {
       throw new Error("telegram outbound conversation rejected stale target or channel policy ref");
     }
 
@@ -305,13 +321,22 @@ class TelegramOutboundConversationPort implements GatewayOutboundConversationPor
       throw error;
     }
 
-    return OutboundConversationDeliveryReceiptSchema.parse({
+    const receipt = OutboundConversationDeliveryReceiptSchema.parse({
       message_id: parsed.message_id,
       surface: "telegram",
       target_binding_ref: parsed.target_binding_ref,
       delivered_at: new Date().toISOString(),
       ...(transportMessageRef ? { transport_message_ref: transportMessageRef } : {}),
     });
+    await this.interactionAuthorityStore.recordDecision(projectOutboundConversationAuthority({
+      message: parsed,
+      currentTarget: target,
+      receipt,
+      decisionId: authorityDecision.decision_id,
+      deliveryRef: parsed.message_id,
+      surfaceClass: "transport",
+    }));
+    return receipt;
   }
 }
 
@@ -332,6 +357,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly notifier: TelegramGatewayNotifier;
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
   private readonly proactivePolicyStateStore: Pick<ProactivePolicyStateStore, "applyEvents">;
+  private readonly interactionAuthorityStore: Pick<InteractionAuthorityStore, "recordDecision">;
   private readonly peerInitiativeStore: Pick<
     PeerInitiativeStore,
     "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
@@ -351,6 +377,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       ?? new FeedbackIngestionStore(runtimeBaseDir, { controlBaseDir });
     this.proactivePolicyStateStore = options.proactivePolicyStateStore
       ?? new ProactivePolicyStateStore(runtimeBaseDir, { controlBaseDir });
+    this.interactionAuthorityStore = options.interactionAuthorityStore
+      ?? new InteractionAuthorityStore(runtimeBaseDir, { controlBaseDir });
     this.peerInitiativeStore = options.peerInitiativeStore
       ?? new PeerInitiativeStore(runtimeBaseDir, { controlBaseDir });
     this.timing = new TelegramGatewayTimingRecorder(this.name);
@@ -377,6 +405,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       this.timing,
       () => this.recordTiming(),
       (update) => this.recordHealth(update),
+      this.interactionAuthorityStore,
     );
   }
 
@@ -527,6 +556,12 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private async processCallbackQuery(query: TelegramCallbackQuery, updateId?: number): Promise<void> {
     const parsedAction = parseTelegramPeerActionCallbackData(query.data ?? "");
     if (!parsedAction) {
+      await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+        callbackId: query.id,
+        deliveryMatches: false,
+        actionMatches: false,
+        reason: "Telegram callback data did not match the peer action protocol.",
+      }));
       await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button anymore.");
       return;
     }
@@ -538,6 +573,14 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       || typeof chatId !== "number" || !Number.isInteger(chatId)
       || typeof messageId !== "number" || !Number.isInteger(messageId)
     ) {
+      await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+        callbackId: query.id,
+        candidateId: parsedAction.candidateId,
+        action: parsedAction.action,
+        deliveryMatches: false,
+        actionMatches: false,
+        reason: "Telegram callback was missing a valid sender, chat, or message binding.",
+      }));
       await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button in this chat.");
       return;
     }
@@ -547,6 +590,16 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       || (this.config.allowed_chat_ids.length > 0 && !this.config.allowed_chat_ids.includes(chatId))
       || (!this.config.allow_all && !this.effectiveAllowedUserIds().includes(fromId))
     ) {
+      await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+        callbackId: query.id,
+        candidateId: parsedAction.candidateId,
+        action: parsedAction.action,
+        callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
+        callbackTransportMessageRef: String(messageId),
+        deliveryMatches: false,
+        actionMatches: false,
+        reason: "Telegram callback sender or chat was not authorized for this channel.",
+      }));
       await this.api.answerCallbackQuery(query.id, "PulSeed could not use that button in this chat.");
       return;
     }
@@ -557,7 +610,26 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       candidateId: parsedAction.candidateId,
       surface: "telegram",
     });
-    if (!telegramPeerDeliveryMatchesCallback(delivery, chatId, messageId)) {
+    const feedbackAction = delivery?.outbound_message?.feedback_actions.find((action) =>
+      action.action === parsedAction.action
+    );
+    const triggerAction = delivery?.outbound_message?.trigger_actions.find((action) =>
+      action.action === parsedAction.action
+    );
+    const callbackAuthorityDecision = await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+      callbackId: query.id,
+      candidateId: parsedAction.candidateId,
+      action: parsedAction.action,
+      deliveryId: delivery?.delivery_id,
+      targetBindingRef: delivery?.target_binding_ref,
+      channelPolicyRef: delivery?.outbound_message?.channel_policy_ref,
+      transportMessageRef: delivery?.transport_message_ref,
+      callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
+      callbackTransportMessageRef: String(messageId),
+      deliveryMatches: telegramPeerDeliveryMatchesCallback(delivery, chatId, messageId),
+      actionMatches: Boolean(feedbackAction || triggerAction),
+    }));
+    if (!callbackAuthorityDecision.can_execute) {
       await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
         this.api.answerCallbackQuery(query.id, "PulSeed could not find that peer action for this chat anymore.")
       );
@@ -565,9 +637,6 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       await this.recordTiming();
       return;
     }
-    const feedbackAction = delivery?.outbound_message?.feedback_actions.find((action) =>
-      action.action === parsedAction.action
-    );
     if (feedbackAction) {
       const now = new Date().toISOString();
       const existingProjection = await this.peerInitiativeStore.getFeedbackProjectionForAction({
@@ -599,6 +668,21 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         sourceSurface: "telegram",
         projectedAt: now,
       }));
+      await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+        callbackId: query.id,
+        candidateId: parsedAction.candidateId,
+        action: parsedAction.action,
+        deliveryId: delivery?.delivery_id,
+        targetBindingRef: delivery?.target_binding_ref,
+        channelPolicyRef: delivery?.outbound_message?.channel_policy_ref,
+        transportMessageRef: delivery?.transport_message_ref,
+        callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
+        callbackTransportMessageRef: String(messageId),
+        deliveryMatches: true,
+        actionMatches: true,
+        feedbackRef: projection.projection_id,
+        decisionId: callbackAuthorityDecision.decision_id,
+      }));
       await this.proactivePolicyStateStore.applyEvents({
         policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
         now,
@@ -622,9 +706,6 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       return;
     }
 
-    const triggerAction = delivery?.outbound_message?.trigger_actions.find((action) =>
-      action.action === parsedAction.action
-    );
     if (triggerAction) {
       await this.handlePeerTriggerAction(triggerAction, chatId, query.id);
       this.timing.markLifecycleEnd();
