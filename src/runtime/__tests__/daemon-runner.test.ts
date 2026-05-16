@@ -2437,9 +2437,15 @@ describe("DaemonRunner durable runtime", () => {
     const runtimeDir = path.join(tmpDir, "runtime");
     const healthStore = new RuntimeHealthStore(runtimeDir, { controlBaseDir: tmpDir });
 
-    const startPromise = daemon.start(["goal-1"]);
+    const startPromise = daemon.start([]);
     currentStartPromise = startPromise;
-    await pollForStoreMatch(() => healthStore.loadDaemonHealth(), () => true);
+    await pollForStoreMatch(
+      () => healthStore.loadDaemonHealth(),
+      (value) => value.details?.["phase"] === "execution_ownership_durable"
+    );
+    await waitFor(() =>
+      (daemon as unknown as { cronScheduleInterval: ReturnType<typeof setInterval> | null }).cronScheduleInterval !== null
+    );
 
     daemon.stop();
     await startPromise;
