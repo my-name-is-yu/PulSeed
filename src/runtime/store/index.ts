@@ -130,6 +130,7 @@ export {
   ResidentActivationStore,
   ResidentActivationSurfaceSchema,
   applyResidentActivationBindingToPolicyState,
+  clearInactiveResidentActivationBudgetFromPolicyState,
 } from "./resident-activation-store.js";
 export type {
   ResidentActivationBinding,

@@ -71,6 +71,7 @@ import {
   ProactivePolicyStateStore,
   ResidentActivationStore,
   applyResidentActivationBindingToPolicyState,
+  clearInactiveResidentActivationBudgetFromPolicyState,
 } from "../store/index.js";
 import {
   PersonalAgentRuntimeStore,
@@ -433,13 +434,19 @@ export async function triggerResidentPeerInitiative(
     maxDeliveryKind: DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
   });
   const activationBinding = await activationStore.loadActiveBinding();
-  const policyState = activationBinding
-    ? await policyStore.save(applyResidentActivationBindingToPolicyState({
+  const effectivePolicyState = activationBinding
+    ? applyResidentActivationBindingToPolicyState({
         state: basePolicyState,
         binding: activationBinding,
         now,
-      }))
-    : basePolicyState;
+      })
+    : clearInactiveResidentActivationBudgetFromPolicyState({
+        state: basePolicyState,
+        now,
+      });
+  const policyState = effectivePolicyState === basePolicyState
+    ? basePolicyState
+    : await policyStore.save(effectivePolicyState);
   const boundary = mapPeerInitiativeBoundary({
     candidate: selected,
     attentionAdmission: input.attentionAdmission,

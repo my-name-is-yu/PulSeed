@@ -266,10 +266,34 @@ export function applyResidentActivationBindingToPolicyState(input: {
   const maxDeliveryKind = input.state.feedback_refs.length === 0
     ? input.binding.max_delivery_kind
     : minDelivery(input.state.max_delivery_kind, input.binding.max_delivery_kind);
+  const existingBudget = input.state.interruption_budget;
+  const bindingBudget = input.binding.interruption_budget;
+  const currentDebits = existingBudget?.budget_id === bindingBudget.budget_id
+    ? existingBudget.current_debits
+    : bindingBudget.current_debits;
   return ProactivePolicyStateSchema.parse({
     ...input.state,
     max_delivery_kind: maxDeliveryKind,
-    interruption_budget: input.binding.interruption_budget,
+    interruption_budget: {
+      ...bindingBudget,
+      current_debits: currentDebits,
+    },
+    updated_at: input.now,
+    runtime_authority: false,
+  });
+}
+
+export function clearInactiveResidentActivationBudgetFromPolicyState(input: {
+  state: ProactivePolicyState;
+  now: string;
+}): ProactivePolicyState {
+  const budget = input.state.interruption_budget;
+  if (!budget || !budget.budget_id.startsWith("resident-activation-budget:")) {
+    return input.state;
+  }
+  const { interruption_budget: _budget, ...rest } = input.state;
+  return ProactivePolicyStateSchema.parse({
+    ...rest,
     updated_at: input.now,
     runtime_authority: false,
   });

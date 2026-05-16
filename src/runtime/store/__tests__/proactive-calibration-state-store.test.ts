@@ -7,6 +7,7 @@ import {
   ProactivePolicyStateStore,
   ResidentActivationStore,
   applyResidentActivationBindingToPolicyState,
+  clearInactiveResidentActivationBudgetFromPolicyState,
 } from "../index.js";
 
 const NOW = "2026-05-16T00:00:00.000Z";
@@ -98,6 +99,57 @@ describe("proactive calibration runtime state stores", () => {
           max_notify: 4,
           current_debits: 0,
         },
+        runtime_authority: false,
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("preserves resident activation budget debits across binding reapplication and clears inactive activation budgets", async () => {
+    const tmpDir = makeTempDir("pulseed-resident-activation-budget-");
+    try {
+      const activationStore = new ResidentActivationStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const proposal = await activationStore.propose({
+        dogfoodDurationHours: 24,
+        now: NOW,
+      });
+      const binding = await activationStore.accept(proposal.proposal_id, "2026-05-16T00:05:00.000Z");
+      const state = createProactivePolicyState({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: NOW,
+        maxDeliveryKind: "notify",
+      });
+      const activated = applyResidentActivationBindingToPolicyState({
+        state,
+        binding,
+        now: "2026-05-16T00:06:00.000Z",
+      });
+      const debited = {
+        ...activated,
+        interruption_budget: {
+          ...activated.interruption_budget!,
+          current_debits: 2,
+        },
+      };
+      const reapplied = applyResidentActivationBindingToPolicyState({
+        state: debited,
+        binding,
+        now: "2026-05-16T00:07:00.000Z",
+      });
+      const cleared = clearInactiveResidentActivationBudgetFromPolicyState({
+        state: reapplied,
+        now: "2026-05-17T00:06:00.000Z",
+      });
+
+      expect(reapplied.interruption_budget).toMatchObject({
+        budget_id: binding.interruption_budget.budget_id,
+        max_notify: 4,
+        current_debits: 2,
+      });
+      expect(cleared.interruption_budget).toBeUndefined();
+      expect(cleared).toMatchObject({
+        max_delivery_kind: "notify",
         runtime_authority: false,
       });
     } finally {

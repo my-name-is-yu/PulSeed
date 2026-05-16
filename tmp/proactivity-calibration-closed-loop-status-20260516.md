@@ -57,3 +57,12 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
 - `npx vitest run --config vitest.integration.config.ts src/runtime/gateway/__tests__/outbound-conversation.test.ts src/runtime/daemon/__tests__/resident-peer-initiative.test.ts` -> passed
 - `npm run lint:boundaries -- --quiet` -> passed
 - `git diff --check` -> passed
+
+## Review Follow-up
+
+- GitHub Codex P1 review on PR #1995 identified that active resident activation
+  binding reapplication could reset budget debits and that expired activation
+  budgets could remain in persisted policy state.
+- Fixed by preserving same-budget debit counts across binding reapplication and
+  clearing inactive resident activation budgets from the effective policy state.
+  Added store-level and resident caller-path regression coverage.
