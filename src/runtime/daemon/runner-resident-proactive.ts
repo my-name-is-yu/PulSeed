@@ -23,10 +23,18 @@ import {
 import { InteractionAuthorityStore } from "../control/interaction-authority-store.js";
 import { createCompanionGadgetPlan } from "../decision/companion-gadget-planning.js";
 import {
+  buildCommitmentGuardAttentionFromCandidates,
+  buildSignalContextFromAttentionInputs,
   createExpressionDecisionForOutcome,
+  evaluateCommitmentOperationsForAttentionAdmissions,
   ref,
+  runAttentionCycle,
+  type CommitmentCandidate,
+  type CommitmentOperationAdapterOutcome,
 } from "../attention/index.js";
 import { projectSurfaceDelivery, renderSurfaceDeliveryProjection } from "../attention/surface-delivery.js";
+import { attentionScopeKey } from "../attention/attention-scope.js";
+import { stableId } from "../attention/attention-refs.js";
 import {
   OutboundConversationMessageSchema,
   type OutboundConversationSurface,
@@ -42,7 +50,12 @@ import {
   type PeerInitiativeSelectedState,
   type PeerInitiativeSelection,
 } from "../peer-initiative/index.js";
-import { VisibilityPolicySchema, type VisibilityPolicy } from "../types/companion-autonomy.js";
+import {
+  OutcomeDecisionSchema,
+  VisibilityPolicySchema,
+  type OutcomeClass,
+  type VisibilityPolicy,
+} from "../types/companion-autonomy.js";
 import {
   FileCognitiveReplayIndexStore,
   createCognitiveReplayIndexEntry,
@@ -52,6 +65,7 @@ import { resolveDaemonRuntimeRoot } from "./runtime-root.js";
 import {
   evaluateResidentAttentionAdmission,
   residentAttentionActivityMetadata,
+  type ResidentAttentionAdmission,
 } from "./resident-attention-orchestrator.js";
 import type {
   ResidentActivityMetadata,
@@ -75,6 +89,7 @@ import {
   DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
   ProactivePolicyStateStore,
   ResidentActivationStore,
+  AttentionStateStore,
   applyResidentActivationBindingToPolicyState,
   clearInactiveResidentActivationBudgetFromPolicyState,
 } from "../store/index.js";
@@ -183,6 +198,372 @@ export async function triggerResidentPreemptiveCheck(
   }
 }
 
+export async function runResidentCommitmentAttentionCycle(
+  context: Pick<
+    DaemonRunnerResidentContext,
+    "baseDir" | "config" | "state" | "logger" | "saveDaemonState" | "gateway" | "attentionStateStore" | "residentOperationBoundaryEvaluator" | "feedbackIngestionStore"
+  >,
+  now = new Date().toISOString(),
+): Promise<boolean> {
+  const store = residentCommitmentAttentionStore(context);
+  const dueCandidates = await store.listCommitmentCandidates({
+    states: ["candidate", "shadow_held", "ask_confirmation", "watching", "active_care", "snoozed", "stale"],
+    dueBefore: now,
+    includeTerminal: false,
+  });
+  if (dueCandidates.length === 0) return false;
+
+  const feedbackContext = await loadResidentFeedbackDecisionContext(context);
+  const preparedCandidates = materializeCommitmentsForResidentCycle({
+    candidates: dueCandidates,
+    now,
+    feedbackRefs: feedbackContext.feedbackRefs,
+    overreach: recentFeedbackSuppressesCommitmentDelivery(feedbackContext.recentFeedback),
+  });
+  const materializedCount = countChangedCommitments(dueCandidates, preparedCandidates);
+  await store.saveCommitmentCandidates(preparedCandidates);
+
+  const provider = buildCommitmentGuardAttentionFromCandidates({
+    candidates: preparedCandidates,
+    now,
+    triggerKind: feedbackContext.feedbackRefs.length > 0 ? "feedback_cooldown" : "revisit_window",
+  });
+  if (provider.attentionInputs.length === 0 && provider.urgeCandidates.length === 0) {
+    if (materializedCount > 0) {
+      await persistResidentActivity(context, {
+        kind: "skipped",
+        trigger: "proactive_tick",
+        summary: `Resident commitment attention updated ${materializedCount} commitment candidate(s) without visible follow-up selection.`,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  await store.saveCycle({
+    attentionInputs: provider.attentionInputs,
+    signalContext: buildSignalContextFromAttentionInputs({
+      inputs: provider.attentionInputs,
+      assembled_at: now,
+      signal_context_id: `signal:resident-commitment:${now}`,
+    }),
+    recordedAt: now,
+  });
+  if (provider.urgeCandidates.length === 0) {
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: materializedCount > 0
+        ? `Resident commitment attention updated ${materializedCount} commitment candidate(s) without visible follow-up selection.`
+        : "Resident commitment attention recorded non-urgent commitment inputs without operation selection.",
+    });
+    return true;
+  }
+
+  let preparedCount = 0;
+  let blockedCount = 0;
+  let traceOnlyCount = 0;
+  for (const candidates of groupCommitmentCandidatesByScope(preparedCandidates)) {
+    const scope = candidates[0]!.scope;
+    const sourceIds = new Set(candidates.map((candidate) => candidate.source_ref.id));
+    const scopeInputs = provider.attentionInputs.filter((input) =>
+      input.user_activity_refs.some((userActivityRef) => sourceIds.has(userActivityRef.id))
+    );
+    const scopeUrges = provider.urgeCandidates.filter((urge) =>
+      candidates.some((candidate) => urge.target.kind === "commitment" && urge.target.id === candidate.commitment_id)
+    );
+    const revision = await store.projectionRevision(scope);
+    const cycle = await runAttentionCycle({
+      store,
+      cycle: {
+        now,
+        trigger: "maintenance",
+        scope,
+        signalRefs: scopeInputs.map((input) => input.signal_ref),
+        sourceHighWatermarks: scopeInputs.map((input) => ({
+          source: input.source.source_kind,
+          highWatermark: input.source.high_watermark,
+        })),
+        expectedProjectionRevision: revision,
+        cycleIdempotencyKey: `resident-commitment:${scope.policyEpoch}:${now}`,
+        policyEpoch: scope.policyEpoch,
+        mode: "live",
+        urges: scopeUrges,
+      },
+    });
+    const outcomes = evaluateCommitmentOperationsForAttentionAdmissions({
+      candidates: cycle.admissionCandidates,
+      assembledAt: now,
+      surfaceRef: scope.surfaceRef,
+      recentFeedback: feedbackContext.recentFeedback,
+      invalidationEvidence: feedbackContext.invalidationEvidence,
+      boundaryEvaluator: context.residentOperationBoundaryEvaluator,
+    });
+    for (const outcome of outcomes) {
+      if (outcome.outcome === "trace_only") {
+        traceOnlyCount += 1;
+        continue;
+      }
+      if (outcome.outcome === "blocked") {
+        blockedCount += 1;
+        await persistResidentActivity(context, {
+          kind: "skipped",
+          trigger: "proactive_tick",
+          summary: `Resident commitment operation held: ${outcome.reason}`,
+          ...(outcome.boundary
+            ? residentOperationBoundaryActivityMetadata(outcome.boundary)
+            : {
+                operation_plan_assembly_id: `operation-plan-assembly:commitment:block:${outcome.candidate.candidateId}`,
+                operation_plan_status: "fail_closed" as const,
+                operation_plan_reason: outcome.reason,
+                operation_preparation_allowed: false,
+                operation_execution_allowed: false,
+              }),
+        });
+        continue;
+      }
+      if (outcome.peerCandidate) {
+        preparedCount += 1;
+        await triggerResidentPeerInitiative(context, peerInitiativeDetailsFromCommitmentOutcome(outcome), {
+          attentionAdmission: residentAdmissionFromCommitmentOutcome(outcome, now),
+          operationBoundary: outcome.boundary,
+          selectionSurfaceRef: scope.surfaceRef ?? undefined,
+          metadata: residentOperationBoundaryActivityMetadata(outcome.boundary),
+        });
+      }
+    }
+  }
+
+  if (preparedCount === 0 && blockedCount === 0 && traceOnlyCount > 0) {
+    await persistResidentActivity(context, {
+      kind: "observation",
+      trigger: "proactive_tick",
+      summary: "Resident commitment attention remained trace-only.",
+    });
+  }
+  if (preparedCount === 0 && blockedCount === 0 && traceOnlyCount === 0 && materializedCount > 0) {
+    await persistResidentActivity(context, {
+      kind: "skipped",
+      trigger: "proactive_tick",
+      summary: `Resident commitment attention updated ${materializedCount} commitment candidate(s) without operation selection.`,
+    });
+    return true;
+  }
+  return preparedCount > 0 || blockedCount > 0 || traceOnlyCount > 0;
+}
+
+function residentCommitmentAttentionStore(
+  context: Pick<DaemonRunnerResidentContext, "baseDir" | "config" | "attentionStateStore">,
+): Pick<
+  AttentionStateStore,
+  | "saveCycle"
+  | "saveCommitmentCandidates"
+  | "listCommitmentCandidates"
+  | "loadConcernState"
+  | "saveMetabolismCycle"
+  | "projectionRevision"
+  | "listPendingBlocks"
+  | "clearPendingBlocks"
+> {
+  const store = context.attentionStateStore;
+  if (
+    store?.saveCycle
+    && store.saveCommitmentCandidates
+    && store.listCommitmentCandidates
+    && store.loadConcernState
+    && store.saveMetabolismCycle
+    && store.projectionRevision
+    && store.listPendingBlocks
+    && store.clearPendingBlocks
+  ) {
+    return store as Pick<
+      AttentionStateStore,
+      | "saveCycle"
+      | "saveCommitmentCandidates"
+      | "listCommitmentCandidates"
+      | "loadConcernState"
+      | "saveMetabolismCycle"
+      | "projectionRevision"
+      | "listPendingBlocks"
+      | "clearPendingBlocks"
+    >;
+  }
+  return new AttentionStateStore(
+    resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
+    { controlBaseDir: context.baseDir },
+  );
+}
+
+function materializeCommitmentsForResidentCycle(input: {
+  candidates: readonly CommitmentCandidate[];
+  now: string;
+  feedbackRefs: readonly string[];
+  overreach: boolean;
+}): CommitmentCandidate[] {
+  return input.candidates.map((candidate) => {
+    if (input.overreach && candidate.materialization_state !== "quieted") {
+      return {
+        ...candidate,
+        materialization_state: "quieted" as const,
+        nudge_policy: "disabled" as const,
+        suppression_refs: [...new Set([...candidate.suppression_refs, ...input.feedbackRefs])],
+        feedback_refs: [...new Set([...candidate.feedback_refs, ...input.feedbackRefs])],
+        next_revisit_at: null,
+        updated_at: input.now,
+      };
+    }
+    if (
+      candidate.materialization_state === "watching"
+      || candidate.materialization_state === "ask_confirmation"
+      || candidate.materialization_state === "candidate"
+      || candidate.materialization_state === "snoozed"
+    ) {
+      return {
+        ...candidate,
+        materialization_state: "active_care" as const,
+        updated_at: input.now,
+      };
+    }
+    return candidate;
+  });
+}
+
+function countChangedCommitments(
+  before: readonly CommitmentCandidate[],
+  after: readonly CommitmentCandidate[],
+): number {
+  const beforeById = new Map(before.map((candidate) => [candidate.commitment_id, candidate]));
+  return after.filter((candidate) => {
+    const previous = beforeById.get(candidate.commitment_id);
+    return !previous
+      || previous.materialization_state !== candidate.materialization_state
+      || previous.nudge_policy !== candidate.nudge_policy
+      || previous.next_revisit_at !== candidate.next_revisit_at
+      || previous.updated_at !== candidate.updated_at;
+  }).length;
+}
+
+function recentFeedbackSuppressesCommitmentDelivery(
+  feedback: readonly { outcome: string; overreach_indicators?: readonly string[]; policy_adjustment?: string }[],
+): boolean {
+  return feedback.some((item) =>
+    item.outcome === "overreach"
+    || item.outcome === "dismissed"
+    || item.policy_adjustment === "reduce_frequency"
+    || item.policy_adjustment === "require_confirmation"
+    || (item.overreach_indicators?.length ?? 0) > 0
+  );
+}
+
+function groupCommitmentCandidatesByScope(
+  candidates: readonly CommitmentCandidate[],
+): CommitmentCandidate[][] {
+  const groups = new Map<string, CommitmentCandidate[]>();
+  for (const candidate of candidates) {
+    const key = attentionScopeKey(candidate.scope);
+    const group = groups.get(key) ?? [];
+    group.push(candidate);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function peerInitiativeDetailsFromCommitmentOutcome(
+  outcome: Extract<CommitmentOperationAdapterOutcome, { outcome: "prepared" }>,
+): Record<string, unknown> {
+  const candidate = outcome.peerCandidate;
+  if (!candidate) return {};
+  return {
+    peer_initiative: {
+      kind: candidate.kind,
+      message: candidate.draft_message,
+      message_intent: candidate.message_intent,
+      action_plan: candidate.action_plan,
+      worthiness: candidate.worthiness,
+      grounding: candidate.grounding,
+      confidence: candidate.confidence,
+      max_delivery_kind: candidate.max_delivery_kind,
+      ...(candidate.capability_fit ? { capability_fit: candidate.capability_fit } : {}),
+      playful_style_enabled: candidate.playful_style_enabled,
+    },
+  };
+}
+
+function residentAdmissionFromCommitmentOutcome(
+  outcome: Extract<CommitmentOperationAdapterOutcome, { outcome: "prepared" }>,
+  now: string,
+): ResidentAttentionAdmission {
+  const deliveryOutcome = surfaceOutcomeForCommitmentOutcome(outcome);
+  const outcomeDecisionId = `outcome:resident-commitment:${stableId(`${outcome.candidate.idempotencyKey}:${outcome.family}`)}`;
+  const outcomeDecision = OutcomeDecisionSchema.parse({
+    outcome_decision_id: outcomeDecisionId,
+    initiative_decision_ref: ref("initiative_gate_decision", `gate:${outcome.candidate.candidateId}`),
+    decided_at: now,
+    requested_outcome: deliveryOutcome,
+    admission_status: "admitted",
+    final_outcome: deliveryOutcome,
+    runtime_item_refs: [ref("runtime_item", outcome.candidate.agendaRef)],
+    authority_checks: [{
+      check_id: `authority:resident-commitment:${outcome.candidate.candidateId}`,
+      kind: "authority",
+      status: "passed",
+      reason: "commitment operation boundary admitted preparation before peer delivery mapping",
+      evidence_refs: [],
+    }],
+    staleness_checks: [{
+      check_id: `staleness:resident-commitment:${outcome.candidate.candidateId}`,
+      kind: "staleness",
+      status: "passed",
+      reason: "commitment child source refs were fresh at operation selection",
+      evidence_refs: [],
+    }],
+    companion_control_checks: [],
+    safety_checks: [{
+      check_id: `safety:resident-commitment:${outcome.candidate.candidateId}`,
+      kind: "safety",
+      status: "passed",
+      reason: "commitment operation adapter cannot execute external actions directly",
+      evidence_refs: [],
+    }],
+    visibility_checks: [{
+      check_id: `visibility:resident-commitment:${outcome.candidate.candidateId}`,
+      kind: "visibility",
+      status: "passed",
+      reason: "peer initiative visibility path must still admit rendering",
+      evidence_refs: [],
+    }],
+    visibility_policy_ref: ref("visibility_policy", `visibility:resident-commitment:${outcome.candidate.candidateId}`),
+    audit_ref: ref("audit_trace", `resident-commitment:${outcome.candidate.candidateId}`),
+  });
+  return {
+    action: "peer_initiative",
+    source_kind: "resident_proactive_maintenance",
+    attention_input_id: `attention-input:${outcome.candidate.candidateId}`,
+    signal_context_id: `signal:${outcome.candidate.candidateId}`,
+    urge_id: `urge:${outcome.candidate.candidateId}`,
+    agenda_item_id: outcome.candidate.agendaRef,
+    inhibition_decision_id: `inhibition:${outcome.candidate.candidateId}`,
+    initiative_gate_decision_id: `gate:${outcome.candidate.candidateId}`,
+    outcome_decision_id: outcomeDecision.outcome_decision_id,
+    replay_disposition: "accepted",
+    requested_outcome: deliveryOutcome,
+    admission_status: "admitted",
+    final_outcome: deliveryOutcome,
+    outcome_decision: outcomeDecision,
+    branch_admitted: true,
+    summary: "Resident commitment operation prepared a peer initiative follow-up candidate.",
+  };
+}
+
+function surfaceOutcomeForCommitmentOutcome(
+  outcome: Extract<CommitmentOperationAdapterOutcome, { outcome: "prepared" }>,
+): OutcomeClass {
+  if (outcome.peerCandidate?.max_delivery_kind === "digest" || outcome.family === "attention.commitment.digest") {
+    return "add_to_digest";
+  }
+  return "express_to_user";
+}
+
 export async function proactiveTick(
   context: Pick<
     DaemonRunnerResidentContext,
@@ -207,6 +588,10 @@ export async function proactiveTick(
     skipWhenNoTriggers: true,
   });
   if (curiosityTriggered) {
+    return;
+  }
+
+  if (await runResidentCommitmentAttentionCycle(context)) {
     return;
   }
 

@@ -53,6 +53,12 @@ function classifier(): CommitmentCandidateClassifier {
   };
 }
 
+function classifierForExtraction(input: unknown): CommitmentCandidateClassifier {
+  return {
+    classify: vi.fn().mockResolvedValue(CommitmentCandidateExtractionSchema.parse(input)),
+  };
+}
+
 function adapter(): IAdapter {
   return {
     adapterType: "test",
@@ -242,6 +248,67 @@ describe("chat commitment attention bridge", () => {
           speak: false,
           act: false,
         }),
+      }),
+    ]);
+  });
+
+  it("applies completion outcomes to the current stored commitment instead of creating a duplicate", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    const first = await recordChatTurnCommitmentAttention({
+      turnContext: turnContext("明日までにピッチ資料を直さないと"),
+      classifier: classifier(),
+      store,
+    });
+    expect(first.candidate?.materialization_state).toBe("shadow_held");
+
+    const completed = await recordChatTurnCommitmentAttention({
+      turnContext: turnContext("それはもう終わった"),
+      classifier: classifierForExtraction({
+        outcome: "completion",
+        target_commitment_id: first.candidate!.commitment_id,
+        owner: "user",
+        confidence: 0.91,
+        reason: "current message explicitly marks the stored commitment done",
+      }),
+      store,
+    });
+
+    expect(completed.candidate).toMatchObject({
+      commitment_id: first.candidate!.commitment_id,
+      materialization_state: "resolved",
+    });
+    await expect(store.listCommitmentCandidates()).resolves.toHaveLength(0);
+    await expect(store.listCommitmentCandidates({ includeTerminal: true })).resolves.toHaveLength(1);
+  });
+
+  it("does not reuse a previous commitment target when the current completion has no grounded target", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    const first = await recordChatTurnCommitmentAttention({
+      turnContext: turnContext("明日までにピッチ資料を直さないと"),
+      classifier: classifier(),
+      store,
+    });
+    expect(first.candidate?.materialization_state).toBe("shadow_held");
+
+    const ambiguous = await recordChatTurnCommitmentAttention({
+      turnContext: turnContext("終わった"),
+      classifier: classifierForExtraction({
+        outcome: "completion",
+        target_commitment_id: null,
+        owner: "user",
+        confidence: 0.9,
+        reason: "completion wording lacked a current grounded target",
+      }),
+      store,
+    });
+
+    expect(ambiguous.candidate).toBeNull();
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({
+        commitment_id: first.candidate!.commitment_id,
+        materialization_state: "shadow_held",
       }),
     ]);
   });

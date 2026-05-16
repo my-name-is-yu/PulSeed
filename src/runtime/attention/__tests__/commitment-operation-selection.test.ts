@@ -216,4 +216,63 @@ describe("commitment operation selection", () => {
       assembledAt: NOW,
     })).toBeNull();
   });
+
+  it("fails closed when boundary evidence is denied or mismatched", () => {
+    const candidate = commitmentCandidate({ state: "active_care" });
+    const provider = buildCommitmentGuardAttentionFromCandidates({
+      candidates: [candidate],
+      now: NOW,
+      triggerKind: "revisit_window",
+    });
+    const [cluster] = promoteAttentionClusters({
+      clusters: [createAttentionClusterFromUrge(provider.urgeCandidates[0]!, NOW)],
+      now: NOW,
+    });
+    const [decomposition] = decomposeAgenda({
+      agendaItems: projectClustersToAgenda({ clusters: cluster ? [cluster] : [], now: NOW }),
+      now: NOW,
+    });
+    const admissions = buildAttentionAdmissionCandidates({
+      decompositions: decomposition ? [decomposition] : [],
+      now: NOW,
+    });
+    const [defaultPrepared] = evaluateCommitmentOperationsForAttentionAdmissions({
+      candidates: admissions,
+      assembledAt: NOW,
+      surfaceRef: "surface:telegram",
+    }).filter((outcome) => outcome.outcome === "prepared");
+    expect(defaultPrepared?.outcome).toBe("prepared");
+    if (defaultPrepared?.outcome !== "prepared") throw new Error("expected prepared commitment boundary");
+
+    const denied = evaluateCommitmentOperationsForAttentionAdmissions({
+      candidates: admissions,
+      assembledAt: NOW,
+      boundaryEvaluator: () => ({
+        ...defaultPrepared.boundary,
+        preparation_allowed: false,
+      }),
+    });
+    expect(denied).toContainEqual(expect.objectContaining({
+      outcome: "blocked",
+      reason: "commitment operation boundary denied preparation",
+    }));
+
+    const mismatchedBoundary = structuredClone(defaultPrepared.boundary);
+    mismatchedBoundary.assembly.candidate_plans[0]!.operation_plan.payload_class = "attention.commitment.digest";
+    const mismatched = evaluateCommitmentOperationsForAttentionAdmissions({
+      candidates: admissions,
+      assembledAt: NOW,
+      boundaryEvaluator: () => mismatchedBoundary,
+    });
+    expect(mismatched).toContainEqual(expect.objectContaining({
+      outcome: "blocked",
+      reason: "commitment operation boundary plan family did not match the candidate",
+    }));
+    expect(projectCommitmentBoundaryToPeerCandidate({
+      candidate: admissions[0]!,
+      family: "attention.commitment.prepare_followup",
+      boundary: mismatchedBoundary,
+      assembledAt: NOW,
+    })).toBeNull();
+  });
 });

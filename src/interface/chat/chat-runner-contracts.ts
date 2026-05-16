@@ -115,7 +115,10 @@ export interface ChatRunnerDeps {
   companionCognitionService?: Pick<CompanionCognitionService, "evaluateTurn">;
   personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   commitmentCandidateClassifier?: CommitmentCandidateClassifier;
-  attentionStateStore?: Pick<AttentionStateStore, "saveCommitmentCandidates" | "saveCycle">;
+  attentionStateStore?: Pick<
+    AttentionStateStore,
+    "saveCommitmentCandidates" | "saveCycle" | "listCommitmentCandidates" | "applyCommitmentControl"
+  >;
 }
 
 export interface ChatRunResult {

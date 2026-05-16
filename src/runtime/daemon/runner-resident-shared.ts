@@ -136,7 +136,18 @@ export interface DaemonRunnerResidentContext {
   scheduleEngine?: ScheduleEngine;
   supervisor?: LoopSupervisor;
   gateway?: Pick<IngressGateway, "getOutboundConversationPort">;
-  attentionStateStore?: Pick<AttentionStateStore, "saveCycle">;
+  attentionStateStore?: Partial<Pick<
+    AttentionStateStore,
+    | "saveCycle"
+    | "saveCommitmentCandidates"
+    | "listCommitmentCandidates"
+    | "applyCommitmentControl"
+    | "loadConcernState"
+    | "saveMetabolismCycle"
+    | "projectionRevision"
+    | "listPendingBlocks"
+    | "clearPendingBlocks"
+  >>;
   runtimeOperationStore?: Pick<RuntimeOperationStore, "listCompleted" | "listPending">;
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "listEffects">;
   residentOperationBoundaryEvaluator?: ResidentOperationBoundaryEvaluator;

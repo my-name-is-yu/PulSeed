@@ -121,8 +121,9 @@ export const CommitmentCandidateSchema = z.object({
 export type CommitmentCandidate = z.infer<typeof CommitmentCandidateSchema>;
 
 export const CommitmentCandidateExtractionSchema = z.object({
-  outcome: z.enum(["candidate", "none", "unknown", "completion", "correction"]),
+  outcome: z.enum(["candidate", "none", "unknown", "completion", "correction", "not_relevant"]),
   summary: z.string().min(1).optional(),
+  target_commitment_id: z.string().min(1).nullable().default(null),
   due: z.object({
     window_start: z.string().datetime().nullable().default(null),
     window_end: z.string().datetime().nullable().default(null),
@@ -159,6 +160,14 @@ export interface CommitmentCandidateClassifierInput {
   routeKind: string;
   startedAt: string;
   policyEpoch: string;
+  openCommitments?: Array<{
+    commitmentId: string;
+    summary: string;
+    materializationState: CommitmentCareLifecycle;
+    dueWindowStart?: string | null;
+    dueWindowEnd?: string | null;
+    updatedAt: string;
+  }>;
   locale?: string | null;
 }
 
@@ -177,13 +186,14 @@ export class StructuredCommitmentCandidateClassifier implements CommitmentCandid
           "Classify the current chat message into a typed unresolved-intention candidate.",
           "Return only JSON matching this contract. Do not infer execution authority, memory writes, reminders, notifications, or tool actions.",
           "Use outcome none or unknown when the message lacks a current grounded user-owned intention, commitment, unresolved decision, completion, or correction.",
-          "Do not reuse previous targets unless the current message provides a grounded ref or explicit current subject.",
+          "For completion, correction, or not_relevant, set target_commitment_id only to one of the provided open commitments when the current message explicitly resolves that current commitment. Do not guess or reuse stale previous targets.",
           "",
           `turn_id: ${input.turnId}`,
           `session_id: ${input.sessionId}`,
           `route_kind: ${input.routeKind}`,
           `started_at: ${input.startedAt}`,
           `policy_epoch: ${input.policyEpoch}`,
+          `open_commitments: ${JSON.stringify(input.openCommitments ?? [])}`,
           `message: ${input.text}`,
         ].join("\n"),
       },
@@ -413,6 +423,7 @@ export function buildCommitmentReemissionInput(input: {
       act: false,
     },
     current_session_refs: [ref("session", input.candidate.scope.sessionId ?? input.candidate.source_epoch)],
+    user_activity_refs: [ref("user_activity", input.candidate.source_ref.id)],
     runtime_state_refs: [ref("runtime_event", `commitment-reemit:${input.candidate.commitment_id}:${input.triggerKind}`)],
     audit_refs: [ref("audit_trace", `attention.commitment.reemit:${input.candidate.commitment_id}:${input.triggerKind}`)],
     stale_refs: input.candidate.materialization_state === "stale"

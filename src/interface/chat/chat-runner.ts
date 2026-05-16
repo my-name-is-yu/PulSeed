@@ -233,7 +233,10 @@ export class ChatRunner {
   private readonly companionCognitionService: Pick<CompanionCognitionService, "evaluateTurn">;
   private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private readonly commitmentCandidateClassifier: CommitmentCandidateClassifier | null;
-  private readonly attentionStateStore: Pick<AttentionStateStore, "saveCommitmentCandidates" | "saveCycle">;
+  private readonly attentionStateStore: Pick<
+    AttentionStateStore,
+    "saveCommitmentCandidates" | "saveCycle" | "listCommitmentCandidates" | "applyCommitmentControl"
+  >;
   private readonly toolExecutor?: ToolExecutor;
 
   constructor(private readonly deps: ChatRunnerDeps) {

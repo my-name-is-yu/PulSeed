@@ -4,6 +4,7 @@ import {
   type ResidentOperationBoundaryInput,
   type ResidentOperationBoundaryResult,
 } from "../capability-operation-planner.js";
+import type { AutonomyFeedbackSignal } from "../control/autonomy-governor.js";
 import {
   generatePeerInitiativeCandidates,
   type PeerInitiativeCandidate,
@@ -42,6 +43,8 @@ export interface CommitmentOperationAdapterInput {
   assembledAt: string;
   goalId?: string | null;
   surfaceRef?: string | null;
+  recentFeedback?: readonly AutonomyFeedbackSignal[];
+  invalidationEvidence?: ResidentOperationBoundaryInput["invalidationEvidence"];
   boundaryEvaluator?: (input: ResidentOperationBoundaryInput) => ResidentOperationBoundaryResult;
 }
 
@@ -85,6 +88,8 @@ export function evaluateCommitmentOperationsForAttentionAdmissions(
       goalId: input.goalId,
       details,
       surfaceRef: input.surfaceRef,
+      recentFeedback: input.recentFeedback ? [...input.recentFeedback] : undefined,
+      invalidationEvidence: input.invalidationEvidence,
     });
     if (!boundary.admission_evaluation || !boundary.autonomy_decision) {
       outcomes.push({
@@ -92,6 +97,16 @@ export function evaluateCommitmentOperationsForAttentionAdmissions(
         candidate,
         boundary,
         reason: "commitment operation boundary did not produce admission and autonomy evidence",
+      });
+      continue;
+    }
+    const mismatch = commitmentBoundaryMismatch(candidate, family, boundary);
+    if (mismatch) {
+      outcomes.push({
+        outcome: "blocked",
+        candidate,
+        boundary,
+        reason: mismatch,
       });
       continue;
     }
@@ -130,6 +145,7 @@ export function projectCommitmentBoundaryToPeerCandidate(input: {
   surfaceRef?: string | null;
 }): PeerInitiativeCandidate | null {
   if (!input.boundary?.admission_evaluation || !input.boundary.autonomy_decision) return null;
+  if (commitmentBoundaryMismatch(input.candidate, input.family, input.boundary)) return null;
   if (!input.boundary.preparation_allowed) return null;
   return peerCandidateForPreparedCommitment({
     candidate: input.candidate,
@@ -138,6 +154,67 @@ export function projectCommitmentBoundaryToPeerCandidate(input: {
     assembledAt: input.assembledAt,
     surfaceRef: input.surfaceRef ?? "surface:resident-daemon",
   });
+}
+
+function commitmentBoundaryMismatch(
+  candidate: AttentionAdmissionCandidate,
+  family: CommitmentOperationFamily,
+  boundary: ResidentOperationBoundaryResult,
+): string | null {
+  const plan = boundary.assembly.candidate_plans[0];
+  if (!plan) return "commitment operation boundary did not produce a candidate operation plan";
+  const projection = commitmentProjectionForCandidate(candidate, family);
+  const expectedTargets = [
+    projection.attention_input_id,
+    projection.signal_context_id,
+    projection.urge_id,
+    projection.agenda_item_id,
+    projection.inhibition_decision_id,
+    projection.initiative_gate_decision_id,
+    ...(projection.outcome_decision_id ? [projection.outcome_decision_id] : []),
+  ];
+  if (boundary.assembly.source.kind !== "attention_projection") {
+    return "commitment operation boundary source was not an attention projection";
+  }
+  const metadata = boundary.assembly.source.metadata;
+  if (
+    metadata["action"] !== "commitment"
+    || metadata["attention_input_id"] !== projection.attention_input_id
+    || metadata["agenda_item_id"] !== projection.agenda_item_id
+  ) {
+    return "commitment operation boundary source metadata did not match the candidate";
+  }
+  if (
+    plan.operation_plan.provider_ref !== "attention:commitment-operation-adapter"
+    || plan.operation_plan.payload_class !== family
+    || !plan.operation_plan.operation_id.startsWith(`${family}.`)
+  ) {
+    return "commitment operation boundary plan family did not match the candidate";
+  }
+  const missingTargets = expectedTargets.filter((target) => !plan.operation_plan.target_refs.includes(target));
+  if (missingTargets.length > 0) {
+    return "commitment operation boundary plan target refs did not match the candidate";
+  }
+  if (
+    boundary.admission_evaluation
+    && (
+      boundary.admission_evaluation.operation_id !== plan.operation_plan.operation_id
+      || boundary.admission_evaluation.provider_ref !== plan.operation_plan.provider_ref
+      || boundary.admission_evaluation.payload_class !== plan.operation_plan.payload_class
+    )
+  ) {
+    return "commitment operation boundary admission evidence did not match the operation plan";
+  }
+  if (
+    boundary.autonomy_decision
+    && (
+      boundary.autonomy_decision.operation_id !== plan.operation_plan.operation_id
+      || boundary.autonomy_decision.metadata.admission_evaluation_ref !== boundary.admission_evaluation?.evaluation_id
+    )
+  ) {
+    return "commitment operation boundary autonomy evidence did not match the admission evidence";
+  }
+  return null;
 }
 
 function commitmentFamilyForChild(candidate: AttentionAdmissionCandidate): CommitmentOperationFamily {
