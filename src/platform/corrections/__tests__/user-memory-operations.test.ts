@@ -151,6 +151,55 @@ describe("user memory correction operations", () => {
     expect(order.indexOf("truth-transaction")).toBeLessThan(order.indexOf("trace"));
   });
 
+  it("returns the committed agent memory correction when post-commit trace persistence fails", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace")
+      .mockRejectedValueOnce(new Error("trace unavailable"));
+
+    const result = await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    expect(result.correction).toMatchObject({
+      target_ref: { kind: "agent_memory", id: "memory-old" },
+      correction_kind: "corrected",
+    });
+    expect(result.replacement?.ref).toEqual(expect.objectContaining({
+      kind: "agent_memory",
+    }));
+
+    const manager = new KnowledgeManager(stateManager, {} as ILLMClient);
+    expect(await manager.recallAgentMemory("favorite-editor", { exact: true })).toEqual([]);
+    expect(await manager.recallAgentMemory("favorite-editor-current", { exact: true })).toEqual([
+      expect.objectContaining({
+        key: "favorite-editor-current",
+        supersedes_memory_id: "memory-old",
+      }),
+    ]);
+
+    const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      await expect(truthStore.listCorrections("memory-old")).resolves.toEqual([
+        expect.objectContaining({
+          target_claim_id: "memory-old",
+          replacement_claim_id: result.replacement?.ref.id,
+        }),
+      ]);
+    } finally {
+      await truthStore.close();
+    }
+  });
+
   it("does not record durable admission when the truth transaction fails", async () => {
     await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
       entries: [memoryEntry()],

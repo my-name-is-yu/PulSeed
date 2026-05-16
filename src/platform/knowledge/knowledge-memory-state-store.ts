@@ -573,6 +573,12 @@ export class KnowledgeMemoryStateStore {
         source_types: [SOURCE_DOMAIN_ENTRY, SOURCE_DOMAIN_STATE],
         goal_ids: [goalId],
       });
+      await saveDomainKnowledgeToTruth(this.baseDir, DomainKnowledgeSchema.parse({
+        goal_id: goalId,
+        domain: goalId,
+        entries: [],
+        last_updated: new Date().toISOString(),
+      }));
       await repo.applyMutation({ tombstones: existing.map(tombstoneForRecord) });
     } finally {
       repo.close();

@@ -40,7 +40,7 @@ export async function loadAgentMemoryStore(stateManager: StateManager): Promise<
 
 export async function saveAgentMemoryStore(stateManager: StateManager, store: AgentMemoryStore): Promise<void> {
   await saveAgentMemoryStoreToTruth(stateManager.getBaseDir(), store);
-  await projectAgentMemory(stateManager, store);
+  await projectAgentMemory(stateManager, store, { persistTruth: false });
 }
 
 export async function projectDomainKnowledge(stateManager: StateManager, goalId: string, domainKnowledge: DomainKnowledge): Promise<void> {

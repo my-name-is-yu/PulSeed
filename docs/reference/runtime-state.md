@@ -63,7 +63,17 @@ Runtime Event Log linkage. Post-transaction Soil projection for those correction
 paths writes projection state without re-saving truth, so `CorrectionRef`
 Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Later
 owner snapshots also preserve those refs when they mirror older correction
-entries. Recall results carry an explicit mode: `exact`,
+entries. If post-commit trace persistence fails for a user memory correction,
+the committed truth transaction remains authoritative and the caller receives
+the committed correction result.
+
+Conflict resolution restores the selected claim's previous lifecycle and
+normal-projection eligibility, while losing claims are archived and remain
+withheld from normal surfaces. Domain knowledge deletion writes an empty typed
+owner snapshot before tombstoning Soil compatibility records, so normal
+knowledge loads cannot fall back to stale Soil rows after delete.
+
+Recall results carry an explicit mode: `exact`,
 `lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
 without an embedding index returns `semantic_unavailable`; it is not reported as
 a semantic result backed by lexical matching. Goal-scoped semantic knowledge

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { KnowledgeEntry, SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
@@ -44,6 +44,7 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const dir of tempDirs.splice(0)) {
       cleanupTempDir(dir);
     }
@@ -108,6 +109,26 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     } finally {
       repo?.close();
     }
+  });
+
+  it("saves agent memory truth once before writing Soil projection records", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-single-truth-write-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const saveSnapshotSpy = vi.spyOn(MemoryTruthMaintenanceStore.prototype, "saveOwnerSnapshot");
+
+    await manager.saveAgentMemory({
+      key: "runtime.storage.owner",
+      value: "Agent memory truth is owned by MemoryTruthMaintenanceStore.",
+      memory_type: "fact",
+    });
+
+    expect(saveSnapshotSpy).toHaveBeenCalledTimes(1);
+    expect(saveSnapshotSpy).toHaveBeenCalledWith(expect.objectContaining({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+    }));
   });
 
   it("treats correction_state inactive entries as withheld across recall, truth, and Soil", async () => {
@@ -375,6 +396,56 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         record_filter: { source_types: ["knowledge_domain_entry"] },
       });
       expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-1:domain-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("tombstones domain knowledge truth when deleting the production domain owner", async () => {
+    const baseDir = tempHome("pulseed-domain-delete-truth-tombstone-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    const entry = makeKnowledgeEntry({
+      entry_id: "entry-delete",
+      question: "Which deleted fact must not return?",
+      answer: "This domain fact was deleted.",
+      tags: ["delete"],
+    });
+
+    await manager.saveKnowledge("goal-delete", entry);
+    await expect(manager.loadKnowledge("goal-delete")).resolves.toEqual([entry]);
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.deleteDomainKnowledge("goal-delete");
+
+    await expect(manager.loadKnowledge("goal-delete")).resolves.toEqual([]);
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.listClaims({
+        ownerKind: "domain_knowledge",
+        ownerScope: "goal-delete",
+        includeInactive: true,
+      })).resolves.toEqual([
+        expect.objectContaining({
+          claim_id: "knowledge:domain:goal-delete:entry-delete",
+          lifecycle: "forgotten",
+          visible_to_normal_surface: false,
+        }),
+      ]);
+    } finally {
+      await truthStore.close();
+    }
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const lexical = await repo!.searchLexical({
+        query: "deleted fact",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(lexical.map((candidate) => candidate.record_id)).not.toContain("knowledge_domain_entry:goal-delete:entry-delete");
     } finally {
       repo?.close();
     }

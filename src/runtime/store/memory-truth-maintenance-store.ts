@@ -828,16 +828,93 @@ function upsertConflict(sqlite: SqliteDatabase, conflictInput: ConflictSet): voi
       VALUES (?, ?, ?)
     `).run(conflict.conflict_set_id, claimId, claimId === conflict.resolution_claim_id ? "primary" : "conflicting");
     const claim = readClaim(sqlite, claimId);
-    if (claim && conflict.status !== "resolved") {
+    if (!claim) continue;
+    if (conflict.status === "resolved") {
+      upsertClaim(sqlite, resolvedConflictClaim(claim, conflict));
+    } else {
       upsertClaim(sqlite, MemoryClaimSchema.parse({
         ...claim,
         lifecycle: "conflicted",
         visible_to_normal_surface: false,
         updated_at: conflict.updated_at,
         operator_explanation_refs: unique([...claim.operator_explanation_refs, conflict.conflict_set_id]),
+        metadata: rememberPreConflictClaimState(claim, conflict),
       }));
     }
   }
+}
+
+function resolvedConflictClaim(claim: MemoryClaim, conflict: ConflictSet): MemoryClaim {
+  const previousState = preConflictClaimState(claim, conflict.conflict_set_id);
+  const metadata = forgetPreConflictClaimState(claim, conflict.conflict_set_id);
+  const explanationRefs = unique([...claim.operator_explanation_refs, conflict.conflict_set_id]);
+  if (conflict.resolution_claim_id && claim.claim_id !== conflict.resolution_claim_id) {
+    return MemoryClaimSchema.parse({
+      ...claim,
+      lifecycle: "archived",
+      visible_to_normal_surface: false,
+      invalidated_by: claim.invalidated_by ?? conflict.conflict_set_id,
+      updated_at: conflict.updated_at,
+      operator_explanation_refs: explanationRefs,
+      metadata,
+    });
+  }
+  return MemoryClaimSchema.parse({
+    ...claim,
+    lifecycle: previousState?.lifecycle ?? "active",
+    visible_to_normal_surface: previousState?.visible_to_normal_surface ?? true,
+    updated_at: conflict.updated_at,
+    operator_explanation_refs: explanationRefs,
+    metadata,
+  });
+}
+
+function rememberPreConflictClaimState(claim: MemoryClaim, conflict: ConflictSet): MemoryClaim["metadata"] {
+  const conflictState = conflictStateMetadata(claim);
+  if (!conflictState[conflict.conflict_set_id]) {
+    conflictState[conflict.conflict_set_id] = {
+      lifecycle: claim.lifecycle,
+      visible_to_normal_surface: claim.visible_to_normal_surface,
+    };
+  }
+  return {
+    ...claim.metadata,
+    conflict_state: conflictState,
+  };
+}
+
+function preConflictClaimState(
+  claim: MemoryClaim,
+  conflictSetId: string,
+): { lifecycle: MemoryClaimLifecycle; visible_to_normal_surface: boolean } | null {
+  const raw = conflictStateMetadata(claim)[conflictSetId];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const lifecycle = (raw as Record<string, unknown>)["lifecycle"];
+  const visible = (raw as Record<string, unknown>)["visible_to_normal_surface"];
+  const parsedLifecycle = MemoryClaimLifecycleSchema.safeParse(lifecycle);
+  if (!parsedLifecycle.success || typeof visible !== "boolean") return null;
+  return {
+    lifecycle: parsedLifecycle.data,
+    visible_to_normal_surface: visible,
+  };
+}
+
+function forgetPreConflictClaimState(claim: MemoryClaim, conflictSetId: string): MemoryClaim["metadata"] {
+  const conflictState = conflictStateMetadata(claim);
+  delete conflictState[conflictSetId];
+  const metadata = { ...claim.metadata };
+  if (Object.keys(conflictState).length > 0) {
+    metadata["conflict_state"] = conflictState;
+  } else {
+    delete metadata["conflict_state"];
+  }
+  return metadata;
+}
+
+function conflictStateMetadata(claim: MemoryClaim): Record<string, unknown> {
+  const raw = claim.metadata["conflict_state"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...(raw as Record<string, unknown>) };
 }
 
 function upsertRecall(sqlite: SqliteDatabase, recallInput: RecallRecord): void {

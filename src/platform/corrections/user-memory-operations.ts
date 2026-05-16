@@ -165,7 +165,7 @@ export async function runUserMemoryOperation(
       createdAt: input.now,
       provenanceRef: "pulseed memory command",
     });
-    await recordMemoryCorrectionTrace(stateManager, input, result.correction, {
+    await recordMemoryCorrectionTraceBestEffort(stateManager, input, result.correction, {
       memoryRef: { kind: "memory", ref: input.targetRef.id },
       replacementRef: result.replacement ? { kind: "memory", ref: result.replacement.id } : null,
     });
@@ -382,4 +382,22 @@ async function recordMemoryCorrectionTrace(
     memoryWithheld: true,
     normalSurfaceProjectionRef: `normal-surface:memory-correction:${correction.correction_id}`,
   }));
+}
+
+async function recordMemoryCorrectionTraceBestEffort(
+  stateManager: StateManager,
+  input: UserMemoryOperationInput,
+  correction: MemoryCorrectionEntry,
+  refs: {
+    memoryRef: RuntimeGraphRef;
+    replacementRef: RuntimeGraphRef | null;
+  },
+): Promise<void> {
+  try {
+    await recordMemoryCorrectionTrace(stateManager, input, correction, refs);
+  } catch (error) {
+    console.warn(
+      `[memory-correction] Failed to record post-commit trace for ${correction.correction_id}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }

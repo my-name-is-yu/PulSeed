@@ -172,6 +172,63 @@ describe("MemoryTruthMaintenanceStore", () => {
     const eventLog = new RuntimeEventLogStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
     await expect(eventLog.listEvents({ limit: 20 })).resolves.toEqual([]);
   });
+
+  it("clears conflicted lifecycle when resolving a conflict set", async () => {
+    const baseDir = makeTmpDir();
+    const store = new MemoryTruthMaintenanceStore(baseDir, { appendRuntimeEvents: false });
+    await store.saveOwnerSnapshot({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+      claims: [
+        claimInput("claim:old", "favorite-editor", "The user prefers Atom."),
+        replacementClaimInput("claim:new"),
+      ],
+      evidenceRefs: [
+        evidenceInput("evidence:old", "claim:old"),
+        evidenceInput("evidence:new", "claim:new"),
+      ],
+      conflictSets: [conflictInput("conflict:editor", ["claim:old", "claim:new"])],
+      emitRuntimeEvent: false,
+    });
+
+    await expect(store.listClaims({ includeInactive: true })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        claim_id: "claim:old",
+        lifecycle: "conflicted",
+        visible_to_normal_surface: false,
+      }),
+      expect.objectContaining({
+        claim_id: "claim:new",
+        lifecycle: "conflicted",
+        visible_to_normal_surface: false,
+      }),
+    ]));
+
+    const conflictedClaims = await store.listClaims({ includeInactive: true });
+    await store.saveOwnerSnapshot({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+      claims: conflictedClaims,
+      conflictSets: [{
+        ...conflictInput("conflict:editor", ["claim:old", "claim:new"]),
+        status: "resolved",
+        resolution_claim_id: "claim:new",
+        updated_at: "2026-05-16T00:02:00.000Z",
+      }],
+      emitRuntimeEvent: false,
+    });
+
+    await expect(store.getClaim("claim:new")).resolves.toMatchObject({
+      lifecycle: "active",
+      visible_to_normal_surface: true,
+      invalidated_by: null,
+    });
+    await expect(store.getClaim("claim:old")).resolves.toMatchObject({
+      lifecycle: "archived",
+      visible_to_normal_surface: false,
+      invalidated_by: "conflict:editor",
+    });
+  });
 });
 
 async function seedClaim(store: MemoryTruthMaintenanceStore): Promise<void> {

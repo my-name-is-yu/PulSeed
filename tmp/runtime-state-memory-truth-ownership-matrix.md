@@ -50,10 +50,12 @@ GitHub state confirmed before implementation:
 - Agent-memory recall/projection safety requires both an active status and `correction_state.active=true`, blocking active-looking stale entries from normal recall, Soil projection, dream grouping, dream Soil mutation, and planning projections.
 - `KnowledgeManager.correctAgentMemory` now uses the typed correction commit hook, so dream_lint/runtime repair callers use the same transaction/event path as CLI and tool memory corrections.
 - Domain/shared knowledge owner loads treat inactive typed truth rows as authoritative truth presence and do not fall back to stale Soil compatibility records when active truth is empty.
+- Domain knowledge deletion writes an empty typed owner snapshot before Soil compatibility tombstones, so normal loads remain truth-first and cannot resurrect stale Soil entries after delete.
 - `KnowledgeQueryTool` reports `semantic_unavailable` and `lexicalFallbackUsed=true` for semantic requests without a semantic index; available semantic searches that return no matches do not silently use keyword results; goal-scoped semantic searches filter vector hits by typed owner scope before returning domain knowledge.
 - `KnowledgeMemoryStateStore` and `rebuildSoilFromRuntime` use typed truth presence before compatibility Soil reads, so runtime rebuild does not reproject stale domain/shared knowledge when typed truth contains only inactive claims.
 - CLI memory export redacts inactive corrected/superseded/forgotten/retracted/quarantined/archived/conflicted memory content; active replacements remain visible through normal governance filters.
 - Conflicted agent-memory claims are represented in typed state, withheld from normal recall with `safeForNormalProjection=false`, and inspect/export paths do not expose the conflicting raw values on normal surfaces.
+- Conflict resolution records restore the resolved winner's previous lifecycle/projection eligibility and archive losing claims, preventing a stale conflicting answer from becoming active again.
 - `check:database-first-legacy-stores` now has a negative guard for production memory/knowledge/Soil `StateManager.writeRaw`.
 
 Repo-wide completion can only be claimed after a later pass proves every non-memory domain has no production raw owner. This PR's completion target is Memory / Soil / Knowledge.
