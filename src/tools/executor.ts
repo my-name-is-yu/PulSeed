@@ -43,6 +43,12 @@ import type {
 import type { PersonalAgentRuntimeStore } from "../runtime/personal-agent/index.js";
 import { InteractionAuthorityStore } from "../runtime/control/interaction-authority-store.js";
 import { projectApprovalResumeAuthority } from "../runtime/control/execution-authority-decision.js";
+import { RuntimeEventLogStore } from "../runtime/store/runtime-event-log.js";
+import type {
+  PermissionWaitCanonicalPlan,
+  PermissionWaitPlanRecord,
+  PermissionWaitPlanResumeResult,
+} from "../runtime/store/permission-wait-plan-store.js";
 
 type PermissionApprovalResult =
   | { status: "approved"; context: ToolCallContext }
@@ -393,8 +399,9 @@ export class ToolExecutor {
     permissionGrantDecision?: PermissionGrantEvaluation;
   }): Promise<PermissionApprovalResult> {
     const waitPlan = buildPermissionApprovalWaitPlan(input);
+    let waitingRecord: PermissionWaitPlanRecord | null = null;
     if (input.context.permissionWaitPlanStore) {
-      await input.context.permissionWaitPlanStore.createWaiting({
+      waitingRecord = await input.context.permissionWaitPlanStore.createWaiting({
         wait_plan_id: waitPlan.approvalId,
         approval_id: waitPlan.approvalId,
         goal_id: input.context.goalId,
@@ -430,10 +437,10 @@ export class ToolExecutor {
     if (!input.context.permissionWaitPlanStore) {
       return { status: "approved", context: buildApprovedToolCallContext(input.context) };
     }
+    if (!waitingRecord) {
+      throw new Error("Permission wait plan store did not return a waiting approval record.");
+    }
 
-    await input.context.permissionWaitPlanStore.markApproved(waitPlan.approvalId, {
-      audit_refs: [`approval:${waitPlan.approvalId}`, waitPlan.auditRef],
-    });
     const resumePlan = buildPermissionWaitCanonicalPlan({
       tool: input.tool,
       input: input.input,
@@ -441,6 +448,15 @@ export class ToolExecutor {
       reason: input.reason,
       reversibility: input.reversibility,
       permissionGrantDecision: input.permissionGrantDecision,
+    });
+    await this.recordApprovalResumeRequestBeforeMutation(input.context, {
+      waitPlanId: waitPlan.approvalId,
+      expectedCanonicalPlan: waitPlan.canonicalPlan,
+      actualCanonicalPlan: resumePlan,
+      waitingRecord,
+    });
+    await input.context.permissionWaitPlanStore.markApproved(waitPlan.approvalId, {
+      audit_refs: [`approval:${waitPlan.approvalId}`, waitPlan.auditRef],
     });
     const resumeResult = await input.context.permissionWaitPlanStore.resumeApproved(waitPlan.approvalId, {
       canonical_plan: resumePlan,
@@ -529,18 +545,48 @@ export class ToolExecutor {
     input: Parameters<typeof projectApprovalResumeAuthority>[0],
   ): Promise<void> {
     const store = this.resolveInteractionAuthorityStore(context);
-    if (!store) return;
     await store.recordDecision(projectApprovalResumeAuthority(input));
+  }
+
+  private async recordApprovalResumeRequestBeforeMutation(
+    context: ToolCallContext,
+    input: {
+      waitPlanId: string;
+      expectedCanonicalPlan: PermissionWaitCanonicalPlan;
+      actualCanonicalPlan: PermissionWaitCanonicalPlan;
+      waitingRecord: PermissionWaitPlanRecord;
+    },
+  ): Promise<void> {
+    const resumeResult: PermissionWaitPlanResumeResult = {
+      status: "not_approved",
+      record: input.waitingRecord,
+    };
+    const store = this.resolveRuntimeEventLogStore(context);
+    await store.appendAuthorityDecision(projectApprovalResumeAuthority({
+      waitPlanId: input.waitPlanId,
+      expectedCanonicalPlan: input.expectedCanonicalPlan,
+      actualCanonicalPlan: input.actualCanonicalPlan,
+      resumeResult,
+      resumePhase: "before_mutation",
+      reason: "Approval resume request was durably appended before mutating the wait-plan approval state.",
+      decisionId: `execution-authority:approval:${input.waitPlanId}:resume:before-mutation`,
+    }));
   }
 
   private resolveInteractionAuthorityStore(
     context: ToolCallContext,
-  ): Pick<InteractionAuthorityStore, "recordDecision"> | null {
+  ): Pick<InteractionAuthorityStore, "recordDecision"> {
     if (context.interactionAuthorityStore) return context.interactionAuthorityStore;
     if (this.interactionAuthorityStore) return this.interactionAuthorityStore;
-    const baseDir = context.providerConfigBaseDir ?? this.traceBaseDir ?? null;
-    if (!baseDir) return null;
+    const baseDir = context.providerConfigBaseDir ?? this.traceBaseDir ?? getPulseedDirPath();
     return new InteractionAuthorityStore(baseDir, { controlBaseDir: baseDir });
+  }
+
+  private resolveRuntimeEventLogStore(
+    context: ToolCallContext,
+  ): Pick<RuntimeEventLogStore, "appendAuthorityDecision"> {
+    const baseDir = context.providerConfigBaseDir ?? this.traceBaseDir ?? getPulseedDirPath();
+    return new RuntimeEventLogStore(baseDir, { controlBaseDir: baseDir });
   }
 
   private async checkHostPolicyPreflight(

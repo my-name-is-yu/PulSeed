@@ -6,6 +6,7 @@ import {
   DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
   ProactivePolicyStateStore,
 } from "../../store/index.js";
+import { RuntimeEventLogStore } from "../../store/runtime-event-log.js";
 import {
   generatePeerInitiativeCandidates,
   peerInitiativeActionButtons,
@@ -14,6 +15,7 @@ import {
 import {
   PeerInitiativeFeedbackActionSchema,
   PeerInitiativeTriggerActionSchema,
+  type OutboundConversationMessage,
 } from "../outbound-conversation.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 
@@ -32,6 +34,8 @@ describe("gateway outbound conversation port", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const configDir = makeTempDir("telegram-outbound-send-");
+    const runtimeRoot = path.join(configDir, "runtime");
+    const controlBaseDir = path.join(configDir, "control");
     const adapter = new TelegramGatewayAdapter(configDir, {
       bot_token: "token",
       chat_id: 12345,
@@ -44,17 +48,20 @@ describe("gateway outbound conversation port", () => {
       user_goal_map: {},
       allow_all: true,
       polling_timeout: 1,
+    }, {
+      runtimeBaseDir: runtimeRoot,
+      controlBaseDir,
     });
 
     const target = await adapter.outboundConversation.resolveDefaultTarget();
-    const receipt = await adapter.outboundConversation.sendOutboundConversationMessage({
+    const outboundMessage: OutboundConversationMessage = {
       message_id: "peer-message:1",
-      surface: "telegram",
+      surface: "telegram" as const,
       target_binding_ref: target!.target_binding_ref,
       channel_policy_ref: target!.channel_policy_ref,
       text: "今日も頑張ってね。",
-      reply_required: false,
-      source: "peer_initiative",
+      reply_required: false as const,
+      source: "peer_initiative" as const,
       candidate_id: "peer-candidate:1",
       expression_decision_ref: "expression:1",
       visibility_policy_ref: "visibility:1",
@@ -70,7 +77,8 @@ describe("gateway outbound conversation port", () => {
         },
         feedback_epoch: "2026-05-15T00:00:00.000Z",
       }],
-    });
+    };
+    const receipt = await adapter.outboundConversation.sendOutboundConversationMessage(outboundMessage);
 
     expect(receipt).toMatchObject({
       message_id: "peer-message:1",
@@ -93,6 +101,61 @@ describe("gateway outbound conversation port", () => {
         }),
       }),
     );
+
+    const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir });
+    const deliveryEvents = await eventLog.listEvents({
+      eventType: "gateway.telegram.delivery.recorded",
+      limit: 10,
+    });
+    expect(deliveryEvents).toHaveLength(2);
+    expect(deliveryEvents.map((event) => `${event.side_effect_ref?.kind}:${event.side_effect_ref?.ref}`))
+      .toEqual(expect.arrayContaining([
+        "delivery:peer-message:1",
+        "transport_message:77",
+      ]));
+    const deliveryDecisions = deliveryEvents.map((event) => {
+      expect(event.payload.schema_version).toBe("runtime-event-payload/authority-decision/v1");
+      return (event.payload as {
+        decision: { bindings: { transport_message_ref?: string; delivery_ref?: string } };
+      }).decision;
+    });
+    expect(deliveryDecisions.some((decision) => decision.bindings.delivery_ref === "peer-message:1"
+      && decision.bindings.transport_message_ref === undefined)).toBe(true);
+    expect(deliveryDecisions.some((decision) => decision.bindings.delivery_ref === "peer-message:1"
+      && decision.bindings.transport_message_ref === "77")).toBe(true);
+    const rebuild = await eventLog.rebuildProjections();
+    expect(rebuild.peer_delivery_state).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        delivery_ref: "peer-message:1",
+        transport_message_ref: "77",
+        can_send: true,
+      }),
+    ]));
+
+    await expect(adapter.outboundConversation.sendOutboundConversationMessage(outboundMessage))
+      .rejects.toThrow("rejected");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const deliveryEventsAfterReplay = await eventLog.listEvents({
+      eventType: "gateway.telegram.delivery.recorded",
+      limit: 10,
+    });
+    expect(deliveryEventsAfterReplay).toHaveLength(3);
+    expect(deliveryEventsAfterReplay).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        side_effect_ref: null,
+        payload: expect.objectContaining({
+          decision: expect.objectContaining({
+            outcome: "suppressed",
+            can_send: false,
+            suppressed: true,
+            metadata: expect.objectContaining({
+              runtime_event_replay_suppressed: true,
+              runtime_event_replay_side_effect_ref: "delivery:peer-message:1",
+            }),
+          }),
+        }),
+      }),
+    ]));
   });
 
   it("rejects stale outbound target refs before sending", async () => {

@@ -93,6 +93,9 @@ pulseed runtime proactive-calibration [--json]
 pulseed runtime peer-initiative-capability [--json]
 pulseed runtime proactive-feedback --intervention <id> --outcome <accepted|ignored|dismissed|corrected|overreach>
 pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
+pulseed runtime graph explain <trace-id> [--json]
+pulseed runtime event-log rebuild [--dry-run] [--trace <trace-id>] [--json]
+pulseed runtime replay --trace <trace-id> [--json]
 ```
 
 `proactive-feedback` also accepts `--follow-through-success` and `--json`.
@@ -101,6 +104,9 @@ Valid overreach indicators are `too_frequent`, `wrong_context`, `sensitive`, and
 `peer-initiative-capability` is a current-claim diagnostic: outbound peer
 initiative delivery is Telegram-only until channel budgets, explicit opt-in, and
 feedback calibration exist for other surfaces.
+The event-log commands are operator/debug surfaces. They expose runtime event
+IDs, RuntimeGraph lineage, idempotency keys, authority refs, and projection
+rebuild evidence that normal chat/status surfaces intentionally redact.
 
 ## Schedules
 

@@ -60,6 +60,9 @@ Usage:
   pulseed runtime intervention-decision <id> [--json]  Diagnostic InterventionPolicy inspection
   pulseed runtime capability-decision <id> [--json]  Diagnostic Capability Registry inspection
   pulseed runtime runtime-graph <id> [--json]  Diagnostic RuntimeGraph node and lineage inspection
+  pulseed runtime graph explain <trace-id> [--json]  Explain event-log and RuntimeGraph causality
+  pulseed runtime event-log rebuild [--dry-run] [--json]  Rebuild event-log projections
+  pulseed runtime replay --trace <trace-id> [--json]  Replay/explain one runtime trace
   pulseed runtime memory-provenance [--json]  Diagnostic memory provenance/correction audit inspection
   pulseed log --goal <id>              View observation and gap history log
   pulseed tui                          Launch the interactive TUI

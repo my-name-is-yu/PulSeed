@@ -41,6 +41,80 @@ Bounded event-spool files are IPC payloads, not the decision authority for
 acting on a signal. EventServer and DriveSystem event ingress records the
 personal-agent `external_signal` trace in the control DB before enqueue/replay.
 
+## Runtime Event Log And RuntimeGraph
+
+The current source-of-truth path for major runtime event evidence is the
+append-only `runtime_events` control-DB table plus RuntimeGraph linkage in
+`personal_agent_runtime_graph_nodes` and
+`personal_agent_runtime_graph_edges`. Existing current-state tables remain
+their production write projections, indexes, or compatibility views unless this
+page names them as a write owner for a narrower domain. This PR adds
+deterministic event-log summary rebuilds; it does not yet rewrite every legacy
+projection table from replay.
+
+Each runtime event uses the typed `runtime-event-envelope/v1` contract. The
+envelope records event ID, event type, schema version, occurrence time, trace
+ID, causation ID, correlation ID, idempotency key, actor, caller path, surface,
+goal/task/run/session scope where available, source/target refs, authority
+decision refs, RuntimeGraph refs, side-effect refs, replay policy, and a typed
+payload schema/version. Payload JSON is accepted only behind typed payload
+schemas such as `runtime-event-payload/personal-agent-trace/v1`,
+`runtime-event-payload/authority-decision/v1`, and
+`runtime-event-payload/projection-rebuild/v1`, and
+`runtime-event-payload/goal-task-mutation/v1`.
+
+Production callers that write the canonical personal-agent trace or interaction
+authority path now append the event before the projection row update. That
+covers ToolExecutor admission/approval resume/denial, runtime-control
+pause/resume/cancel requests, schedule cron/probe/goal-trigger/wait-resume
+wakes, notification/outbox enqueue and suppression decisions, Telegram peer
+delivery and callback authority, memory correction/forget/recall-impact
+invalidation, goal/task mutation traces already routed through the runtime
+stores, daemon resident peer initiative, and gateway/chat ingress traces that
+trigger runtime action. If a future caller bypasses those canonical stores, it
+must either append its own typed event before side effects or be documented as a
+contract-only/future surface.
+
+RuntimeGraph edges are the causal index for those events. The current event-log
+linker records `caused_by`, `decided_by`, `approved_by`, `blocked_by`,
+`projected_to`, `executed_by`, `delivered_to`, `invalidated_by`, and
+`deduplicated_by` where the typed refs are present. Event nodes carry
+`runtime_graph_role=source_of_truth`; generic source/target/side-effect ref
+nodes created by the event-log linker are causal-index nodes, not authoritative
+payload replacements. Existing graph edges such as `supersedes` and `resumes`
+still belong to the owning runtime stores. Replay inspection rebuilds the key
+summary projections below from `runtime_events` plus RuntimeGraph evidence
+instead of reading the current-state projection tables as hidden truth.
+Rebuild output includes RuntimeGraph node/edge evidence for the events used as
+projection input.
+The event log enforces one event per event type, idempotency key, replay policy,
+and side-effect ref, so replay with a new event ID returns the existing
+source-of-truth event instead of creating a duplicate side-effect boundary,
+while legitimate outcome events with new transport/side-effect refs remain
+append-only evidence.
+
+Rebuildable projections currently include:
+
+- interaction authority summary
+- approval resume outcomes
+- notification/outbox dedupe state
+- peer delivery state
+- memory correction invalidation summary
+- schedule wake execution summary
+- tool execution outcome summary
+
+Operator/debug inspection commands:
+
+```bash
+pulseed runtime graph explain <trace-id> [--json]
+pulseed runtime event-log rebuild [--dry-run] [--trace <trace-id>] [--json]
+pulseed runtime replay --trace <trace-id> [--json]
+```
+
+These commands may expose raw event IDs, graph IDs, authority refs,
+idempotency keys, and internal evidence. Normal chat/status/gateway surfaces
+must consume redacted projections and must not expose those internals.
+
 ## Personal-Agent Runtime Trace
 
 The current durable personal-agent runtime trace is stored in the control DB,
@@ -63,10 +137,14 @@ non-trivial production decisions:
   `personal_agent_runtime_graph_edges`: RuntimeGraph nodes and lineage for
   goals, sessions, runs, tasks, process sessions, commitments, milestones,
   artifacts, reply targets, frames, events, candidates, decisions, and memory
-  records. Nodes with `runtime_graph_role=source_of_truth` carry the
-  authoritative runtime payload. Goal/task/milestone writes update graph
-  authority in the same transaction as the legacy query/index projection
-  tables. The session registry syncs conversations, agent/coreloop/process
+  records. Event-log nodes with `runtime_graph_role=source_of_truth` carry the
+  event-log source-of-truth payload; generic event-log ref nodes are causal
+  index nodes. Goal/task/milestone writes update graph
+  authority in the same transaction as legacy query/index projection tables.
+  Goal/task mutations routed through `GoalTaskStateStore` append typed
+  `goal.mutation.recorded` / `task.mutation.recorded` events before those
+  projection writes, while event-log replay explains their causal relationship
+  to the current projection. The session registry syncs conversations, agent/coreloop/process
   runs, process sessions, artifacts, reply targets, and parent/child lineage
   into RuntimeGraph and reads the graph authority back for session/run
   snapshots; projection reads are compatibility fallbacks for pre-migration

@@ -5,6 +5,7 @@ import {
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "../store/control-db/index.js";
+import { RuntimeEventLogStore } from "../store/runtime-event-log.js";
 import {
   AttentionTransitionSchema,
   CapabilityRegistryDecisionSchema,
@@ -67,6 +68,7 @@ export class PersonalAgentRuntimeStore {
 
   async recordTrace(trace: PersonalAgentDecisionTrace): Promise<PersonalAgentTraceSnapshot> {
     const parsed = PersonalAgentDecisionTraceSchema.parse(trace);
+    await new RuntimeEventLogStore(this.baseDir, this.options).appendPersonalAgentTrace(parsed);
     const db = await this.database();
     db.transaction((sqlite) => {
       upsertSituationFrame(sqlite, parsed.situation_frame);

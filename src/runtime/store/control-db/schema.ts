@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 36;
+export const CONTROL_DB_SCHEMA_VERSION = 39;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2521,6 +2521,92 @@ CREATE INDEX IF NOT EXISTS interaction_authority_decisions_fail_closed_idx
   ON interaction_authority_decisions(fail_closed, stale_target_rejected, suppressed, decided_at, decision_id);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_EVENT_LOG_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  causation_id TEXT,
+  correlation_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  caller_path TEXT NOT NULL,
+  surface TEXT,
+  replay_policy TEXT NOT NULL,
+  goal_id TEXT,
+  task_id TEXT,
+  run_id TEXT,
+  session_id TEXT,
+  source_ref TEXT NOT NULL,
+  authority_decision_ref TEXT,
+  side_effect_ref TEXT,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+
+CREATE INDEX IF NOT EXISTS runtime_events_trace_idx
+  ON runtime_events(trace_id, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS runtime_events_causation_idx
+  ON runtime_events(causation_id, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS runtime_events_correlation_idx
+  ON runtime_events(correlation_id, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS runtime_events_idempotency_idx
+  ON runtime_events(idempotency_key, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS runtime_events_type_idx
+  ON runtime_events(event_type, occurred_at, event_id);
+
+CREATE INDEX IF NOT EXISTS runtime_events_scope_idx
+  ON runtime_events(goal_id, task_id, run_id, session_id, occurred_at, event_id);
+`.trim();
+
+export const CONTROL_DB_RUNTIME_EVENT_LOG_IDEMPOTENCY_SCHEMA_SQL = `
+DELETE FROM runtime_events
+WHERE rowid NOT IN (
+  SELECT MIN(rowid)
+  FROM runtime_events
+  GROUP BY
+    event_type,
+    idempotency_key,
+    replay_policy,
+    CASE WHEN side_effect_ref IS NULL THEN 'pending' ELSE 'side_effect' END
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_idempotency_unique_idx
+  ON runtime_events(
+    event_type,
+    idempotency_key,
+    replay_policy,
+    CASE WHEN side_effect_ref IS NULL THEN 'pending' ELSE 'side_effect' END
+  );
+`.trim();
+
+export const CONTROL_DB_RUNTIME_EVENT_LOG_SIDE_EFFECT_REF_IDEMPOTENCY_SCHEMA_SQL = `
+DROP INDEX IF EXISTS runtime_events_idempotency_unique_idx;
+
+DELETE FROM runtime_events
+WHERE rowid NOT IN (
+  SELECT MIN(rowid)
+  FROM runtime_events
+  GROUP BY
+    event_type,
+    idempotency_key,
+    replay_policy,
+    COALESCE(side_effect_ref, 'pending')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_idempotency_unique_idx
+  ON runtime_events(
+    event_type,
+    idempotency_key,
+    replay_policy,
+    COALESCE(side_effect_ref, 'pending')
+  );
+`.trim();
+
 export function controlDbMigrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
@@ -2718,5 +2804,20 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     36,
     "interaction-authority-runtime-state",
     CONTROL_DB_INTERACTION_AUTHORITY_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    37,
+    "runtime-event-log-source-of-truth",
+    CONTROL_DB_RUNTIME_EVENT_LOG_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    38,
+    "runtime-event-log-idempotency-enforcement",
+    CONTROL_DB_RUNTIME_EVENT_LOG_IDEMPOTENCY_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    39,
+    "runtime-event-log-side-effect-ref-idempotency",
+    CONTROL_DB_RUNTIME_EVENT_LOG_SIDE_EFFECT_REF_IDEMPOTENCY_SCHEMA_SQL
   ),
 ];

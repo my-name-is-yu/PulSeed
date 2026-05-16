@@ -65,6 +65,26 @@ export type {
 } from "./control-db/index.js";
 
 export {
+  RuntimeEventEnvelopeSchema,
+  RuntimeEventPayloadSchema,
+  RuntimeEventReplayPolicySchema,
+  RuntimeEventLogStore,
+  RuntimeEventTypeSchema,
+  runtimeEventFromAuthorityDecision,
+  runtimeEventFromPersonalAgentTrace,
+} from "./runtime-event-log.js";
+export type {
+  RuntimeEventEnvelope,
+  RuntimeEventEnvelopeInput,
+  RuntimeEventLogListOptions,
+  RuntimeEventPayload,
+  RuntimeEventProjectionRebuild,
+  RuntimeEventReplayPolicy,
+  RuntimeEventType,
+  RuntimeGraphExplainResult,
+} from "./runtime-event-log.js";
+
+export {
   DriveGoalScheduleStateStore,
 } from "../../platform/drive/drive-schedule-state-store.js";
 export type {
