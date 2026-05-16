@@ -3,9 +3,11 @@ import { parseArgs } from "node:util";
 import type { StateManager } from "../../../base/state/state-manager.js";
 import {
   FileCognitionAuditSink,
+  projectRelationshipMemoryNormalSummary,
   type CognitionEventRef,
   type CognitionRef,
   type CompanionCognitionSurfaceTarget,
+  type RelationshipMemoryNormalSummary,
 } from "../../../runtime/cognition/index.js";
 import {
   FileCognitiveReplayIndexStore,
@@ -52,6 +54,7 @@ export type RuntimeCognitionReplayDiagnostic = {
   read_only: true;
   mutation_performed: false;
   view: CognitiveReplayInspectionView;
+  relationship_memory_summaries: RelationshipMemoryNormalSummary[];
   writeback_queue_refs: RuntimeCognitionReplayQueueRef[];
   memory_lifecycle_review_inbox: MemoryLifecycleReviewInbox;
 };
@@ -154,9 +157,14 @@ export async function createRuntimeCognitionReplayDiagnostic(input: {
     generated_at: generatedAt,
     read_only: true,
     mutation_performed: false,
-    view,
-    writeback_queue_refs: queueRefsForView(queueEntries, view),
-    memory_lifecycle_review_inbox: createMemoryLifecycleReviewInbox({
+      view,
+      relationship_memory_summaries: replayRecords.flatMap((record) =>
+        record.stable_output
+          ? [projectRelationshipMemoryNormalSummary(record.stable_output.relationship_state)]
+          : []
+      ),
+      writeback_queue_refs: queueRefsForView(queueEntries, view),
+      memory_lifecycle_review_inbox: createMemoryLifecycleReviewInbox({
       inboxId: `runtime:memory-lifecycle-review:${input.surfaceTarget}:${generatedAt}`,
       generatedAt,
       envelopes: lifecycleEnvelopes,
@@ -175,6 +183,7 @@ export function printRuntimeCognitionReplayDiagnostic(diagnostic: RuntimeCogniti
   console.log(`  Debug to normal:${view.normal_surface_debug_visible ? "visible" : "hidden"}`);
   console.log(`  Read only:      ${diagnostic.read_only ? "yes" : "no"}`);
   console.log(`  Mutated:        ${diagnostic.mutation_performed ? "yes" : "no"}`);
+  console.log(`  Relationship:  ${diagnostic.relationship_memory_summaries.length}`);
   console.log(`  Review inbox:   ${diagnostic.memory_lifecycle_review_inbox.items.length}`);
 
   if (view.items.length === 0) {
@@ -192,6 +201,20 @@ export function printRuntimeCognitionReplayDiagnostic(diagnostic: RuntimeCogniti
       console.log(`      tools:      ${item.tool_authority_stages.join(", ") || "-"}`);
       console.log(`      writeback:  ${item.writeback_proposal_refs.map(refKey).join(", ") || "-"}`);
       console.log(`      sources:    ${item.debug_refs_visible ? item.source_refs.map(eventRefLabel).join(", ") || "-" : "hidden"}`);
+    }
+  }
+
+  if (diagnostic.relationship_memory_summaries.length > 0) {
+    console.log("  Relationship memory summaries:");
+    for (const summary of diagnostic.relationship_memory_summaries) {
+      console.log(`    - posture: ${summary.posture}; overreach: ${summary.overreach_risk}`);
+      console.log(`      included: ${summary.included_count}; withheld: ${summary.withheld_count}`);
+      for (const fact of summary.included) {
+        console.log(`      included ${fact.role}/${fact.allowed_surface_use}: ${fact.user_readable_reason}`);
+      }
+      for (const fact of summary.withheld) {
+        console.log(`      withheld ${fact.role}/${fact.withheld_reason}: ${fact.user_readable_reason}`);
+      }
     }
   }
 

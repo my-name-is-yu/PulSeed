@@ -11,6 +11,10 @@ import {
   type MemoryCorrectionTargetRef,
 } from "./memory-correction-ledger.js";
 import {
+  projectUserFacingMemoryInspect,
+  type UserFacingMemoryInspectProjection,
+} from "./memory-inspect-projection.js";
+import {
   AgentMemoryStoreSchema,
   type AgentMemoryEntry,
 } from "../knowledge/types/agent-memory.js";
@@ -63,6 +67,13 @@ export interface UserMemoryOperationResult {
   correction: MemoryCorrectionEntry | null;
   history: MemoryCorrectionEntry[];
   replacement?: { ref: MemoryCorrectionTargetRef; entry?: AgentMemoryEntry };
+}
+
+export interface UserMemoryInspectInput {
+  targetRef: MemoryCorrectionTargetRef;
+  goalId?: string;
+  runId?: string;
+  taskId?: string;
 }
 
 function correctionKindForOperation(operation: Exclude<UserMemoryOperation, "history">): MemoryCorrectionKind {
@@ -188,6 +199,31 @@ export async function runUserMemoryOperation(
     correction,
     history: await readCorrectionHistory(stateManager, { ...input, targetRef: scopedTarget }),
   };
+}
+
+export async function inspectUserMemory(
+  stateManager: StateManager,
+  input: UserMemoryInspectInput,
+): Promise<UserFacingMemoryInspectProjection> {
+  const history = await readCorrectionHistory(stateManager, {
+    operation: "history",
+    targetRef: input.targetRef,
+    goalId: input.goalId,
+    runId: input.runId,
+    taskId: input.taskId,
+  });
+  if (input.targetRef.kind !== "agent_memory") {
+    return projectUserFacingMemoryInspect({
+      targetKind: input.targetRef.kind,
+      history,
+    });
+  }
+  const store = await stateManagerAgentMemoryHost(stateManager).loadAgentMemoryStore();
+  return projectUserFacingMemoryInspect({
+    targetKind: input.targetRef.kind,
+    history,
+    agentMemoryEntry: store.entries.find((entry) => entry.id === input.targetRef.id) ?? null,
+  });
 }
 
 function deterministicMemoryCorrectionId(

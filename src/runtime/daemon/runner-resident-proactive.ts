@@ -611,6 +611,8 @@ function createPeerInitiativeVisibilityPolicy(input: {
     digest_only: input.digestOnly,
     visible_in_digest: input.digestOnly,
     never_directly_show: false,
+    // This allows only the post-gated draft message selected by the peer initiative
+    // delivery path. It does not expose raw memory, trace, policy, or evidence refs.
     raw_content_allowed: true,
     inspectable_summary: input.candidate.message_intent,
     rationale: "Peer initiative passed attention, threshold, and visibility gates for a low-pressure outbound message.",

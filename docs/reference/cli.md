@@ -87,6 +87,8 @@ pulseed runtime budget <id> [--json]
 pulseed runtime experiment-queues [--json]
 pulseed runtime experiment-queue <id> [--json]
 pulseed runtime proactive-quality [--json]
+pulseed runtime proactive-calibration [--json]
+pulseed runtime peer-initiative-capability [--json]
 pulseed runtime proactive-feedback --intervention <id> --outcome <accepted|ignored|dismissed|corrected|overreach>
 pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
 ```
@@ -94,6 +96,9 @@ pulseed runtime proactive-feedback --intervention <id> --outcome overreach --ove
 `proactive-feedback` also accepts `--follow-through-success` and `--json`.
 Valid overreach indicators are `too_frequent`, `wrong_context`, `sensitive`, and
 `unwanted_timing`.
+`peer-initiative-capability` is a current-claim diagnostic: outbound peer
+initiative delivery is Telegram-only until channel budgets, explicit opt-in, and
+feedback calibration exist for other surfaces.
 
 ## Schedules
 

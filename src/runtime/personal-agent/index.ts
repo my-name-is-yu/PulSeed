@@ -51,6 +51,10 @@ export {
   stableTraceId,
 } from "./trace-builder.js";
 export {
+  PersonalAgentNormalSurfaceProjectionSchema,
+  projectPersonalAgentNormalSurface,
+} from "./normal-surface-projection.js";
+export {
   allocateDeterministicGoalId,
   recordExplicitCommandDecision,
 } from "./explicit-command-trace.js";
@@ -61,6 +65,9 @@ export type {
   BuildPersonalAgentDecisionTraceInput,
   PersonalAgentTraceSourceInput,
 } from "./trace-builder.js";
+export type {
+  PersonalAgentNormalSurfaceProjection,
+} from "./normal-surface-projection.js";
 export type {
   ExplicitCommandDecisionTarget,
   RecordExplicitCommandDecisionInput,

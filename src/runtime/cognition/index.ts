@@ -78,6 +78,10 @@ export {
   relationshipTurnRefForCognitionInput,
 } from "./relationship-state-projection.js";
 export {
+  RelationshipMemoryNormalSummarySchema,
+  projectRelationshipMemoryNormalSummary,
+} from "./relationship-normal-summary.js";
+export {
   MEMORY_LIFECYCLE_OWNER_ROUTING_TABLE,
   MemoryLifecycleCanonicalOwnerSchema,
   MemoryLifecycleOwnerRoutingRuleSchema,
@@ -163,6 +167,9 @@ export type {
 export type {
   CompanionCognitionServiceDeps,
 } from "./companion-cognition-service.js";
+export type {
+  RelationshipMemoryNormalSummary,
+} from "./relationship-normal-summary.js";
 export type {
   MemoryLifecycleCanonicalOwner,
   MemoryLifecycleOwnerRoutingRule,

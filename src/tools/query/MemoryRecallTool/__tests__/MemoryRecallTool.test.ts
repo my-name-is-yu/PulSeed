@@ -7,6 +7,11 @@ import { AgentMemoryEntrySchema, type AgentMemoryEntry } from "../../../../platf
 import { StateManager } from "../../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../../base/llm/llm-client.js";
 import { cleanupTempDir, makeTempDir } from "../../../../../tests/helpers/temp-dir.js";
+import { createBuiltinTools } from "../../../builtin/index.js";
+import { ConcurrencyController } from "../../../concurrency.js";
+import { ToolExecutor } from "../../../executor.js";
+import { ToolPermissionManager } from "../../../permission.js";
+import { ToolRegistry } from "../../../registry.js";
 
 const makeContext = (): ToolCallContext => ({
   cwd: "/tmp",
@@ -351,6 +356,46 @@ describe("MemoryRecallTool", () => {
         expect(freeform.error).toContain("semantic agent memory recall requires an embedding client");
 
         const lexical = await realTool.call({ query: "TypeScript", mode: "lexical" }, makeContext());
+        expect(lexical.success).toBe(true);
+        expect((lexical.data as { entries: AgentMemoryEntry[] }).entries).toEqual([
+          expect.objectContaining({ key: "user.language" }),
+        ]);
+      } finally {
+        cleanupTempDir(tmpDir);
+      }
+    });
+
+    it("keeps freeform semantic recall default through the built-in ToolExecutor caller path", async () => {
+      const tmpDir = makeTempDir("pulseed-memory-recall-tool-executor-");
+      try {
+        const stateManager = new StateManager(tmpDir);
+        await stateManager.init();
+        const realKm = new RealKnowledgeManager(stateManager, {} as ILLMClient);
+        await realKm.saveAgentMemory({
+          key: "user.language",
+          value: "The user prefers TypeScript.",
+          tags: ["typescript", "preference"],
+        });
+        const memoryRecallTool = createBuiltinTools({ knowledgeManager: realKm })
+          .find((candidate) => candidate.metadata.name === "memory_recall");
+        expect(memoryRecallTool).toBeDefined();
+        const registry = new ToolRegistry();
+        registry.register(memoryRecallTool!);
+        const executor = new ToolExecutor({
+          registry,
+          permissionManager: new ToolPermissionManager({}),
+          concurrency: new ConcurrencyController(),
+        });
+
+        const freeform = await executor.execute("memory_recall", { query: "TypeScript" }, makeContext());
+        expect(freeform.success).toBe(false);
+        expect(freeform.error ?? "").toContain("semantic agent memory recall requires an embedding client");
+
+        const lexical = await executor.execute(
+          "memory_recall",
+          { query: "TypeScript", mode: "lexical" },
+          makeContext()
+        );
         expect(lexical.success).toBe(true);
         expect((lexical.data as { entries: AgentMemoryEntry[] }).entries).toEqual([
           expect.objectContaining({ key: "user.language" }),

@@ -1083,6 +1083,11 @@ export const VisibilityPolicySchema = z.object({
   never_directly_show: z.boolean(),
   content_lifecycle: CompanionAutonomyContentLifecycleSchema.default("active"),
   redaction_required: z.boolean().default(false),
+  /**
+   * Allows only the selected post-gated user text/content artifact to be rendered.
+   * It does not authorize raw trace payloads, raw memory/source records, policy refs,
+   * or deleted/tombstoned content to cross into normal surfaces.
+   */
   raw_content_allowed: z.boolean().default(false),
   inspectable_summary: z.string().min(1).optional(),
   rationale: z.string().min(1),
@@ -1262,9 +1267,14 @@ export const PermissionGrantBoundarySchema = z.object({
 }).strict();
 export type PermissionGrantBoundary = z.infer<typeof PermissionGrantBoundarySchema>;
 
-export function canVisibilityPolicyExposeRawContent(policy: VisibilityPolicy): boolean {
+export function canVisibilityPolicyExposePostGatedUserText(policy: VisibilityPolicy): boolean {
   if (policy.content_lifecycle === "deleted" || policy.content_lifecycle === "tombstone") return false;
   if (policy.never_directly_show) return false;
   if (policy.redaction_required) return false;
   return policy.raw_content_allowed;
+}
+
+/** @deprecated Use canVisibilityPolicyExposePostGatedUserText for the narrower field meaning. */
+export function canVisibilityPolicyExposeRawContent(policy: VisibilityPolicy): boolean {
+  return canVisibilityPolicyExposePostGatedUserText(policy);
 }

@@ -49,12 +49,21 @@ import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./oper
 import { cmdRuntimeCognitionReplay } from "./cognition-replay.js";
 import {
   PersonalAgentRuntimeStore,
+  projectPersonalAgentNormalSurface,
   type CapabilityRegistryDecision,
   type InterventionDecision,
+  type PersonalAgentNormalSurfaceProjection,
   type PersonalAgentTraceSnapshot,
   type RuntimeGraphNode,
   type SituationFrame,
 } from "../../../runtime/personal-agent/index.js";
+import {
+  PeerInitiativeStore,
+  createPeerInitiativeCalibrationReport,
+  projectPeerInitiativeCurrentCapability,
+  type PeerInitiativeCalibrationReport,
+  type PeerInitiativeCurrentCapabilityProjection,
+} from "../../../runtime/peer-initiative/index.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -326,6 +335,34 @@ function printProactiveSummary(summary: ProactiveInterventionSummary): void {
   }
 }
 
+function printPeerInitiativeCapability(projection: PeerInitiativeCurrentCapabilityProjection): void {
+  console.log("Peer initiative capability:");
+  console.log(`  Current:       ${projection.current_capability}`);
+  console.log(`  Read-only:     ${projection.read_only ? "yes" : "no"}`);
+  console.log(`  Raw refs:      ${projection.raw_refs_visible ? "visible" : "hidden"}`);
+  console.log("  Delivery surfaces:");
+  for (const surface of projection.delivery_surfaces) {
+    console.log(`    - ${surface.surface}: ${surface.current_status}`);
+    console.log(`      claim: ${surface.normal_user_claim}`);
+  }
+}
+
+function printPeerInitiativeCalibrationReport(report: PeerInitiativeCalibrationReport): void {
+  const evidence = report.threshold_tuning_evidence;
+  console.log("Peer initiative calibration:");
+  console.log(`  Surface scope: ${report.surface_scope}`);
+  console.log(`  Accepted:      ${evidence.accepted_count}`);
+  console.log(`  Dismissed:     ${evidence.dismissed_count}`);
+  console.log(`  Corrected:     ${evidence.corrected_count}`);
+  console.log(`  Wrong read:    ${evidence.wrong_read_count}`);
+  console.log(`  More like this: ${evidence.more_like_this_count}`);
+  console.log(`  Less like this: ${evidence.less_like_this_count}`);
+  console.log(`  Not now:       ${evidence.not_now_count}`);
+  console.log(`  Mute kind:     ${evidence.mute_this_kind_count}`);
+  console.log(`  Recommendation: ${report.recommendation}`);
+  console.log(`  Mutated:       ${report.mutation_performed ? "yes" : "no"}`);
+}
+
 function printAttentionContinuitySummary(inspection: AttentionContinuityInspection): void {
   console.log("Attention continuity:");
   console.log(`  Status:          ${inspection.status}`);
@@ -387,6 +424,17 @@ function printTraceSummary(trace: PersonalAgentTraceSnapshot): void {
   }
 }
 
+function printNormalTraceProjection(projection: PersonalAgentNormalSurfaceProjection): void {
+  console.log("Normal initiative projection:");
+  console.log(`  Why now:             ${projection.why_now}`);
+  console.log(`  What I will do:      ${projection.what_i_will_do}`);
+  console.log(`  What I need from you:${projection.what_i_need_from_you ? ` ${projection.what_i_need_from_you}` : " -"}`);
+  console.log(`  Uncertainty:         ${projection.confidence_or_uncertainty ?? "-"}`);
+  console.log(`  Read-only:           ${projection.readonly_projection ? "yes" : "no"}`);
+  console.log(`  Action authority:    ${projection.action_authority_increased ? "expanded" : "unchanged"}`);
+  console.log(`  Raw refs visible:    ${projection.raw_refs_visible ? "yes" : "no"}`);
+}
+
 function printInterventionDecision(decision: InterventionDecision): void {
   console.log(`InterventionPolicy decision: ${decision.decision_id}`);
   console.log(`  Decision:    ${decision.decision}`);
@@ -436,18 +484,19 @@ function parseListArgs(args: string[], command: string): RuntimeListValues {
   }
 }
 
-function parseDetailArgs(args: string[], command: string): { id?: string; json?: boolean } {
+function parseDetailArgs(args: string[], command: string): { id?: string; json?: boolean; normal?: boolean } {
   const logger = getCliLogger();
   try {
     const { values, positionals } = parseArgs({
       args,
       options: {
         json: { type: "boolean" },
+        normal: { type: "boolean" },
       },
       allowPositionals: true,
       strict: false,
-    }) as { values: { json?: boolean }; positionals: string[] };
-    return { id: positionals[0], json: values.json };
+    }) as { values: { json?: boolean; normal?: boolean }; positionals: string[] };
+    return { id: positionals[0], json: values.json, normal: values.normal };
   } catch (err) {
     logger.error(formatOperationError(`parse runtime ${command} arguments`, err));
     return {};
@@ -527,7 +576,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
     return 1;
   }
 
@@ -732,6 +781,29 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "proactive-calibration") {
+    const values = parseListArgs(args.slice(1), "proactive-calibration");
+    const baseDir = stateManager.getBaseDir();
+    const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(baseDir);
+    const proactiveSummary = await new ProactiveInterventionStore(runtimeRoot, { controlBaseDir: baseDir }).summarize();
+    const peerFeedbackProjections = await new PeerInitiativeStore(runtimeRoot, { controlBaseDir: baseDir })
+      .listFeedbackProjections({ limit: 500 });
+    const report = createPeerInitiativeCalibrationReport({
+      generatedAt: new Date().toISOString(),
+      proactiveSummary,
+      peerFeedbackProjections,
+    });
+    values.json ? printJson(report) : printPeerInitiativeCalibrationReport(report);
+    return 0;
+  }
+
+  if (runtimeSubcommand === "peer-initiative-capability") {
+    const values = parseListArgs(args.slice(1), "peer-initiative-capability");
+    const projection = projectPeerInitiativeCurrentCapability();
+    values.json ? printJson(projection) : printPeerInitiativeCapability(projection);
+    return 0;
+  }
+
   if (runtimeSubcommand === "attention-continuity") {
     const values = parseListArgs(args.slice(1), "attention-continuity");
     const baseDir = stateManager.getBaseDir();
@@ -770,13 +842,18 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   if (runtimeSubcommand === "initiative-trace") {
     const values = parseDetailArgs(args.slice(1), "initiative-trace");
     if (!values.id) {
-      logger.error("Error: trace/task/run/action ref is required. Usage: pulseed runtime initiative-trace <ref> [--json]");
+      logger.error("Error: trace/task/run/action ref is required. Usage: pulseed runtime initiative-trace <ref> [--normal] [--json]");
       return 1;
     }
     const trace = await personalAgentStore(stateManager).loadTrace(values.id);
     if (!trace) {
       console.error(`Initiative trace not found: ${values.id}`);
       return 1;
+    }
+    if (values.normal) {
+      const projection = projectPersonalAgentNormalSurface(trace);
+      values.json ? printJson(projection) : printNormalTraceProjection(projection);
+      return 0;
     }
     values.json ? printJson(trace) : printTraceSummary(trace);
     return 0;
@@ -914,7 +991,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
   return 1;
 }
 
