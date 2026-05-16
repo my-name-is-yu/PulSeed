@@ -70,3 +70,12 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
   budget also needs to restore temporary activation delivery caps. Fixed by
   restoring `helpful_nudge` default delivery only when no cooldown is active,
   while preserving feedback-driven downgrades.
+- A third Codex review identified two remaining activation-policy persistence
+  risks: temporary caps could survive expiry when cleanup ran during quiet mode,
+  and resident activation writes could clobber fresher Telegram feedback updates.
+  Fixed by restoring expired activation caps based on cooldown state rather than
+  current mode, and by applying activation policy changes through an atomic
+  policy-state updater that reads the latest persisted state inside the write
+  transaction. The Telegram feedback `applyEvents` path now uses the same
+  transaction-local reducer so feedback/cooldown writes do not preserve a split
+  read/save window either.

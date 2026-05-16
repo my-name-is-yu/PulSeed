@@ -317,7 +317,16 @@ describe("resident peer initiative caller path", () => {
   it("uses persisted proactive policy feedback in the resident peer initiative caller path", async () => {
     const baseDir = makeTempDir("resident-peer-initiative-policy-state-");
     const gatewayPort = new FakeOutboundConversationPort();
-    await new ProactivePolicyStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+    const runtimeRoot = path.join(baseDir, "runtime");
+    const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: baseDir });
+    const proposal = await activationStore.propose({
+      requestedMaxDeliveryKind: "notify",
+      dogfoodDurationHours: 168,
+      now: "2026-05-15T00:00:00.000Z",
+    });
+    const binding = await activationStore.accept(proposal.proposal_id, "2026-05-15T00:00:01.000Z");
+    const policyStore = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: baseDir });
+    await policyStore
       .applyEvents({
         policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
         now: "2026-05-15T00:00:00.000Z",
@@ -336,7 +345,7 @@ describe("resident peer initiative caller path", () => {
       loop_count: 4,
       active_goals: [],
       status: "idle",
-      runtime_root: path.join(baseDir, "runtime"),
+      runtime_root: runtimeRoot,
       last_resident_at: null,
       resident_activity: null,
     });
@@ -430,6 +439,15 @@ describe("resident peer initiative caller path", () => {
     expect(records[0]).toMatchObject({
       kind: "care_presence",
       selected_state: "digested",
+    });
+    const storedPolicy = await policyStore.load(DEFAULT_RESIDENT_ACTIVATION_POLICY_ID);
+    expect(storedPolicy).toMatchObject({
+      max_delivery_kind: "digest",
+      cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+      feedback_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+      interruption_budget: {
+        budget_id: binding.interruption_budget.budget_id,
+      },
     });
   });
 

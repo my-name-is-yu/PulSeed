@@ -292,7 +292,7 @@ export function clearInactiveResidentActivationBudgetFromPolicyState(input: {
     return input.state;
   }
   const { interruption_budget: _budget, ...rest } = input.state;
-  const maxDeliveryKind = input.state.mode === "active" && input.state.cooldown_refs.length === 0
+  const maxDeliveryKind = input.state.cooldown_refs.length === 0
     ? input.state.default_profile.default_max_delivery_kind
     : input.state.max_delivery_kind;
   return ProactivePolicyStateSchema.parse({

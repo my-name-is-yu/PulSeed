@@ -428,25 +428,22 @@ export async function triggerResidentPeerInitiative(
     selectedState: "held",
   });
   const artifactRef = await persistPreparedPeerArtifact(store, selected, now);
-  const basePolicyState = await policyStore.loadOrCreate({
+  const activationBinding = await activationStore.loadActiveBinding();
+  const policyState = await policyStore.updateState({
     policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
     now,
     maxDeliveryKind: DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+    updater: (basePolicyState) => activationBinding
+      ? applyResidentActivationBindingToPolicyState({
+          state: basePolicyState,
+          binding: activationBinding,
+          now,
+        })
+      : clearInactiveResidentActivationBudgetFromPolicyState({
+          state: basePolicyState,
+          now,
+        }),
   });
-  const activationBinding = await activationStore.loadActiveBinding();
-  const effectivePolicyState = activationBinding
-    ? applyResidentActivationBindingToPolicyState({
-        state: basePolicyState,
-        binding: activationBinding,
-        now,
-      })
-    : clearInactiveResidentActivationBudgetFromPolicyState({
-        state: basePolicyState,
-        now,
-      });
-  const policyState = effectivePolicyState === basePolicyState
-    ? basePolicyState
-    : await policyStore.save(effectivePolicyState);
   const boundary = mapPeerInitiativeBoundary({
     candidate: selected,
     attentionAdmission: input.attentionAdmission,

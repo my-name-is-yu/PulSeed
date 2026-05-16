@@ -106,6 +106,59 @@ describe("proactive calibration runtime state stores", () => {
     }
   });
 
+  it("applies resident activation policy updates against the latest persisted feedback state", async () => {
+    const tmpDir = makeTempDir("pulseed-resident-activation-policy-update-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: tmpDir });
+      const proposal = await activationStore.propose({
+        dogfoodDurationHours: 24,
+        now: NOW,
+      });
+      const binding = await activationStore.accept(proposal.proposal_id, "2026-05-16T00:05:00.000Z");
+      const store = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: tmpDir });
+      const staleSnapshot = await store.loadOrCreate({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: NOW,
+        maxDeliveryKind: "notify",
+      });
+      await store.applyEvents({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: "2026-05-16T00:06:00.000Z",
+        maxDeliveryKind: "notify",
+        events: [{
+          kind: "feedback",
+          feedback_ref: { kind: "peer_feedback_projection", ref: "peer-feedback:not-now" },
+          feedback_kind: "dismissed",
+          recorded_at: "2026-05-16T00:06:00.000Z",
+        }],
+      });
+
+      const updated = await store.updateState({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: "2026-05-16T00:07:00.000Z",
+        maxDeliveryKind: "notify",
+        updater: (state) => applyResidentActivationBindingToPolicyState({
+          state,
+          binding,
+          now: "2026-05-16T00:07:00.000Z",
+        }),
+      });
+
+      expect(staleSnapshot.feedback_refs).toHaveLength(0);
+      expect(updated).toMatchObject({
+        max_delivery_kind: "digest",
+        cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+        feedback_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+        interruption_budget: {
+          budget_id: binding.interruption_budget.budget_id,
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("preserves resident activation budget debits across binding reapplication and clears inactive activation budgets", async () => {
     const tmpDir = makeTempDir("pulseed-resident-activation-budget-");
     try {
@@ -181,6 +234,13 @@ describe("proactive calibration runtime state stores", () => {
         state: activationCapped,
         now: "2026-05-17T00:06:00.000Z",
       });
+      const quietRestored = clearInactiveResidentActivationBudgetFromPolicyState({
+        state: {
+          ...activationCapped,
+          mode: "quiet",
+        },
+        now: "2026-05-17T00:06:30.000Z",
+      });
       const feedbackCapped = clearInactiveResidentActivationBudgetFromPolicyState({
         state: {
           ...activationCapped,
@@ -201,7 +261,13 @@ describe("proactive calibration runtime state stores", () => {
         max_delivery_kind: "notify",
         runtime_authority: false,
       });
+      expect(quietRestored).toMatchObject({
+        mode: "quiet",
+        max_delivery_kind: "notify",
+        runtime_authority: false,
+      });
       expect(restored.interruption_budget).toBeUndefined();
+      expect(quietRestored.interruption_budget).toBeUndefined();
       expect(feedbackCapped).toMatchObject({
         max_delivery_kind: "digest",
         cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],

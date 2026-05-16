@@ -89,29 +89,54 @@ export class ProactivePolicyStateStore {
     return parsed;
   }
 
+  async updateState(input: ProactivePolicyStateLoadOrCreateInput & {
+    updater: (state: ProactivePolicyState) => ProactivePolicyState;
+  }): Promise<ProactivePolicyState> {
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const initial = readPolicyState(sqlite, input.policyId)
+        ?? createProactivePolicyState({
+          policyId: input.policyId,
+          now: input.now,
+          mode: input.mode,
+          maxDeliveryKind: input.maxDeliveryKind,
+          budget: input.budget,
+        });
+      const updated = ProactivePolicyStateSchema.parse(input.updater(initial));
+      if (updated.policy_id !== input.policyId) {
+        throw new Error(`Proactive policy updater changed policy_id: ${input.policyId}`);
+      }
+      writePolicyState(sqlite, updated);
+      return updated;
+    });
+  }
+
   async applyEvents(input: ProactivePolicyStateLoadOrCreateInput & {
     events: readonly ProactivePolicyEvent[];
   }): Promise<{
     state: ProactivePolicyState;
     result: ProactivePolicyStateApplyResult;
   }> {
-    const initial = await this.loadOrCreate(input);
-    let state = initial;
+    const events = input.events.map((candidate) => ProactivePolicyEventSchema.parse(candidate));
     let applied = 0;
     let skipped = 0;
-
-    for (const event of input.events.map((candidate) => ProactivePolicyEventSchema.parse(candidate))) {
-      if (event.kind === "feedback" && hasFeedbackRef(state, event.feedback_ref)) {
-        skipped += 1;
-        continue;
+    let beforeMaxDeliveryKind: ProactiveDeliveryKind | null = null;
+    const state = await this.updateState({
+      ...input,
+      updater: (initial) => {
+        beforeMaxDeliveryKind = initial.max_delivery_kind;
+        let next = initial;
+        for (const event of events) {
+          if (event.kind === "feedback" && hasFeedbackRef(next, event.feedback_ref)) {
+            skipped += 1;
+            continue;
+          }
+          next = reduceProactivePolicyState(next, event);
+          applied += 1;
+        }
+        return next;
       }
-      state = reduceProactivePolicyState(state, event);
-      applied += 1;
-    }
-
-    if (applied > 0) {
-      state = await this.save(state);
-    }
+    });
 
     return {
       state,
@@ -120,7 +145,7 @@ export class ProactivePolicyStateStore {
         policy_id: state.policy_id,
         applied_event_count: applied,
         skipped_existing_event_count: skipped,
-        before_max_delivery_kind: initial.max_delivery_kind,
+        before_max_delivery_kind: beforeMaxDeliveryKind ?? state.max_delivery_kind,
         after_max_delivery_kind: state.max_delivery_kind,
         feedback_ref_count: state.feedback_refs.length,
         cooldown_ref_count: state.cooldown_refs.length,
