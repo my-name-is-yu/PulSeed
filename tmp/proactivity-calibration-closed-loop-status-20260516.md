@@ -66,3 +66,7 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
 - Fixed by preserving same-budget debit counts across binding reapplication and
   clearing inactive resident activation budgets from the effective policy state.
   Added store-level and resident caller-path regression coverage.
+- A second Codex P1 review identified that clearing an inactive activation
+  budget also needs to restore temporary activation delivery caps. Fixed by
+  restoring `helpful_nudge` default delivery only when no cooldown is active,
+  while preserving feedback-driven downgrades.

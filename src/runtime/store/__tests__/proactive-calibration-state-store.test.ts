@@ -156,4 +156,59 @@ describe("proactive calibration runtime state stores", () => {
       cleanupTempDir(tmpDir);
     }
   });
+
+  it("restores temporary activation delivery caps on expiry without lifting feedback cooldowns", async () => {
+    const tmpDir = makeTempDir("pulseed-resident-activation-cap-expiry-");
+    try {
+      const activationStore = new ResidentActivationStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+      const proposal = await activationStore.propose({
+        requestedMaxDeliveryKind: "suggest",
+        dogfoodDurationHours: 24,
+        now: NOW,
+      });
+      const binding = await activationStore.accept(proposal.proposal_id, "2026-05-16T00:05:00.000Z");
+      const state = createProactivePolicyState({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: NOW,
+        maxDeliveryKind: "notify",
+      });
+      const activationCapped = applyResidentActivationBindingToPolicyState({
+        state,
+        binding,
+        now: "2026-05-16T00:06:00.000Z",
+      });
+      const restored = clearInactiveResidentActivationBudgetFromPolicyState({
+        state: activationCapped,
+        now: "2026-05-17T00:06:00.000Z",
+      });
+      const feedbackCapped = clearInactiveResidentActivationBudgetFromPolicyState({
+        state: {
+          ...activationCapped,
+          max_delivery_kind: "digest",
+          cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+          feedback_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+        },
+        now: "2026-05-17T00:07:00.000Z",
+      });
+
+      expect(activationCapped).toMatchObject({
+        max_delivery_kind: "suggest",
+        interruption_budget: {
+          budget_id: binding.interruption_budget.budget_id,
+        },
+      });
+      expect(restored).toMatchObject({
+        max_delivery_kind: "notify",
+        runtime_authority: false,
+      });
+      expect(restored.interruption_budget).toBeUndefined();
+      expect(feedbackCapped).toMatchObject({
+        max_delivery_kind: "digest",
+        cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+      });
+      expect(feedbackCapped.interruption_budget).toBeUndefined();
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
 });
