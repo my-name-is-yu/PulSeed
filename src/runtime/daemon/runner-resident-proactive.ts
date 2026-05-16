@@ -66,6 +66,14 @@ import {
   triggerResidentInvestigation,
 } from "./runner-resident-curiosity.js";
 import {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  ProactivePolicyStateStore,
+  ResidentActivationStore,
+  applyResidentActivationBindingToPolicyState,
+  clearInactiveResidentActivationBudgetFromPolicyState,
+} from "../store/index.js";
+import {
   PersonalAgentRuntimeStore,
   buildPersonalAgentDecisionTrace,
   type CapabilityRegistryDecisionKind,
@@ -382,10 +390,13 @@ export async function triggerResidentPeerInitiative(
   },
 ): Promise<void> {
   const now = new Date().toISOString();
+  const runtimeRoot = resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root);
   const store = new PeerInitiativeStore(
-    resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
+    runtimeRoot,
     { controlBaseDir: context.baseDir },
   );
+  const policyStore = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: context.baseDir });
+  const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: context.baseDir });
   const candidates = generatePeerInitiativeCandidates({
     details,
     attentionSignalRefs: [
@@ -417,10 +428,27 @@ export async function triggerResidentPeerInitiative(
     selectedState: "held",
   });
   const artifactRef = await persistPreparedPeerArtifact(store, selected, now);
+  const activationBinding = await activationStore.loadActiveBinding();
+  const policyState = await policyStore.updateState({
+    policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+    now,
+    maxDeliveryKind: DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+    updater: (basePolicyState) => activationBinding
+      ? applyResidentActivationBindingToPolicyState({
+          state: basePolicyState,
+          binding: activationBinding,
+          now,
+        })
+      : clearInactiveResidentActivationBudgetFromPolicyState({
+          state: basePolicyState,
+          now,
+        }),
+  });
   const boundary = mapPeerInitiativeBoundary({
     candidate: selected,
     attentionAdmission: input.attentionAdmission,
     operationBoundary: input.operationBoundary,
+    policyState,
     now,
   });
   const peerMetadata = {
@@ -527,6 +555,17 @@ export async function triggerResidentPeerInitiative(
     ),
     deliveredAt: delivery.status === "delivered" ? delivery.delivered_at ?? now : undefined,
   });
+  if (
+    boundary.thresholdDecision.budget_debit > 0
+    && delivery.status === "delivered"
+    && delivery.fresh_delivery
+  ) {
+    await policyStore.recordBudgetDebit({
+      policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+      amount: boundary.thresholdDecision.budget_debit,
+      debitedAt: delivery.delivered_at ?? now,
+    });
+  }
   await persistResidentActivity(context, {
     kind: delivery.status === "delivered" ? "observation" : "skipped",
     trigger: "proactive_tick",
@@ -634,6 +673,7 @@ async function deliverPeerInitiativeMessage(input: {
   message_id?: string;
   delivered_at?: string;
   status: "pending_send" | "delivered" | "held" | "failed";
+  fresh_delivery: boolean;
 }> {
   const surface: OutboundConversationSurface = "telegram";
   const deliveryId = `peer-delivery:${input.candidate.candidate_id}:${surface}`;
@@ -644,6 +684,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: existingDelivery.message_id,
       delivered_at: existingDelivery.delivered_at,
       status: "delivered",
+      fresh_delivery: false,
     };
   }
   const port = input.context.gateway?.getOutboundConversationPort(surface);
@@ -655,7 +696,7 @@ async function deliverPeerInitiativeMessage(input: {
       status: "held",
       failure_reason: "no live gateway outbound conversation port for telegram",
     });
-    return { delivery_id: deliveryId, status: "held" };
+    return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
   const target = await port.resolveDefaultTarget();
   if (!target) {
@@ -666,7 +707,7 @@ async function deliverPeerInitiativeMessage(input: {
       status: "held",
       failure_reason: "telegram outbound conversation target is not bound",
     });
-    return { delivery_id: deliveryId, status: "held" };
+    return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
   const actionButtons = peerInitiativeActionButtons({
     candidate: input.candidate,
@@ -725,6 +766,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: claim.record.message_id,
       delivered_at: claim.record.delivered_at,
       status: claim.record.status,
+      fresh_delivery: false,
     };
   }
   try {
@@ -747,6 +789,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: receipt.message_id,
       delivered_at: receipt.delivered_at,
       status: "delivered",
+      fresh_delivery: true,
     };
   } catch (error) {
     await input.store.recordDelivery({
@@ -765,7 +808,12 @@ async function deliverPeerInitiativeMessage(input: {
       candidate_id: input.candidate.candidate_id,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { delivery_id: deliveryId, message_id: peerMessage.message_id, status: "failed" };
+    return {
+      delivery_id: deliveryId,
+      message_id: peerMessage.message_id,
+      status: "failed",
+      fresh_delivery: false,
+    };
   }
 }
 

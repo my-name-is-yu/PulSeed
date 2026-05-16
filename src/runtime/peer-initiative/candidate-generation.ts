@@ -104,7 +104,7 @@ export function generatePeerInitiativeCandidates(
     reply_required: false,
     action_plan: actionPlan,
     worthiness,
-    max_delivery_kind: details.max_delivery_kind ?? "suggest",
+    max_delivery_kind: details.max_delivery_kind ?? "notify",
     external_action_authority: false,
     task_creation_authority: false,
     confidence: details.confidence ?? confidenceForNeeds(needs),

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   createProactivePolicyState,
   decideProactiveThreshold,
+  type ProactivePolicyState,
   type ProactiveThresholdDecision,
 } from "../attention/proactive-policy.js";
 import { projectCompanionAction } from "../control/companion-action-projection.js";
@@ -18,6 +19,7 @@ export interface PeerInitiativeBoundaryMappingInput {
   candidate: PeerInitiativeCandidate;
   attentionAdmission: ResidentAttentionAdmission;
   operationBoundary?: ResidentOperationBoundaryResult;
+  policyState?: ProactivePolicyState;
   now: string;
   quietingActive?: boolean;
 }
@@ -36,7 +38,7 @@ export function mapPeerInitiativeBoundary(
   const candidateRef = cognitionRef("peer_initiative", input.candidate.candidate_id);
   const artifactRef = preparedArtifactRef(input.candidate);
   const thresholdDecision = decideProactiveThreshold({
-    state: createProactivePolicyState({
+    state: input.policyState ?? createProactivePolicyState({
       policyId: `peer-initiative:${input.candidate.candidate_id}`,
       now: input.now,
       maxDeliveryKind: input.candidate.max_delivery_kind,

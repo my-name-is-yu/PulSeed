@@ -31,6 +31,7 @@ export {
   CONTROL_DB_MIGRATIONS,
   CONTROL_DB_PERSONAL_AGENT_RUNTIME_SCHEMA_SQL,
   CONTROL_DB_PLUGIN_CHANNEL_RUNTIME_SCHEMA_SQL,
+  CONTROL_DB_PROACTIVE_CALIBRATION_SCHEMA_SQL,
   CONTROL_DB_QUEUE_DAEMON_SCHEDULE_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_EVIDENCE_STRATEGY_DREAM_SCHEMA_SQL,
   CONTROL_DB_RUNTIME_JOURNAL_REPLACEMENT_SCHEMA_SQL,
@@ -103,6 +104,46 @@ export {
 export type {
   FeedbackIngestionStoreOptions,
 } from "./feedback-ingestion-store.js";
+
+export {
+  ProactivePolicyStateApplyResultSchema,
+  ProactivePolicyStateStore,
+} from "./proactive-policy-state-store.js";
+export type {
+  ProactivePolicyStateApplyResult,
+  ProactivePolicyStateLoadOrCreateInput,
+} from "./proactive-policy-state-store.js";
+
+export {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  DEFAULT_RESIDENT_ACTIVATION_DAILY_NOTIFY_BUDGET,
+  DEFAULT_RESIDENT_ACTIVATION_MAX_DELIVERY_KIND,
+  DEFAULT_RESIDENT_ACTIVATION_SCOPE,
+  ResidentActivationBindingSchema,
+  ResidentActivationBindingStatusSchema,
+  ResidentActivationBudgetSchema,
+  ResidentActivationMaxDeliveryKindSchema,
+  ResidentActivationProposalSchema,
+  ResidentActivationProposalStatusSchema,
+  ResidentActivationScopeSchema,
+  ResidentActivationStatusProjectionSchema,
+  ResidentActivationStore,
+  ResidentActivationSurfaceSchema,
+  applyResidentActivationBindingToPolicyState,
+  clearInactiveResidentActivationBudgetFromPolicyState,
+} from "./resident-activation-store.js";
+export type {
+  ResidentActivationBinding,
+  ResidentActivationBindingStatus,
+  ResidentActivationBudget,
+  ResidentActivationMaxDeliveryKind,
+  ResidentActivationProposal,
+  ResidentActivationProposalInput,
+  ResidentActivationProposalStatus,
+  ResidentActivationScope,
+  ResidentActivationStatusProjection,
+  ResidentActivationSurface,
+} from "./resident-activation-store.js";
 
 export {
   GoalOrchestrationStateStore,

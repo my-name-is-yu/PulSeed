@@ -3,6 +3,10 @@ import * as path from "node:path";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { FeedbackIngestionStore } from "../../store/feedback-ingestion-store.js";
 import {
+  DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+  ProactivePolicyStateStore,
+} from "../../store/index.js";
+import {
   generatePeerInitiativeCandidates,
   peerInitiativeActionButtons,
   PeerInitiativeStore,
@@ -219,6 +223,7 @@ describe("gateway outbound conversation port", () => {
       throw new Error(`unexpected Telegram method: ${method}`);
     });
     vi.stubGlobal("fetch", fetchMock);
+    const policyStore = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: tmpDir });
     const adapter = new TelegramGatewayAdapter("/tmp/telegram-bot", {
       bot_token: "token",
       chat_id: 12345,
@@ -293,6 +298,7 @@ describe("gateway outbound conversation port", () => {
 
     const feedbackRecords = await feedbackStore.listRecords();
     const projections = await peerStore.listFeedbackProjections({ candidateId: candidate.candidate_id });
+    const policyState = await policyStore.load(DEFAULT_RESIDENT_ACTIVATION_POLICY_ID);
     expect(callbackAckIds).toEqual([
       "callback-wrong-chat",
       "callback-wrong-message",
@@ -316,6 +322,11 @@ describe("gateway outbound conversation port", () => {
       source_surface: "telegram",
       feedback_id: feedbackRecords[0]!.feedback_id,
     }]);
+    expect(policyState).toMatchObject({
+      max_delivery_kind: "digest",
+      cooldown_refs: [{ kind: "peer_feedback_projection", ref: projections[0]!.projection_id }],
+      runtime_authority: false,
+    });
   });
 
   it("acknowledges malformed and rejected Telegram peer callback payloads without side effects", async () => {

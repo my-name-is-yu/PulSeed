@@ -124,6 +124,12 @@ describe("runtime peer initiative diagnostics", () => {
         read_only: boolean;
         mutation_performed: boolean;
         relationship_profile_write_performed: boolean;
+        relationship_review: {
+          review_item_count: number;
+          pending_wrong_read_count: number;
+          raw_refs_visible: boolean;
+          relationship_profile_write_performed: boolean;
+        };
         threshold_tuning_evidence: {
           accepted_count: number;
           dismissed_count: number;
@@ -143,6 +149,163 @@ describe("runtime peer initiative diagnostics", () => {
           wrong_read_count: 1,
         },
         recommendation: "review_relationship_reading",
+        relationship_review: {
+          review_item_count: 1,
+          pending_wrong_read_count: 1,
+          raw_refs_visible: false,
+          relationship_profile_write_performed: false,
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("can explicitly apply calibration feedback into policy state", async () => {
+    const tmpDir = makeTempDir("pulseed-peer-initiative-calibration-apply-");
+    try {
+      const stateManager = new StateManager(tmpDir);
+      await stateManager.init();
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const peerStore = new PeerInitiativeStore(runtimeRoot, { controlBaseDir: tmpDir });
+      const [candidate] = generatePeerInitiativeCandidates({
+        details: {
+          peer_initiative: {
+            kind: "care_presence",
+            message: "Small low-pressure check-in.",
+            action_plan: { mode: "care_only", permission_required: false },
+            worthiness: {
+              can_be_valuable_without_reply: true,
+              user_cognitive_load: "low",
+              reply_pressure: "none",
+              care_value: "high",
+              attention_fit: "medium",
+              concrete_helpfulness: "medium",
+              self_serving_risk: "none",
+              tutorial_risk: "none",
+            },
+          },
+        },
+        attentionSignalRefs: ["attention:calibration:apply"],
+        policyEpoch: "policy:calibration",
+        now: NOW,
+        surfaceTarget: "telegram",
+      });
+      expect(candidate).toBeDefined();
+      await peerStore.upsertCandidate({ candidate: candidate!, selectedState: "suggested" });
+      await peerStore.appendFeedbackProjection(PeerFeedbackProjectionSchema.parse({
+        projection_id: "peer-feedback:not-now",
+        candidate_id: candidate!.candidate_id,
+        kind: candidate!.kind,
+        structured_outcome: "not_now",
+        source_surface: "telegram",
+        projected_at: "2026-05-16T00:04:00.000Z",
+      }));
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const code = await cmdRuntime(stateManager, ["proactive-calibration", "--apply-policy", "--json"]);
+      const output = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      logSpy.mockRestore();
+
+      expect(code).toBe(0);
+      expect(output).not.toContain(candidate!.candidate_id);
+      const parsed = JSON.parse(output) as {
+        report: { read_only: boolean; mutation_performed: boolean };
+        policy_application: {
+          mutation_performed: boolean;
+          policy_state_result: {
+            applied_event_count: number;
+            after_max_delivery_kind: string;
+          };
+          authority_escalation_performed: boolean;
+          relationship_profile_write_performed: boolean;
+          raw_refs_visible: boolean;
+        };
+      };
+      expect(parsed.report).toMatchObject({
+        read_only: true,
+        mutation_performed: false,
+      });
+      expect(parsed.policy_application).toMatchObject({
+        mutation_performed: true,
+        policy_state_result: {
+          applied_event_count: 1,
+          after_max_delivery_kind: "digest",
+        },
+        authority_escalation_performed: false,
+        relationship_profile_write_performed: false,
+        raw_refs_visible: false,
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("creates and accepts an explicit resident activation binding for one-day Telegram dogfood", async () => {
+    const tmpDir = makeTempDir("pulseed-resident-activation-cli-");
+    try {
+      const stateManager = new StateManager(tmpDir);
+      await stateManager.init();
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const proposeCode = await cmdRuntime(stateManager, [
+        "resident-activation",
+        "propose",
+        "--hours",
+        "24",
+        "--json",
+      ]);
+      const proposalOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      logSpy.mockClear();
+      const proposal = JSON.parse(proposalOutput) as {
+        proposal_id: string;
+        requested_max_delivery_kind: string;
+        daily_budget: { max_notify: number };
+        runtime_authority: boolean;
+      };
+      const acceptCode = await cmdRuntime(stateManager, [
+        "resident-activation",
+        "accept",
+        proposal.proposal_id,
+        "--json",
+      ]);
+      const bindingOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      logSpy.mockClear();
+      const statusCode = await cmdRuntime(stateManager, ["resident-activation", "status", "--json"]);
+      const statusOutput = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      logSpy.mockRestore();
+
+      expect(proposeCode).toBe(0);
+      expect(acceptCode).toBe(0);
+      expect(statusCode).toBe(0);
+      const binding = JSON.parse(bindingOutput) as {
+        max_delivery_kind: string;
+        interruption_budget: { max_notify: number; current_debits: number };
+        runtime_authority: boolean;
+      };
+      const status = JSON.parse(statusOutput) as {
+        active: boolean;
+        active_binding: { max_delivery_kind: string; budget: { max_notify: number } } | null;
+        raw_refs_visible: boolean;
+        runtime_authority: boolean;
+      };
+      expect(proposal).toMatchObject({
+        requested_max_delivery_kind: "notify",
+        daily_budget: { max_notify: 4 },
+        runtime_authority: false,
+      });
+      expect(binding).toMatchObject({
+        max_delivery_kind: "notify",
+        interruption_budget: { max_notify: 4, current_debits: 0 },
+        runtime_authority: false,
+      });
+      expect(status).toMatchObject({
+        active: true,
+        active_binding: {
+          max_delivery_kind: "notify",
+          budget: { max_notify: 4 },
+        },
+        raw_refs_visible: false,
+        runtime_authority: false,
       });
     } finally {
       cleanupTempDir(tmpDir);
