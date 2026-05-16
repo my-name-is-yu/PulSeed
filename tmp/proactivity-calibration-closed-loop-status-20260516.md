@@ -82,3 +82,7 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
 - A fourth Codex P1 review identified that budget debit recording still had a
   split `load`/`save` window. Fixed by making `recordBudgetDebit` read and write
   inside one control-DB transaction, with store-level latest-feedback coverage.
+- A fifth Codex P1 review identified that existing `pending_send` delivery
+  claims could consume duplicate activation budget debits. Fixed by debiting
+  only after confirmed delivery, with resident caller-path coverage for an
+  already pending peer delivery.

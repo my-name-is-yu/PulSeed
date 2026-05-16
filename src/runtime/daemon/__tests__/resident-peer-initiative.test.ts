@@ -9,7 +9,10 @@ import type {
   OutboundConversationTarget,
 } from "../../gateway/index.js";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
-import { PeerInitiativeStore } from "../../peer-initiative/index.js";
+import {
+  PeerInitiativeStore,
+  generatePeerInitiativeCandidates,
+} from "../../peer-initiative/index.js";
 import {
   DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
   ProactivePolicyStateStore,
@@ -589,6 +592,167 @@ describe("resident peer initiative caller path", () => {
       current_debits: 1,
       max_notify: 1,
     });
+  });
+
+  it("does not debit resident activation budget for an already pending peer delivery", async () => {
+    const baseDir = makeTempDir("resident-peer-initiative-pending-budget-");
+    const runtimeRoot = path.join(baseDir, "runtime");
+    const now = "2026-05-16T00:10:00.000Z";
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(now));
+      const gatewayPort = new FakeOutboundConversationPort();
+      const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: baseDir });
+      const proposal = await activationStore.propose({
+        requestedMaxDeliveryKind: "notify",
+        dailyBudget: { max_notify: 2 },
+        dogfoodDurationHours: 168,
+        now: "2026-05-16T00:00:00.000Z",
+      });
+      const binding = await activationStore.accept(proposal.proposal_id, "2026-05-16T00:00:01.000Z");
+      const state = DaemonStateSchema.parse({
+        pid: 123,
+        started_at: "2026-05-16T00:00:00.000Z",
+        last_loop_at: null,
+        loop_count: 4,
+        active_goals: [],
+        status: "idle",
+        runtime_root: runtimeRoot,
+        last_resident_at: null,
+        resident_activity: null,
+      });
+      const details = {
+        peer_initiative: {
+          kind: "care_presence",
+          message: "今日も頑張ってね。",
+          max_delivery_kind: "notify",
+          action_plan: {
+            mode: "care_only",
+            permission_required: false,
+          },
+          worthiness: {
+            can_be_valuable_without_reply: true,
+            user_cognitive_load: "low",
+            reply_pressure: "none",
+            care_value: "high",
+            attention_fit: "strong",
+            concrete_helpfulness: "high",
+            self_serving_risk: "none",
+            tutorial_risk: "none",
+          },
+          need_signals: [{
+            signal_id: "need:peer:pending-budget",
+            kind: "care_presence_appropriate",
+            created_at: now,
+            attention_signal_refs: ["attention:peer:pending-budget"],
+            confidence: 0.85,
+            summary: "Existing pending delivery should not consume a second budget debit.",
+          }],
+        },
+      };
+      const outcomeDecision = OutcomeDecisionSchema.parse({
+        outcome_decision_id: "outcome:peer:pending-budget",
+        initiative_decision_ref: ref("initiative_gate_decision", "gate:peer:pending-budget"),
+        decided_at: now,
+        requested_outcome: "express_to_user",
+        admission_status: "admitted",
+        final_outcome: "express_to_user",
+        visibility_policy_ref: ref("visibility_policy", "visibility:peer:pending-budget"),
+      });
+      const attentionAdmission = {
+        action: "peer_initiative",
+        source_kind: "resident_proactive_maintenance",
+        attention_input_id: "attention:peer:pending-budget",
+        signal_context_id: "signal:peer:pending-budget",
+        urge_id: "urge:peer:pending-budget",
+        agenda_item_id: "agenda:peer:pending-budget",
+        inhibition_decision_id: "inhibition:peer:pending-budget",
+        initiative_gate_decision_id: "gate:peer:pending-budget",
+        outcome_decision_id: outcomeDecision.outcome_decision_id,
+        outcome_decision: outcomeDecision,
+        replay_disposition: "accepted",
+        requested_outcome: "express_to_user",
+        admission_status: "admitted",
+        final_outcome: "express_to_user",
+        branch_admitted: true,
+        summary: "Resident peer initiative admitted while a previous send is pending.",
+      };
+      const selectionSurfaceRef = "surface:relationship-profile:peer:pending-budget";
+      const candidate = generatePeerInitiativeCandidates({
+        details,
+        attentionSignalRefs: [
+          attentionAdmission.attention_input_id,
+          attentionAdmission.signal_context_id,
+          attentionAdmission.agenda_item_id,
+        ],
+        relationshipProjectionRef: selectionSurfaceRef,
+        policyEpoch: attentionAdmission.initiative_gate_decision_id,
+        now,
+        surfaceTarget: "telegram",
+      })[0]!;
+      const store = new PeerInitiativeStore(runtimeRoot, { controlBaseDir: baseDir });
+      await store.upsertCandidate({
+        candidate,
+        selectedState: "suggested",
+      });
+      await store.recordDelivery({
+        delivery_id: `peer-delivery:${candidate.candidate_id}:telegram`,
+        candidate_id: candidate.candidate_id,
+        surface: "telegram",
+        status: "pending_send",
+        message_id: `peer-message:${candidate.candidate_id}`,
+        target_binding_ref: "gateway:telegram:home_chat:12345",
+        expression_decision_ref: "expression:peer:pending-budget",
+        visibility_policy_ref: "visibility:peer:pending-budget",
+        claimed_at: now,
+        claim_expires_at: "2026-05-16T00:20:00.000Z",
+        claim_attempt: 1,
+      });
+      const operationBoundary = evaluateResidentOperationBoundary({
+        admission: attentionAdmission as never,
+        assembledAt: now,
+        details,
+      });
+
+      await triggerResidentPeerInitiative(
+        {
+          baseDir,
+          config: DaemonConfigSchema.parse({
+            proactive_mode: true,
+            proactive_interval_ms: 1,
+            goal_review_interval_ms: 7 * 24 * 60 * 60 * 1000,
+            runtime_root: runtimeRoot,
+          }),
+          state,
+          logger: logger() as never,
+          saveDaemonState: vi.fn(async () => {}),
+          gateway: {
+            getOutboundConversationPort: (surface: OutboundConversationSurface) => surface === "telegram" ? gatewayPort : undefined,
+          },
+        },
+        details,
+        {
+          attentionAdmission: attentionAdmission as never,
+          operationBoundary,
+          selectionSurfaceRef,
+          metadata: {},
+        },
+      );
+
+      expect(gatewayPort.messages).toHaveLength(0);
+      expect(state.resident_activity).toMatchObject({
+        kind: "skipped",
+        peer_initiative_delivery_status: "pending_send",
+      });
+      const storedPolicy = await new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: baseDir })
+        .load(DEFAULT_RESIDENT_ACTIVATION_POLICY_ID);
+      expect(storedPolicy?.interruption_budget).toMatchObject({
+        budget_id: binding.interruption_budget.budget_id,
+        current_debits: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks the candidate held when outbound peer initiative delivery is unavailable", async () => {

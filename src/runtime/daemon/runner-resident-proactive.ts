@@ -557,7 +557,7 @@ export async function triggerResidentPeerInitiative(
   });
   if (
     boundary.thresholdDecision.budget_debit > 0
-    && (delivery.status === "delivered" || delivery.status === "pending_send")
+    && delivery.status === "delivered"
   ) {
     await policyStore.recordBudgetDebit({
       policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
