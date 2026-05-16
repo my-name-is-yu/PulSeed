@@ -632,8 +632,14 @@ export class KnowledgeMemoryStateStore {
     if (truth.entries.length > 0 || truth.corrections.length > 0) return truth;
     const repo = await this.openRepository();
     try {
-      const entryRecords = await repo.loadRecords({ source_types: [SOURCE_AGENT_MEMORY_ENTRY] });
-      const correctionRecords = await repo.loadRecords({ source_types: [SOURCE_AGENT_MEMORY_CORRECTION] });
+      const entryRecords = await repo.loadRecords({
+        source_types: [SOURCE_AGENT_MEMORY_ENTRY],
+        active_only: false,
+      });
+      const correctionRecords = await repo.loadRecords({
+        source_types: [SOURCE_AGENT_MEMORY_CORRECTION],
+        active_only: false,
+      });
       const stateRecord = (await repo.loadRecords({
         source_types: [SOURCE_AGENT_MEMORY_STATE],
         source_ids: ["current"],

@@ -307,7 +307,7 @@ export class MemoryTruthMaintenanceStore {
     db.transaction((sqlite) => {
       const resurrectedClaimIds = new Set(
         claims
-          .filter((claim) => claim.lifecycle === "active" && hasTombstone(sqlite, claim.claim_id))
+          .filter((claim) => claim.lifecycle === "active" && hasBlockingTombstone(sqlite, claim.claim_id))
           .map((claim) => claim.claim_id),
       );
       const acceptedClaims = claims.filter((claim) => !resurrectedClaimIds.has(claim.claim_id));
@@ -978,9 +978,15 @@ function readClaim(sqlite: SqliteDatabase, claimId: string): MemoryClaim | null 
   return row ? claimCodec.parse(row.claim_json) : null;
 }
 
-function hasTombstone(sqlite: SqliteDatabase, claimId: string): boolean {
-  const row = sqlite.prepare("SELECT 1 FROM memory_forget_tombstones WHERE claim_id = ? LIMIT 1").get(claimId);
-  return row !== undefined;
+function hasBlockingTombstone(sqlite: SqliteDatabase, claimId: string): boolean {
+  const rows = sqlite.prepare(`
+    SELECT tombstone_json
+    FROM memory_forget_tombstones
+    WHERE claim_id = ?
+  `).all(claimId) as Array<{ tombstone_json: string }>;
+  return rows
+    .map((row) => tombstoneCodec.parse(row.tombstone_json))
+    .some((tombstone) => tombstone.prevents_reimport && tombstone.operator_restored_at === null);
 }
 
 function readClaims(sqlite: SqliteDatabase, input: {

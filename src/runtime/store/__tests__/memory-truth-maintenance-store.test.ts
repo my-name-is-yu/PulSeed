@@ -13,6 +13,7 @@ import {
   type ProjectionRecordInput,
   type RecallRecordInput,
 } from "../memory-truth-maintenance-store.js";
+import { openControlDatabase } from "../control-db/index.js";
 import { RuntimeEventLogStore } from "../runtime-event-log.js";
 
 const tmpDirs: string[] = [];
@@ -227,6 +228,54 @@ describe("MemoryTruthMaintenanceStore", () => {
       lifecycle: "archived",
       visible_to_normal_surface: false,
       invalidated_by: "conflict:editor",
+    });
+  });
+
+  it("allows claim reactivation after an operator restores the blocking tombstone", async () => {
+    const baseDir = makeTmpDir();
+    const store = new MemoryTruthMaintenanceStore(baseDir, { appendRuntimeEvents: false });
+    await seedClaim(store);
+
+    await store.applyCorrectionTransaction({
+      correction: {
+        ...correctionInput("correction:forget", "idem:forget"),
+        correction_kind: "forgotten",
+        replacement_claim_id: null,
+      },
+      tombstone: tombstoneInput("tombstone:forget", "claim:old", "idem:forget"),
+    });
+    await expect(store.getClaim("claim:old")).resolves.toMatchObject({
+      lifecycle: "forgotten",
+      visible_to_normal_surface: false,
+    });
+
+    const restoredAt = "2026-05-16T00:03:00.000Z";
+    const db = await openControlDatabase({ baseDir });
+    try {
+      db.transaction((sqlite) => {
+        sqlite.prepare(`
+          UPDATE memory_forget_tombstones
+          SET operator_restored_at = ?,
+              tombstone_json = json_set(tombstone_json, '$.operator_restored_at', ?)
+          WHERE tombstone_id = ?
+        `).run(restoredAt, restoredAt, "tombstone:forget");
+      });
+    } finally {
+      db.close();
+    }
+
+    await store.saveOwnerSnapshot({
+      ownerKind: "agent_memory",
+      ownerScope: "default",
+      claims: [claimInput("claim:old", "favorite-editor", "The user prefers VS Code.")],
+      evidenceRefs: [evidenceInput("evidence:old-restored", "claim:old")],
+      emitRuntimeEvent: false,
+    });
+
+    await expect(store.getClaim("claim:old")).resolves.toMatchObject({
+      lifecycle: "active",
+      visible_to_normal_surface: true,
+      invalidated_by: null,
     });
   });
 });

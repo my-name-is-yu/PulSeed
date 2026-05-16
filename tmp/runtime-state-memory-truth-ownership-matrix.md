@@ -56,6 +56,8 @@ GitHub state confirmed before implementation:
 - CLI memory export redacts inactive corrected/superseded/forgotten/retracted/quarantined/archived/conflicted memory content; active replacements remain visible through normal governance filters.
 - Conflicted agent-memory claims are represented in typed state, withheld from normal recall with `safeForNormalProjection=false`, and inspect/export paths do not expose the conflicting raw values on normal surfaces.
 - Conflict resolution records restore the resolved winner's previous lifecycle/projection eligibility and archive losing claims, preventing a stale conflicting answer from becoming active again.
+- Forget tombstone resurrection guards honor `operator_restored_at`; restored tombstones no longer block explicit claim reactivation.
+- Soil compatibility fallback reads inactive correction audit rows for history/dedupe context without making them active normal-search records.
 - `check:database-first-legacy-stores` now has a negative guard for production memory/knowledge/Soil `StateManager.writeRaw`.
 
 Repo-wide completion can only be claimed after a later pass proves every non-memory domain has no production raw owner. This PR's completion target is Memory / Soil / Knowledge.

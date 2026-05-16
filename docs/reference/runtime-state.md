@@ -71,7 +71,10 @@ Conflict resolution restores the selected claim's previous lifecycle and
 normal-projection eligibility, while losing claims are archived and remain
 withheld from normal surfaces. Domain knowledge deletion writes an empty typed
 owner snapshot before tombstoning Soil compatibility records, so normal
-knowledge loads cannot fall back to stale Soil rows after delete.
+knowledge loads cannot fall back to stale Soil rows after delete. A forget
+tombstone blocks stale evidence reimport until an operator restore records
+`operator_restored_at`; restored tombstones no longer block explicit claim
+reactivation.
 
 Recall results carry an explicit mode: `exact`,
 `lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall

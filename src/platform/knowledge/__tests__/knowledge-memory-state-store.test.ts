@@ -131,6 +131,43 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     }));
   });
 
+  it("loads inactive correction audit records from Soil compatibility fallback", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-soil-corrections-");
+    const correction = {
+      correction_id: "correction:soil-only",
+      target_ref: { kind: "agent_memory" as const, id: "memory-old" },
+      correction_kind: "corrected" as const,
+      replacement_ref: null,
+      actor: "user" as const,
+      reason: "Compatibility correction history must remain readable.",
+      created_at: fixedNow,
+      provenance: {
+        source: "user" as const,
+        source_ref: "test",
+        confidence: 1,
+      },
+      audit: {
+        status: "active" as const,
+        retained_for_audit: true,
+        destructive_delete_approved_at: null,
+      },
+    };
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [correction],
+      last_consolidated_at: null,
+    }), { persistTruth: false });
+
+    await expect(store.loadAgentMemoryStore()).resolves.toMatchObject({
+      entries: [],
+      corrections: [expect.objectContaining({
+        correction_id: "correction:soil-only",
+        target_ref: { kind: "agent_memory", id: "memory-old" },
+      })],
+    });
+  });
+
   it("treats correction_state inactive entries as withheld across recall, truth, and Soil", async () => {
     const baseDir = tempHome("pulseed-knowledge-memory-inactive-state-");
     const stateManager = new StateManager(baseDir);
