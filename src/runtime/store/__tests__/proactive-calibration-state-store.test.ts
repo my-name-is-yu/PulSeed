@@ -159,6 +159,61 @@ describe("proactive calibration runtime state stores", () => {
     }
   });
 
+  it("records resident activation budget debits against the latest persisted feedback state", async () => {
+    const tmpDir = makeTempDir("pulseed-resident-activation-budget-debit-update-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: tmpDir });
+      const proposal = await activationStore.propose({
+        dogfoodDurationHours: 24,
+        now: NOW,
+      });
+      const binding = await activationStore.accept(proposal.proposal_id, "2026-05-16T00:05:00.000Z");
+      const store = new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: tmpDir });
+      const activated = applyResidentActivationBindingToPolicyState({
+        state: createProactivePolicyState({
+          policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+          now: NOW,
+          maxDeliveryKind: "notify",
+        }),
+        binding,
+        now: "2026-05-16T00:05:30.000Z",
+      });
+      await store.save(activated);
+      const staleSnapshot = await store.load(DEFAULT_RESIDENT_ACTIVATION_POLICY_ID);
+      await store.applyEvents({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        now: "2026-05-16T00:06:00.000Z",
+        maxDeliveryKind: "notify",
+        events: [{
+          kind: "feedback",
+          feedback_ref: { kind: "peer_feedback_projection", ref: "peer-feedback:not-now" },
+          feedback_kind: "dismissed",
+          recorded_at: "2026-05-16T00:06:00.000Z",
+        }],
+      });
+
+      const debited = await store.recordBudgetDebit({
+        policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
+        amount: 1,
+        debitedAt: "2026-05-16T00:07:00.000Z",
+      });
+
+      expect(staleSnapshot?.feedback_refs).toHaveLength(0);
+      expect(debited).toMatchObject({
+        max_delivery_kind: "digest",
+        cooldown_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+        feedback_refs: [{ kind: "peer_feedback_projection", ref: "peer-feedback:not-now" }],
+        interruption_budget: {
+          budget_id: binding.interruption_budget.budget_id,
+          current_debits: 1,
+        },
+      });
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
   it("preserves resident activation budget debits across binding reapplication and clears inactive activation budgets", async () => {
     const tmpDir = makeTempDir("pulseed-resident-activation-budget-");
     try {

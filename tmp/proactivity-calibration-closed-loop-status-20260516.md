@@ -79,3 +79,6 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
   transaction. The Telegram feedback `applyEvents` path now uses the same
   transaction-local reducer so feedback/cooldown writes do not preserve a split
   read/save window either.
+- A fourth Codex P1 review identified that budget debit recording still had a
+  split `load`/`save` window. Fixed by making `recordBudgetDebit` read and write
+  inside one control-DB transaction, with store-level latest-feedback coverage.

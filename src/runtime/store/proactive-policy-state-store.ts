@@ -162,17 +162,22 @@ export class ProactivePolicyStateStore {
   }): Promise<ProactivePolicyState | null> {
     const amount = Math.max(0, Math.floor(input.amount));
     if (amount === 0) return this.load(input.policyId);
-    const existing = await this.load(input.policyId);
-    if (!existing?.interruption_budget) return existing;
-    return this.save(ProactivePolicyStateSchema.parse({
-      ...existing,
-      interruption_budget: {
-        ...existing.interruption_budget,
-        current_debits: existing.interruption_budget.current_debits + amount,
-      },
-      updated_at: input.debitedAt,
-      runtime_authority: false,
-    }));
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const existing = readPolicyState(sqlite, input.policyId);
+      if (!existing?.interruption_budget) return existing;
+      const updated = ProactivePolicyStateSchema.parse({
+        ...existing,
+        interruption_budget: {
+          ...existing.interruption_budget,
+          current_debits: existing.interruption_budget.current_debits + amount,
+        },
+        updated_at: input.debitedAt,
+        runtime_authority: false,
+      });
+      writePolicyState(sqlite, updated);
+      return updated;
+    });
   }
 
   private async database(): Promise<ControlDatabase> {
