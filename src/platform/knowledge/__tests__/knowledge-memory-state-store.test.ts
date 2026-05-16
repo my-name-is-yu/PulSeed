@@ -223,6 +223,51 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     });
   });
 
+  it("migrates legacy correction-only agent memory without writing orphan truth rows", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-orphan-correction-migration-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const correction = {
+      correction_id: "correction:legacy-orphan",
+      target_ref: { kind: "agent_memory" as const, id: "memory-physically-deleted" },
+      correction_kind: "forgotten" as const,
+      replacement_ref: null,
+      actor: "manual_tool" as const,
+      reason: "Legacy repair manifest physically removed this claim before truth migration.",
+      created_at: fixedNow,
+      provenance: {
+        source: "manual_tool" as const,
+        source_ref: "memory-repair-manifest:legacy",
+        confidence: 1,
+      },
+      audit: {
+        status: "destructive_delete_requested" as const,
+        retained_for_audit: true,
+        destructive_delete_approved_at: fixedNow,
+      },
+    };
+    const compatibilityStore = new KnowledgeMemoryStateStore(baseDir);
+    await compatibilityStore.saveAgentMemoryStore(AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [correction],
+      last_consolidated_at: null,
+    }), { persistTruth: false });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.loadAgentMemoryStore()).resolves.toMatchObject({
+      entries: [],
+      corrections: [expect.objectContaining({ correction_id: "correction:legacy-orphan" })],
+    });
+
+    const truthStore = new MemoryTruthMaintenanceStore(baseDir);
+    try {
+      await expect(truthStore.listCorrections("memory-physically-deleted")).resolves.toEqual([]);
+      await expect(truthStore.listTombstones("memory-physically-deleted")).resolves.toEqual([]);
+    } finally {
+      await truthStore.close();
+    }
+  });
+
   it("does not resurrect agent memory from stale Soil when empty truth is authoritative", async () => {
     const baseDir = tempHome("pulseed-agent-memory-empty-truth-no-soil-resurrection-");
     const stateManager = new StateManager(baseDir);

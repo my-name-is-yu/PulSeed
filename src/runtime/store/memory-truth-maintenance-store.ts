@@ -313,6 +313,13 @@ export class MemoryTruthMaintenanceStore {
       const acceptedClaims = claims.filter((claim) => !resurrectedClaimIds.has(claim.claim_id));
       const acceptedClaimIds = new Set(acceptedClaims.map((claim) => claim.claim_id));
       const existingClaims = readClaims(sqlite, { ownerKind, ownerScope });
+      const existingClaimIds = new Set(existingClaims.map((claim) => claim.claim_id));
+      const writableClaimIds = new Set([...acceptedClaimIds, ...existingClaimIds]);
+      const acceptedCorrections = corrections.filter((correction) =>
+        writableClaimIds.has(correction.target_claim_id)
+        && (correction.replacement_claim_id === null || writableClaimIds.has(correction.replacement_claim_id))
+      );
+      const acceptedTombstones = tombstones.filter((tombstone) => writableClaimIds.has(tombstone.claim_id));
       const nextClaimIds = acceptedClaimIds;
       for (const existing of existingClaims) {
         if (!nextClaimIds.has(existing.claim_id) && existing.lifecycle !== "forgotten") {
@@ -345,8 +352,8 @@ export class MemoryTruthMaintenanceStore {
         if (!acceptedClaimIds.has(evidence.claim_id)) continue;
         upsertEvidence(sqlite, evidence);
       }
-      for (const correction of corrections) upsertCorrection(sqlite, correction);
-      for (const tombstone of tombstones) upsertTombstone(sqlite, tombstone);
+      for (const correction of acceptedCorrections) upsertCorrection(sqlite, correction);
+      for (const tombstone of acceptedTombstones) upsertTombstone(sqlite, tombstone);
       for (const conflict of conflictSets) upsertConflict(sqlite, conflict);
       for (const projection of projections) {
         if (projection.claim_id && !acceptedClaimIds.has(projection.claim_id)) continue;
@@ -366,7 +373,7 @@ export class MemoryTruthMaintenanceStore {
             claim_ids: acceptedClaims.map((claim) => claim.claim_id),
             projection_ids: projections.map((projection) => projection.projection_id),
             recall_ids: [],
-            tombstone_ids: tombstones.map((tombstone) => tombstone.tombstone_id),
+            tombstone_ids: acceptedTombstones.map((tombstone) => tombstone.tombstone_id),
             conflict_set_ids: conflictSets.map((conflict) => conflict.conflict_set_id),
             owner: { kind: ownerKind, scope: ownerScope },
           },
