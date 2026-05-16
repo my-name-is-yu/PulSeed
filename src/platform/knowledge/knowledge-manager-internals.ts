@@ -13,6 +13,8 @@ import {
 } from "./types/agent-memory.js";
 import { KnowledgeMemoryStateStore } from "./knowledge-memory-state-store.js";
 import {
+  hasDomainKnowledgeTruth,
+  hasSharedKnowledgeTruth,
   loadAgentMemoryStoreFromTruth,
   loadDomainKnowledgeFromTruth,
   loadSharedKnowledgeFromTruth,
@@ -84,6 +86,7 @@ export async function loadDomainKnowledgeFromOwner(stateManager: StateManager, g
   const baseDir = stateManager.getBaseDir();
   const truth = await loadDomainKnowledgeFromTruth(baseDir, goalId);
   if (truth.entries.length > 0) return truth;
+  if (await hasDomainKnowledgeTruth(baseDir, goalId)) return truth;
   const legacy = await knowledgeMemoryStoreForStateManager(stateManager).loadDomainKnowledge(goalId);
   if (legacy.entries.length > 0) {
     await saveDomainKnowledgeToTruth(baseDir, legacy);
@@ -99,6 +102,7 @@ export async function loadSharedKnowledgeFromOwner(stateManager: StateManager): 
   const baseDir = stateManager.getBaseDir();
   const truth = await loadSharedKnowledgeFromTruth(baseDir);
   if (truth.length > 0) return truth;
+  if (await hasSharedKnowledgeTruth(baseDir)) return truth;
   const legacy = await knowledgeMemoryStoreForStateManager(stateManager).loadSharedKnowledgeEntries();
   if (legacy.length > 0) {
     await saveSharedKnowledgeToTruth(baseDir, legacy);

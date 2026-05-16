@@ -46,6 +46,9 @@ GitHub state confirmed before implementation:
 - `MemoryRecallTool` returns typed recall provenance with explicit `mode`, semantic index status, evidence refs, lifecycle/invalidation state, trust, and normal-projection safety.
 - `RuntimeEventLogStore` now accepts `memory.truth_maintenance.recorded` and exposes `memory_truth_maintenance_summary` during projection rebuild; correction events and RuntimeGraph nodes are inserted in the same control DB transaction as the truth update.
 - Soil SQLite records for corrected/forgotten/retracted/quarantined memory and correction audit records are inactive for normal search, carry lifecycle/status metadata, and use sanitized fallback text so production Soil lexical/context fallback cannot surface stale memory as normal truth.
+- `KnowledgeManager.correctAgentMemory` now uses the typed correction commit hook, so dream_lint/runtime repair callers use the same transaction/event path as CLI and tool memory corrections.
+- Domain/shared knowledge owner loads treat inactive typed truth rows as authoritative truth presence and do not fall back to stale Soil compatibility records when active truth is empty.
+- `KnowledgeQueryTool` reports `semantic_unavailable` and `lexicalFallbackUsed=true` for semantic requests without a semantic index; available semantic searches that return no matches do not silently use keyword results.
 - `check:database-first-legacy-stores` now has a negative guard for production memory/knowledge/Soil `StateManager.writeRaw`.
 
 Repo-wide completion can only be claimed after a later pass proves every non-memory domain has no production raw owner. This PR's completion target is Memory / Soil / Knowledge.

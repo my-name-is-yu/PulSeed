@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateManager } from "../../../base/state/state-manager.js";
-import type { KnowledgeEntry } from "../../../base/types/knowledge.js";
+import type { KnowledgeEntry, SharedKnowledgeEntry } from "../../../base/types/knowledge.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { importLegacyKnowledgeMemoryState } from "../../../runtime/store/knowledge-memory-state-migration.js";
@@ -10,6 +10,7 @@ import { openControlDatabase } from "../../../runtime/store/control-db/index.js"
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
+import { saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../memory-truth-adapter.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
 
@@ -25,6 +26,15 @@ function makeKnowledgeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeE
     superseded_by: overrides.superseded_by ?? null,
     tags: overrides.tags ?? ["database-first", "soil"],
     embedding_id: overrides.embedding_id ?? null,
+  };
+}
+
+function makeSharedKnowledgeEntry(overrides: Partial<SharedKnowledgeEntry> = {}): SharedKnowledgeEntry {
+  return {
+    ...makeKnowledgeEntry(overrides),
+    source_goal_ids: overrides.source_goal_ids ?? ["goal-1"],
+    domain_stability: overrides.domain_stability ?? "moderate",
+    revalidation_due_at: overrides.revalidation_due_at ?? null,
   };
 }
 
@@ -237,6 +247,79 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
       }));
     } finally {
       controlDb.close();
+    }
+  });
+
+  it("does not resurrect inactive domain truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-domain-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const active = makeKnowledgeEntry({
+      entry_id: "domain-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveDomainKnowledge({
+      goal_id: "goal-1",
+      domain: "goal-1",
+      entries: [active],
+      last_updated: fixedNow,
+    });
+    await saveDomainKnowledgeToTruth(baseDir, {
+      goal_id: "goal-1",
+      domain: "goal-1",
+      entries: [{ ...active, superseded_by: "domain-replacement" }],
+      last_updated: fixedNow,
+    });
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.loadKnowledge("goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-1:domain-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("does not resurrect inactive shared truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-shared-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const active = makeSharedKnowledgeEntry({
+      entry_id: "shared-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+      source_goal_ids: ["goal-1"],
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveSharedKnowledgeEntries([active]);
+    await saveSharedKnowledgeToTruth(baseDir, [{ ...active, superseded_by: "shared-replacement" }]);
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_shared_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_shared_entry:shared-stale");
+    } finally {
+      repo?.close();
     }
   });
 });

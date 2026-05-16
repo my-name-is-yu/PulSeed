@@ -109,6 +109,13 @@ describe("KnowledgeQueryTool", () => {
         entryId: "entry-1",
         confidence: 0.9,
         goalId: "goal-1",
+        mode: "keyword",
+      });
+      expect(data).toMatchObject({
+        requestedMode: "keyword",
+        mode: "keyword",
+        semanticIndexStatus: "not_requested",
+        lexicalFallbackUsed: false,
       });
     });
 
@@ -187,11 +194,55 @@ describe("KnowledgeQueryTool", () => {
 
       expect(result.success).toBe(true);
       expect(vi.mocked(km.searchKnowledge)).toHaveBeenCalledWith("TypeScript", 5);
-      const data = result.data as { results: unknown[]; totalFound: number };
+      const data = result.data as { results: Array<{ mode: string }>; totalFound: number; mode: string; semanticIndexStatus: string; lexicalFallbackUsed: boolean };
       expect(data.totalFound).toBe(1);
+      expect(data).toMatchObject({
+        mode: "semantic",
+        semanticIndexStatus: "available",
+        lexicalFallbackUsed: false,
+      });
+      expect(data.results[0]?.mode).toBe("semantic");
     });
 
-    it("falls back to keyword when semantic returns empty", async () => {
+    it("reports semantic_unavailable when the semantic index is unavailable and labels fallback results as keyword", async () => {
+      km = makeMockKnowledgeManager({
+        hasKnowledgeSemanticIndex: vi.fn().mockReturnValue(false),
+      });
+      tool = new KnowledgeQueryTool(km);
+      const entry = makeEntry({ question: "TypeScript fallback" });
+      vi.mocked(km.loadKnowledge).mockResolvedValue([entry]);
+
+      const result = await tool.call(
+        { query: "TypeScript", goalId: "goal-1", limit: 5, type: "semantic" },
+        makeContext()
+      );
+
+      expect(result.success).toBe(true);
+      const data = result.data as {
+        results: Array<{ mode: string }>;
+        totalFound: number;
+        requestedMode: string;
+        mode: string;
+        semanticIndexStatus: string;
+        lexicalFallbackUsed: boolean;
+      };
+      expect(data.totalFound).toBe(1);
+      expect(data).toMatchObject({
+        requestedMode: "semantic",
+        mode: "semantic_unavailable",
+        semanticIndexStatus: "unavailable",
+        lexicalFallbackUsed: true,
+      });
+      expect(data.results[0]?.mode).toBe("keyword");
+      expect(vi.mocked(km.searchKnowledge)).not.toHaveBeenCalled();
+      expect(result.summary).toContain("Semantic knowledge search unavailable");
+    });
+
+    it("returns semantic available with no results instead of silently using keyword fallback", async () => {
+      km = makeMockKnowledgeManager({
+        hasKnowledgeSemanticIndex: vi.fn().mockReturnValue(true),
+      });
+      tool = new KnowledgeQueryTool(km);
       vi.mocked(km.searchKnowledge).mockResolvedValue([]);
       const entry = makeEntry({ question: "TypeScript fallback" });
       vi.mocked(km.loadKnowledge).mockResolvedValue([entry]);
@@ -202,8 +253,15 @@ describe("KnowledgeQueryTool", () => {
       );
 
       expect(result.success).toBe(true);
-      const data = result.data as { results: unknown[]; totalFound: number };
-      expect(data.totalFound).toBe(1);
+      const data = result.data as { results: unknown[]; totalFound: number; mode: string; semanticIndexStatus: string; lexicalFallbackUsed: boolean };
+      expect(data).toMatchObject({
+        results: [],
+        totalFound: 0,
+        mode: "semantic",
+        semanticIndexStatus: "available",
+        lexicalFallbackUsed: false,
+      });
+      expect(vi.mocked(km.loadKnowledge)).not.toHaveBeenCalled();
     });
 
     it("uses searchByEmbedding for cross-goal", async () => {

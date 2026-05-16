@@ -45,6 +45,7 @@ import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/ind
 import type { AgentMemoryEntry, AgentMemoryStore, AgentMemoryType } from "./types/agent-memory.js";
 import {
   loadAgentMemoryStore,
+  projectAgentMemory,
   projectDomainKnowledge,
   projectSharedKnowledge,
   saveAgentMemoryStore,
@@ -63,6 +64,7 @@ import {
   recallAgentMemoryEntries,
   recallAgentMemoryEntriesWithRecord,
   saveAgentMemoryEntry,
+  type AgentMemoryCorrectionResult,
   type AgentMemoryPhysicalDeleteManifest,
   type AgentMemoryRecallMode,
 } from "./knowledge-manager-agent-memory.js";
@@ -82,6 +84,7 @@ import {
   saveDomainKnowledgeEntry,
   saveSharedKnowledgeEntry,
 } from "./knowledge-manager-store.js";
+import { commitAgentMemoryCorrectionToTruth } from "./memory-truth-adapter.js";
 
 export * from "./public-api.js";
 
@@ -285,6 +288,10 @@ export class KnowledgeManager {
       [query, profileQuery].filter((part) => part.trim().length > 0).join("\n"),
       topK
     ).then((entries) => [...profileEntries, ...entries]);
+  }
+
+  hasKnowledgeSemanticIndex(): boolean {
+    return this.vectorIndex !== undefined;
   }
 
   private relationshipProfileContextToKnowledgeEntries(
@@ -674,6 +681,15 @@ export class KnowledgeManager {
       baseDir: this.stateManager.getBaseDir(),
       loadAgentMemoryStore: () => this._loadAgentMemoryStore(),
       saveAgentMemoryStore: (store: AgentMemoryStore) => this.saveAgentMemoryStore(store),
+      commitAgentMemoryCorrection: async (store: AgentMemoryStore, result: AgentMemoryCorrectionResult) => {
+        await commitAgentMemoryCorrectionToTruth(this.stateManager.getBaseDir(), {
+          store,
+          correction: result.correction,
+          target: result.target,
+          replacement: result.replacement,
+        });
+        await projectAgentMemory(this.stateManager, store);
+      },
     };
   }
 

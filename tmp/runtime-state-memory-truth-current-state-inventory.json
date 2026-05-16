@@ -369,14 +369,19 @@
       "MemorySaveTool -> KnowledgeManager.saveAgentMemory -> MemoryTruthMaintenanceStore.saveOwnerSnapshot",
       "MemoryRecallTool -> KnowledgeManager.recallAgentMemoryWithProvenance -> typed RecallRecord",
       "MemoryCorrectionTool/cmdMemory -> runUserMemoryOperation -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
+      "KnowledgeManager.correctAgentMemory -> commitAgentMemoryCorrectionToTruth -> MemoryTruthMaintenanceStore.applyCorrectionTransaction",
       "KnowledgeManager domain/shared knowledge load/save/query adapters -> MemoryTruthMaintenanceStore",
+      "KnowledgeQueryTool semantic requests -> explicit semantic/semantic_unavailable mode contract",
       "Soil agent memory projection after save/correction/forget/retract",
       "RuntimeEventLogStore memory.truth_maintenance.recorded event and rebuild summary"
     ],
     "fresh_audit_remediation": [
       "Inactive agent-memory and correction audit records now write inactive Soil records with sanitized normal-search text plus lifecycle/status metadata; product gauntlet exercises SqliteSoilRepository.searchLexical and compileSoilContextFromRepository.",
       "Memory truth correction transactions now insert memory.truth_maintenance.recorded and RuntimeGraph nodes inside the same control DB transaction; runtime_event failure injection proves rollback leaves no truth rows or event rows.",
-      "User memory correction traces are recorded after the truth transaction succeeds, preventing authority/runtime evidence from claiming an uncommitted correction."
+      "User memory correction traces are recorded after the truth transaction succeeds, preventing authority/runtime evidence from claiming an uncommitted correction.",
+      "KnowledgeManager.correctAgentMemory now supplies the typed correction commit hook, so dream_lint auto-repair uses the same correction transaction and Event Log / RuntimeGraph event path as CLI/tool memory corrections.",
+      "Domain/shared knowledge owner loads now treat inactive truth rows as authoritative truth presence, so stale Soil compatibility records cannot resurrect superseded knowledge when active truth is empty.",
+      "KnowledgeQueryTool semantic requests now report semantic_unavailable with lexicalFallbackUsed=true when the semantic index is unavailable and do not silently return keyword results as semantic results."
     ],
     "guardrail_added": "check:database-first-legacy-stores fails production memory/knowledge/Soil StateManager.writeRaw calls through memory-knowledge-raw-state-manager-write.",
     "representative_tests_added": [
@@ -384,7 +389,10 @@
       "tests/replay/memory-truth-maintenance-replay.test.ts",
       "tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts",
       "src/interface/cli/__tests__/database-first-legacy-store-check.test.ts memory raw write negative fixture",
-      "src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts exact/lexical/semantic/graph provenance caller path"
+      "src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts exact/lexical/semantic/graph provenance caller path",
+      "src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts production KnowledgeManager.correctAgentMemory transaction/event-log path",
+      "src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts inactive truth blocks stale Soil fallback",
+      "src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts semantic_unavailable fallback contract"
     ],
     "runtime_state_ownership_2_full_repo_completion": "incomplete"
   }

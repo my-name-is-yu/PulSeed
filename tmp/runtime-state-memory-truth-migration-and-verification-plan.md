@@ -38,6 +38,9 @@
 
 - Fresh audit blocker: inactive agent-memory entries were still written to Soil chunks with active search eligibility. Fix: corrected/forgotten/retracted/quarantined memory and correction audit records now write `is_active=false`, sanitized normal-search text, lifecycle/status metadata, and product-gauntlet coverage through `SqliteSoilRepository.searchLexical` plus `compileSoilContextFromRepository`.
 - Fresh audit blocker: memory truth correction rows committed before Event Log / RuntimeGraph insertion. Fix: `MemoryTruthMaintenanceStore.applyCorrectionTransaction` now inserts the memory truth event and RuntimeGraph nodes inside the same control DB transaction and proves rollback with `failureAfterStep: "runtime_event"`.
+- Fresh audit blocker: `KnowledgeManager.correctAgentMemory` could fall back to owner snapshots instead of the correction transaction. Fix: `KnowledgeManager.agentMemoryHost()` now provides `commitAgentMemoryCorrection`, and `knowledge-manager-lint.test.ts` proves the dream_lint production caller path writes `memory_correction_refs` plus a `memory.truth_maintenance.recorded` event.
+- Fresh audit blocker: domain/shared knowledge loads could fall back to stale Soil rows when typed truth contained only inactive claims. Fix: `hasDomainKnowledgeTruth` and `hasSharedKnowledgeTruth` make inactive truth authoritative for owner loads, and `knowledge-memory-state-store.test.ts` proves old Soil rows are not resurrected.
+- Fresh audit blocker: `KnowledgeQueryTool` semantic requests could silently return keyword fallback results. Fix: semantic queries now return `mode=semantic_unavailable`, `semanticIndexStatus=unavailable`, and `lexicalFallbackUsed=true` when no semantic index exists; when an index exists, empty semantic results remain empty and do not call keyword fallback.
 
 ## Verification Plan
 
@@ -47,6 +50,7 @@ Targeted first:
 - `npx vitest run --config vitest.replay.config.ts tests/replay/memory-truth-maintenance-replay.test.ts`
 - `npx vitest run --config vitest.product-gauntlet.config.ts tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts`
 - `npx vitest run src/platform/corrections/__tests__/user-memory-operations.test.ts src/platform/knowledge/__tests__/knowledge-manager-semantic-recall.test.ts src/tools/query/MemoryRecallTool/__tests__/MemoryRecallTool.test.ts src/tools/execution/MemoryCorrectionTool/__tests__/MemoryCorrectionTool.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+- `npx vitest run --config vitest.unit.config.ts src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts`
 
 Full required lane before final report:
 

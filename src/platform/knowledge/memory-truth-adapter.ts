@@ -205,6 +205,21 @@ export async function loadDomainKnowledgeFromTruth(baseDir: string, goalId: stri
   }
 }
 
+export async function hasDomainKnowledgeTruth(baseDir: string, goalId: string): Promise<boolean> {
+  const store = createMemoryTruthStore(baseDir);
+  try {
+    const claims = await store.listClaims({
+      ownerKind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+      ownerScope: goalId,
+      claimType: "knowledge",
+      includeInactive: true,
+    });
+    return claims.length > 0;
+  } finally {
+    await store.close();
+  }
+}
+
 export async function saveDomainKnowledgeToTruth(baseDir: string, input: DomainKnowledge): Promise<void> {
   const parsed = DomainKnowledgeSchema.parse(input);
   const store = createMemoryTruthStore(baseDir, { appendRuntimeEvents: true });
@@ -232,6 +247,21 @@ export async function loadSharedKnowledgeFromTruth(baseDir: string): Promise<Sha
       claimType: "shared_knowledge",
     });
     return claims.map(sharedKnowledgeEntryFromClaim).filter(isSharedKnowledgeEntry);
+  } finally {
+    await store.close();
+  }
+}
+
+export async function hasSharedKnowledgeTruth(baseDir: string): Promise<boolean> {
+  const store = createMemoryTruthStore(baseDir);
+  try {
+    const claims = await store.listClaims({
+      ownerKind: SHARED_KNOWLEDGE_OWNER_KIND,
+      ownerScope: "global",
+      claimType: "shared_knowledge",
+      includeInactive: true,
+    });
+    return claims.length > 0;
   } finally {
     await store.close();
   }
