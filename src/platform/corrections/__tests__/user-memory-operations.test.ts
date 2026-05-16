@@ -81,17 +81,39 @@ describe("user memory correction operations", () => {
     });
     expect(store.corrections).toHaveLength(1);
 
+    let committedRuntimeEventRef: string | null = null;
+    let committedRuntimeGraphRefs: string[] = [];
     const truthStore = new MemoryTruthMaintenanceStore(tmpDir);
     try {
-      await expect(truthStore.listCorrections("memory-old")).resolves.toEqual([
+      const [correction] = await truthStore.listCorrections("memory-old");
+      expect(correction).toEqual(expect.objectContaining({
+        target_claim_id: "memory-old",
+        runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
+        runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+      }));
+      committedRuntimeEventRef = correction?.runtime_event_ref ?? null;
+      committedRuntimeGraphRefs = correction?.runtime_graph_refs ?? [];
+    } finally {
+      await truthStore.close();
+    }
+
+    await manager.saveAgentMemory({
+      key: "unrelated-later-save",
+      value: "A later memory save must not erase correction event refs.",
+      memory_type: "fact",
+    });
+
+    const afterSaveTruthStore = new MemoryTruthMaintenanceStore(tmpDir);
+    try {
+      await expect(afterSaveTruthStore.listCorrections("memory-old")).resolves.toEqual([
         expect.objectContaining({
           target_claim_id: "memory-old",
-          runtime_event_ref: expect.stringMatching(/^runtime-event:memory-truth:/),
-          runtime_graph_refs: [expect.stringMatching(/^runtime-event:memory-truth:/)],
+          runtime_event_ref: committedRuntimeEventRef,
+          runtime_graph_refs: committedRuntimeGraphRefs,
         }),
       ]);
     } finally {
-      await truthStore.close();
+      await afterSaveTruthStore.close();
     }
   });
 

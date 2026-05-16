@@ -386,7 +386,7 @@
       "KnowledgeMemoryStateStore direct compatibility loads and Soil runtime rebuild now treat inactive domain/shared truth as authoritative, merge typed truth goal scopes, and overwrite stale shared/domain projections with empty active output instead of resurrecting stale Soil records.",
       "CLI governance export redacts all inactive agent-memory content, including corrected, superseded, archived, quarantined, forgotten, retracted, and conflicted entries.",
       "Conflicted agent-memory claims are typed as conflicted, load through the production KnowledgeManager API after restart, remain withheld from normal recall, and record withheld claim IDs with safeForNormalProjection=false.",
-      "Post-correction Soil projection runs with persistTruth=false, so user and dream_lint correction paths retain CorrectionRef runtime_event_ref and runtime_graph_refs instead of overwriting them with a later owner snapshot.",
+      "Post-correction Soil projection runs with persistTruth=false, and MemoryTruthMaintenanceStore.upsertCorrection preserves existing CorrectionRef runtime_event_ref and runtime_graph_refs during later owner snapshots, so user/dream_lint correction linkage survives subsequent normal memory saves.",
       "Agent-memory active/safe projection checks now require correction_state.active=true across recall, truth lifecycle, Soil projection, dream duplicate grouping, dream Soil mutation, and planning projections; active-looking inactive entries are withheld from normal recall and search."
     ],
     "guardrail_added": "check:database-first-legacy-stores fails production memory/knowledge/Soil StateManager.writeRaw calls through memory-knowledge-raw-state-manager-write.",
@@ -399,7 +399,7 @@
       "src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts production KnowledgeManager.correctAgentMemory transaction/event-log path",
       "src/platform/knowledge/__tests__/knowledge-manager-lint.test.ts correction refs retain runtime event and RuntimeGraph refs after Soil projection",
       "src/platform/knowledge/__tests__/knowledge-memory-state-store.test.ts inactive truth blocks stale Soil fallback and correction_state inactive memory is withheld from recall/truth/Soil",
-      "src/platform/corrections/__tests__/user-memory-operations.test.ts user correction refs retain runtime event and RuntimeGraph refs after Soil projection",
+      "src/platform/corrections/__tests__/user-memory-operations.test.ts user correction refs retain runtime event and RuntimeGraph refs after Soil projection and a later normal KnowledgeManager.saveAgentMemory snapshot",
       "src/tools/query/KnowledgeQueryTool/__tests__/KnowledgeQueryTool.test.ts semantic_unavailable fallback contract",
       "src/platform/soil/__tests__/soil-runtime-rebuild-import.test.ts inactive domain/shared truth blocks runtime rebuild resurrection",
       "src/interface/cli/commands/__tests__/memory.test.ts corrected memory export redaction",

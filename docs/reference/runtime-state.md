@@ -61,8 +61,9 @@ transaction that updates the correction row, replacement claim, target claim
 lifecycle, forget tombstone, conflict records, recall/projection records, and
 Runtime Event Log linkage. Post-transaction Soil projection for those correction
 paths writes projection state without re-saving truth, so `CorrectionRef`
-Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Recall
-results carry an explicit mode: `exact`,
+Runtime Event Log and RuntimeGraph refs remain owned by the transaction. Later
+owner snapshots also preserve those refs when they mirror older correction
+entries. Recall results carry an explicit mode: `exact`,
 `lexical`, `semantic`, `semantic_unavailable`, or `graph`. Semantic recall
 without an embedding index returns `semantic_unavailable`; it is not reported as
 a semantic result backed by lexical matching.

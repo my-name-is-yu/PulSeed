@@ -733,7 +733,16 @@ function upsertEvidence(sqlite: SqliteDatabase, evidenceInput: EvidenceRef): voi
 }
 
 function upsertCorrection(sqlite: SqliteDatabase, correctionInput: CorrectionRef): void {
-  const correction = CorrectionRefSchema.parse(correctionInput);
+  const parsedCorrection = CorrectionRefSchema.parse(correctionInput);
+  const existingCorrection = readCorrectionById(sqlite, parsedCorrection.correction_id);
+  const correction = CorrectionRefSchema.parse({
+    ...parsedCorrection,
+    runtime_event_ref: parsedCorrection.runtime_event_ref ?? existingCorrection?.runtime_event_ref ?? null,
+    runtime_graph_refs: unique([
+      ...(existingCorrection?.runtime_graph_refs ?? []),
+      ...parsedCorrection.runtime_graph_refs,
+    ]),
+  });
   sqlite.prepare(`
     INSERT INTO memory_correction_refs (
       correction_id, target_claim_id, correction_kind, replacement_claim_id,
@@ -757,6 +766,15 @@ function upsertCorrection(sqlite: SqliteDatabase, correctionInput: CorrectionRef
     correction.created_at,
     correctionCodec.stringify(correction),
   );
+}
+
+function readCorrectionById(sqlite: SqliteDatabase, correctionId: string): CorrectionRef | null {
+  const row = sqlite.prepare(`
+    SELECT correction_json
+    FROM memory_correction_refs
+    WHERE correction_id = ?
+  `).get(correctionId) as { correction_json: string } | undefined;
+  return row ? correctionCodec.parse(row.correction_json) : null;
 }
 
 function upsertTombstone(sqlite: SqliteDatabase, tombstoneInput: ForgetTombstone): void {
