@@ -639,11 +639,16 @@ describe("LoopSupervisor", () => {
 
   it("runs at most N workers simultaneously", async () => {
     let concurrent = 0; let max = 0;
+    const slowAdmissionTrace = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 70));
+    });
     const { deps, runtimeRoot } = makeSupervisor(async () => {
       concurrent++; max = Math.max(max, concurrent);
       await new Promise((r) => setTimeout(r, 30));
       concurrent--;
       return makeLoopResult();
+    }, {
+      personalAgentRuntime: { recordTrace: slowAdmissionTrace },
     });
     const sv = new LoopSupervisor(deps, {
       concurrency: 2, pollIntervalMs: 20, maxCrashCount: 3,
@@ -653,8 +658,9 @@ describe("LoopSupervisor", () => {
     });
     try {
       await sv.start(["g1", "g2", "g3"]);
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 260));
       await sv.shutdown();
+      expect(slowAdmissionTrace).toHaveBeenCalled();
       expect(max).toBeLessThanOrEqual(2);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });

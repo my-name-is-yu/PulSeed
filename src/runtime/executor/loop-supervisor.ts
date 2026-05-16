@@ -239,7 +239,7 @@ export class LoopSupervisor {
     return {
       workers: this.workers.map(w => {
         const backgroundRun = this.activeBackgroundRuns.get(w.id);
-        const goalId = this.shutdownRelinquishedWorkerIds.has(w.id) ? null : w.getCurrentGoalId();
+        const goalId = this.shutdownRelinquishedWorkerIds.has(w.id) ? null : this.goalIdForWorker(w);
         return {
           workerId: w.id,
           goalId,
@@ -351,7 +351,7 @@ export class LoopSupervisor {
     if (!this.running || this.polling) return;
     this.polling = true;
 
-    const idleWorkers = this.workers.filter(w => w.isIdle());
+    const idleWorkers = this.workers.filter(w => w.isIdle() && !this.hasAssignedGoal(w));
 
     try {
       for (const worker of idleWorkers) {
@@ -408,6 +408,23 @@ export class LoopSupervisor {
     } finally {
       this.polling = false;
     }
+  }
+
+  private hasAssignedGoal(worker: GoalWorker): boolean {
+    for (const activeWorker of this.activeGoals.values()) {
+      if (activeWorker === worker) return true;
+    }
+    return false;
+  }
+
+  private goalIdForWorker(worker: GoalWorker): string | null {
+    const currentGoalId = worker.getCurrentGoalId();
+    if (currentGoalId) return currentGoalId;
+
+    for (const [goalId, activeWorker] of this.activeGoals.entries()) {
+      if (activeWorker === worker) return goalId;
+    }
+    return null;
   }
 
   private async claimNextDispatch(workerId: string): Promise<GoalActivation | null> {
