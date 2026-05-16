@@ -25,6 +25,7 @@ import {
   type MemoryCorrectionEntry,
 } from "../corrections/memory-correction-ledger.js";
 import {
+  hasAgentMemoryTruth,
   hasDomainKnowledgeTruth,
   hasSharedKnowledgeTruth,
   listDomainKnowledgeTruthGoalIds,
@@ -630,6 +631,7 @@ export class KnowledgeMemoryStateStore {
   async loadAgentMemoryStore(): Promise<AgentMemoryStore> {
     const truth = AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromTruth(this.baseDir));
     if (truth.entries.length > 0 || truth.corrections.length > 0) return truth;
+    if (await hasAgentMemoryTruth(this.baseDir)) return truth;
     const repo = await this.openRepository();
     try {
       const entryRecords = await repo.loadRecords({

@@ -13,6 +13,7 @@ import {
 } from "./types/agent-memory.js";
 import { KnowledgeMemoryStateStore } from "./knowledge-memory-state-store.js";
 import {
+  hasAgentMemoryTruth,
   hasDomainKnowledgeTruth,
   hasSharedKnowledgeTruth,
   loadAgentMemoryStoreFromTruth,
@@ -31,6 +32,7 @@ export async function loadAgentMemoryStore(stateManager: StateManager): Promise<
   const baseDir = stateManager.getBaseDir();
   const truth = AgentMemoryStoreSchema.parse(await loadAgentMemoryStoreFromTruth(baseDir));
   if (truth.entries.length > 0 || truth.corrections.length > 0) return truth;
+  if (await hasAgentMemoryTruth(baseDir)) return truth;
   const legacy = AgentMemoryStoreSchema.parse(await knowledgeMemoryStoreForStateManager(stateManager).loadAgentMemoryStore());
   if (legacy.entries.length > 0 || legacy.corrections.length > 0) {
     await saveAgentMemoryStoreToTruth(baseDir, legacy);

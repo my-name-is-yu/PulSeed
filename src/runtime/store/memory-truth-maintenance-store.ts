@@ -534,7 +534,12 @@ export class MemoryTruthMaintenanceStore {
     });
   }
 
-  async listProjectionRecords(input: { claimId?: string; projectionKind?: ProjectionRecord["projection_kind"] } = {}): Promise<ProjectionRecord[]> {
+  async listProjectionRecords(input: {
+    claimId?: string;
+    ownerKind?: string;
+    ownerScope?: string;
+    projectionKind?: ProjectionRecord["projection_kind"];
+  } = {}): Promise<ProjectionRecord[]> {
     const db = await this.database();
     return db.read((sqlite) => {
       const clauses: string[] = [];
@@ -542,6 +547,14 @@ export class MemoryTruthMaintenanceStore {
       if (input.claimId) {
         clauses.push("claim_id = ?");
         params.push(input.claimId);
+      }
+      if (input.ownerKind) {
+        clauses.push("owner_kind = ?");
+        params.push(input.ownerKind);
+      }
+      if (input.ownerScope) {
+        clauses.push("owner_scope = ?");
+        params.push(input.ownerScope);
       }
       if (input.projectionKind) {
         clauses.push("projection_kind = ?");

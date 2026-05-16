@@ -93,6 +93,26 @@ export async function loadAgentMemoryStoreFromTruth(baseDir: string): Promise<Ag
   }
 }
 
+export async function hasAgentMemoryTruth(baseDir: string): Promise<boolean> {
+  const store = createMemoryTruthStore(baseDir);
+  try {
+    const claims = await store.listClaims({
+      ownerKind: AGENT_MEMORY_OWNER_KIND,
+      ownerScope: AGENT_MEMORY_OWNER_SCOPE,
+      includeInactive: true,
+    });
+    if (claims.length > 0) return true;
+    const projections = await store.listProjectionRecords({
+      ownerKind: AGENT_MEMORY_OWNER_KIND,
+      ownerScope: AGENT_MEMORY_OWNER_SCOPE,
+      projectionKind: "memory_metadata",
+    });
+    return projections.length > 0;
+  } finally {
+    await store.close();
+  }
+}
+
 export async function saveAgentMemoryStoreToTruth(baseDir: string, input: AgentMemoryStore): Promise<void> {
   const parsed = AgentMemoryStoreSchema.parse(input);
   const store = createMemoryTruthStore(baseDir, { appendRuntimeEvents: true });
@@ -113,7 +133,10 @@ export async function saveAgentMemoryStoreToTruth(baseDir: string, input: AgentM
           reason: correction.reason,
           created_at: correction.created_at,
         })),
-      projections: parsed.entries.flatMap(agentMemoryProjectionInputs),
+      projections: [
+        ...parsed.entries.flatMap(agentMemoryProjectionInputs),
+        agentMemoryOwnerMetadataProjection(parsed),
+      ],
       tombstoneReason: "Agent memory owner snapshot removed this claim.",
       dropRemovedClaimIds: parsed.corrections
         .filter((correction) => correction.correction_kind === "forgotten"
@@ -533,6 +556,31 @@ function agentMemoryProjectionInputs(entry: AgentMemoryEntry): ProjectionRecordI
       created_at: now,
     }),
   ];
+}
+
+function agentMemoryOwnerMetadataProjection(store: AgentMemoryStore): ProjectionRecordInput {
+  const now = store.entries
+    .map((entry) => entry.updated_at)
+    .concat(store.corrections.map((correction) => correction.created_at))
+    .sort()
+    .at(-1) ?? new Date().toISOString();
+  return ProjectionRecordSchema.parse({
+    projection_id: "projection:agent-memory:owner:metadata",
+    claim_id: null,
+    owner_kind: AGENT_MEMORY_OWNER_KIND,
+    owner_scope: AGENT_MEMORY_OWNER_SCOPE,
+    projection_kind: "memory_metadata",
+    surface: "owner_metadata",
+    safe_for_normal_surface: false,
+    payload: {
+      owner_kind: AGENT_MEMORY_OWNER_KIND,
+      owner_scope: AGENT_MEMORY_OWNER_SCOPE,
+      entries_count: store.entries.length,
+      corrections_count: store.corrections.length,
+      last_consolidated_at: store.last_consolidated_at,
+    },
+    created_at: now,
+  });
 }
 
 function agentMemoryEntryFromClaim(claim: MemoryClaim): AgentMemoryEntry | null {

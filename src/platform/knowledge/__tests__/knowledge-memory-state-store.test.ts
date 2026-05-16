@@ -11,7 +11,7 @@ import { MemoryTruthMaintenanceStore } from "../../../runtime/store/memory-truth
 import { SqliteSoilRepository } from "../../soil/sqlite-repository.js";
 import { KnowledgeMemoryStateStore } from "../knowledge-memory-state-store.js";
 import { KnowledgeManager } from "../knowledge-manager.js";
-import { saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../memory-truth-adapter.js";
+import { saveAgentMemoryStoreToTruth, saveDomainKnowledgeToTruth, saveSharedKnowledgeToTruth } from "../memory-truth-adapter.js";
 import { AgentMemoryStoreSchema } from "../types/agent-memory.js";
 
 const fixedNow = "2026-05-09T12:00:00.000Z";
@@ -166,6 +166,51 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         target_ref: { kind: "agent_memory", id: "memory-old" },
       })],
     });
+  });
+
+  it("does not resurrect agent memory from stale Soil when empty truth is authoritative", async () => {
+    const baseDir = tempHome("pulseed-agent-memory-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const staleStore = AgentMemoryStoreSchema.parse({
+      entries: [{
+        id: "memory-stale",
+        key: "favorite-editor",
+        value: "Atom",
+        tags: ["editor"],
+        memory_type: "preference",
+        status: "compiled",
+        created_at: fixedNow,
+        updated_at: fixedNow,
+      }],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const emptyTruth = AgentMemoryStoreSchema.parse({
+      entries: [],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    await store.saveAgentMemoryStore(staleStore, { persistTruth: false });
+    await saveAgentMemoryStoreToTruth(baseDir, emptyTruth);
+
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(manager.loadAgentMemoryStore()).resolves.toEqual(emptyTruth);
+    await expect(manager.recallAgentMemory("favorite-editor", { exact: true })).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_agent_memory_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_agent_memory_entry:memory-stale");
+    } finally {
+      repo?.close();
+    }
   });
 
   it("treats correction_state inactive entries as withheld across recall, truth, and Soil", async () => {
