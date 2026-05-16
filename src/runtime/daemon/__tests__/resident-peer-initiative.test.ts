@@ -750,6 +750,50 @@ describe("resident peer initiative caller path", () => {
         budget_id: binding.interruption_budget.budget_id,
         current_debits: 0,
       });
+      await store.recordDelivery({
+        delivery_id: `peer-delivery:${candidate.candidate_id}:telegram`,
+        candidate_id: candidate.candidate_id,
+        surface: "telegram",
+        status: "delivered",
+        delivered_at: "2026-05-16T00:09:00.000Z",
+        message_id: `peer-message:${candidate.candidate_id}`,
+        target_binding_ref: "gateway:telegram:home_chat:12345",
+        expression_decision_ref: "expression:peer:pending-budget",
+        visibility_policy_ref: "visibility:peer:pending-budget",
+      });
+
+      await triggerResidentPeerInitiative(
+        {
+          baseDir,
+          config: DaemonConfigSchema.parse({
+            proactive_mode: true,
+            proactive_interval_ms: 1,
+            goal_review_interval_ms: 7 * 24 * 60 * 60 * 1000,
+            runtime_root: runtimeRoot,
+          }),
+          state,
+          logger: logger() as never,
+          saveDaemonState: vi.fn(async () => {}),
+          gateway: {
+            getOutboundConversationPort: (surface: OutboundConversationSurface) => surface === "telegram" ? gatewayPort : undefined,
+          },
+        },
+        details,
+        {
+          attentionAdmission: attentionAdmission as never,
+          operationBoundary,
+          selectionSurfaceRef,
+          metadata: {},
+        },
+      );
+
+      expect(gatewayPort.messages).toHaveLength(0);
+      const afterDeliveredReplayPolicy = await new ProactivePolicyStateStore(runtimeRoot, { controlBaseDir: baseDir })
+        .load(DEFAULT_RESIDENT_ACTIVATION_POLICY_ID);
+      expect(afterDeliveredReplayPolicy?.interruption_budget).toMatchObject({
+        budget_id: binding.interruption_budget.budget_id,
+        current_debits: 0,
+      });
     } finally {
       vi.useRealTimers();
     }

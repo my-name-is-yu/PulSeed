@@ -558,6 +558,7 @@ export async function triggerResidentPeerInitiative(
   if (
     boundary.thresholdDecision.budget_debit > 0
     && delivery.status === "delivered"
+    && delivery.fresh_delivery
   ) {
     await policyStore.recordBudgetDebit({
       policyId: DEFAULT_RESIDENT_ACTIVATION_POLICY_ID,
@@ -672,6 +673,7 @@ async function deliverPeerInitiativeMessage(input: {
   message_id?: string;
   delivered_at?: string;
   status: "pending_send" | "delivered" | "held" | "failed";
+  fresh_delivery: boolean;
 }> {
   const surface: OutboundConversationSurface = "telegram";
   const deliveryId = `peer-delivery:${input.candidate.candidate_id}:${surface}`;
@@ -682,6 +684,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: existingDelivery.message_id,
       delivered_at: existingDelivery.delivered_at,
       status: "delivered",
+      fresh_delivery: false,
     };
   }
   const port = input.context.gateway?.getOutboundConversationPort(surface);
@@ -693,7 +696,7 @@ async function deliverPeerInitiativeMessage(input: {
       status: "held",
       failure_reason: "no live gateway outbound conversation port for telegram",
     });
-    return { delivery_id: deliveryId, status: "held" };
+    return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
   const target = await port.resolveDefaultTarget();
   if (!target) {
@@ -704,7 +707,7 @@ async function deliverPeerInitiativeMessage(input: {
       status: "held",
       failure_reason: "telegram outbound conversation target is not bound",
     });
-    return { delivery_id: deliveryId, status: "held" };
+    return { delivery_id: deliveryId, status: "held", fresh_delivery: false };
   }
   const actionButtons = peerInitiativeActionButtons({
     candidate: input.candidate,
@@ -763,6 +766,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: claim.record.message_id,
       delivered_at: claim.record.delivered_at,
       status: claim.record.status,
+      fresh_delivery: false,
     };
   }
   try {
@@ -785,6 +789,7 @@ async function deliverPeerInitiativeMessage(input: {
       message_id: receipt.message_id,
       delivered_at: receipt.delivered_at,
       status: "delivered",
+      fresh_delivery: true,
     };
   } catch (error) {
     await input.store.recordDelivery({
@@ -803,7 +808,12 @@ async function deliverPeerInitiativeMessage(input: {
       candidate_id: input.candidate.candidate_id,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { delivery_id: deliveryId, message_id: peerMessage.message_id, status: "failed" };
+    return {
+      delivery_id: deliveryId,
+      message_id: peerMessage.message_id,
+      status: "failed",
+      fresh_delivery: false,
+    };
   }
 }
 

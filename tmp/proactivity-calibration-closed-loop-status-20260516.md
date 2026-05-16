@@ -86,3 +86,7 @@ one-day dogfood pass. Scope is broader than the minimum report-only closure:
   claims could consume duplicate activation budget debits. Fixed by debiting
   only after confirmed delivery, with resident caller-path coverage for an
   already pending peer delivery.
+- A sixth Codex P1 review identified that replaying an already delivered peer
+  delivery could also consume another debit. Fixed by carrying a `fresh_delivery`
+  flag from the delivery path and debiting only fresh confirmed sends, with the
+  same resident caller-path test covering delivered replay.
