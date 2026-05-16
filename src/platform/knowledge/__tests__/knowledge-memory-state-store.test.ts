@@ -56,6 +56,61 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     return dir;
   }
 
+  async function seedStaleKnowledgeSoilRecord(input: {
+    baseDir: string;
+    recordId: string;
+    soilId: string;
+    sourceType: string;
+    sourceId: string;
+    goalId: string | null;
+    entry: KnowledgeEntry | SharedKnowledgeEntry;
+  }): Promise<void> {
+    const repo = await SqliteSoilRepository.create({ rootDir: path.join(input.baseDir, "soil") });
+    try {
+      await repo.applyMutation({
+        records: [{
+          record_id: input.recordId,
+          record_key: input.recordId,
+          version: 1,
+          record_type: "fact",
+          soil_id: input.soilId,
+          title: input.entry.question,
+          summary: input.entry.answer,
+          canonical_text: `${input.entry.question}\n${input.entry.answer}`,
+          goal_id: input.goalId,
+          task_id: null,
+          status: "active",
+          confidence: input.entry.confidence,
+          importance: null,
+          source_reliability: 0.8,
+          valid_from: input.entry.acquired_at,
+          valid_to: null,
+          supersedes_record_id: null,
+          is_active: true,
+          source_type: input.sourceType,
+          source_id: input.sourceId,
+          metadata_json: { entry: input.entry },
+          created_at: input.entry.acquired_at,
+          updated_at: input.entry.acquired_at,
+        }],
+        chunks: [{
+          chunk_id: `${input.recordId}:chunk`,
+          record_id: input.recordId,
+          soil_id: input.soilId,
+          chunk_index: 0,
+          chunk_kind: "paragraph",
+          heading_path_json: [],
+          chunk_text: `${input.entry.question}\n${input.entry.answer}`,
+          token_count: 8,
+          checksum: `${input.recordId}:checksum`,
+          created_at: input.entry.acquired_at,
+        }],
+      });
+    } finally {
+      repo.close();
+    }
+  }
+
   it("routes KnowledgeManager domain, shared, and agent memory state to Soil SQLite without legacy JSON sidecars", async () => {
     const baseDir = tempHome("pulseed-knowledge-memory-soil-");
     const stateManager = new StateManager(baseDir);
@@ -483,6 +538,51 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
     }
   });
 
+  it("does not resurrect empty domain truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-domain-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const stale = makeKnowledgeEntry({
+      entry_id: "domain-empty-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+    });
+    await seedStaleKnowledgeSoilRecord({
+      baseDir,
+      recordId: "knowledge_domain_entry:goal-empty:domain-empty-stale",
+      soilId: "knowledge/domain/goal-empty/domain-empty-stale",
+      sourceType: "knowledge_domain_entry",
+      sourceId: "goal-empty:domain-empty-stale",
+      goalId: "goal-empty",
+      entry: stale,
+    });
+    await saveDomainKnowledgeToTruth(baseDir, {
+      goal_id: "goal-empty",
+      domain: "goal-empty",
+      entries: [],
+      last_updated: fixedNow,
+    });
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadDomainKnowledge("goal-empty")).resolves.toMatchObject({ entries: [] });
+    await expect(manager.loadKnowledge("goal-empty")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_domain_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_domain_entry:goal-empty:domain-empty-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
   it("tombstones domain knowledge truth when deleting the production domain owner", async () => {
     const baseDir = tempHome("pulseed-domain-delete-truth-tombstone-");
     const stateManager = new StateManager(baseDir);
@@ -561,6 +661,47 @@ describe("KnowledgeMemoryStateStore database ownership", () => {
         record_filter: { source_types: ["knowledge_shared_entry"] },
       });
       expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_shared_entry:shared-stale");
+    } finally {
+      repo?.close();
+    }
+  });
+
+  it("does not resurrect empty shared truth from stale Soil compatibility records", async () => {
+    const baseDir = tempHome("pulseed-shared-empty-truth-no-soil-resurrection-");
+    const stateManager = new StateManager(baseDir);
+    await stateManager.init();
+    const stale = makeSharedKnowledgeEntry({
+      entry_id: "shared-empty-stale",
+      question: "Which editor is current?",
+      answer: "Atom",
+      tags: ["editor"],
+      source_goal_ids: ["goal-1"],
+    });
+    await seedStaleKnowledgeSoilRecord({
+      baseDir,
+      recordId: "knowledge_shared_entry:shared-empty-stale",
+      soilId: "knowledge/shared/shared-empty-stale",
+      sourceType: "knowledge_shared_entry",
+      sourceId: "shared-empty-stale",
+      goalId: null,
+      entry: stale,
+    });
+    await saveSharedKnowledgeToTruth(baseDir, []);
+
+    const store = new KnowledgeMemoryStateStore(baseDir);
+    const manager = new KnowledgeManager(stateManager, createMockLLMClient([]));
+    await expect(store.loadSharedKnowledgeEntries()).resolves.toEqual([]);
+    await expect(manager.querySharedKnowledge(["editor"], "goal-1")).resolves.toEqual([]);
+
+    const repo = await SqliteSoilRepository.openExisting({ rootDir: path.join(baseDir, "soil") });
+    expect(repo).not.toBeNull();
+    try {
+      const staleSoil = await repo!.searchLexical({
+        query: "Atom",
+        limit: 5,
+        record_filter: { source_types: ["knowledge_shared_entry"] },
+      });
+      expect(staleSoil.map((candidate) => candidate.record_id)).toContain("knowledge_shared_entry:shared-empty-stale");
     } finally {
       repo?.close();
     }

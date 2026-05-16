@@ -219,7 +219,13 @@ export async function hasDomainKnowledgeTruth(baseDir: string, goalId: string): 
       claimType: "knowledge",
       includeInactive: true,
     });
-    return claims.length > 0;
+    if (claims.length > 0) return true;
+    const projections = await store.listProjectionRecords({
+      ownerKind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+      ownerScope: goalId,
+      projectionKind: "memory_metadata",
+    });
+    return projections.length > 0;
   } finally {
     await store.close();
   }
@@ -233,7 +239,14 @@ export async function listDomainKnowledgeTruthGoalIds(baseDir: string): Promise<
       claimType: "knowledge",
       includeInactive: true,
     });
-    return [...new Set(claims.map((claim) => claim.owner_scope))].sort((left, right) => left.localeCompare(right));
+    const projections = await store.listProjectionRecords({
+      ownerKind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+      projectionKind: "memory_metadata",
+    });
+    return [...new Set([
+      ...claims.map((claim) => claim.owner_scope),
+      ...projections.map((projection) => projection.owner_scope),
+    ])].sort((left, right) => left.localeCompare(right));
   } finally {
     await store.close();
   }
@@ -248,8 +261,11 @@ export async function saveDomainKnowledgeToTruth(baseDir: string, input: DomainK
       ownerScope: parsed.goal_id,
       claims: parsed.entries.map((entry) => knowledgeClaimInput(parsed.goal_id, entry)),
       evidenceRefs: parsed.entries.flatMap((entry) => knowledgeEvidenceInputs(parsed.goal_id, entry)),
-      projections: parsed.entries.flatMap((entry) =>
-        knowledgeProjectionInputs(DOMAIN_KNOWLEDGE_OWNER_KIND, parsed.goal_id, domainKnowledgeClaimId(parsed.goal_id, entry.entry_id))),
+      projections: [
+        ...parsed.entries.flatMap((entry) =>
+          knowledgeProjectionInputs(DOMAIN_KNOWLEDGE_OWNER_KIND, parsed.goal_id, domainKnowledgeClaimId(parsed.goal_id, entry.entry_id))),
+        domainKnowledgeOwnerMetadataProjection(parsed),
+      ],
       tombstoneReason: "Domain knowledge owner snapshot removed this claim.",
     });
   } finally {
@@ -280,7 +296,13 @@ export async function hasSharedKnowledgeTruth(baseDir: string): Promise<boolean>
       claimType: "shared_knowledge",
       includeInactive: true,
     });
-    return claims.length > 0;
+    if (claims.length > 0) return true;
+    const projections = await store.listProjectionRecords({
+      ownerKind: SHARED_KNOWLEDGE_OWNER_KIND,
+      ownerScope: "global",
+      projectionKind: "memory_metadata",
+    });
+    return projections.length > 0;
   } finally {
     await store.close();
   }
@@ -295,8 +317,11 @@ export async function saveSharedKnowledgeToTruth(baseDir: string, entries: Share
       ownerScope: "global",
       claims: parsed.map(sharedKnowledgeClaimInput),
       evidenceRefs: parsed.flatMap((entry) => knowledgeEvidenceInputs("shared", entry)),
-      projections: parsed.flatMap((entry) =>
-        knowledgeProjectionInputs(SHARED_KNOWLEDGE_OWNER_KIND, "global", sharedKnowledgeClaimId(entry.entry_id))),
+      projections: [
+        ...parsed.flatMap((entry) =>
+          knowledgeProjectionInputs(SHARED_KNOWLEDGE_OWNER_KIND, "global", sharedKnowledgeClaimId(entry.entry_id))),
+        sharedKnowledgeOwnerMetadataProjection(parsed),
+      ],
       tombstoneReason: "Shared knowledge owner snapshot removed this claim.",
     });
   } finally {
@@ -729,6 +754,45 @@ function knowledgeProjectionInputs(ownerKind: string, ownerScope: string, claimI
       created_at: now,
     }),
   ];
+}
+
+function domainKnowledgeOwnerMetadataProjection(domainKnowledge: DomainKnowledge): ProjectionRecordInput {
+  return ProjectionRecordSchema.parse({
+    projection_id: `projection:${DOMAIN_KNOWLEDGE_OWNER_KIND}:${domainKnowledge.goal_id}:owner:metadata`,
+    claim_id: null,
+    owner_kind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+    owner_scope: domainKnowledge.goal_id,
+    projection_kind: "memory_metadata",
+    surface: "owner_metadata",
+    safe_for_normal_surface: false,
+    payload: {
+      owner_kind: DOMAIN_KNOWLEDGE_OWNER_KIND,
+      owner_scope: domainKnowledge.goal_id,
+      entries_count: domainKnowledge.entries.length,
+      domain: domainKnowledge.domain,
+      last_updated: domainKnowledge.last_updated,
+    },
+    created_at: domainKnowledge.last_updated,
+  });
+}
+
+function sharedKnowledgeOwnerMetadataProjection(entries: SharedKnowledgeEntry[]): ProjectionRecordInput {
+  const now = entries.map((entry) => entry.acquired_at).sort().at(-1) ?? new Date().toISOString();
+  return ProjectionRecordSchema.parse({
+    projection_id: `projection:${SHARED_KNOWLEDGE_OWNER_KIND}:global:owner:metadata`,
+    claim_id: null,
+    owner_kind: SHARED_KNOWLEDGE_OWNER_KIND,
+    owner_scope: "global",
+    projection_kind: "memory_metadata",
+    surface: "owner_metadata",
+    safe_for_normal_surface: false,
+    payload: {
+      owner_kind: SHARED_KNOWLEDGE_OWNER_KIND,
+      owner_scope: "global",
+      entries_count: entries.length,
+    },
+    created_at: now,
+  });
 }
 
 function knowledgeEntryFromClaim(claim: MemoryClaim): KnowledgeEntry | null {
