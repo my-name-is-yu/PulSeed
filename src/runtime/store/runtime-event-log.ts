@@ -143,7 +143,7 @@ export type RuntimeEventEnvelopeInput = z.input<typeof RuntimeEventEnvelopeSchem
 export interface RuntimeEventLogListOptions {
   traceId?: string;
   eventType?: RuntimeEventType;
-  limit?: number;
+  limit?: number | null;
 }
 
 export type RuntimeEventAppendDisposition =
@@ -314,36 +314,38 @@ export class RuntimeEventLogStore {
   }
 
   async listEvents(options: RuntimeEventLogListOptions = {}): Promise<RuntimeEventEnvelope[]> {
-    const limit = Math.max(1, Math.min(1000, Math.floor(options.limit ?? 500)));
+    const hasLimit = options.limit !== null;
+    const limit = hasLimit ? Math.max(1, Math.floor(options.limit ?? 500)) : null;
     const db = await this.database();
     return db.read((sqlite) => {
+      const params: unknown[] = [
+        options.traceId ?? null,
+        options.traceId ?? null,
+        options.eventType ?? null,
+        options.eventType ?? null,
+      ];
+      if (hasLimit) params.push(limit);
       const rows = sqlite.prepare(`
         SELECT event_json
         FROM runtime_events
         WHERE (? IS NULL OR trace_id = ?)
           AND (? IS NULL OR event_type = ?)
         ORDER BY occurred_at ASC, event_id ASC
-        LIMIT ?
-      `).all(
-        options.traceId ?? null,
-        options.traceId ?? null,
-        options.eventType ?? null,
-        options.eventType ?? null,
-        limit,
-      ) as Array<{ event_json: string }>;
+        ${hasLimit ? "LIMIT ?" : ""}
+      `).all(...params) as Array<{ event_json: string }>;
       return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
     });
   }
 
   async rebuildProjections(options: { traceId?: string } = {}): Promise<RuntimeEventProjectionRebuild> {
-    const events = await this.listEvents({ traceId: options.traceId, limit: 1000 });
+    const events = await this.listEvents({ traceId: options.traceId, limit: null });
     const db = await this.database();
     const graph = db.read((sqlite) => readRuntimeGraphForEvents(sqlite, events));
     return rebuildRuntimeEventProjections(events, options.traceId ?? null, graph);
   }
 
   async explainTrace(traceId: string): Promise<RuntimeGraphExplainResult> {
-    const events = await this.listEvents({ traceId, limit: 1000 });
+    const events = await this.listEvents({ traceId, limit: null });
     const db = await this.database();
     const graph = db.read((sqlite) => readRuntimeGraphForEvents(sqlite, events));
     const projectionRebuild = rebuildRuntimeEventProjections(events, traceId, graph);

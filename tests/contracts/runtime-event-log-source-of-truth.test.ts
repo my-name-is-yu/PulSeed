@@ -316,6 +316,7 @@ describe("runtime event log source-of-truth contract", () => {
       await store.saveGoal(goal);
       await store.saveTask(task);
       await store.deleteTask(goal.id, task.id);
+      await expect(store.deleteTask(goal.id, "event-log-missing-task")).resolves.toBe(false);
       const archiveGoal = makeGoal({
         id: "event-log-archive-goal",
         title: "Event log archive goal",
@@ -355,6 +356,7 @@ describe("runtime event log source-of-truth contract", () => {
         "goal.mutation.recorded",
         "task.mutation.recorded",
       ]));
+      expect(events.some((event) => event.task_id === "event-log-missing-task")).toBe(false);
       expect(events.filter((event) => event.payload_schema === "runtime-event-payload/goal-task-mutation/v1")).toHaveLength(9);
       const rebuild = await eventLog.rebuildProjections();
       expect(rebuild.runtime_graph_evidence.edge_kinds).toEqual(expect.objectContaining({
@@ -365,6 +367,47 @@ describe("runtime event log source-of-truth contract", () => {
       expect(rebuild.runtime_graph_evidence.source_event_refs.length).toBeGreaterThanOrEqual(3);
     } finally {
       appendSpy.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds graph-backed projections from more than 1000 event-log rows", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const authorityStore = new InteractionAuthorityStore(runtimeRoot, { controlBaseDir: root });
+      const eventCount = 1005;
+      for (let index = 0; index < eventCount; index += 1) {
+        await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+          candidateId: `peer-candidate:bulk-${index}`,
+          deliveryId: `peer-delivery:bulk-${index}`,
+          surface: "telegram",
+          reason: "Bulk peer delivery projection rebuild coverage.",
+          decidedAt: new Date(Date.parse(NOW) + index).toISOString(),
+          canSend: true,
+          canNotify: true,
+          targetBindingRef: `gateway:telegram:bulk:${index}`,
+          channelPolicyRef: "gateway:telegram:policy",
+          transportMessageRef: `telegram-message:bulk-${index}`,
+          normalSurfaceProjectionRef: `normal-projection:bulk-${index}`,
+        }));
+      }
+
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const defaultLimitedEvents = await eventLog.listEvents({
+        eventType: "gateway.telegram.delivery.recorded",
+      });
+      expect(defaultLimitedEvents).toHaveLength(500);
+
+      const rebuild = await eventLog.rebuildProjections();
+      expect(rebuild.source_event_count).toBe(eventCount);
+      expect(rebuild.peer_delivery_state).toHaveLength(eventCount);
+      expect(rebuild.runtime_graph_evidence.source_event_refs).toHaveLength(eventCount);
+      expect(rebuild.peer_delivery_state.at(-1)).toEqual(expect.objectContaining({
+        delivery_ref: "peer-delivery:bulk-1004",
+        transport_message_ref: "telegram-message:bulk-1004",
+      }));
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

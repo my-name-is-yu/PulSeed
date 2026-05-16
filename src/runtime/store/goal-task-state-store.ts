@@ -479,13 +479,14 @@ export class GoalTaskStateStore {
   }
 
   async deleteTask(goalId: string, taskId: string): Promise<boolean> {
-    const existingTask = await this.loadTask(goalId, taskId);
+    const snapshot = await this.readTaskDeletionSnapshot(goalId, taskId);
+    if (!snapshot.exists) return false;
     await this.recordGoalTaskMutation({
       entityKind: "task",
       action: "delete",
       goalId,
       taskId,
-      task: existingTask,
+      task: snapshot.task,
     });
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -1056,6 +1057,26 @@ export class GoalTaskStateStore {
         if (task) tasks.set(taskId, task);
       }
       return { goal, taskIds, tasks };
+    });
+  }
+
+  private async readTaskDeletionSnapshot(goalId: string, taskId: string): Promise<{
+    exists: boolean;
+    task: Task | null;
+  }> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const graphTask = readTaskFromRuntimeGraph(sqlite, goalId, taskId);
+      const row = sqlite.prepare(`
+        SELECT task_json
+        FROM task_records
+        WHERE goal_id = ? AND task_id = ?
+      `).get(goalId, taskId) as { task_json: string } | undefined;
+      const task = graphTask ?? (row ? TaskSchema.parse(parseJson(row.task_json)) : null);
+      return {
+        exists: graphTask !== null || row !== undefined,
+        task,
+      };
     });
   }
 
