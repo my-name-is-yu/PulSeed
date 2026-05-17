@@ -163,6 +163,9 @@ const OWNER_STORES_BY_CALLER_PATH: Record<CompanionCognitionCallerPath, readonly
   chat_user_turn: ["chat_history", "chat_events"],
   resident_proactive_check: ["attention_ledger", "proactive_intervention"],
   long_running_task_turn: ["runtime_operation"],
+  schedule_wake: ["schedule", "runtime_event_log"],
+  runtime_control_response: ["runtime_operation", "runtime_event_log"],
+  memory_truth_operation: ["memory_truth", "profile", "knowledge", "soil"],
 };
 
 export function ownerStoreAllowedForCallerPath(

@@ -15,16 +15,20 @@ export {
   evaluateCloudBoundaryForCognition,
 } from "./cloud-boundary.js";
 export {
+  CompanionCognitionKernel,
   CompanionCognitionService,
 } from "./companion-cognition-service.js";
 export {
   AuthorizationRequestSchema,
+  AuthorityHandoffSchema,
+  CandidateActionSchema,
   ChatSessionCognitionContextSchema,
   CloudAdmittedRefVersionSchema,
   CloudComputeRequestSchema,
   CloudComputePurposeSchema,
   CloudRetentionExpectationSchema,
   CognitionEventRefSchema,
+  CognitionCorrelationRefsSchema,
   CognitionMemoryRequestSchema,
   CognitionMemoryResultSchema,
   CognitionMemorySourceSchema,
@@ -34,6 +38,7 @@ export {
   CognitionSourceStoreSchema,
   CognitionUncertaintySchema,
   CognitionWritebackReflectionInputSchema,
+  CommitmentAttentionHandoffSchema,
   CompanionCognitionCallerPathSchema,
   CompanionCognitionInputSchema,
   CompanionCognitionOutputSchema,
@@ -45,6 +50,7 @@ export {
   IntentionLifecycleSchema,
   IntentionSelectionSchema,
   MemoryWritebackProposalSchema,
+  MemoryUseAuditSchema,
   PrivacyProfileSchema,
   ProactiveDeliveryKindSchema,
   ReflectionHintSchema,
@@ -116,12 +122,15 @@ export type {
 } from "./cloud-boundary.js";
 export type {
   AuthorizationRequest,
+  AuthorityHandoff,
+  CandidateAction,
   ChatSessionCognitionContext,
   CloudAdmittedRefVersion,
   CloudComputeRequest,
   CloudComputePurpose,
   CloudRetentionExpectation,
   CognitionEventRef,
+  CognitionCorrelationRefs,
   CognitionMemoryRequest,
   CognitionMemoryResult,
   CognitionMemorySource,
@@ -132,6 +141,7 @@ export type {
   CognitionSourceStore,
   CognitionUncertainty,
   CognitionWritebackReflectionInput,
+  CommitmentAttentionHandoff,
   CompanionCognitionCallerPath,
   CompanionCognitionInput,
   CompanionCognitionOutput,
@@ -143,6 +153,7 @@ export type {
   IntentionLifecycle,
   IntentionSelection,
   MemoryWritebackProposal,
+  MemoryUseAudit,
   PrivacyProfile,
   ProactiveDeliveryKind,
   ReflectionHint,
@@ -165,6 +176,7 @@ export type {
   WorkingContextSnapshot,
 } from "./contracts.js";
 export type {
+  CompanionCognitionKernelDeps,
   CompanionCognitionServiceDeps,
 } from "./companion-cognition-service.js";
 export type {

@@ -4,6 +4,9 @@ export const CompanionCognitionCallerPathSchema = z.enum([
   "chat_user_turn",
   "resident_proactive_check",
   "long_running_task_turn",
+  "schedule_wake",
+  "runtime_control_response",
+  "memory_truth_operation",
 ]);
 export type CompanionCognitionCallerPath = z.infer<typeof CompanionCognitionCallerPathSchema>;
 
@@ -21,12 +24,15 @@ export const CognitionSourceStoreSchema = z.enum([
   "dream_event_log",
   "proactive_intervention",
   "attention_ledger",
+  "schedule",
   "soil",
   "profile",
   "knowledge",
   "approval",
   "notification",
   "cognition_audit",
+  "memory_truth",
+  "runtime_event_log",
 ]);
 export type CognitionSourceStore = z.infer<typeof CognitionSourceStoreSchema>;
 
@@ -69,6 +75,14 @@ export const WorkingContextSnapshotSchema = z.object({
   route_ref: CognitionRefSchema.optional(),
   reply_target_ref: CognitionRefSchema.optional(),
   session_ref: CognitionRefSchema.optional(),
+  situation_frame_ref: CognitionRefSchema.optional(),
+  runtime_event_refs: z.array(CognitionRefSchema).default([]),
+  runtime_graph_refs: z.array(CognitionRefSchema).default([]),
+  authority_state_refs: z.array(CognitionRefSchema).default([]),
+  memory_truth_refs: z.array(CognitionRefSchema).default([]),
+  relationship_permission_refs: z.array(CognitionRefSchema).default([]),
+  conflict_refs: z.array(CognitionRefSchema).default([]),
+  uncertainty_refs: z.array(CognitionRefSchema).default([]),
   turn_started_at: z.string().datetime().optional(),
   current_language_hint: z.string().min(1).optional(),
   hidden_prompt_content_materialized: z.literal(false).default(false),
@@ -110,6 +124,7 @@ const DELIVERY_KIND_RANK: Record<ProactiveDeliveryKind, number> = {
 
 export const AttentionCognitionContextSchema = z.object({
   attention_input_ref: CognitionRefSchema,
+  commitment_ref: CognitionRefSchema.optional(),
   agenda_ref: CognitionRefSchema.optional(),
   admission_status: z.enum(["admitted", "held", "blocked", "not_selected", "duplicate"]),
   initiative_gate_decision_id: z.string().min(1),
@@ -117,6 +132,14 @@ export const AttentionCognitionContextSchema = z.object({
   operation_plan_ref: z.string().min(1).optional(),
   max_delivery_kind: ProactiveDeliveryKindSchema,
   feedback_policy_refs: z.array(CognitionRefSchema).default([]),
+  store_ref: CognitionRefSchema.optional(),
+  handoff_state: z.enum([
+    "not_applicable",
+    "shadow_recorded",
+    "candidate_saved",
+    "control_applied",
+    "resident_operation_selected",
+  ]).default("not_applicable"),
 }).strict();
 export type AttentionCognitionContext = z.infer<typeof AttentionCognitionContextSchema>;
 
@@ -126,6 +149,7 @@ export const RuntimeCognitionContextSchema = z.object({
   last_tool_trace_refs: z.array(CognitionRefSchema).default([]),
   operator_handoff_ref: CognitionRefSchema.optional(),
   phase_ref: CognitionRefSchema.optional(),
+  active_control_state_refs: z.array(CognitionRefSchema).default([]),
 }).strict();
 export type RuntimeCognitionContext = z.infer<typeof RuntimeCognitionContextSchema>;
 
@@ -705,6 +729,83 @@ export const CognitionUncertaintySchema = z.object({
 }).strict();
 export type CognitionUncertainty = z.infer<typeof CognitionUncertaintySchema>;
 
+export const CandidateActionSchema = z.object({
+  action_id: z.string().min(1),
+  action_kind: z.enum([
+    "no_op",
+    "hold",
+    "suppress",
+    "continue_route",
+    "digest",
+    "suggest",
+    "prepare",
+    "request_authority",
+    "handoff",
+  ]),
+  target_ref: CognitionRefSchema.optional(),
+  reason_refs: z.array(CognitionRefSchema).default([]),
+  side_effect_profile: SideEffectProfileSchema,
+  requires_authority: z.boolean().default(false),
+  executes_side_effect: z.literal(false).default(false),
+}).strict();
+export type CandidateAction = z.infer<typeof CandidateActionSchema>;
+
+export const CommitmentAttentionHandoffSchema = z.object({
+  handoff_id: z.string().min(1),
+  state: z.enum([
+    "not_applicable",
+    "shadow_recorded",
+    "candidate_saved",
+    "control_applied",
+    "resident_operation_selected",
+  ]),
+  attention_input_ref: CognitionRefSchema.optional(),
+  commitment_ref: CognitionRefSchema.optional(),
+  operation_plan_ref: CognitionRefSchema.optional(),
+  store_ref: CognitionRefSchema.optional(),
+  uses_attention_state_store: z.literal(true).default(true),
+  creates_parallel_commitment_store: z.literal(false).default(false),
+}).strict();
+export type CommitmentAttentionHandoff = z.infer<typeof CommitmentAttentionHandoffSchema>;
+
+export const MemoryUseAuditSchema = z.object({
+  audit_id: z.string().min(1),
+  request_id: z.string().min(1),
+  requested_uses: z.array(CognitionRequestedMemoryUseSchema).default([]),
+  included_memory_refs: z.array(CognitionRefSchema).default([]),
+  withheld_memory_refs: z.array(CognitionRefSchema).default([]),
+  memory_truth_refs: z.array(CognitionRefSchema).default([]),
+  owner_boundary: z.literal("memory_truth_maintenance"),
+  raw_memory_read: z.literal(false).default(false),
+  resurrects_invalidated_memory: z.literal(false).default(false),
+}).strict();
+export type MemoryUseAudit = z.infer<typeof MemoryUseAuditSchema>;
+
+export const AuthorityHandoffSchema = z.object({
+  handoff_id: z.string().min(1),
+  boundary: z.enum([
+    "interaction_authority",
+    "runtime_control",
+    "tool_policy",
+    "none",
+  ]),
+  proposed_decision_ref: CognitionRefSchema.optional(),
+  request_refs: z.array(CognitionRefSchema).default([]),
+  authority_state_refs: z.array(CognitionRefSchema).default([]),
+  kernel_executes_side_effects: z.literal(false).default(false),
+  bypasses_stale_target_rejection: z.literal(false).default(false),
+}).strict();
+export type AuthorityHandoff = z.infer<typeof AuthorityHandoffSchema>;
+
+export const CognitionCorrelationRefsSchema = z.object({
+  replay_key: z.string().min(1),
+  idempotency_key: z.string().min(1),
+  event_refs: z.array(CognitionEventRefSchema).default([]),
+  runtime_graph_refs: z.array(CognitionRefSchema).default([]),
+  runtime_event_refs: z.array(CognitionRefSchema).default([]),
+}).strict();
+export type CognitionCorrelationRefs = z.infer<typeof CognitionCorrelationRefsSchema>;
+
 export const CompanionCognitionInputSchema = z.object({
   cognition_id: z.string().min(1),
   caller_path: CompanionCognitionCallerPathSchema,
@@ -741,6 +842,13 @@ export const CompanionCognitionInputSchema = z.object({
       message: "task cognition input requires runtime_context",
     });
   }
+  if (input.caller_path === "runtime_control_response" && !input.runtime_context) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["runtime_context"],
+      message: "runtime-control cognition input requires runtime_context",
+    });
+  }
   if (input.memory_context_request.caller_path !== input.caller_path) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -758,11 +866,16 @@ export const CompanionCognitionOutputSchema = z.object({
   situation_model: SituationModelSchema,
   relationship_state: RelationshipStateProjectionSchema,
   selected_intention: IntentionSelectionSchema.nullable(),
+  candidate_action: CandidateActionSchema.optional(),
+  commitment_handoff: CommitmentAttentionHandoffSchema.optional(),
   response_plan: ResponsePlanSchema,
+  memory_use_audit: MemoryUseAuditSchema.optional(),
+  authority_handoff: AuthorityHandoffSchema.optional(),
   tool_candidates: z.array(ToolCandidateSchema).default([]),
   authorization_requests: z.array(AuthorizationRequestSchema).default([]),
   memory_writeback: z.array(MemoryWritebackProposalSchema).default([]),
   reflection_hints: z.array(ReflectionHintSchema).default([]),
+  correlation_refs: CognitionCorrelationRefsSchema.optional(),
   audit_refs: z.array(z.string().min(1)).default([]),
   uncertainty: z.array(CognitionUncertaintySchema).default([]),
   debug_trace: z.object({
@@ -802,11 +915,16 @@ export const CognitionReplayStableOutputSchema = z.object({
   situation_model: SituationModelSchema,
   relationship_state: RelationshipStateProjectionSchema,
   selected_intention: IntentionSelectionSchema.nullable(),
+  candidate_action: CandidateActionSchema.optional(),
+  commitment_handoff: CommitmentAttentionHandoffSchema.optional(),
   response_plan: ResponsePlanSchema,
+  memory_use_audit: MemoryUseAuditSchema.optional(),
+  authority_handoff: AuthorityHandoffSchema.optional(),
   tool_candidates: z.array(ToolCandidateSchema).default([]),
   authorization_requests: z.array(AuthorizationRequestSchema).default([]),
   memory_writeback: z.array(MemoryWritebackProposalSchema).default([]),
   reflection_hints: z.array(ReflectionHintSchema).default([]),
+  correlation_refs: CognitionCorrelationRefsSchema.optional(),
   audit_refs: z.array(z.string().min(1)).default([]),
   uncertainty: z.array(CognitionUncertaintySchema).default([]),
 }).strict();

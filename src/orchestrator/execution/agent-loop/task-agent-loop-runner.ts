@@ -29,7 +29,7 @@ import {
 import type { ToolCallContext } from "../../../tools/types.js";
 import type { ExecutionPolicy, SubagentRole } from "./execution-policy.js";
 import {
-  CompanionCognitionService,
+  CompanionCognitionKernel,
   FileCognitionAuditSink,
   InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
@@ -239,7 +239,7 @@ async function evaluateTaskAgentLoopCognition(input: {
   });
   const eventRefs = [eventRef, ...toolTraceEventRefs];
   const auditSink = new InMemoryCognitionAuditSink();
-  const output = await new CompanionCognitionService({
+  const output = await new CompanionCognitionKernel({
     auditSink,
     memoryPort: createRelationshipProfileCognitionMemoryPort({
       baseDir: input.baseDir,

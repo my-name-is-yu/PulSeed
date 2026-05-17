@@ -22,9 +22,9 @@
 - [x] Create implementation branch.
 - [x] Create draft PR: https://github.com/my-name-is-yu/PulSeed/pull/2002
 - [x] Current-state inventory: `tmp/companion-cognition-kernel-inventory.md`
-- [ ] Kernel implementation.
-- [ ] Production caller migrations.
-- [ ] Guardrail.
+- [x] Kernel implementation.
+- [x] Production caller migrations.
+- [x] Guardrail.
 - [ ] Tests and docs.
 - [ ] Local verification.
 - [ ] Sub-agent review.

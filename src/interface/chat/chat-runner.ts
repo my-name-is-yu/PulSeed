@@ -118,13 +118,12 @@ import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime
 import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
 import { AttentionStateStore } from "../../runtime/store/attention-state-store.js";
 import {
+  CompanionCognitionKernel,
   CompanionCognitionService,
-  CognitionMemoryRequestSchema,
   createCognitionReplayRecord,
   createRelationshipProfileCognitionMemoryPort,
-  createRelationshipStateProjectionV2,
-  relationshipCharacterPolicyProjectionRef,
   type CompanionCognitionInput,
+  type CompanionCognitionOutput,
   type CognitionRef,
 } from "../../runtime/cognition/index.js";
 import { CharacterConfigManager } from "../../platform/traits/character-config.js";
@@ -137,7 +136,10 @@ import {
 import { ToolExecutor } from "../../tools/executor.js";
 import { ToolPermissionManager } from "../../tools/permission.js";
 import { ConcurrencyController } from "../../tools/concurrency.js";
-import { recordChatTurnCommitmentAttention } from "./chat-commitment-attention.js";
+import {
+  recordChatTurnCommitmentAttention,
+  type ChatCommitmentAttentionResult,
+} from "./chat-commitment-attention.js";
 
 export type {
   ChatRunResult,
@@ -147,6 +149,12 @@ export type {
 } from "./chat-runner-contracts.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+interface ChatShadowCognition {
+  input: CompanionCognitionInput;
+  output: CompanionCognitionOutput;
+  createdAt: string;
+}
 
 function buildGatewayModelLoopSystemPrompt(basePrompt: string, languageHint: TurnLanguageHint): string {
   return [
@@ -241,7 +249,7 @@ export class ChatRunner {
 
   constructor(private readonly deps: ChatRunnerDeps) {
     this.feedbackIngestionStore = deps.feedbackIngestionStore ?? createDefaultChatFeedbackIngestionStore(deps.stateManager);
-    this.companionCognitionService = deps.companionCognitionService ?? new CompanionCognitionService({
+    this.companionCognitionService = deps.companionCognitionService ?? new CompanionCognitionKernel({
       memoryPort: createRelationshipProfileCognitionMemoryPort({
         baseDir: this.providerConfigBaseDir(),
       }),
@@ -1014,14 +1022,7 @@ export class ChatRunner {
     const prompt = historyBlock ? `${historyBlock}${basePrompt}` : basePrompt;
     const turnStartedAt = new Date(start);
     const characterPolicy = await this.resolveCharacterPolicyContext(turnStartedAt.toISOString());
-    const relationshipSurface = await this.resolveRelationshipSurfaceContext({
-      eventContext,
-      sessionId: history.getSessionId(),
-      selectedRoute,
-      startedAt: turnStartedAt,
-      characterPolicy,
-    });
-    const turnContext = buildChatTurnContext({
+    const baseTurnContextInput = {
       eventContext,
       startedAt: turnStartedAt,
       sessionId: history.getSessionId(),
@@ -1050,15 +1051,44 @@ export class ChatRunner {
       setupSecretIntake,
       activatedTools: this.activatedTools,
       characterPolicy,
-      relationshipSurface,
-    });
-    await history.recordTurnContext(toTurnContextSnapshot(turnContext));
+      relationshipSurface: null,
+    };
+    const baseTurnContext = buildChatTurnContext(baseTurnContextInput);
+    let shadowCognition: ChatShadowCognition | null = null;
+    let commitmentAttention: ChatCommitmentAttentionResult | null = null;
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
       try {
-        await this.recordShadowCognition(turnContext, history);
         if (this.commitmentCandidateClassifier) {
-          await this.recordShadowCommitmentAttention(turnContext, eventContext);
+          commitmentAttention = await this.recordShadowCommitmentAttention(baseTurnContext, eventContext);
         }
+        shadowCognition = await this.evaluateShadowCognition(baseTurnContext, history, commitmentAttention);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const elapsed_ms = Date.now() - start;
+        const output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
+          `Could not record durable SituationFrame for this turn: ${message}`,
+          assistantBuffer.text,
+          eventContext,
+          {
+            code: "personal_agent_trace_unavailable",
+            stoppedReason: "personal_agent_trace_unavailable",
+          },
+          this.deps.llmClient
+        );
+        this.eventBridge.emitLifecycleEndEvent("error", elapsed_ms, eventContext, false);
+        return this.flushAndReturn({ success: false, output, elapsed_ms });
+      }
+    }
+    const relationshipSurface = shadowCognition
+      ? this.relationshipSurfaceFromCognitionOutput(shadowCognition.output)
+      : null;
+    const turnContext = relationshipSurface
+      ? buildChatTurnContext({ ...baseTurnContextInput, relationshipSurface })
+      : baseTurnContext;
+    await history.recordTurnContext(toTurnContextSnapshot(turnContext));
+    if (shadowCognition) {
+      try {
+        await this.recordShadowCognition(shadowCognition, history);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const elapsed_ms = Date.now() - start;
@@ -1135,18 +1165,16 @@ export class ChatRunner {
     return this.flushAndReturn({ success: false, output, elapsed_ms });
   }
 
-  private async recordShadowCognition(turnContext: ChatTurnContext, history: ChatHistory): Promise<void> {
-    const input = this.buildChatCognitionInput(turnContext);
+  private async evaluateShadowCognition(
+    turnContext: ChatTurnContext,
+    history: ChatHistory,
+    commitmentAttention: ChatCommitmentAttentionResult | null,
+  ): Promise<ChatShadowCognition> {
+    const input = this.buildChatCognitionInput(turnContext, commitmentAttention);
     const createdAt = new Date().toISOString();
     try {
       const output = await this.companionCognitionService.evaluateTurn(input);
-      await this.personalAgentRuntime.recordTrace(buildPersonalAgentTraceFromCognition(input, output));
-      await history.recordCognitionAudit(createCognitionReplayRecord({
-        recordId: `${input.cognition_id}:chat-history-record`,
-        createdAt,
-        input,
-        output,
-      }));
+      return { input, output, createdAt };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await history.recordCognitionAudit(createCognitionReplayRecord({
@@ -1162,10 +1190,34 @@ export class ChatRunner {
     }
   }
 
+  private async recordShadowCognition(shadow: ChatShadowCognition, history: ChatHistory): Promise<void> {
+    try {
+      await this.personalAgentRuntime.recordTrace(buildPersonalAgentTraceFromCognition(shadow.input, shadow.output));
+      await history.recordCognitionAudit(createCognitionReplayRecord({
+        recordId: `${shadow.input.cognition_id}:chat-history-record`,
+        createdAt: shadow.createdAt,
+        input: shadow.input,
+        output: shadow.output,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await history.recordCognitionAudit(createCognitionReplayRecord({
+        recordId: `${shadow.input.cognition_id}:chat-history-record`,
+        createdAt: shadow.createdAt,
+        input: shadow.input,
+        failure: {
+          message,
+          retryable: true,
+        },
+      }));
+      throw err;
+    }
+  }
+
   private async recordShadowCommitmentAttention(
     turnContext: ChatTurnContext,
     eventContext: ChatEventContext,
-  ): Promise<void> {
+  ): Promise<ChatCommitmentAttentionResult | null> {
     try {
       const result = await recordChatTurnCommitmentAttention({
         turnContext,
@@ -1182,6 +1234,7 @@ export class ChatRunner {
           ...this.eventBridge.eventBase(eventContext),
         });
       }
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.eventBridge.emitEvent({
@@ -1192,6 +1245,7 @@ export class ChatRunner {
         transient: true,
         ...this.eventBridge.eventBase(eventContext),
       });
+      return null;
     }
   }
 
@@ -1244,7 +1298,10 @@ export class ChatRunner {
     }));
   }
 
-  private buildChatCognitionInput(turnContext: ChatTurnContext): CompanionCognitionInput {
+  private buildChatCognitionInput(
+    turnContext: ChatTurnContext,
+    commitmentAttention: ChatCommitmentAttentionResult | null = null,
+  ): CompanionCognitionInput {
     const turn = turnContext.modelVisible.turn;
     const session = turnContext.modelVisible.session;
     const routeKind = session.route?.kind === "agent_loop" ? "agent_loop" : "gateway_model_loop";
@@ -1262,6 +1319,15 @@ export class ChatRunner {
         ?? turnContext.hostOnly.runtime.fallbackReplyTarget
         ?? turnContext.modelVisible.runtime.replyTarget,
     );
+    const commitmentAttentionInput = commitmentAttention?.attentionInputIntake?.records[0]?.input
+      ?? commitmentAttention?.attentionInputIntake?.accepted[0]
+      ?? null;
+    const commitmentRef = commitmentAttention?.candidate
+      ? {
+          kind: "commitment",
+          ref: commitmentAttention.candidate.commitment_id,
+        }
+      : undefined;
     return {
       cognition_id: cognitionId,
       caller_path: "chat_user_turn",
@@ -1286,6 +1352,12 @@ export class ChatRunner {
               reply_target_ref: replyTargetRef,
             }
           : {}),
+        relationship_permission_refs: turnContext.modelVisible.characterPolicy
+          ? [{
+              kind: turnContext.modelVisible.characterPolicy.policyRef.kind,
+              ref: turnContext.modelVisible.characterPolicy.policyRef.ref,
+            }]
+          : [],
         turn_started_at: turn.startedAt,
         hidden_prompt_content_materialized: false,
       },
@@ -1308,6 +1380,35 @@ export class ChatRunner {
         quieting_active: false,
         stale_reply_target_refs: [],
       },
+      ...(commitmentAttentionInput || commitmentRef
+        ? {
+            attention_context: {
+              attention_input_ref: {
+                kind: "attention_input",
+                ref: commitmentAttentionInput?.attention_input_id ?? `attention-input:commitment:${turn.turnId}`,
+              },
+              ...(commitmentRef ? { commitment_ref: commitmentRef } : {}),
+              admission_status: commitmentAttention?.attentionInputIntake?.accepted.length
+                ? "held"
+                : commitmentAttention?.attentionInputIntake?.duplicates.length
+                  ? "duplicate"
+                  : "held",
+              initiative_gate_decision_id: commitmentRef?.ref ?? `commitment-shadow:${turn.turnId}`,
+              operation_boundary: "held",
+              max_delivery_kind: "hold",
+              store_ref: {
+                kind: "attention_state_store",
+                ref: "commitment_candidates",
+              },
+              handoff_state: commitmentAttention?.attentionInputIntake
+                ? "candidate_saved"
+                : commitmentRef
+                  ? "control_applied"
+                  : "shadow_recorded",
+              feedback_policy_refs: [],
+            },
+          }
+        : {}),
       goal_context: turnContext.hostOnly.execution.goalId
         ? {
             active_goals: [{
@@ -1354,59 +1455,19 @@ export class ChatRunner {
     }
   }
 
-  private async resolveRelationshipSurfaceContext(input: {
-    eventContext: ChatEventContext;
-    sessionId: string | null;
-    selectedRoute: SelectedChatRoute | null;
-    startedAt: Date;
-    characterPolicy: PublicCharacterPolicyContext | null;
-  }): Promise<PublicRelationshipSurfaceContext | null> {
-    if (input.selectedRoute?.kind !== "agent_loop" && input.selectedRoute?.kind !== "gateway_model_loop") {
+  private relationshipSurfaceFromCognitionOutput(
+    output: CompanionCognitionOutput
+  ): PublicRelationshipSurfaceContext | null {
+    const projection = output.relationship_state;
+    if (
+      projection.included.length === 0
+      && projection.withheld.length === 0
+      && projection.relationship_refs.length === 0
+      && projection.withheld_memory_refs.length === 0
+    ) {
       return null;
     }
-    const routeKind = input.selectedRoute.kind === "agent_loop" ? "agent_loop" : "gateway_model_loop";
-    const inputRef = {
-      ref: `${input.sessionId ?? "session:none"}:${input.eventContext.turnId}:user_input`,
-      source_store: "chat_history" as const,
-      source_event_type: "user_input",
-      schema_version: 1,
-      source_epoch: input.eventContext.turnId,
-      redaction_policy: "metadata_only" as const,
-    };
-    const cognitionId = `relationship-normal-surface:chat:${input.eventContext.turnId}`;
-    try {
-      const memoryPort = createRelationshipProfileCognitionMemoryPort({
-        baseDir: this.providerConfigBaseDir(),
-        now: () => input.startedAt,
-      });
-      const memoryResult = await memoryPort.retrieveMemory(CognitionMemoryRequestSchema.parse({
-        request_id: `${cognitionId}:memory-request`,
-        requested_uses: ["runtime_grounding", "user_facing_reference"],
-        caller_path: "chat_user_turn",
-        query_ref: inputRef,
-        surface_projection_required: true,
-        side_effect_authorization_allowed: false,
-        include_sensitive_content: false,
-      }));
-      if (memoryResult.included.length === 0 && memoryResult.withheld.length === 0) {
-        return null;
-      }
-      const projection = createRelationshipStateProjectionV2({
-        projectionId: cognitionId,
-        turnRef: {
-          kind: routeKind === "gateway_model_loop" ? "gateway_turn" : "chat_turn",
-          ref: input.eventContext.turnId,
-        },
-        memoryResult,
-        callerPath: "chat_user_turn",
-        ...(input.characterPolicy
-          ? { characterPolicyRef: relationshipCharacterPolicyProjectionRef(input.characterPolicy.policyRef) }
-          : {}),
-      });
-      return toPublicRelationshipSurfaceContext(projection);
-    } catch {
-      return null;
-    }
+    return toPublicRelationshipSurfaceContext(projection);
   }
 
   getSessionCwd(): string | null {

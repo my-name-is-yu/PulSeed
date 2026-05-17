@@ -1,4 +1,10 @@
 import {
+  CompanionCognitionKernel,
+  type CompanionCognitionInput,
+  type CompanionCognitionOutput,
+  type CognitionEventRef,
+} from "../cognition/index.js";
+import {
   buildPersonalAgentDecisionTrace,
   stableId,
   type CapabilityRegistryDecisionKind,
@@ -64,6 +70,19 @@ export interface ScheduleWaitResumeDecisionTraceInput {
   auditRefs?: RuntimeGraphRef[];
 }
 
+interface ScheduleKernelDecisionInput {
+  entry: ScheduleTraceEntry;
+  firedAt: string;
+  scheduledFor?: string | null;
+  sourceType: "goal_run" | "job" | "wait_resume";
+  actionKind: string;
+  decision: InterventionDecisionKind;
+  currentRefs?: RuntimeGraphRef[];
+  staleRefs?: RuntimeGraphRef[];
+  auditRefs?: RuntimeGraphRef[];
+  goalId?: string;
+}
+
 export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceInput): Promise<void> {
   if (!input.personalAgentRuntime) return;
   const scheduledFor = input.scheduledFor ?? input.firedAt;
@@ -88,6 +107,20 @@ export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceI
     kind: "goal",
     ref: input.goalId,
   };
+  const cognition = await evaluateScheduleKernelDecision({
+    entry: input.entry,
+    firedAt: input.firedAt,
+    scheduledFor,
+    sourceType: "goal_run",
+    actionKind: input.mode,
+    decision: input.decision,
+    goalId: input.goalId,
+    currentRefs: [
+      scheduleRef,
+      goalRef,
+      { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+    ],
+  });
   await input.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
     callerPath: "scheduled_wake",
     source: {
@@ -115,12 +148,14 @@ export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceI
       { kind: "capability", ref: "durable_loop_goal_run" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
     ],
-    policyRef: { kind: "intervention_policy", ref: "policy:schedule-goal-run-v1" },
+    policyRef: cognitionPolicyRef(cognition, "policy:schedule-goal-run-v1"),
     permissionRequired: false,
+    cognitionSituation: cognition.situation_model,
     currentRefs: [
       scheduleRef,
       goalRef,
       { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
       ...(input.entry.metadata?.strategy_id ? [{ kind: "strategy", ref: input.entry.metadata.strategy_id }] : []),
       ...(input.entry.metadata?.wait_strategy_id ? [{ kind: "strategy", ref: input.entry.metadata.wait_strategy_id }] : []),
       ...(input.reason ? [{ kind: "schedule_run_reason", ref: input.reason }] : []),
@@ -129,6 +164,7 @@ export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceI
       scheduleRef,
       goalRef,
       { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      { kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` },
     ],
   }));
 }
@@ -151,6 +187,19 @@ export async function recordScheduleJobDecision(input: ScheduleJobDecisionTraceI
     kind: "schedule_job_action",
     ref: `schedule-job:${stableId(replayKey)}`,
   };
+  const cognition = await evaluateScheduleKernelDecision({
+    entry: input.entry,
+    firedAt: input.firedAt,
+    scheduledFor,
+    sourceType: "job",
+    actionKind: input.actionKind,
+    decision: input.decision,
+    currentRefs: [
+      scheduleRef,
+      { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      ...(input.currentRefs ?? []),
+    ],
+  });
   await input.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
     callerPath: "scheduled_wake",
     source: {
@@ -177,16 +226,19 @@ export async function recordScheduleJobDecision(input: ScheduleJobDecisionTraceI
       { kind: "capability", ref: `schedule_job:${input.jobKind}:${input.actionKind}` },
       ...(input.capabilityRefs ?? []),
     ],
-    policyRef: { kind: "intervention_policy", ref: "policy:schedule-job-action-v1" },
+    policyRef: cognitionPolicyRef(cognition, "policy:schedule-job-action-v1"),
     permissionRequired: false,
+    cognitionSituation: cognition.situation_model,
     currentRefs: [
       scheduleRef,
       { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
       ...(input.currentRefs ?? []),
     ],
     auditRefs: [
       scheduleRef,
       { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      { kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` },
     ],
   }));
 }
@@ -211,6 +263,24 @@ export async function recordScheduleWaitResumeDecision(input: ScheduleWaitResume
     kind: "signal_context",
     ref: input.signalContextId,
   };
+  const cognition = await evaluateScheduleKernelDecision({
+    entry: input.entry,
+    firedAt: input.firedAt,
+    scheduledFor,
+    sourceType: "wait_resume",
+    actionKind: "wait_resume",
+    decision: input.decision,
+    goalId: input.goalId,
+    currentRefs: [
+      scheduleRef,
+      goalRef,
+      signalRef,
+      { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      ...(input.currentRefs ?? []),
+    ],
+    staleRefs: input.staleRefs,
+    auditRefs: input.auditRefs,
+  });
   await input.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
     callerPath: "scheduled_wake",
     source: {
@@ -236,13 +306,15 @@ export async function recordScheduleWaitResumeDecision(input: ScheduleWaitResume
       { kind: "capability", ref: "schedule_wait_resume_attention" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
     ],
-    policyRef: { kind: "intervention_policy", ref: "policy:schedule-wait-resume-v1" },
+    policyRef: cognitionPolicyRef(cognition, "policy:schedule-wait-resume-v1"),
     permissionRequired: false,
+    cognitionSituation: cognition.situation_model,
     currentRefs: [
       scheduleRef,
       goalRef,
       signalRef,
       { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+      { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
       ...(input.entry.metadata?.strategy_id ? [{ kind: "strategy", ref: input.entry.metadata.strategy_id }] : []),
       ...(input.entry.metadata?.wait_strategy_id ? [{ kind: "strategy", ref: input.entry.metadata.wait_strategy_id }] : []),
       ...(input.currentRefs ?? []),
@@ -252,7 +324,80 @@ export async function recordScheduleWaitResumeDecision(input: ScheduleWaitResume
       scheduleRef,
       goalRef,
       signalRef,
+      { kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` },
       ...(input.auditRefs ?? []),
     ],
   }));
+}
+
+async function evaluateScheduleKernelDecision(input: ScheduleKernelDecisionInput): Promise<CompanionCognitionOutput> {
+  const scheduledFor = input.scheduledFor ?? input.firedAt;
+  const eventRef: CognitionEventRef = {
+    ref: `${input.entry.id}:${input.sourceType}:${input.actionKind}:${scheduledFor}`,
+    source_store: "schedule",
+    source_event_type: "schedule_wake",
+    schema_version: 1,
+    source_epoch: scheduledFor,
+    replay_key: [
+      "schedule_kernel",
+      input.sourceType,
+      input.entry.id,
+      input.actionKind,
+      scheduledFor,
+    ].join(":"),
+    redaction_policy: "metadata_only",
+  };
+  const cognitionId = `cognition:schedule:${stableId(eventRef.replay_key!)}`;
+  const cognitionInput: CompanionCognitionInput = {
+    cognition_id: cognitionId,
+    caller_path: "schedule_wake",
+    event_refs: [eventRef],
+    working_context: {
+      input_ref: eventRef,
+      route_ref: { kind: "schedule_action", ref: input.actionKind },
+      runtime_graph_refs: input.currentRefs ?? [],
+      uncertainty_refs: input.staleRefs ?? [],
+      turn_started_at: input.firedAt,
+      hidden_prompt_content_materialized: false,
+    },
+    runtime_context: {
+      runtime_item_refs: [
+        { kind: "schedule_entry", ref: input.entry.id },
+        ...(input.goalId ? [{ kind: "goal", ref: input.goalId }] : []),
+      ],
+      phase_ref: { kind: "schedule_wake", ref: `${input.entry.id}:${scheduledFor}` },
+    },
+    goal_context: input.goalId
+      ? {
+          active_goals: [{
+            goal_id: input.goalId,
+            goal_ref: { kind: "goal", ref: input.goalId },
+            lifecycle: input.decision === "block" ? "blocked" : "active",
+            priority: "unknown",
+          }],
+          active_intention_refs: [],
+          stale_target_refs: input.staleRefs ?? [],
+        }
+      : undefined,
+    memory_context_request: {
+      request_id: `${cognitionId}:memory-request`,
+      requested_uses: ["attention_prioritization", "runtime_grounding"],
+      caller_path: "schedule_wake",
+      query_ref: eventRef,
+      surface_projection_required: true,
+      side_effect_authorization_allowed: false,
+      include_sensitive_content: false,
+    },
+    surface_target: "internal_audit",
+  };
+  return new CompanionCognitionKernel().evaluateScheduleWake(cognitionInput);
+}
+
+function cognitionPolicyRef(
+  cognition: CompanionCognitionOutput,
+  fallback: string,
+): RuntimeGraphRef {
+  return cognition.response_plan?.plan_id
+    ? { kind: "response_plan", ref: cognition.response_plan.plan_id }
+    : { kind: "intervention_policy", ref: fallback };
 }

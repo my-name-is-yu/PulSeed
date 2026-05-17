@@ -31,6 +31,12 @@ import {
 } from "../knowledge/knowledge-manager-agent-memory.js";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 import {
+  CompanionCognitionKernel,
+  type CompanionCognitionInput,
+  type CompanionCognitionOutput,
+  type CognitionEventRef,
+} from "../../runtime/cognition/index.js";
+import {
   PersonalAgentRuntimeStore,
   buildPersonalAgentDecisionTrace,
   stableId,
@@ -331,6 +337,13 @@ async function recordMemoryCorrectionTrace(
     ...(input.runId ? [{ kind: "run", ref: input.runId }] : []),
     ...(input.taskId ? [{ kind: "task", ref: input.taskId }] : []),
   ];
+  const cognition = await evaluateMemoryTruthKernel({
+    input,
+    correction,
+    memoryRef: refs.memoryRef,
+    replacementRef: refs.replacementRef,
+    scopeRefs,
+  });
   await store.recordTrace(buildPersonalAgentDecisionTrace({
     callerPath: "memory_correction",
     source: {
@@ -358,14 +371,19 @@ async function recordMemoryCorrectionTrace(
     decisionReason: "User memory correction is allowed after the truth-maintenance commit and future decisions must treat the target memory as corrected or invalidated.",
     capabilityDecision: "available",
     capabilityRefs: [{ kind: "memory_correction_operation", ref: input.operation }],
-    policyRef: { kind: "intervention_policy", ref: "policy:memory-correction-v1" },
+    policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
+    cognitionSituation: cognition.situation_model,
     currentRefs: [
       refs.memoryRef,
       ...(refs.replacementRef ? [refs.replacementRef] : []),
       ...scopeRefs,
+      { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
     ],
     staleRefs: [refs.memoryRef],
-    auditRefs: [{ kind: "memory_correction", ref: correction.correction_id }],
+    auditRefs: [
+      { kind: "memory_correction", ref: correction.correction_id },
+      { kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` },
+    ],
     outcomeEvent: {
       type: "memory_updated",
       summary: "Memory correction/invalidation was committed before the memory can influence future decisions.",
@@ -382,6 +400,78 @@ async function recordMemoryCorrectionTrace(
     memoryWithheld: true,
     normalSurfaceProjectionRef: `normal-surface:memory-correction:${correction.correction_id}`,
   }));
+}
+
+async function evaluateMemoryTruthKernel(input: {
+  input: UserMemoryOperationInput;
+  correction: MemoryCorrectionEntry;
+  memoryRef: RuntimeGraphRef;
+  replacementRef: RuntimeGraphRef | null;
+  scopeRefs: RuntimeGraphRef[];
+}): Promise<CompanionCognitionOutput> {
+  const eventRef: CognitionEventRef = {
+    ref: input.correction.correction_id,
+    source_store: "memory_truth",
+    source_event_type: "memory_correction",
+    schema_version: 1,
+    source_epoch: input.input.operation,
+    high_watermark: memoryCorrectionTargetKey(input.correction.target_ref),
+    replay_key: [
+      "memory_truth_kernel",
+      input.correction.correction_id,
+      input.input.operation,
+      memoryCorrectionTargetKey(input.correction.target_ref),
+    ].join(":"),
+    redaction_policy: "metadata_only",
+  };
+  const cognitionId = `cognition:memory-truth:${stableId(eventRef.replay_key!)}`;
+  const memoryTruthRefs = [
+    input.memoryRef,
+    ...(input.replacementRef ? [input.replacementRef] : []),
+  ];
+  const cognitionInput: CompanionCognitionInput = {
+    cognition_id: cognitionId,
+    caller_path: "memory_truth_operation",
+    event_refs: [eventRef],
+    working_context: {
+      input_ref: eventRef,
+      route_ref: { kind: "memory_truth_operation", ref: input.input.operation },
+      memory_truth_refs: memoryTruthRefs,
+      runtime_graph_refs: input.scopeRefs,
+      turn_started_at: input.correction.created_at,
+      hidden_prompt_content_materialized: false,
+    },
+    runtime_context: {
+      runtime_item_refs: [
+        { kind: "memory_correction", ref: input.correction.correction_id },
+        ...memoryTruthRefs,
+      ],
+      phase_ref: { kind: "memory_truth_operation", ref: input.input.operation },
+    },
+    goal_context: input.input.goalId
+      ? {
+          active_goals: [{
+            goal_id: input.input.goalId,
+            goal_ref: { kind: "goal", ref: input.input.goalId },
+            lifecycle: "active",
+            priority: "unknown",
+          }],
+          active_intention_refs: [],
+          stale_target_refs: memoryTruthRefs,
+        }
+      : undefined,
+    memory_context_request: {
+      request_id: `${cognitionId}:memory-request`,
+      requested_uses: ["behavioral_inhibition", "user_facing_reference"],
+      caller_path: "memory_truth_operation",
+      query_ref: eventRef,
+      surface_projection_required: true,
+      side_effect_authorization_allowed: false,
+      include_sensitive_content: false,
+    },
+    surface_target: "internal_audit",
+  };
+  return new CompanionCognitionKernel().evaluateMemoryTruthOperation(cognitionInput);
 }
 
 async function recordMemoryCorrectionTraceBestEffort(
