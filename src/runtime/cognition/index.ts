@@ -51,6 +51,7 @@ export {
   IntentionSelectionSchema,
   MemoryWritebackProposalSchema,
   MemoryUseAuditSchema,
+  ModelContextPolicySchema,
   PrivacyProfileSchema,
   ProactiveDeliveryKindSchema,
   ReflectionHintSchema,
@@ -78,6 +79,9 @@ export {
   createRelationshipProfileCognitionMemoryPort,
   cognitionMemoryResultFromCoreProjection,
 } from "./memory-context.js";
+export {
+  renderCompanionCognitionGatewaySystemPrompt,
+} from "./model-context-policy-projection.js";
 export {
   createRelationshipStateProjectionV2,
   relationshipCharacterPolicyProjectionRef,
@@ -154,6 +158,7 @@ export type {
   IntentionSelection,
   MemoryWritebackProposal,
   MemoryUseAudit,
+  ModelContextPolicy,
   PrivacyProfile,
   ProactiveDeliveryKind,
   ReflectionHint,

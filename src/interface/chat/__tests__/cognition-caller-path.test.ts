@@ -313,6 +313,9 @@ describe("chat caller path cognition integration", () => {
       session_context: {
         route_kind: "gateway_model_loop",
       },
+      working_context: {
+        current_language_hint: "ja",
+      },
       memory_context_request: {
         caller_path: "chat_user_turn",
         side_effect_authorization_allowed: false,
@@ -322,6 +325,21 @@ describe("chat caller path cognition integration", () => {
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords).toHaveLength(1);
+    expect(cognitionRecords[0]?.payload).toMatchObject({
+      stable_output: {
+        model_context_policy: {
+          surface: "gateway_chat",
+          local_fact_policy: "tool_required_for_current_state",
+          tool_use_policy: "use_available_tools_for_inspection_or_state",
+          runtime_control_policy: "provided_authorization_tools_only",
+          language_policy: {
+            mode: "same_as_current_input",
+            hint: "ja",
+          },
+          hidden_policy_state_visible_to_normal_user: false,
+        },
+      },
+    });
   });
 
   it("fails closed before agent execution when durable personal-agent trace persistence fails", async () => {

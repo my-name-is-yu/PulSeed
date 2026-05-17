@@ -9,6 +9,7 @@ import {
   CognitionCorrelationRefsSchema,
   CommitmentAttentionHandoffSchema,
   MemoryUseAuditSchema,
+  ModelContextPolicySchema,
   ResponsePlanSchema,
   IntentionSelectionSchema,
   deliveryKindRank,
@@ -21,6 +22,7 @@ import {
   type CompanionCognitionOutput,
   type IntentionSelection,
   type MemoryUseAudit,
+  type ModelContextPolicy,
   type ParsedCompanionCognitionInput,
   type ResponsePlan,
 } from "./contracts.js";
@@ -127,6 +129,7 @@ export class CompanionCognitionKernel {
       overreachRisk: input.caller_path === "resident_proactive_check" ? "medium" : "unknown",
     });
     const responsePlan = responsePlanFor(input);
+    const modelContextPolicy = modelContextPolicyFor(input);
     const selectedIntention = intentionFor(input);
     const candidateAction = candidateActionFor(input, responsePlan, selectedIntention);
     const commitmentHandoff = commitmentHandoffFor(input);
@@ -150,6 +153,7 @@ export class CompanionCognitionKernel {
       candidate_action: candidateAction,
       commitment_handoff: commitmentHandoff,
       response_plan: responsePlan,
+      ...(modelContextPolicy ? { model_context_policy: modelContextPolicy } : {}),
       memory_use_audit: memoryUseAudit,
       authority_handoff: authorityHandoff,
       tool_candidates: input.proposed_tool_candidates,
@@ -282,6 +286,31 @@ function responsePlanFor(input: ParsedCompanionCognitionInput): ResponsePlan {
     ],
     hidden_policy_state_visible_to_normal_user: false,
   });
+}
+
+function modelContextPolicyFor(input: ParsedCompanionCognitionInput): ModelContextPolicy | undefined {
+  if (input.caller_path !== "chat_user_turn" || input.session_context?.route_kind !== "gateway_model_loop") {
+    return undefined;
+  }
+  return ModelContextPolicySchema.parse({
+    policy_id: `${input.cognition_id}:model-context-policy`,
+    surface: "gateway_chat",
+    reply_shape: "codex_chat_shape",
+    local_fact_policy: "tool_required_for_current_state",
+    tool_use_policy: "use_available_tools_for_inspection_or_state",
+    runtime_control_policy: "provided_authorization_tools_only",
+    internal_label_visibility: "suppress_route_and_lifecycle_labels",
+    language_policy: {
+      mode: "same_as_current_input",
+      hint: languageHintFor(input.working_context.current_language_hint),
+    },
+    hidden_policy_state_visible_to_normal_user: false,
+  });
+}
+
+function languageHintFor(value: string | undefined): ModelContextPolicy["language_policy"]["hint"] {
+  if (value === "ja" || value === "latin" || value === "other") return value;
+  return "unknown";
 }
 
 function characterPolicyRefFor(

@@ -121,6 +121,7 @@ import {
   CompanionCognitionKernel,
   createCognitionReplayRecord,
   createRelationshipProfileCognitionMemoryPort,
+  renderCompanionCognitionGatewaySystemPrompt,
   type CompanionCognitionService,
   type CompanionCognitionInput,
   type CompanionCognitionOutput,
@@ -154,19 +155,6 @@ interface ChatShadowCognition {
   input: CompanionCognitionInput;
   output: CompanionCognitionOutput;
   createdAt: string;
-}
-
-function buildGatewayModelLoopSystemPrompt(basePrompt: string, languageHint: TurnLanguageHint): string {
-  return [
-    basePrompt,
-    "You are Seedy on a gateway chat surface. Match Codex's chat shape: answer ordinary casual messages directly, and choose tools only when current state, setup, run-spec, implementation handoff, or inspection work is actually needed.",
-    "Do not invent current workspace, runtime, command, process, repository, file, or local-machine facts. If you need those facts, call an available tool first.",
-    "Default gateway tool contract: when the user explicitly asks to inspect current repository files, workspace state, PulSeed runtime/gateway/daemon/session state, setup state, or implementation status, use the relevant available tool before answering.",
-    "Do not answer tool-available inspection requests by telling the user to run local commands or manual checks themselves. If the relevant tool is unavailable, denied, or insufficient, say that plainly and keep the answer bounded to what was actually checked.",
-    "When using tools, write brief model-authored commentary only when it helps the user understand the real next step. Do not describe route selection, lifecycle phases, or internal PulSeed planning labels.",
-    "Keep PulSeed runtime-control actions behind the provided authorization and approval tools. Do not suggest shell commands as a workaround for unauthorized runtime control.",
-    sameLanguageResponseInstruction(languageHint),
-  ].filter((section) => section.trim().length > 0).join("\n\n");
 }
 
 function normalizePinnedReplyTarget(replyTarget: RuntimeControlReplyTarget | null): RuntimeReplyTarget | null {
@@ -209,6 +197,13 @@ function cognitionReplyTargetRef(
       replyTarget.deliveryMode ?? "reply",
     ].join(":"),
   };
+}
+
+function cognitionLanguageHint(hint: TurnLanguageHint): string {
+  if (hint.language === "ja") return "ja";
+  if (hint.script === "latin") return "latin";
+  if (hint.script === "other") return "other";
+  return "unknown";
 }
 
 const standaloneIngressRouter = createIngressRouter();
@@ -973,9 +968,7 @@ export class ChatRunner {
       : undefined;
 
     let systemPrompt = this.cachedStaticSystemPrompt ?? "";
-    if (!resumeOnly && usesGatewayModelLoop) {
-      systemPrompt = buildGatewayModelLoopSystemPrompt(this.cachedStaticSystemPrompt ?? "", this.turnLanguageHint);
-    } else if (!resumeOnly) {
+    if (!resumeOnly && !usesGatewayModelLoop) {
       try {
         this.eventBridge.emitActivity("lifecycle", "Preparing context...", eventContext, "lifecycle:context");
         if (usesNativeAgentLoop) {
@@ -1008,7 +1001,7 @@ export class ChatRunner {
         ? "Workspace and tool context are ready."
         : "Workspace grounding is ready.", eventContext, "context");
     }
-    const agentLoopSystemPrompt = [
+    let agentLoopSystemPrompt = [
       systemPrompt,
       sameLanguageResponseInstruction(this.turnLanguageHint),
       compactionSummary ? `## Compacted Chat Summary\n${compactionSummary}` : "",
@@ -1082,8 +1075,22 @@ export class ChatRunner {
     const relationshipSurface = shadowCognition
       ? this.relationshipSurfaceFromCognitionOutput(shadowCognition.output)
       : null;
-    const turnContext = relationshipSurface
-      ? buildChatTurnContext({ ...baseTurnContextInput, relationshipSurface })
+    if (!resumeOnly && usesGatewayModelLoop && shadowCognition) {
+      systemPrompt = renderCompanionCognitionGatewaySystemPrompt(
+        this.cachedStaticSystemPrompt ?? "",
+        shadowCognition.output,
+      );
+      agentLoopSystemPrompt = [
+        systemPrompt,
+        sameLanguageResponseInstruction(this.turnLanguageHint),
+        compactionSummary ? `## Compacted Chat Summary\n${compactionSummary}` : "",
+      ]
+        .filter((section) => section && section.trim().length > 0)
+        .join("\n\n")
+        .trim();
+    }
+    const turnContext = relationshipSurface || systemPrompt !== baseTurnContext.modelVisible.instructions.systemPrompt
+      ? buildChatTurnContext({ ...baseTurnContextInput, systemPrompt, agentLoopSystemPrompt, relationshipSurface })
       : baseTurnContext;
     await history.recordTurnContext(toTurnContextSnapshot(turnContext));
     if (shadowCognition) {
@@ -1359,6 +1366,7 @@ export class ChatRunner {
             }]
           : [],
         turn_started_at: turn.startedAt,
+        current_language_hint: cognitionLanguageHint(this.turnLanguageHint),
         hidden_prompt_content_materialized: false,
       },
       session_context: {

@@ -276,9 +276,16 @@ describe("user memory correction operations", () => {
         };
         policy_refs?: Array<{ kind: string; ref: string }>;
         current_refs?: Array<{ kind: string; ref: string }>;
+        withheld_memory_refs?: Array<{ kind: string; ref: string }>;
       };
       intervention_decisions?: Array<{ policy_ref?: { kind: string; ref: string } }>;
       initiative_events?: Array<{ event_type: string; audit_refs?: Array<{ kind: string; ref: string }> }>;
+      memory_audits?: Array<{
+        memory_ref: { kind: string; ref: string };
+        action: string;
+        invalidated?: boolean;
+        withheld_reason?: string;
+      }>;
     }> = [];
     vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function (_trace) {
       traces.push(_trace);
@@ -306,6 +313,7 @@ describe("user memory correction operations", () => {
       situation_frame: {
         cognition_situation: {
           caller_path: "memory_truth_operation",
+          missing_memory_refs: [{ kind: "memory", ref: "evidence-1" }],
           stale_target_refs: [{ kind: "runtime_evidence", ref: "evidence-1" }],
           current_target_refs: expect.arrayContaining([
             { kind: "runtime_evidence", ref: "evidence-1" },
@@ -316,6 +324,7 @@ describe("user memory correction operations", () => {
         current_refs: expect.arrayContaining([
           expect.objectContaining({ kind: "cognition_response_plan" }),
         ]),
+        withheld_memory_refs: [{ kind: "runtime_evidence", ref: "evidence-1" }],
       },
       intervention_decisions: [expect.objectContaining({
         policy_ref: expect.objectContaining({ kind: "response_plan" }),
@@ -329,6 +338,14 @@ describe("user memory correction operations", () => {
         }),
       ]),
     });
+    expect(traces[0]?.memory_audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        memory_ref: { kind: "runtime_evidence", ref: "evidence-1" },
+        action: "invalidate",
+        invalidated: true,
+        withheld_reason: "deleted",
+      }),
+    ]));
   });
 
   it("replays the same runtime memory correction input without duplicate ledger effects", async () => {

@@ -27,6 +27,7 @@
 - [x] Guardrail.
 - [x] Tests and docs.
 - [x] Local verification.
+- [x] Sub-agent review round 1 findings fixed: gateway model prompt policy projection, memory-truth withheld evidence, and broader boundary guard.
 - [ ] Sub-agent review.
 - [ ] GitHub Codex review.
 
@@ -41,7 +42,7 @@
 - `npm run test:product-gauntlet`
 - `npm run test:smoke`
 - `npm run test:integration`
-- `npm run test:changed`
+- `npm run test:changed` (passed with temporary `PULSEED_HOME` after clearing generated Control DB state under fixed test temp directories)
 - `npm run build`
 - `npm run check:public-contracts`
 - `git diff --check`

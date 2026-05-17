@@ -692,6 +692,22 @@ export const ResponsePlanSchema = z.object({
 }).strict();
 export type ResponsePlan = z.infer<typeof ResponsePlanSchema>;
 
+export const ModelContextPolicySchema = z.object({
+  policy_id: z.string().min(1),
+  surface: z.enum(["gateway_chat"]),
+  reply_shape: z.enum(["codex_chat_shape"]),
+  local_fact_policy: z.enum(["tool_required_for_current_state"]),
+  tool_use_policy: z.enum(["use_available_tools_for_inspection_or_state"]),
+  runtime_control_policy: z.enum(["provided_authorization_tools_only"]),
+  internal_label_visibility: z.enum(["suppress_route_and_lifecycle_labels"]),
+  language_policy: z.object({
+    mode: z.literal("same_as_current_input"),
+    hint: z.enum(["ja", "latin", "other", "unknown"]).default("unknown"),
+  }).strict(),
+  hidden_policy_state_visible_to_normal_user: z.literal(false).default(false),
+}).strict();
+export type ModelContextPolicy = z.infer<typeof ModelContextPolicySchema>;
+
 export const MemoryWritebackProposalSchema = z.object({
   proposal_id: z.string().min(1),
   proposal_kind: z.enum([
@@ -869,6 +885,7 @@ export const CompanionCognitionOutputSchema = z.object({
   candidate_action: CandidateActionSchema.optional(),
   commitment_handoff: CommitmentAttentionHandoffSchema.optional(),
   response_plan: ResponsePlanSchema,
+  model_context_policy: ModelContextPolicySchema.optional(),
   memory_use_audit: MemoryUseAuditSchema.optional(),
   authority_handoff: AuthorityHandoffSchema.optional(),
   tool_candidates: z.array(ToolCandidateSchema).default([]),
@@ -918,6 +935,7 @@ export const CognitionReplayStableOutputSchema = z.object({
   candidate_action: CandidateActionSchema.optional(),
   commitment_handoff: CommitmentAttentionHandoffSchema.optional(),
   response_plan: ResponsePlanSchema,
+  model_context_policy: ModelContextPolicySchema.optional(),
   memory_use_audit: MemoryUseAuditSchema.optional(),
   authority_handoff: AuthorityHandoffSchema.optional(),
   tool_candidates: z.array(ToolCandidateSchema).default([]),

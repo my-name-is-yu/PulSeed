@@ -35,6 +35,7 @@ import {
   type CompanionCognitionInput,
   type CompanionCognitionOutput,
   type CognitionEventRef,
+  type CognitionMemoryResult,
 } from "../../runtime/cognition/index.js";
 import {
   PersonalAgentRuntimeStore,
@@ -344,6 +345,10 @@ async function recordMemoryCorrectionTrace(
     replacementRef: refs.replacementRef,
     scopeRefs,
   });
+  const cognitionWithheldMemoryRefs = cognition.memory_use_audit?.withheld_memory_refs.length
+    ? [refs.memoryRef]
+    : [];
+  const cognitionAuditRefs = cognition.audit_refs.map((ref) => ({ kind: "cognition_audit", ref }));
   await store.recordTrace(buildPersonalAgentDecisionTrace({
     callerPath: "memory_correction",
     source: {
@@ -373,6 +378,19 @@ async function recordMemoryCorrectionTrace(
     capabilityRefs: [{ kind: "memory_correction_operation", ref: input.operation }],
     policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
     cognitionSituation: cognition.situation_model,
+    withheldMemoryRefs: cognitionWithheldMemoryRefs,
+    memoryAuditInputs: cognitionWithheldMemoryRefs.map((memoryRef) => ({
+      memoryRef,
+      action: "invalidate",
+      allowedUses: [],
+      forbiddenUses: cognition.memory_use_audit?.requested_uses ?? [],
+      correctionState: correction.correction_kind === "corrected" ? "corrected" : "retracted",
+      invalidated: true,
+      lifecycle: memoryLifecycleForCorrection(correction.correction_kind),
+      withheldReason: memoryWithheldReasonFor(correction.correction_kind),
+      provenanceRefs: cognitionAuditRefs,
+      reason: "Memory truth maintenance withheld this corrected or invalidated memory before future companion behavior can use it.",
+    })),
     currentRefs: [
       refs.memoryRef,
       ...(refs.replacementRef ? [refs.replacementRef] : []),
@@ -382,7 +400,7 @@ async function recordMemoryCorrectionTrace(
     staleRefs: [refs.memoryRef],
     auditRefs: [
       { kind: "memory_correction", ref: correction.correction_id },
-      { kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` },
+      ...cognitionAuditRefs,
     ],
     outcomeEvent: {
       type: "memory_updated",
@@ -425,6 +443,7 @@ async function evaluateMemoryTruthKernel(input: {
     redaction_policy: "metadata_only",
   };
   const cognitionId = `cognition:memory-truth:${stableId(eventRef.replay_key!)}`;
+  const memoryRequestId = `${cognitionId}:memory-request`;
   const memoryTruthRefs = [
     input.memoryRef,
     ...(input.replacementRef ? [input.replacementRef] : []),
@@ -461,7 +480,7 @@ async function evaluateMemoryTruthKernel(input: {
         }
       : undefined,
     memory_context_request: {
-      request_id: `${cognitionId}:memory-request`,
+      request_id: memoryRequestId,
       requested_uses: ["behavioral_inhibition", "user_facing_reference"],
       caller_path: "memory_truth_operation",
       query_ref: eventRef,
@@ -469,9 +488,86 @@ async function evaluateMemoryTruthKernel(input: {
       side_effect_authorization_allowed: false,
       include_sensitive_content: false,
     },
+    memory_result: createMemoryTruthOperationMemoryResult({
+      requestId: memoryRequestId,
+      eventRef,
+      correction: input.correction,
+      targetRef: input.memoryRef,
+    }),
     surface_target: "internal_audit",
   };
   return new CompanionCognitionKernel().evaluateMemoryTruthOperation(cognitionInput);
+}
+
+function createMemoryTruthOperationMemoryResult(input: {
+  requestId: string;
+  eventRef: CognitionEventRef;
+  correction: MemoryCorrectionEntry;
+  targetRef: RuntimeGraphRef;
+}): CognitionMemoryResult {
+  return {
+    request_id: input.requestId,
+    withheld: [{
+      memory_ref: memoryTruthEventRefFor(input.targetRef, input.eventRef, "target"),
+      source_kind: memorySourceKindFor(input.targetRef),
+      allowed_uses: [],
+      forbidden_uses: ["behavioral_inhibition", "user_facing_reference"],
+      sensitivity: "private",
+      lifecycle: memoryLifecycleForCorrection(input.correction.correction_kind),
+      correction_state: memoryCorrectionStateFor(input.correction.correction_kind),
+      confidence: 1,
+      withheld_reason: memoryWithheldReasonFor(input.correction.correction_kind),
+    }],
+    included: [],
+    audit_refs: [input.eventRef],
+    model_visible_without_cloud_gate: false,
+  };
+}
+
+function memoryTruthEventRefFor(
+  ref: RuntimeGraphRef,
+  eventRef: CognitionEventRef,
+  role: "target",
+): CognitionEventRef {
+  return {
+    ref: ref.ref,
+    source_store: "memory_truth",
+    source_event_type: `${role}_${ref.kind}`,
+    schema_version: 1,
+    source_epoch: eventRef.source_epoch,
+    high_watermark: eventRef.high_watermark,
+    replay_key: `${eventRef.replay_key}:${role}:${ref.kind}:${ref.ref}`,
+    redaction_policy: "metadata_only",
+  };
+}
+
+function memorySourceKindFor(ref: RuntimeGraphRef): CognitionMemoryResult["withheld"][number]["source_kind"] {
+  if (ref.kind === "agent_memory" || ref.kind === "memory") return "semantic";
+  if (ref.kind === "runtime_evidence" || ref.kind === "dream_checkpoint") return "episodic";
+  return "working";
+}
+
+function memoryLifecycleForCorrection(
+  kind: MemoryCorrectionEntry["correction_kind"],
+): CognitionMemoryResult["withheld"][number]["lifecycle"] {
+  if (kind === "forgotten") return "deleted";
+  if (kind === "retracted") return "retracted";
+  return "superseded";
+}
+
+function memoryCorrectionStateFor(
+  kind: MemoryCorrectionEntry["correction_kind"],
+): CognitionMemoryResult["withheld"][number]["correction_state"] {
+  if (kind === "corrected") return "corrected";
+  return "retracted";
+}
+
+function memoryWithheldReasonFor(
+  kind: MemoryCorrectionEntry["correction_kind"],
+): CognitionMemoryResult["withheld"][number]["withheld_reason"] {
+  if (kind === "forgotten") return "deleted";
+  if (kind === "corrected") return "corrected";
+  return "quarantined";
 }
 
 async function recordMemoryCorrectionTraceBestEffort(

@@ -55,6 +55,7 @@ export function createCognitionReplayRecord(input: {
             candidate_action: input.output.candidate_action,
             commitment_handoff: input.output.commitment_handoff,
             response_plan: input.output.response_plan,
+            model_context_policy: input.output.model_context_policy,
             memory_use_audit: input.output.memory_use_audit,
             authority_handoff: input.output.authority_handoff,
             tool_candidates: input.output.tool_candidates,

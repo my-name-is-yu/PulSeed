@@ -8,6 +8,7 @@ const srcRoot = join(root, "src");
 
 const allowed = new Set([
   "src/runtime/cognition/companion-cognition-service.ts",
+  "src/runtime/cognition/model-context-policy-projection.ts",
   "src/runtime/cognition/relationship-state-projection.ts",
 ]);
 
@@ -23,6 +24,18 @@ const checks = [
   {
     pattern: /\bcreateRelationshipStateProjectionV2\s*\(/,
     message: "relationship projection assembly must stay inside the cognition kernel boundary",
+  },
+  {
+    pattern: /\bbuildGatewayModelLoopSystemPrompt\b/,
+    message: "gateway behavioral prompt policy must be rendered from typed CompanionCognitionKernel output",
+  },
+  {
+    pattern: /Default gateway tool contract|Do not invent current workspace|Keep PulSeed runtime-control actions/,
+    message: "gateway behavioral prompt text must stay inside the cognition model-context projection boundary",
+  },
+  {
+    pattern: /memory[- ]use policy|behavioral prompt policy|action policy shortcut/i,
+    message: "direct companion memory/action/prompt policy assembly must stay behind the cognition kernel boundary",
   },
 ];
 
