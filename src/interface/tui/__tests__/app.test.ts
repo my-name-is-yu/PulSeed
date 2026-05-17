@@ -2087,6 +2087,81 @@ describe("daemon-mode chat routing", () => {
     screen.unmount();
   });
 
+  it("reports daemon-mode /stop failures instead of showing a successful stop signal", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    vi.mocked(daemonClient.stopGoal).mockRejectedValueOnce(new Error("daemon offline"));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    await act(async () => {
+      daemonClient.handlers.get("loop_update")?.({
+        goalId: "goal-alpha",
+        running: true,
+        iteration: 1,
+        status: "running",
+        trustScore: 0,
+      });
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("/stop");
+    await flush();
+
+    expect(daemonClient.stopGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop failed: daemon offline"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop signal sent to daemon."))).toBe(false);
+
+    screen.unmount();
+  });
+
+  it("reports daemon-mode /stop without an active goal as a failed stop", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("/stop");
+    await flush();
+
+    expect(daemonClient.stopGoal).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop failed: no active daemon goal"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop signal sent to daemon."))).toBe(false);
+
+    screen.unmount();
+  });
+
   it("preserves daemon-mode /start exact goal IDs while routing slash commands case-insensitively", async () => {
     const daemonClient = createDaemonClientMock();
     const stateManager = createStateManagerMock();

@@ -81,11 +81,11 @@ import { logTuiDebug } from "./debug-log.js";
 const MAX_MESSAGES = 200;
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
 
-type StartLoopResult =
+type LoopCommandResult =
   | { ok: true }
   | { ok: false; error: string };
 
-function formatStartLoopError(error: unknown): string {
+function formatLoopCommandError(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message.trim();
   }
@@ -313,7 +313,7 @@ export function App({
 
   const loopState = isDaemonMode ? daemonLoopState : (standaloneHook?.loopState ?? IDLE_LOOP_STATE);
   const startLoop = isDaemonMode
-    ? async (goalId: string): Promise<StartLoopResult> => {
+    ? async (goalId: string): Promise<LoopCommandResult> => {
         const replayKey = ["tui_start_goal", "daemon_app", goalId].join(":");
         try {
           await recordExplicitCommandDecision({
@@ -341,29 +341,46 @@ export function App({
           await daemonClient!.startGoal(goalId);
           return { ok: true };
         } catch (error) {
-          return { ok: false, error: formatStartLoopError(error) };
+          return { ok: false, error: formatLoopCommandError(error) };
         }
       }
-    : async (goalId: string): Promise<StartLoopResult> => {
+    : async (goalId: string): Promise<LoopCommandResult> => {
         try {
           standaloneHook?.start(goalId);
           return { ok: true };
         } catch (error) {
-          return { ok: false, error: formatStartLoopError(error) };
+          return { ok: false, error: formatLoopCommandError(error) };
         }
       };
   const stopLoop = isDaemonMode
-    ? async () => {
-        if (daemonLoopState.goalId) {
+    ? async (): Promise<LoopCommandResult> => {
+        if (!daemonLoopState.goalId) {
+          return { ok: false, error: "no active daemon goal" };
+        }
+        try {
           await recordTuiStopDecision({
             baseDir: stateManager.getBaseDir(),
             goalId: daemonLoopState.goalId,
             mode: "daemon_app",
           });
-          await daemonClient!.stopGoal(daemonLoopState.goalId).catch(() => {});
+        } catch {
+          // The audit trace must not prevent an explicit operator stop command.
+        }
+        try {
+          await daemonClient!.stopGoal(daemonLoopState.goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
         }
       }
-    : (standaloneHook?.stop ?? (async () => {}));
+    : async (): Promise<LoopCommandResult> => {
+        try {
+          await (standaloneHook?.stop ?? (async () => {}))();
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
+        }
+      };
 
   // ── Daemon SSE event listeners ──
   useEffect(() => {
@@ -861,7 +878,16 @@ export function App({
             }
           }
           if (result.stopLoop) {
-            await stopLoop();
+            const stopResult = await stopLoop();
+            if (!stopResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(),
+                role: "pulseed" as const,
+                text: `Stop failed: ${stopResult.error}`,
+                timestamp: new Date(),
+                messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           }
         } else if (action.kind === "daemon_slash") {
           // Daemon mode: handle basic slash commands locally
@@ -898,11 +924,19 @@ export function App({
               }].slice(-MAX_MESSAGES));
             }
           } else if (trimmed === "/stop") {
-            await stopLoop();
-            setMessages((prev) => [...prev, {
-              id: randomUUID(), role: "pulseed" as const,
-              text: "Stop signal sent to daemon.", timestamp: new Date(), messageType: "info" as const,
-            }].slice(-MAX_MESSAGES));
+            const stopResult = await stopLoop();
+            if (stopResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(), role: "pulseed" as const,
+                text: "Stop signal sent to daemon.", timestamp: new Date(), messageType: "info" as const,
+              }].slice(-MAX_MESSAGES));
+            } else {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(), role: "pulseed" as const,
+                text: `Stop failed: ${stopResult.error}`,
+                timestamp: new Date(), messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           } else {
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,
