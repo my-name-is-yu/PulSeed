@@ -296,6 +296,37 @@ describe("ExperienceLearningStateStore", () => {
     ]));
   });
 
+  it("does not inject run-scoped priors into consumers without the matching run id", async () => {
+    await store.appendLifecycleEvent(makePriorGeneratedPayload({
+      runId: "run-specific",
+      idempotencyKey: "experience-learning:test:run-specific-prior",
+    }));
+
+    await expect(store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-without-run",
+      consumerDecisionRef: "task-generation:goal-learning:2:no-run",
+      now: "2026-05-17T00:05:00.000Z",
+    })).resolves.toBeNull();
+
+    const matched = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-specific",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-specific" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-with-run",
+      consumerDecisionRef: "task-generation:goal-learning:2:with-run",
+      now: "2026-05-17T00:06:00.000Z",
+    });
+
+    expect(matched?.prior.runId).toBe("run-specific");
+    expect(matched?.record.stage).toBe("reserved");
+  });
+
   it("keeps goal-scoped metric snapshots from counting other goals' prior consumption", async () => {
     const otherGoalPrior = makePriorGeneratedPayload({
       goalId: "goal-other",

@@ -552,7 +552,7 @@ export class ExperienceLearningStateStore {
       const resolver = new LearningPriorResolver();
       for (const row of rows) {
         const prior = LearningPriorSnapshotSchema.parse(JSON.parse(row.prior_json) as unknown);
-        if (parsedInput.runId && prior.runId && parsedInput.runId !== prior.runId) continue;
+        if (prior.runId && parsedInput.runId !== prior.runId) continue;
         const suggestion = prior.suggestions.find((item) => item.consumerPhase === parsedInput.consumerPhase) ?? null;
         if (!suggestion) continue;
         const resolved = resolver.resolveForPhase({

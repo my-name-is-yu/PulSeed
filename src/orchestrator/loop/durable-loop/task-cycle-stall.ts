@@ -28,6 +28,9 @@ export interface StallActionHints {
   recommendedAction?: "continue" | "refine" | "pivot";
   learningProjection?: LearningPriorPhaseProjection & { phase: "stall_detection" };
   learningPriorConsumptionRef?: string;
+  focusEvidenceRefs?: string[];
+  blockedLoopPatternRefs?: string[];
+  experimentPlanIds?: string[];
 }
 
 export interface StallDetectionExecutionResult {
@@ -195,9 +198,14 @@ async function applyStallAction(
   }
   const analysis = ctx.deps.stallDetector.analyzeStallCause?.(dimHistory);
   result.stallAnalysis = analysis;
+  const projectionRecommendedAction = (stallActionHints?.blockedLoopPatternRefs?.length ?? 0) > 0
+    ? "pivot"
+    : (stallActionHints?.focusEvidenceRefs?.length ?? 0) > 0
+      ? "refine"
+      : undefined;
   const selectedAction = analysis?.recommended_action === "escalate"
     ? "escalate"
-    : stallActionHints?.recommendedAction ?? analysis?.recommended_action ?? "pivot";
+    : stallActionHints?.recommendedAction ?? projectionRecommendedAction ?? analysis?.recommended_action ?? "pivot";
 
   if (selectedAction === "continue") {
     ctx.logger?.info(`CoreLoop: ${logPrefix}stall CONTINUE — replanning evidence prefers continuing current strategy`, {
@@ -302,7 +310,7 @@ async function applyStallAction(
         timestamp: new Date().toISOString(),
         what_worked: [],
         what_failed: [],
-        suggested_next: [],
+        suggested_next: stallActionHints?.focusEvidenceRefs ?? [],
       });
     } catch {
       // non-fatal

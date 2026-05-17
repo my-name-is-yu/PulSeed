@@ -568,6 +568,74 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("does not close experiment records when the required plan cannot be matched to the task", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `task-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:task-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `task evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-task-experiment" },
+        record: { id: "consumption-task-experiment", stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: {
+          phase: "task_generation",
+          projectionKind: "task_generation_bias",
+          consumptionRecordId: "consumption-task-experiment",
+          preferredTargetDimension: "dim1",
+          taskBiasRefs: [],
+          avoidTaskPatternRefs: [],
+          requiredExperimentPlanIds: ["missing-experiment-plan"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
+      listExperimentPlans: vi.fn().mockResolvedValue([]),
+      appendLifecycleEvent,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-task-experiment",
+      generatedDecisionRefs: ["task:task-1"],
+    });
+    expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "experiment_record_closed",
+    }));
+  });
+
   it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
@@ -838,6 +906,50 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
       consumptionId: "consumption-stall-detection",
       reasonCodes: ["consumer_execution_failed"],
+    });
+  });
+
+  it("suppresses stall-detection priors as no-op when no stall decision consumes them", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const stallDetectionProjection = {
+      phase: "stall_detection",
+      projectionKind: "stall_focus_bias",
+      consumptionRecordId: "consumption-stall-noop",
+      focusEvidenceRefs: ["evidence-stall-detection"],
+      blockedLoopPatternRefs: [],
+      experimentPlanIds: [],
+      generalizationBodies: [],
+      suppressedSuggestionIds: [],
+    } as const;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "stall_detection") return null;
+      return {
+        prior: { id: "prior-stall-noop" },
+        record: { id: stallDetectionProjection.consumptionRecordId, stage: "reserved" },
+        runtimeEventId: "runtime-event:stall-noop",
+        projection: stallDetectionProjection,
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-noop",
+      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+    });
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-noop",
+      reasonCodes: ["consumer_no_op"],
     });
   });
 

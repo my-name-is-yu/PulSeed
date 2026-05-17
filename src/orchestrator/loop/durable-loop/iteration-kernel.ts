@@ -298,7 +298,7 @@ export class CoreIterationKernel {
     };
     const markLearningProjectionSuppressed = async (
       projection: LearningPriorPhaseProjection | null | undefined,
-      reasonCodes: readonly ["consumer_execution_failed"],
+      reasonCodes: readonly ["consumer_execution_failed" | "consumer_no_op"],
     ): Promise<void> => {
       if (!projection || !this.deps.deps.experienceLearningStore) return;
       try {
@@ -712,6 +712,9 @@ export class CoreIterationKernel {
           ...baseStallActionHints,
           learningProjection: stallDetectionProjection,
           learningPriorConsumptionRef: stallDetectionProjection.consumptionRecordId,
+          focusEvidenceRefs: stallDetectionProjection.focusEvidenceRefs,
+          blockedLoopPatternRefs: stallDetectionProjection.blockedLoopPatternRefs,
+          experimentPlanIds: stallDetectionProjection.experimentPlanIds,
         }
       : baseStallActionHints;
     const stallDetection = await runPhase("stall-detection", () =>
@@ -723,12 +726,14 @@ export class CoreIterationKernel {
         mergedStallActionHints,
       )
     );
-    if (!stallDetection || stallDetection.status === "completed" || stallDetection.decisionProduced) {
+    if (stallDetectionProjection && result.stallDetected) {
       await markLearningProjectionApplied(stallDetectionProjection, [
         `stall-detection:${goalId}:${loopIndex}`,
       ]);
-    } else {
+    } else if (stallDetectionProjection && stallDetection?.status === "failed" && !stallDetection.decisionProduced) {
       await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_execution_failed"]);
+    } else if (stallDetectionProjection) {
+      await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_no_op"]);
     }
     const shouldRunStallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result);
     const stallInvestigationResolution = shouldRunStallInvestigation
@@ -1060,39 +1065,47 @@ export class CoreIterationKernel {
         const experimentPlanId = taskLearningProjection.requiredExperimentPlanIds[0]!;
         const experimentPlan = (await this.deps.deps.experienceLearningStore.listExperimentPlans(goalId))
           .find((plan) => plan.id === experimentPlanId) ?? null;
-        const experimentClosedPayload = buildExperimentRecordClosedPayload({
-          goalId,
-          runId: runtimeEvidenceScope.run_id,
-          loopIndex,
+        const matchesExperimentPlan = taskMatchesExperimentPlan({
           taskResult: completedTaskResult,
-          planId: experimentPlanId,
+          projection: taskLearningProjection,
           plan: experimentPlan,
-          evidenceRefs: iterationEvidence.map((entry) => entry.id),
-          eventRefs: iterationEvidence.flatMap((entry) =>
-            entry.raw_refs
-              .filter((ref) => ref.kind === "runtime_event")
-              .map((ref) => ref.id)
-              .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
-          ),
+          planId: experimentPlanId,
         });
-        await this.deps.deps.experienceLearningStore.appendLifecycleEvent(experimentClosedPayload);
-        const postOutcomePayloads = await buildPostExperimentOutcomePayloads({
-          store: this.deps.deps.experienceLearningStore,
-          experimentClosedPayload,
-        });
-        for (const payload of postOutcomePayloads) {
-          await this.deps.deps.experienceLearningStore.appendLifecycleEvent(payload);
-          if (
-            payload.event_kind === "artifact_transitioned"
-            && payload.artifact?.status === "promoted"
-            && this.deps.deps.cognitionWritebackQueue
-          ) {
-            await enqueueExperienceLearningProjectionForOwnerReview({
-              artifact: payload.artifact,
-              learningStore: this.deps.deps.experienceLearningStore,
-              queueStore: this.deps.deps.cognitionWritebackQueue,
-              createdAt: payload.artifact.updatedAt,
-            });
+        if (matchesExperimentPlan) {
+          const experimentClosedPayload = buildExperimentRecordClosedPayload({
+            goalId,
+            runId: runtimeEvidenceScope.run_id,
+            loopIndex,
+            taskResult: completedTaskResult,
+            planId: experimentPlanId,
+            plan: experimentPlan,
+            evidenceRefs: iterationEvidence.map((entry) => entry.id),
+            eventRefs: iterationEvidence.flatMap((entry) =>
+              entry.raw_refs
+                .filter((ref) => ref.kind === "runtime_event")
+                .map((ref) => ref.id)
+                .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+            ),
+          });
+          await this.deps.deps.experienceLearningStore.appendLifecycleEvent(experimentClosedPayload);
+          const postOutcomePayloads = await buildPostExperimentOutcomePayloads({
+            store: this.deps.deps.experienceLearningStore,
+            experimentClosedPayload,
+          });
+          for (const payload of postOutcomePayloads) {
+            await this.deps.deps.experienceLearningStore.appendLifecycleEvent(payload);
+            if (
+              payload.event_kind === "artifact_transitioned"
+              && payload.artifact?.status === "promoted"
+              && this.deps.deps.cognitionWritebackQueue
+            ) {
+              await enqueueExperienceLearningProjectionForOwnerReview({
+                artifact: payload.artifact,
+                learningStore: this.deps.deps.experienceLearningStore,
+                queueStore: this.deps.deps.cognitionWritebackQueue,
+                createdAt: payload.artifact.updatedAt,
+              });
+            }
           }
         }
       } catch (err) {
@@ -1156,6 +1169,23 @@ export class CoreIterationKernel {
     result.elapsedMs = Date.now() - startTime;
     return await finalizeExperienceLearning();
   }
+}
+
+function taskMatchesExperimentPlan(input: {
+  taskResult: TaskCycleResult;
+  projection: LearningPriorPhaseProjection & { phase: "task_generation" };
+  plan: LearningExperimentPlan | null;
+  planId: string;
+}): boolean {
+  if (!input.projection.requiredExperimentPlanIds.includes(input.planId)) return false;
+  if (!input.plan || input.plan.plannedConsumerPhase !== "task_generation") return false;
+  if (input.plan.plannedTaskId) {
+    return input.plan.plannedTaskId === input.taskResult.task.id;
+  }
+  const preferredDimension = input.projection.preferredTargetDimension;
+  if (!preferredDimension) return false;
+  return input.taskResult.task.primary_dimension === preferredDimension
+    || input.taskResult.task.target_dimensions.includes(preferredDimension);
 }
 
 function buildExperimentRecordClosedPayload(input: {

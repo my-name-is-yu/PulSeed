@@ -50,6 +50,7 @@ export const LearningPriorConsumptionReasonCodeSchema = z.enum([
   "stale_or_expired",
   "max_uses_exhausted",
   "consumer_execution_failed",
+  "consumer_no_op",
 ]);
 export type LearningPriorConsumptionReasonCode = z.infer<typeof LearningPriorConsumptionReasonCodeSchema>;
 
