@@ -173,8 +173,9 @@ describe("cmdDaemonStatus", () => {
   });
 
   it("prints 'No daemon state found' when state file does not exist", async () => {
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
+    expect(code).toBe(0);
     expect(consoleSpy).toHaveBeenCalledWith("No daemon state found");
   });
 
@@ -188,9 +189,10 @@ describe("cmdDaemonStatus", () => {
       database.close();
     }
 
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(code).toBe(1);
     expect(output).toContain("Status:          schema drift");
     expect(output).toContain(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`);
     expect(output).toContain(`supports (${CONTROL_DB_SCHEMA_VERSION})`);
@@ -351,8 +353,9 @@ describe("cmdDaemonStatus", () => {
     };
     await insertRawDaemonStateFixture(tmpDir, state);
 
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
+    expect(code).toBe(1);
     expect(errorSpy.mock.calls[0]?.[0]).toContain("Invalid daemon state");
     expect(consoleSpy).not.toHaveBeenCalled();
   });

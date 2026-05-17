@@ -637,7 +637,7 @@ export async function cmdStart(
   await daemon.start(goalIds);
 }
 
-export async function cmdDaemonStatus(_args: string[]): Promise<void> {
+export async function cmdDaemonStatus(_args: string[]): Promise<number> {
   const baseDir = getPulseedDirPath();
   const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
   if (schemaDriftMessage) {
@@ -647,7 +647,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
       "Status:          schema drift",
       schemaDriftMessage,
     ].join("\n"));
-    return;
+    return 1;
   }
   const pidManager = new PIDManager(baseDir);
   const pidStatus = await pidManager.inspect();
@@ -661,26 +661,26 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     loadedState = await new DaemonStateStore(baseDir).load();
   } catch (error) {
     console.error(`Invalid daemon state: ${error instanceof Error ? error.message : String(error)}`);
-    return;
+    return 1;
   }
   if (loadedState === null) {
     if (!runtimeAlive && !watchdogAlive) {
       console.log("No daemon state found");
-      return;
+      return 0;
     }
     if (!runtimeAlive && watchdogAlive) {
       console.log(
         `Daemon watchdog is running, but runtime child is restarting (PID: ${runtimePid ?? "unknown"})`
       );
-      return;
+      return 0;
     }
     console.log("Daemon process is running, but daemon state is missing");
-    return;
+    return 1;
   }
   const parsed = DaemonStateSchema.safeParse(loadedState);
   if (!parsed.success) {
     console.error(`Invalid daemon state: ${parsed.error.message}`);
-    return;
+    return 1;
   }
   const data: DaemonState = parsed.data;
 
@@ -990,6 +990,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   lines.push(`Last error:      ${data.last_error ?? "none"}`);
 
   console.log(lines.join("\n"));
+  return 0;
 }
 
 async function stopDaemonRuntimeForCli(): Promise<StopDaemonOutcome> {

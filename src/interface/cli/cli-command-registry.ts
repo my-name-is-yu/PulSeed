@@ -383,8 +383,7 @@ export async function dispatchCommand(
     }
 
     if (daemonSubcommand === "status") {
-      await cmdDaemonStatus(argv.slice(2));
-      return 0;
+      return await cmdDaemonStatus(argv.slice(2));
     }
 
     if (daemonSubcommand === "ping") {
