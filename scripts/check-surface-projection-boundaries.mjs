@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import process from "node:process";
 
 const normalSurfaceConsumers = [
+  "src/interface/chat/chat-runner-event-bridge.ts",
   "src/interface/chat/chat-runner.ts",
   "src/interface/chat/chat-runner-routes.ts",
   "src/runtime/gateway/chat-session-dispatch.ts",
@@ -153,6 +154,13 @@ const tuiApproval = existsSync("src/interface/tui/app-approval.ts")
   : "";
 if (tuiApproval.includes("data.summary") || tuiApproval.includes("data.current_status")) {
   issues.push("src/interface/tui/app-approval.ts must not render raw operator handoff summary/current_status on normal approval surfaces");
+}
+
+const chatRunnerEventBridge = existsSync("src/interface/chat/chat-runner-event-bridge.ts")
+  ? readFileSync("src/interface/chat/chat-runner-event-bridge.ts", "utf8")
+  : "";
+if (!chatRunnerEventBridge.includes("surface_projection: options.surfaceProjection")) {
+  issues.push("src/interface/chat/chat-runner-event-bridge.ts ephemeral assistant finals must carry SurfaceProjection when provided");
 }
 
 const operatorHandoffSurface = existsSync("src/runtime/operator-handoff-surface.ts")

@@ -4288,6 +4288,11 @@ describe("ChatRunner", () => {
       expect(interrupted.success).toBe(true);
       expect(interrupted.output).toContain("Interrupted the active turn");
       expect(interrupted.output).toContain("Activity before interruption");
+      expect(interrupted.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/active-turn steer assistant output",
+      });
       const steer = events.find((event): event is Extract<ChatEvent, { type: "turn_steer" }> =>
         event.type === "turn_steer"
       );
@@ -4346,6 +4351,11 @@ describe("ChatRunner", () => {
       expect(interruptible.getSignal()?.aborted).toBe(false);
       expect(redirected.success).toBe(true);
       expect(redirected.output).toContain("background is not available yet");
+      expect(redirected.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/active-turn steer assistant output",
+      });
       expect(runner.hasActiveTurn()).toBe(true);
       expect(runner.getActiveSeedyPresence()).toMatchObject({
         phase: "acting",

@@ -37,6 +37,7 @@ import {
 } from "./seedy-turn-presence.js";
 import { createTextUserInput, type UserInput } from "./user-input.js";
 import { createTurnStartOperation, type TurnOperation } from "./turn-protocol.js";
+import type { SurfaceProjection } from "../../runtime/surface-projection-protocol.js";
 
 export type { ActiveChatTurn } from "./turn-state.js";
 
@@ -150,12 +151,14 @@ export class ChatRunnerEventBridge {
       context?: ChatEventContext;
       finishActiveTurn?: boolean;
       operation?: TurnOperation;
+      surfaceProjection?: SurfaceProjection;
       userInput?: UserInput;
     } = {},
   ): {
     success: boolean;
     output: string;
     elapsed_ms: number;
+    surface_projection?: SurfaceProjection;
   } {
     const context = options.context
       ?? (options.operation
@@ -180,6 +183,7 @@ export class ChatRunnerEventBridge {
         type: "assistant_final",
         text: output,
         persisted: false,
+        ...(options.surfaceProjection ? { surface_projection: options.surfaceProjection } : {}),
         ...this.eventBase(context),
       });
       this.emitSeedyPresence(success ? "complete" : "blocked", context, {
@@ -198,7 +202,12 @@ export class ChatRunnerEventBridge {
       });
       this.finishActiveTurn(context);
     }
-    return { success, output, elapsed_ms };
+    return {
+      success,
+      output,
+      elapsed_ms,
+      ...(options.surfaceProjection ? { surface_projection: options.surfaceProjection } : {}),
+    };
   }
 
   createAgentLoopEventSink(

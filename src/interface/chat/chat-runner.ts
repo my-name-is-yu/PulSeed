@@ -500,14 +500,16 @@ export class ChatRunner {
       return this.execute(input, cwd, timeoutMs, { userInput: steerUserInput });
     }
     if (redirect === "background") {
-      return this.eventBridge.emitEphemeralAssistantResult(input, [
+      const output = [
         "Continuing this same turn in the background is not available yet.",
         "",
         "The active turn is still running in the foreground.",
         "Use /tend for daemon-backed work, or send a narrower follow-up request.",
-      ].join("\n"), true, start, {
+      ].join("\n");
+      return this.eventBridge.emitEphemeralAssistantResult(input, output, true, start, {
         context: activeTurn.context,
         operation: steerOperation,
+        surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       });
     }
@@ -520,14 +522,16 @@ export class ChatRunner {
 
     const stopped = await this.eventBridge.waitForActiveTurn(activeTurn, 2_000);
     if (!stopped) {
+      const output = "Interrupt requested. The active turn will stop at the next safe point.";
       return this.eventBridge.emitEphemeralAssistantResult(
         input,
-        "Interrupt requested. The active turn will stop at the next safe point.",
+        output,
         false,
         start,
         {
           context: activeTurn.context,
           operation: steerOperation,
+          surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
           userInput: steerUserInput,
         },
       );
@@ -569,6 +573,7 @@ export class ChatRunner {
       {
         context: activeTurn.context,
         operation: steerOperation,
+        surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       },
     );
@@ -1937,6 +1942,19 @@ export class ChatRunner {
       await this.eventJournalHistory.persist();
     }
     return resolved;
+  }
+
+  private projectEphemeralAssistantResultSurface(
+    output: string,
+    eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0],
+  ) {
+    return projectChatRunResultSurface({
+      output,
+      purpose: "chat/active-turn steer assistant output",
+      eventContext,
+      replyTarget: this.runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+      projectedAt: new Date().toISOString(),
+    });
   }
 
   private async finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): Promise<ChatRunResult> {
