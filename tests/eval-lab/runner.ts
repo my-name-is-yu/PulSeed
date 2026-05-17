@@ -16,17 +16,34 @@ import { CrossPlatformChatSessionManager } from "../../src/interface/chat/cross-
 import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
 import { runUserMemoryOperation } from "../../src/platform/corrections/user-memory-operations.js";
 import {
+  CommitmentCandidateExtractionSchema,
+  ProactiveThresholdInputSchema,
+  createCommitmentCandidate,
+  createFeedbackIngestion,
+  createProactivePolicyState,
+  decideProactiveThreshold,
+  projectProactiveThresholdDecisionForSurface,
+  reduceProactivePolicyState,
+  ref,
+  type AttentionScope,
+  type ProactiveInterruptionBudget,
+} from "../../src/runtime/attention/index.js";
+import {
   InteractionAuthorityStore,
   projectPeerInitiativeDeliveryAuthority,
   projectTelegramCallbackAuthority,
 } from "../../src/runtime/control/index.js";
+import { runResidentCommitmentAttentionCycle } from "../../src/runtime/daemon/runner-resident-proactive.js";
+import type { DaemonRunnerResidentContext } from "../../src/runtime/daemon/runner-resident-shared.js";
 import { ApprovalBroker } from "../../src/runtime/approval-broker.js";
 import { createPendingPermissionTask, type PendingPermissionTask } from "../../src/runtime/permission-dialogue.js";
 import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
 import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
 import { ApprovalStore } from "../../src/runtime/store/approval-store.js";
 import { RuntimeEventLogStore } from "../../src/runtime/store/runtime-event-log.js";
+import { AttentionStateStore, FeedbackIngestionStore } from "../../src/runtime/store/index.js";
 import { PersonalAgentRuntimeStore } from "../../src/runtime/personal-agent/index.js";
+import { PeerInitiativeStore } from "../../src/runtime/peer-initiative/index.js";
 import { ToolExecutor, ToolPermissionManager, ToolRegistry, ConcurrencyController } from "../../src/tools/index.js";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolResult } from "../../src/tools/types.js";
 import { HarnessClock } from "../harness/fake-clock.js";
@@ -522,48 +539,187 @@ async function runToolCapability(context: RunContext, step: Extract<EvalStep, { 
 }
 
 async function runQuietMode(context: RunContext, step: Extract<EvalStep, { kind: "quiet_mode" }>): Promise<void> {
-  await recordPeerDelivery(context, `quiet:${context.scenario.scenario_id}`, {
+  const now = context.clock.nowIso();
+  const budget: ProactiveInterruptionBudget = {
+    budget_id: `budget:quiet:${context.scenario.scenario_id}`,
+    scope: "surface",
+    surface: "gateway",
+    window_started_at: now,
+    window_ends_at: new Date(context.clock.nowMs() + 60 * 60 * 1000).toISOString(),
+    max_notify: 1,
+    max_ask: 1,
+    max_prepare: 1,
+    current_debits: 0,
+    quiet_mode_active: true,
+  };
+  const initialState = createProactivePolicyState({
+    policyId: `policy:quiet:${context.scenario.scenario_id}`,
+    now,
+    maxDeliveryKind: "notify",
+    budget,
+  });
+  const quietState = reduceProactivePolicyState(initialState, {
+    kind: "quiet_entered",
+    control_ref: { kind: "runtime_control", ref: step.quieting_ref },
+    recorded_at: now,
+  });
+  const thresholdInput = ProactiveThresholdInputSchema.parse({
+    candidate_ref: { kind: "candidate", ref: `candidate:quiet:${context.scenario.scenario_id}` },
+    expected_user_value: 0.82,
+    interruption_cost: 0.25,
+    urgency: "high",
+    confidence: 0.86,
+    reversibility: "none",
+    operation_boundary: "allowed",
+    side_effect_profile: "read",
+    privacy_profile: "workspace_private",
+    recent_feedback_refs: [],
+    channel_budget_ref: { kind: "interruption_budget", ref: budget.budget_id },
+    quieting_active: true,
+    stale_target_refs: [],
+    downstream_authorization_refs: [],
+    requested_delivery_kind: step.requested_delivery_kind,
+  });
+  const thresholdDecision = decideProactiveThreshold({
+    state: quietState,
+    thresholdInput,
+    candidateCreatedAt: now,
+  });
+  const normalProjection = projectProactiveThresholdDecisionForSurface({
+    decision: thresholdDecision,
+    surfaceTarget: "normal_user",
+    budget,
+  });
+  const operatorProjection = projectProactiveThresholdDecisionForSurface({
+    decision: thresholdDecision,
+    surfaceTarget: "operator_debug",
+    budget,
+  });
+  if (
+    thresholdDecision.allowed_delivery_kind !== "hold"
+    || !thresholdDecision.downgrade_reasons.includes("quieting_active")
+  ) {
+    throw new Error(`Quiet mode did not hold proactive delivery for ${context.scenario.scenario_id}`);
+  }
+
+  const outbox = new OutboxStore(context.root.runtimeRoot, { controlBaseDir: context.root.root });
+  const outboxBefore = await outbox.list();
+  const authorityDecision = await recordPeerDelivery(context, `quiet:${context.scenario.scenario_id}`, {
     outcome: "held",
     canHold: true,
     quietingRef: step.quieting_ref,
   });
+  const outboxAfter = await outbox.list();
+  if (outboxAfter.length !== outboxBefore.length) {
+    throw new Error(`Quiet mode leaked a transport/outbox send for ${context.scenario.scenario_id}`);
+  }
   context.operatorProjections.push({
     kind: "quiet_mode",
     quieting_ref: step.quieting_ref,
     requested_delivery_kind: step.requested_delivery_kind,
-    outcome: "held",
+    policy_state: quietState,
+    threshold_decision: thresholdDecision,
+    threshold_projection: operatorProjection,
+    authority_decision_id: authorityDecision.decision_id,
+    outbox_records_before: outboxBefore.length,
+    outbox_records_after: outboxAfter.length,
   });
   context.surfaceProjections.push({
     kind: "quiet_surface",
-    proactive_delivery: "held",
+    proactive_delivery: normalProjection.display_delivery_kind,
+    allowed_delivery_kind: normalProjection.allowed_delivery_kind,
+    downgrade_reasons: normalProjection.downgrade_reasons,
   });
+  context.productionCallerPaths.add("createProactivePolicyState");
+  context.productionCallerPaths.add("reduceProactivePolicyState");
+  context.productionCallerPaths.add("decideProactiveThreshold");
+  context.productionCallerPaths.add("projectProactiveThresholdDecisionForSurface");
+  context.productionCallerPaths.add("OutboxStore.list");
   context.productionCallerPaths.add("projectPeerInitiativeDeliveryAuthority");
 }
 
 async function runFeedback(context: RunContext, step: Extract<EvalStep, { kind: "feedback" }>): Promise<void> {
+  const attentionStore = new AttentionStateStore(context.root.runtimeRoot, { controlBaseDir: context.root.root });
+  await attentionStore.saveCommitmentCandidates([
+    evalCommitmentCandidate(context, {
+      nextRevisitAt: context.clock.nowIso(),
+      state: "watching",
+    }),
+  ]);
+  const feedbackStore = new FeedbackIngestionStore(context.root.runtimeRoot, { controlBaseDir: context.root.root });
   if (step.feedback_kind === "overreach") {
     context.metrics.overreachOpportunities += 1;
-    await recordPeerDelivery(context, `feedback:${context.scenario.scenario_id}`, {
-      outcome: "suppressed",
-      canSuppress: true,
+    const feedback = await feedbackStore.append(createFeedbackIngestion({
+      source: "telegram",
+      feedback_kind: "overreach",
+      outcome: "overreach",
+      target: { kind: "agenda_item", id: `commitment:${context.scenario.scenario_id}` },
+      recorded_at: context.clock.nowIso(),
+      reason: "Eval lab overreach feedback should narrow future resident initiative.",
+      agenda_kind: "commitment_guard",
+      overreach_indicators: ["unwanted_timing"],
+    }));
+    context.productionCallerPaths.add("FeedbackIngestionStore.append");
+    const handled = await runResidentCommitmentAttentionCycle(
+      residentCommitmentContext(context, attentionStore, feedbackStore),
+      context.clock.nowIso(),
+    );
+    const commitments = await attentionStore.listCommitmentCandidates({ includeTerminal: true });
+    const peerRecords = await new PeerInitiativeStore(context.root.runtimeRoot, { controlBaseDir: context.root.root })
+      .listRecentCandidates();
+    if (!handled || peerRecords.length > 0 || commitments[0]?.materialization_state !== "quieted") {
+      context.metrics.overreachCount += 1;
+      throw new Error(`Overreach feedback did not suppress resident intervention for ${context.scenario.scenario_id}`);
+    }
+    context.operatorProjections.push({
+      kind: "feedback",
+      feedback_kind: step.feedback_kind,
+      lowers_future_intervention: step.lowers_future_intervention,
+      resident_cycle_handled: handled,
+      feedback_record: feedback.record,
+      feedback_effects: feedback.effects,
+      commitment_state: commitments[0]?.materialization_state ?? null,
+      nudge_policy: commitments[0]?.nudge_policy ?? null,
+      peer_candidate_count_after_feedback: peerRecords.length,
+    });
+    context.surfaceProjections.push({
+      kind: "feedback_surface",
+      next_intervention: "suppressed",
+      feedback_policy_applied: true,
     });
   } else {
     context.metrics.missedHelpOpportunities += 1;
-    await recordPeerDelivery(context, `missed-help:${context.scenario.scenario_id}`, {
-      outcome: "held",
-      canHold: true,
+    const handled = await runResidentCommitmentAttentionCycle(
+      residentCommitmentContext(context, attentionStore, feedbackStore),
+      context.clock.nowIso(),
+    );
+    const commitments = await attentionStore.listCommitmentCandidates({ includeTerminal: true });
+    const peerRecords = await new PeerInitiativeStore(context.root.runtimeRoot, { controlBaseDir: context.root.root })
+      .listRecentCandidates();
+    const selectedState = peerRecords[0]?.selected_state ?? null;
+    if (!handled || peerRecords.length === 0 || selectedState !== "held") {
+      context.metrics.missedHelpCount += 1;
+      throw new Error(`Missed-help opportunity was not detected and held for review for ${context.scenario.scenario_id}`);
+    }
+    context.operatorProjections.push({
+      kind: "feedback",
+      feedback_kind: step.feedback_kind,
+      lowers_future_intervention: step.lowers_future_intervention,
+      resident_cycle_handled: handled,
+      commitment_state: commitments[0]?.materialization_state ?? null,
+      peer_candidate_count: peerRecords.length,
+      peer_selected_state: selectedState,
+      peer_candidate_id: peerRecords[0]?.candidate.candidateId ?? null,
+    });
+    context.surfaceProjections.push({
+      kind: "feedback_surface",
+      next_intervention: "reviewed",
+      missed_help_detected: true,
     });
   }
-  context.operatorProjections.push({
-    kind: "feedback",
-    feedback_kind: step.feedback_kind,
-    lowers_future_intervention: step.lowers_future_intervention,
-  });
-  context.surfaceProjections.push({
-    kind: "feedback_surface",
-    next_intervention: step.feedback_kind === "overreach" ? "lowered" : "reviewed",
-  });
-  context.productionCallerPaths.add("InteractionAuthorityStore.recordDecision");
+  context.productionCallerPaths.add("AttentionStateStore.saveCommitmentCandidates");
+  context.productionCallerPaths.add("runResidentCommitmentAttentionCycle");
+  context.productionCallerPaths.add("PeerInitiativeStore.listRecentCandidates");
 }
 
 async function runStaleActionBinding(context: RunContext, step: Extract<EvalStep, { kind: "stale_action_binding" }>): Promise<void> {
@@ -620,6 +776,92 @@ async function runTelegramProjection(context: RunContext, step: Extract<EvalStep
   if (normalProjection.delivery_status !== "sent") {
     throw new Error(`Telegram normal projection did not match operator delivery for ${context.scenario.scenario_id}`);
   }
+}
+
+function evalAttentionScope(context: RunContext): AttentionScope {
+  return {
+    userId: "eval-user",
+    identityId: `identity:${context.scenario.scenario_id}`,
+    workspaceId: "eval-workspace",
+    conversationId: context.scenario.fake_controls.telegram_gateway.conversation_id,
+    sessionId: `session:${context.scenario.scenario_id}`,
+    surfaceClass: "telegram",
+    surfaceRef: `surface:telegram:${context.scenario.fake_controls.telegram_gateway.conversation_id}`,
+    permissionScope: "read_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: `policy:eval-lab:${context.scenario.scenario_id}`,
+  };
+}
+
+function evalCommitmentCandidate(
+  context: RunContext,
+  input: {
+    state: "watching" | "active_care" | "quieted";
+    nextRevisitAt: string | null;
+  },
+) {
+  const candidate = createCommitmentCandidate({
+    extraction: CommitmentCandidateExtractionSchema.parse({
+      outcome: "candidate",
+      summary: `Eval lab follow-up for ${context.scenario.scenario_id}.`,
+      due: {
+        window_start: context.clock.nowIso(),
+        window_end: new Date(context.clock.nowMs() + 60 * 60 * 1000).toISOString(),
+        uncertainty: "medium",
+        reason: "deterministic eval-lab due window",
+      },
+      owner: "user",
+      confidence: 0.88,
+      sensitivity: "internal",
+      allowed_memory_use: "attention_only",
+      nudge_policy: "allowed",
+      watch_vector: ["deadline", "related_conversation"],
+    }),
+    scope: evalAttentionScope(context),
+    turnId: `turn:${context.scenario.scenario_id}`,
+    sessionId: `session:${context.scenario.scenario_id}`,
+    sourceId: `eval:${context.scenario.scenario_id}:user`,
+    emittedAt: context.clock.nowIso(),
+    policyEpoch: `policy:eval-lab:${context.scenario.scenario_id}`,
+    activeSurfaceRef: ref("surface", `surface:telegram:${context.scenario.fake_controls.telegram_gateway.conversation_id}`),
+  });
+  if (!candidate) {
+    throw new Error(`Could not create eval commitment candidate for ${context.scenario.scenario_id}`);
+  }
+  return {
+    ...candidate,
+    commitment_id: `commitment:${context.scenario.scenario_id}`,
+    materialization_state: input.state,
+    next_revisit_at: input.nextRevisitAt,
+  };
+}
+
+function residentCommitmentContext(
+  context: RunContext,
+  attentionStateStore: AttentionStateStore,
+  feedbackIngestionStore: FeedbackIngestionStore,
+): Pick<
+  DaemonRunnerResidentContext,
+  "baseDir" | "config" | "state" | "logger" | "saveDaemonState" | "attentionStateStore" | "feedbackIngestionStore"
+> {
+  return {
+    baseDir: context.root.root,
+    config: { runtime_root: context.root.runtimeRoot } as DaemonRunnerResidentContext["config"],
+    state: {
+      started_at: context.scenario.fake_controls.clock_start,
+      loop_count: 1,
+    } as DaemonRunnerResidentContext["state"],
+    logger: {
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    } as never,
+    saveDaemonState: vi.fn(async () => {}),
+    attentionStateStore,
+    feedbackIngestionStore,
+  };
 }
 
 async function recordScenarioAdmission(context: RunContext): Promise<void> {
