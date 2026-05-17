@@ -127,7 +127,6 @@ export async function runEvalScenario(scenario: EvalScenario): Promise<EvalScena
       for (const step of scenario.steps) {
         await runStep(context, step);
       }
-      context.metrics.scenarioPasses += 1;
     } catch (error) {
       scenarioError = error;
     }
@@ -157,15 +156,21 @@ async function finishScenarioRun(
   context.metrics.replayChecks += 1;
   if (replaySummary.replay_equivalent === true) context.metrics.replayEquivalentCount += 1;
   context.metrics.scenarioCount += 1;
-  const metrics = computeEvalMetrics(context.metrics);
-  const failures = [
+  const prePassMetrics = computeEvalMetrics(context.metrics);
+  const scenarioPassThresholds = context.scenario.metric_thresholds.filter((threshold) =>
+    threshold.metric === "scenario_pass_rate"
+  );
+  const nonScenarioPassThresholds = context.scenario.metric_thresholds.filter((threshold) =>
+    threshold.metric !== "scenario_pass_rate"
+  );
+  const failuresBeforePass = [
     ...(replaySummary.replay_equivalent === true
       ? []
       : [{ kind: "replay_equivalence", message: "Runtime Event Log rebuild was not equivalent after restart." }]),
     ...(replaySummary.side_effects_suppressed_after_replay === false
       ? [{ kind: "replay_side_effect_guard", message: "A side effect repeated after replay rebuild." }]
       : []),
-    ...thresholdFailures(metrics, context.scenario.metric_thresholds)
+    ...thresholdFailures(prePassMetrics, nonScenarioPassThresholds)
       .map((message) => ({ kind: "metric_threshold", message })),
     ...(scenarioError
       ? [{
@@ -173,6 +178,15 @@ async function finishScenarioRun(
         message: scenarioError instanceof Error ? scenarioError.message : String(scenarioError),
       }]
       : []),
+  ];
+  if (failuresBeforePass.length === 0) {
+    context.metrics.scenarioPasses += 1;
+  }
+  const metrics = computeEvalMetrics(context.metrics);
+  const failures = [
+    ...failuresBeforePass,
+    ...thresholdFailures(metrics, scenarioPassThresholds)
+      .map((message) => ({ kind: "metric_threshold", message })),
   ];
   const artifact = await buildEvalRunArtifact(context, metrics, replaySummary, failures);
   const artifactPath = await persistEvalRunArtifact(artifact);

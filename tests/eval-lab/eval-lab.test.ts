@@ -186,6 +186,8 @@ describe("Long-run Evaluation Lab", () => {
       await expect(fsp.access(path.join(dir, "event-log-replay-trace.json"))).resolves.toBeUndefined();
       await expect(fsp.readFile(path.join(dir, "metrics.json"), "utf8"))
         .resolves.toContain("scenario_pass_rate");
+      const metrics = JSON.parse(await fsp.readFile(path.join(dir, "metrics.json"), "utf8")) as { scenario_pass_rate: number };
+      expect(metrics.scenario_pass_rate).toBe(0);
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
