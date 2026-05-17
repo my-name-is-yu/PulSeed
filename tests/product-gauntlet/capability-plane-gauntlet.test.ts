@@ -236,6 +236,18 @@ describe("capability plane product gauntlet", () => {
         expect(explainedDescriptor.capability_id).toBe("capability:runtime_control_action:automation:backpressure:reset");
         expect(explainedDescriptor.provider_kind).toBe("runtime_control_action");
         expect(explainedDescriptor.metadata?.action).toBe("automation:backpressure:reset");
+
+        explainLog.mockClear();
+        explainError.mockClear();
+        const unknownExitCode = await cmdRuntime(
+          new StateManager(context.rootDir),
+          ["capability", "explain", "capability:runtime_control_action:reload_confg", "--json"],
+        );
+        expect(unknownExitCode).toBe(1);
+        expect(explainLog).not.toHaveBeenCalled();
+        expect(explainError).toHaveBeenCalledWith(
+          "CapabilityDescriptor not found: capability:runtime_control_action:reload_confg",
+        );
       } finally {
         explainLog.mockRestore();
         explainError.mockRestore();

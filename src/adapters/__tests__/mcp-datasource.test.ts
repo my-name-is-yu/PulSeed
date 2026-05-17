@@ -207,6 +207,37 @@ describe("MCPDataSourceAdapter.query with matching dimension", () => {
     });
   });
 
+  it("keeps verified MCP reads best-effort when capability trace persistence fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const tracedConn = makeConnection({
+      callTool: vi.fn(async () => ({ content: [{ type: "text", text: "42" }] })),
+    });
+    const tracedAdapter = new MCPDataSourceAdapter(makeServerConfig(), tracedConn, {
+      personalAgentRuntime: {
+        recordTrace: vi.fn(async () => {
+          throw new Error("trace store unavailable");
+        }),
+      },
+    });
+
+    try {
+      const result = await tracedAdapter.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+      expect(tracedConn.callTool).toHaveBeenCalledWith("get_coverage", expect.objectContaining({ dimension_name: "coverage" }));
+      expect(result).toMatchObject({
+        value: 42,
+        source_id: "test-mcp-server",
+      });
+      expect(result.metadata).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "MCPDataSourceAdapter: capability admission trace failed",
+        expect.any(Error),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("fails closed before calling imported MCP tools without verified capability readiness", async () => {
     const config = makeServerConfig({
       tool_mappings: [

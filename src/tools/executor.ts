@@ -469,7 +469,6 @@ export class ToolExecutor {
       capabilityDescriptor: undefined,
       capabilityAdmissionDecision: undefined,
       capabilityExecution: undefined,
-      capabilityExecutionResolver: undefined,
     };
     Object.defineProperty(clone, "hostToolState", {
       get: () => context.hostToolState,

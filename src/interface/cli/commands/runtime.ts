@@ -1475,7 +1475,7 @@ function syntheticCapabilityDescriptorForRuntimeExplain(capabilityId: string): C
   const runtimeControlPrefix = "capability:runtime_control_action:";
   if (capabilityId.startsWith(runtimeControlPrefix)) {
     const action = capabilityId.slice(runtimeControlPrefix.length);
-    if (action) {
+    if (action && isRuntimeControlActionExplainable(action)) {
       return descriptorFromRuntimeControlAction(action);
     }
   }
@@ -1491,6 +1491,20 @@ function syntheticCapabilityDescriptorForRuntimeExplain(capabilityId: string): C
     }
   }
   return null;
+}
+
+const RUNTIME_AUTOMATION_CAPABILITY_ACTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["auth_handoff", new Set(["inspect", "complete", "cancel", "expire"])],
+  ["browser_session", new Set(["inspect", "expire"])],
+  ["guardrail", new Set(["inspect", "reset", "unpause", "pause", "half_open"])],
+  ["backpressure", new Set(["inspect", "reset"])],
+]);
+
+function isRuntimeControlActionExplainable(action: string): boolean {
+  if (RuntimeControlOperationKindSchema.safeParse(action).success) return true;
+  const [kind, domain, automationAction, ...rest] = action.split(":");
+  if (kind !== "automation" || !domain || !automationAction || rest.length > 0) return false;
+  return RUNTIME_AUTOMATION_CAPABILITY_ACTIONS.get(domain)?.has(automationAction) ?? false;
 }
 
 async function summarizeEvidenceTarget(ledger: RuntimeEvidenceLedger, id: string): Promise<RuntimeEvidenceSummary> {

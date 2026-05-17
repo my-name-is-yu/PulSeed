@@ -6,6 +6,7 @@ import { dispatchGatewayChatInputResult } from "../chat-session-dispatch.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 import { ChatRunnerEventBridge } from "../../../interface/chat/chat-runner-event-bridge.js";
 import { SurfaceDeliveryProjectionSchema, ref } from "../../attention/index.js";
+import { PersonalAgentRuntimeStore } from "../../personal-agent/index.js";
 import { PluginChannelRuntimeStateStore } from "../../store/plugin-channel-runtime-state-store.js";
 import { createUserVisibleSeedyTurnPresence, type SeedyTurnPresencePhase } from "../../../interface/chat/seedy-turn-presence.js";
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
@@ -113,6 +114,63 @@ describe("TelegramGatewayAdapter", () => {
           allowed_updates: ["message", "callback_query"],
         }),
       })
+    );
+  });
+
+  it("records gateway capability decisions under the inferred runtime directory", async () => {
+    const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pulseed-telegram-gateway-runtime-"));
+    tempDirs.push(runtimeRoot);
+    const configDir = path.join(runtimeRoot, "gateway", "channels", "telegram-home");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(path.join(configDir, "config.json"), JSON.stringify({
+      bot_token: "test-token",
+      chat_id: 314,
+      allowed_user_ids: [42],
+      denied_user_ids: [],
+      allowed_chat_ids: [],
+      denied_chat_ids: [],
+      runtime_control_allowed_user_ids: [42],
+      chat_goal_map: {},
+      user_goal_map: {},
+      allow_all: true,
+      polling_timeout: 30,
+      identity_key: "seedy",
+    }), "utf-8");
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const method = String(url).split("/").at(-1);
+      if (method === "sendMessage") return telegramResponse({ message_id: 9001 });
+      throw new Error(`unexpected Telegram method: ${method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+    adapters.push(adapter);
+
+    await adapter.getNotifier().notify({
+      type: "goal_progress",
+      goal_id: "goal-1",
+      timestamp: "2026-05-10T00:00:00.000Z",
+      summary: "progress",
+      details: {},
+      severity: "info",
+    });
+
+    const store = new PersonalAgentRuntimeStore(runtimeRoot, { controlBaseDir: runtimeRoot });
+    const trace = await store.loadTrace("telegram:goal_progress:goal-1:2026-05-10T00:00:00.000Z");
+    expect(trace?.capability_decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        decision: "available",
+        capability_refs: expect.arrayContaining([
+          expect.objectContaining({ kind: "capability", ref: "capability:gateway_channel_action:telegram:goal_progress" }),
+          expect.objectContaining({ kind: "capability_admission" }),
+          expect.objectContaining({ kind: "capability_fingerprint" }),
+        ]),
+      }),
+    ]));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.telegram.org/bottest-token/sendMessage",
+      expect.objectContaining({
+        body: expect.stringContaining("\"chat_id\":314"),
+      }),
     );
   });
 
@@ -231,7 +289,9 @@ describe("TelegramGatewayAdapter", () => {
         throw new Error(`unexpected Telegram method: ${method}`);
       });
       vi.stubGlobal("fetch", fetchMock);
-      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir);
+      const adapter = TelegramGatewayAdapter.fromConfigDir(configDir, {
+        capabilityDecisionRecorder: async () => undefined,
+      });
       adapterRef.current = adapter;
       adapters.push(adapter);
 

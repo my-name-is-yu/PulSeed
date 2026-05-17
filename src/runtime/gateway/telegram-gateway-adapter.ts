@@ -477,9 +477,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       runtimeBaseDir,
       controlBaseDir,
       capabilityDecisionRecorder: options.capabilityDecisionRecorder
-        ?? (options.runtimeBaseDir
-          ? createGatewayCapabilityDecisionRecorder({ baseDir: options.runtimeBaseDir })
-          : undefined),
+        ?? createGatewayCapabilityDecisionRecorder({ baseDir: runtimeBaseDir }),
     });
   }
 

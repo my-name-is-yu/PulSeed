@@ -139,7 +139,7 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
       if (admission.status !== "allowed") {
         throw new Error(`Capability Plane blocked MCP datasource tool ${mapping.tool_name}: ${admission.reason}`);
       }
-      await this.recordCapabilityAdmission({
+      await this.recordCapabilityAdmissionBestEffort({
         descriptor,
         admission,
         mapping,
@@ -233,6 +233,19 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
         { kind: "mcp_tool", ref: toolRef },
       ],
     }));
+  }
+
+  private async recordCapabilityAdmissionBestEffort(input: {
+    descriptor: CapabilityDescriptor;
+    admission: CapabilityAdmissionDecision;
+    mapping: MCPToolMapping;
+    dimensionName: string;
+  }): Promise<void> {
+    try {
+      await this.recordCapabilityAdmission(input);
+    } catch (err) {
+      console.warn("MCPDataSourceAdapter: capability admission trace failed", err);
+    }
   }
 
   private capabilityRefs(

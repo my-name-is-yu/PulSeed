@@ -16,6 +16,7 @@ import { PermissionWaitPlanStore } from "../../runtime/store/permission-wait-pla
 import type { ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 import type {
+  CapabilityExecutionResolutionInput,
   ITool,
   ToolResult,
   ToolCallContext,
@@ -497,6 +498,89 @@ describe("ToolExecutor", () => {
             follow_up_policy_effect: "record_only",
           }),
         ]);
+      });
+
+      it("preserves capability execution resolution through batch context clones", async () => {
+        const runtimeRoot = makeTempDir("pulseed-capability-batch-verification-");
+        permissionGrantRuntimeRoots.push(runtimeRoot);
+        const store = new CapabilityVerificationStore(runtimeRoot);
+        const tool = createMockTool({
+          name: "batch-read",
+          metadata: {
+            name: "batch-read",
+            aliases: [],
+            permissionLevel: "read_only",
+            isReadOnly: true,
+            isDestructive: false,
+            shouldDefer: false,
+            alwaysLoad: false,
+            maxConcurrency: 0,
+            maxOutputChars: 8000,
+            tags: [],
+            activityCategory: "read",
+          },
+          call: vi.fn().mockResolvedValue({
+            success: true,
+            data: { result: "ok" },
+            summary: "batch read complete",
+            durationMs: 3,
+          } as ToolResult),
+        });
+        const capabilityExecutionResolver = vi.fn(async (input: CapabilityExecutionResolutionInput) => {
+          const rawInput = input.rawInput as { value: string };
+          return {
+            operationId: `operation:batch-read:${rawInput.value}`,
+            providerRef: "runtime:batch",
+            assetRef: `asset:batch:${rawInput.value}`,
+            capabilityId: `capability:batch-read:${rawInput.value}`,
+            operationKind: "read" as const,
+            toolName: input.toolName,
+            payloadClass: "batch_read_payload",
+            riskClass: "low" as const,
+            sideEffectProfile: "read" as const,
+            readinessSnapshotRefs: [`readiness:batch-read:${rawInput.value}`],
+            executionRefs: [`execution:batch-read:${rawInput.value}`],
+            userVisibleEffect: "Batch read result was returned to chat.",
+            sideEffectSummary: "Read-only batch operation.",
+            userDirected: true,
+            initiatedBy: "user",
+            sourceSurface: "chat",
+          };
+        });
+        const { executor } = createExecutor([tool]);
+
+        const results = await executor.executeBatch([
+          { toolName: "batch-read", input: { value: "one" } },
+          { toolName: "batch-read", input: { value: "two" } },
+        ], createMockContext({
+          capabilityVerificationStore: store,
+          capabilityExecutionResolver,
+          conversationSessionId: "conversation-1",
+        }));
+
+        expect(results.every((result) => result.success)).toBe(true);
+        expect(capabilityExecutionResolver).toHaveBeenCalledTimes(2);
+        const summaries = await store.listReadinessEvidenceSummaries();
+        expect(summaries.map((summary) => summary.capability_id).sort()).toEqual([
+          "capability:batch-read:one",
+          "capability:batch-read:two",
+        ]);
+        expect(summaries).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability_id: "capability:batch-read:one",
+            provider_ref: "runtime:batch",
+            asset_ref: "asset:batch:one",
+            payload_class: "batch_read_payload",
+            verification_class: "production_caller_path",
+          }),
+          expect.objectContaining({
+            capability_id: "capability:batch-read:two",
+            provider_ref: "runtime:batch",
+            asset_ref: "asset:batch:two",
+            payload_class: "batch_read_payload",
+            verification_class: "production_caller_path",
+          }),
+        ]));
       });
 
       it("records failed production execution as degraded readiness evidence without admission or autonomy mutation", async () => {
