@@ -9,8 +9,19 @@ import {
   allocateDeterministicGoalId,
   recordExplicitCommandDecision,
   stableId,
+  type RuntimeGraphRef,
   type PersonalAgentRuntimeStore,
 } from "../../runtime/personal-agent/index.js";
+import {
+  admitCapabilityDescriptor,
+  descriptorFromMcpServerTool,
+  type CapabilityAdmissionDecision,
+  type CapabilityDescriptor,
+} from "../../runtime/capability-plane.js";
+import type {
+  CapabilityOperationKind,
+  CapabilitySideEffectProfile,
+} from "../../runtime/store/capability-verification-schemas.js";
 
 export interface MCPServerDeps {
   stateManager: StateManager;
@@ -32,6 +43,12 @@ function err(message: string): MCPResult {
 
 export async function toolGoalList(deps: MCPServerDeps): Promise<MCPResult> {
   try {
+    const blocked = await recordMcpServerReadAdmission(deps, {
+      toolName: "pulseed_goal_list",
+      args: {},
+      targetSummary: "List PulSeed goals through the MCP server.",
+    });
+    if (blocked) return blocked;
     const ids = await deps.stateManager.listGoalIds();
     const goals = await Promise.all(
       ids.map(async (id) => {
@@ -50,6 +67,13 @@ export async function toolGoalList(deps: MCPServerDeps): Promise<MCPResult> {
 
 export async function toolGoalStatus(deps: MCPServerDeps, args: { goal_id: string }): Promise<MCPResult> {
   try {
+    const blocked = await recordMcpServerReadAdmission(deps, {
+      toolName: "pulseed_goal_status",
+      args,
+      targetSummary: `Read PulSeed goal status for ${args.goal_id}.`,
+      currentRefs: [{ kind: "goal", ref: args.goal_id }],
+    });
+    if (blocked) return blocked;
     const goal = await deps.stateManager.loadGoal(args.goal_id);
     if (!goal) return err(`Goal not found: ${args.goal_id}`);
     const gapHistory = await deps.stateManager.loadGapHistory(args.goal_id);
@@ -67,12 +91,62 @@ export async function toolGoalCreate(
   args: { title: string; description: string }
 ): Promise<MCPResult> {
   try {
-    const now = new Date().toISOString();
+    const argsFingerprint = stableId(stableJson(args));
+    const capabilityAdmission = admitMcpServerToolCapability({
+      toolName: "pulseed_goal_create",
+      operationKind: "mutate",
+      sideEffectProfile: "mutate",
+      args,
+      callId: `mcp:pulseed_goal_create:${argsFingerprint}`,
+    });
+    if (capabilityAdmission.admission.status !== "allowed") {
+      const requiresApproval = capabilityAdmission.admission.status === "requires_approval";
+      await recordExplicitCommandDecision({
+        baseDir: deps.baseDir,
+        personalAgentRuntime: deps.personalAgentRuntime,
+        surface: "mcp",
+        command: "pulseed_goal_create",
+        sourceId: `pulseed_goal_create:${argsFingerprint}`,
+        sourceEpoch: argsFingerprint,
+        target: {
+          kind: "goal",
+          ref: { kind: "goal", ref: `pending:${argsFingerprint}` },
+          effect: "create_goal",
+          summary: `Create MCP goal "${args.title}".`,
+        },
+        decision: requiresApproval ? "confirm_required" : "block",
+        capabilityDecision: requiresApproval ? "permission_required" : "blocked",
+        decisionReason: capabilityAdmission.admission.reason,
+        capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
+        currentRefs: [{ kind: "mcp_tool", ref: "pulseed_goal_create" }],
+      });
+      return err(capabilityAdmission.admission.reason);
+    }
+
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: "pulseed_goal_create",
+      sourceId: `pulseed_goal_create:${argsFingerprint}`,
+      sourceEpoch: argsFingerprint,
+      target: {
+        kind: "goal",
+        ref: { kind: "goal", ref: `pending:${argsFingerprint}` },
+        effect: "create_goal",
+        summary: `Create MCP goal "${args.title}".`,
+      },
+      decisionReason: "MCP goal creation was allowed after Capability Plane descriptor admission before local goal-id collision reads.",
+      capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
+      currentRefs: [{ kind: "mcp_tool", ref: "pulseed_goal_create" }],
+    });
+
     const goalId = await allocateDeterministicGoalId({
       command: "pulseed_goal_create",
       title: args.title,
       description: args.description,
     }, async (candidate) => (await deps.stateManager.loadGoal(candidate)) !== null);
+    const now = new Date().toISOString();
     const goal: Goal = {
       id: goalId,
       parent_id: null,
@@ -112,11 +186,32 @@ export async function toolGoalCreate(
         effect: "create_goal",
         summary: `Create MCP goal "${args.title}".`,
       },
-      decisionReason: "MCP goal creation was allowed by InterventionPolicy after Capability Registry evaluation.",
-      capabilityRefs: [{ kind: "capability", ref: "mcp:pulseed_goal_create" }],
+      decisionReason: "MCP goal creation was allowed after Capability Plane descriptor admission.",
+      capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
       currentRefs: [{ kind: "mcp_tool", ref: "pulseed_goal_create" }],
     });
     await deps.stateManager.saveGoal(goal);
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: "pulseed_goal_create",
+      sourceId: `pulseed_goal_create:${goalId}`,
+      sourceEpoch: goalId,
+      target: {
+        kind: "goal",
+        ref: { kind: "goal", ref: goalId },
+        effect: "create_goal",
+        summary: `Create MCP goal "${args.title}".`,
+      },
+      decisionReason: "MCP goal creation completed after Capability Plane descriptor admission.",
+      capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
+      currentRefs: [
+        { kind: "mcp_tool", ref: "pulseed_goal_create" },
+        { kind: "goal", ref: goalId },
+      ],
+      outcomeSummary: `MCP goal ${goalId} was created after descriptor-backed admission.`,
+    });
     return ok({ goal_id: goalId, title: args.title, status: goal.status });
   } catch (e) {
     return err(String(e));
@@ -127,6 +222,13 @@ export async function toolGoalCreate(
 
 export async function toolObserve(deps: MCPServerDeps, args: { goal_id: string }): Promise<MCPResult> {
   try {
+    const blocked = await recordMcpServerReadAdmission(deps, {
+      toolName: "pulseed_observe",
+      args,
+      targetSummary: `Read PulSeed observations for ${args.goal_id}.`,
+      currentRefs: [{ kind: "goal", ref: args.goal_id }],
+    });
+    if (blocked) return blocked;
     const log = await deps.stateManager.loadObservationLog(args.goal_id);
     if (!log) return ok({ goal_id: args.goal_id, observations: [] });
     const recent = log.entries.slice(-10);
@@ -140,6 +242,13 @@ export async function toolObserve(deps: MCPServerDeps, args: { goal_id: string }
 
 export async function toolTaskList(deps: MCPServerDeps, args: { goal_id: string }): Promise<MCPResult> {
   try {
+    const blocked = await recordMcpServerReadAdmission(deps, {
+      toolName: "pulseed_task_list",
+      args,
+      targetSummary: `Read PulSeed tasks for ${args.goal_id}.`,
+      currentRefs: [{ kind: "goal", ref: args.goal_id }],
+    });
+    if (blocked) return blocked;
     const tasks = await deps.stateManager.listTasks(args.goal_id);
     return ok({ goal_id: args.goal_id, tasks });
   } catch (e) {
@@ -151,6 +260,13 @@ export async function toolTaskList(deps: MCPServerDeps, args: { goal_id: string 
 
 export async function toolKnowledgeSearch(deps: MCPServerDeps, args: { query: string }): Promise<MCPResult> {
   try {
+    const blocked = await recordMcpServerReadAdmission(deps, {
+      toolName: "pulseed_knowledge_search",
+      args,
+      targetSummary: "Read PulSeed shared knowledge entries through the MCP server.",
+      currentRefs: [{ kind: "knowledge_query", ref: stableId(args.query) }],
+    });
+    if (blocked) return blocked;
     const entries = await loadSharedEntries(deps.stateManager);
     const q = args.query.toLowerCase();
     const matched = entries.filter((e) => {
@@ -177,6 +293,42 @@ export async function toolTrigger(
       data: args.data,
     }));
     const eventId = `mcp_trigger_${eventSeed}`;
+    const capabilityAdmission = admitMcpServerToolCapability({
+      toolName: "pulseed_trigger",
+      operationKind: "mutate",
+      sideEffectProfile: "mutate",
+      args,
+      callId: `mcp:pulseed_trigger:${eventId}`,
+    });
+    if (capabilityAdmission.admission.status !== "allowed") {
+      const requiresApproval = capabilityAdmission.admission.status === "requires_approval";
+      await recordExplicitCommandDecision({
+        baseDir: deps.baseDir,
+        personalAgentRuntime: deps.personalAgentRuntime,
+        surface: "mcp",
+        command: "pulseed_trigger",
+        sourceId: `pulseed_trigger:${eventId}`,
+        sourceEpoch: eventId,
+        replayKey: ["mcp_trigger", eventSeed].join(":"),
+        target: {
+          kind: "attention_only",
+          ref: { kind: "event_spool", ref: eventId },
+          effect: "continue_route",
+          summary: `Queue MCP trigger "${args.event_type}" from "${args.source}".`,
+        },
+        decision: requiresApproval ? "confirm_required" : "block",
+        capabilityDecision: requiresApproval ? "permission_required" : "blocked",
+        decisionReason: capabilityAdmission.admission.reason,
+        capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
+        currentRefs: [
+          { kind: "mcp_tool", ref: "pulseed_trigger" },
+          { kind: "external_event_source", ref: args.source },
+          { kind: "external_event_type", ref: args.event_type },
+        ],
+      });
+      return err(capabilityAdmission.admission.reason);
+    }
+
     const event = {
       id: eventId,
       source: args.source,
@@ -198,20 +350,155 @@ export async function toolTrigger(
         effect: "continue_route",
         summary: `Queue MCP trigger "${args.event_type}" from "${args.source}".`,
       },
-      decisionReason: "MCP trigger enqueue was allowed by InterventionPolicy after Capability Registry evaluation.",
-      capabilityRefs: [{ kind: "capability", ref: "mcp:pulseed_trigger" }],
+      decisionReason: "MCP trigger enqueue was allowed after Capability Plane descriptor admission.",
+      capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
       currentRefs: [
         { kind: "mcp_tool", ref: "pulseed_trigger" },
         { kind: "external_event_source", ref: args.source },
         { kind: "external_event_type", ref: args.event_type },
       ],
-      outcomeSummary: `MCP trigger ${eventId} was queued for runtime event processing.`,
     });
     await writeEventSpoolJson(eventsDir, event, { fileName: `${eventId}.json` });
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: "pulseed_trigger",
+      sourceId: `pulseed_trigger:${eventId}`,
+      sourceEpoch: eventId,
+      replayKey: ["mcp_trigger", eventSeed, "outcome"].join(":"),
+      target: {
+        kind: "attention_only",
+        ref: { kind: "event_spool", ref: eventId },
+        effect: "continue_route",
+        summary: `Queue MCP trigger "${args.event_type}" from "${args.source}".`,
+      },
+      decisionReason: "MCP trigger enqueue completed after Capability Plane descriptor admission.",
+      capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
+      currentRefs: [
+        { kind: "mcp_tool", ref: "pulseed_trigger" },
+        { kind: "event_spool", ref: eventId },
+        { kind: "external_event_source", ref: args.source },
+        { kind: "external_event_type", ref: args.event_type },
+      ],
+      outcomeSummary: `MCP trigger ${eventId} was queued for runtime event processing.`,
+    });
     return ok({ event_id: eventId, status: "queued" });
   } catch (e) {
     return err(String(e));
   }
+}
+
+type McpServerToolCapabilityAdmission = {
+  descriptor: CapabilityDescriptor;
+  admission: CapabilityAdmissionDecision;
+};
+
+async function recordMcpServerReadAdmission(
+  deps: MCPServerDeps,
+  input: {
+    toolName: string;
+    args: unknown;
+    targetSummary: string;
+    currentRefs?: RuntimeGraphRef[];
+  },
+): Promise<MCPResult | null> {
+  const argsFingerprint = stableId(stableJson(input.args));
+  const capabilityAdmission = admitMcpServerToolCapability({
+    toolName: input.toolName,
+    operationKind: "read",
+    sideEffectProfile: "read",
+    args: input.args,
+    callId: `mcp:${input.toolName}:${argsFingerprint}`,
+  });
+  const capabilityRefs = mcpServerCapabilityAdmissionRefs(capabilityAdmission);
+  if (capabilityAdmission.admission.status !== "allowed") {
+    await recordExplicitCommandDecision({
+      baseDir: deps.baseDir,
+      personalAgentRuntime: deps.personalAgentRuntime,
+      surface: "mcp",
+      command: input.toolName,
+      sourceId: `${input.toolName}:${argsFingerprint}`,
+      sourceEpoch: argsFingerprint,
+      target: {
+        kind: "runtime_control",
+        ref: { kind: "mcp_tool", ref: input.toolName },
+        effect: "none",
+        summary: input.targetSummary,
+      },
+      decision: "block",
+      capabilityDecision: "blocked",
+      decisionReason: capabilityAdmission.admission.reason,
+      capabilityRefs,
+      currentRefs: [
+        { kind: "mcp_tool", ref: input.toolName },
+        ...(input.currentRefs ?? []),
+      ],
+    });
+    return err(capabilityAdmission.admission.reason);
+  }
+
+  await recordExplicitCommandDecision({
+    baseDir: deps.baseDir,
+    personalAgentRuntime: deps.personalAgentRuntime,
+    surface: "mcp",
+    command: input.toolName,
+    sourceId: `${input.toolName}:${argsFingerprint}`,
+    sourceEpoch: argsFingerprint,
+    target: {
+      kind: "runtime_control",
+      ref: { kind: "mcp_tool", ref: input.toolName },
+      effect: "none",
+      summary: input.targetSummary,
+    },
+    decisionReason: `MCP read tool ${input.toolName} was allowed after Capability Plane descriptor admission before local state access.`,
+    capabilityRefs,
+    currentRefs: [
+      { kind: "mcp_tool", ref: input.toolName },
+      ...(input.currentRefs ?? []),
+    ],
+  });
+  return null;
+}
+
+function admitMcpServerToolCapability(input: {
+  toolName: string;
+  operationKind: CapabilityOperationKind;
+  sideEffectProfile: CapabilitySideEffectProfile;
+  args: unknown;
+  callId: string;
+}): McpServerToolCapabilityAdmission {
+  const descriptor = descriptorFromMcpServerTool({
+    toolName: input.toolName,
+    operationKind: input.operationKind,
+    sideEffectProfile: input.sideEffectProfile,
+    readinessState: "executable_verified",
+  });
+  const admission = admitCapabilityDescriptor({
+    descriptor,
+    rawInput: {
+      tool_name: input.toolName,
+      arguments: input.args,
+    },
+    context: {
+      preApproved: input.sideEffectProfile === "none" || input.sideEffectProfile === "read",
+      authorityRefs: descriptor.authority_requirements.required_refs,
+      callId: input.callId,
+    },
+  });
+  return { descriptor, admission };
+}
+
+function mcpServerCapabilityAdmissionRefs(input: McpServerToolCapabilityAdmission): RuntimeGraphRef[] {
+  return [
+    { kind: "capability", ref: input.descriptor.capability_id },
+    { kind: "capability_provider", ref: input.descriptor.provider_ref },
+    { kind: "capability_operation", ref: input.descriptor.runtime_graph_refs.operation_ref },
+    { kind: "capability_admission", ref: input.admission.admission_id },
+    ...(input.admission.capability_fingerprint
+      ? [{ kind: "capability_fingerprint", ref: input.admission.capability_fingerprint }]
+      : []),
+  ];
 }
 
 function stableJson(value: unknown): string {

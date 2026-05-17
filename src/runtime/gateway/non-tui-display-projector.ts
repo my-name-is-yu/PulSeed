@@ -16,6 +16,10 @@ import {
   type ResolvedGatewayChannelDisplayContract,
   resolveGatewayChannelDisplayContract,
 } from "./channel-display-policy.js";
+import {
+  admitGatewayChannelActionCapabilityRecord,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
 
 export interface NonTuiDisplayMessageRef {
   readonly id: string;
@@ -32,6 +36,8 @@ export interface NonTuiDisplayTransport {
 export interface NonTuiDisplayProjectorOptions {
   readonly display: ResolvedGatewayChannelDisplayContract;
   readonly transport: NonTuiDisplayTransport;
+  readonly channelType?: string;
+  readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
 }
 
 interface ProgressEntry {
@@ -49,6 +55,7 @@ const FINAL_EDIT_CATCH_UP_CHARS = 240;
 export class NonTuiDisplayProjector {
   private readonly policy: GatewayDisplayPolicy;
   private readonly transport: NonTuiDisplayTransport;
+  private readonly channelType: string;
   private readonly maxMessageLength: number | undefined;
   private progressRef: NonTuiDisplayMessageRef | null = null;
   private finalRef: NonTuiDisplayMessageRef | null = null;
@@ -57,12 +64,15 @@ export class NonTuiDisplayProjector {
   private lastFinalEditAt = 0;
   private finalText = "";
   private sawFinalSignal = false;
+  private readonly capabilityDecisionRecorder: GatewayCapabilityDecisionRecorder | undefined;
   private readonly progressEntries = new Map<string, ProgressEntry>();
 
   constructor(options: NonTuiDisplayProjectorOptions) {
     this.policy = options.display.policy;
     this.transport = options.transport;
+    this.channelType = options.channelType ?? "non_tui";
     this.maxMessageLength = options.display.capabilities.maxMessageLength;
+    this.capabilityDecisionRecorder = options.capabilityDecisionRecorder;
   }
 
   async handle(event: ChatEvent): Promise<void> {
@@ -190,8 +200,16 @@ export class NonTuiDisplayProjector {
     }
 
     if (this.progressRef === null || this.policy.progressSurface === "single_status") {
+      await this.admitGatewayDisplayAction("progress_send", {
+        reportId: id,
+        textLength: rendered.length,
+      });
       this.progressRef = await this.transport.sendProgress(rendered);
     } else {
+      await this.admitGatewayDisplayAction("progress_edit", {
+        reportId: this.progressRef.id,
+        textLength: rendered.length,
+      });
       await this.transport.editProgress(this.progressRef, rendered);
     }
     this.lastProgressText = rendered;
@@ -217,8 +235,16 @@ export class NonTuiDisplayProjector {
       if (!complete && !this.shouldCommitPartialFinal(nextDisplayText)) return;
       if (this.finalRef === null) {
         await this.cleanupProgressBeforeFirstFinal();
+        await this.admitGatewayDisplayAction("final_send", {
+          reportId: "assistant_final",
+          textLength: nextDisplayText.length,
+        });
         this.finalRef = await this.transport.sendFinal(nextDisplayText);
       } else {
+        await this.admitGatewayDisplayAction("final_edit", {
+          reportId: this.finalRef.id,
+          textLength: nextDisplayText.length,
+        });
         await this.transport.editFinal(this.finalRef, nextDisplayText);
       }
       this.lastFinalText = nextDisplayText;
@@ -231,6 +257,10 @@ export class NonTuiDisplayProjector {
     if (this.policy.finalSurface === "send_once") {
       if (this.finalRef === null) {
         await this.cleanupProgressBeforeFirstFinal();
+        await this.admitGatewayDisplayAction("final_send", {
+          reportId: "assistant_final",
+          textLength: nextDisplayText.length,
+        });
         this.finalRef = await this.transport.sendFinal(nextDisplayText);
         this.lastFinalText = nextDisplayText;
       }
@@ -241,6 +271,10 @@ export class NonTuiDisplayProjector {
       await this.cleanupProgressBeforeFirstFinal();
       const chunks = this.chunkFinal(nextDisplayText);
       for (const chunk of chunks) {
+        await this.admitGatewayDisplayAction("final_chunk_send", {
+          reportId: "assistant_final_chunk",
+          textLength: chunk.length,
+        });
         this.finalRef = await this.transport.sendFinal(chunk);
       }
       this.lastFinalText = nextDisplayText;
@@ -282,12 +316,31 @@ export class NonTuiDisplayProjector {
     if (this.progressRef === null) return;
     if (this.finalRef !== null) return;
     if (this.policy.cleanupPolicy === "delete") {
+      await this.admitGatewayDisplayAction("progress_delete", {
+        reportId: this.progressRef.id,
+        textLength: 0,
+      });
       await this.transport.deleteProgress(this.progressRef);
       this.progressRef = null;
       this.lastProgressText = "";
       return;
     }
     if (this.policy.cleanupPolicy === "collapse") return;
+  }
+
+  private async admitGatewayDisplayAction(
+    reportType: string,
+    input: { reportId: string; textLength: number },
+  ): Promise<void> {
+    const record = admitGatewayChannelActionCapabilityRecord({
+      channelType: this.channelType,
+      reportType,
+      routeRef: `gateway_channel:${this.channelType}`,
+      reportId: input.reportId,
+      textLength: input.textLength,
+      callId: `gateway-display:${this.channelType}:${reportType}:${input.reportId}`,
+    });
+    await this.capabilityDecisionRecorder?.(record);
   }
 }
 
@@ -369,6 +422,8 @@ export function createNonTuiDisplayProjector(
   return new NonTuiDisplayProjector({
     transport: options.transport,
     display: options.display ?? resolveGatewayChannelDisplayContract(undefined),
+    channelType: options.channelType,
+    capabilityDecisionRecorder: options.capabilityDecisionRecorder,
   });
 }
 

@@ -10,6 +10,12 @@ import type {
 } from "../../runtime/session-registry/types.js";
 import type { RuntimeEvidenceSummary } from "../../runtime/store/evidence-ledger.js";
 import type { RuntimeHealthSnapshot } from "../../runtime/store/runtime-schemas.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectStatusSummarySurface,
+  type SurfaceProjection,
+} from "../../runtime/surface-projection-protocol.js";
 
 interface DashboardProps {
   state: LoopState;
@@ -42,6 +48,7 @@ export interface WorkDashboardRow {
 export type RuntimeEvidenceSummaryByRun = Record<string, RuntimeEvidenceSummary>;
 
 export interface OperatorConsoleModel {
+  surfaceProjection: SurfaceProjection;
   selectedId: string;
   selectedTitle: string;
   lifecycle: string;
@@ -253,7 +260,51 @@ export function buildOperatorConsoleModel(
   const artifacts = summarizeArtifacts(run, summary);
   const latestEvents = summarizeEvents(run, summary);
   const blockers = summarizeBlockers(selected, run, summary);
+  const replayKey = [
+    "tui-runtime-status",
+    snapshot.generated_at,
+    selected.kind,
+    selected.id,
+  ].join(":");
+  const surfaceProjection = projectStatusSummarySurface({
+    surface: "tui_status",
+    view: "operator_debug",
+    purpose: "TUI runtime dashboard status projection",
+    projectedAt: snapshot.generated_at,
+    replayKey,
+    summary: {
+      summary_id: `tui-status:${selected.kind}:${selected.id}:${snapshot.generated_at}`,
+      subject_kind: selected.kind,
+      subject_label: selected.title,
+      lifecycle: runLifecycle(run, selected, summary),
+      liveness: summarizeLiveness(selected, health),
+      updated_at: selected.updatedAt,
+      attention_required: selected.attention,
+      blockers,
+    },
+    sourceEventRefs: [
+      normalSourceEventRef({
+        kind: "runtime_registry_snapshot",
+        ref: snapshot.generated_at,
+        event_type: "tui_status",
+        replay_key: replayKey,
+      }),
+    ],
+    runtimeGraphRefs: [
+      normalRuntimeGraphRef({
+        kind: selected.kind,
+        ref: selected.id,
+        role: "target",
+      }),
+      ...(run ? [normalRuntimeGraphRef({
+        kind: "run",
+        ref: run.id,
+        role: "source",
+      })] : []),
+    ],
+  });
   return {
+    surfaceProjection,
     selectedId: selected.id,
     selectedTitle: selected.title,
     lifecycle: runLifecycle(run, selected, summary),

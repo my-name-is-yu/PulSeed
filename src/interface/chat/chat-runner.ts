@@ -72,6 +72,7 @@ import {
   executeGatewayModelLoopRoute,
   formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
+  projectChatRunResultSurface,
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
 import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
@@ -142,6 +143,11 @@ import {
   prepareChatTurnCommitmentAttention,
   type ChatCommitmentAttentionResult,
 } from "./chat-commitment-attention.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectTextSurface,
+} from "../../runtime/surface-projection-protocol.js";
 
 export type {
   ChatRunResult,
@@ -494,14 +500,18 @@ export class ChatRunner {
       return this.execute(input, cwd, timeoutMs, { userInput: steerUserInput });
     }
     if (redirect === "background") {
-      return this.eventBridge.emitEphemeralAssistantResult(input, [
+      const output = [
         "Continuing this same turn in the background is not available yet.",
         "",
         "The active turn is still running in the foreground.",
         "Use /tend for daemon-backed work, or send a narrower follow-up request.",
-      ].join("\n"), true, start, {
+      ].join("\n");
+      return this.eventBridge.emitEphemeralAssistantResult(input, output, true, start, {
         context: activeTurn.context,
+        emitAssistantFinal: true,
         operation: steerOperation,
+        suppressAssistantFinalPresence: true,
+        surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       });
     }
@@ -514,14 +524,18 @@ export class ChatRunner {
 
     const stopped = await this.eventBridge.waitForActiveTurn(activeTurn, 2_000);
     if (!stopped) {
+      const output = "Interrupt requested. The active turn will stop at the next safe point.";
       return this.eventBridge.emitEphemeralAssistantResult(
         input,
-        "Interrupt requested. The active turn will stop at the next safe point.",
+        output,
         false,
         start,
         {
           context: activeTurn.context,
+          emitAssistantFinal: true,
           operation: steerOperation,
+          suppressAssistantFinalPresence: true,
+          surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
           userInput: steerUserInput,
         },
       );
@@ -562,7 +576,10 @@ export class ChatRunner {
       start,
       {
         context: activeTurn.context,
+        emitAssistantFinal: true,
         operation: steerOperation,
+        suppressAssistantFinalPresence: true,
+        surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       },
     );
@@ -912,12 +929,21 @@ export class ChatRunner {
       if (runtimeControlResult.success) {
         await history.appendAssistantMessage(runtimeControlResult.output, { eventContext });
         this.eventBridge.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
+        const surfaceProjection = projectChatRunResultSurface({
+          output: runtimeControlResult.output,
+          purpose: "chat/runtime-control assistant output",
+          eventContext,
+          replyTarget: runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+          projectedAt: new Date().toISOString(),
+        });
         this.eventBridge.emitEvent({
           type: "assistant_final",
           text: runtimeControlResult.output,
           persisted: true,
+          surface_projection: surfaceProjection,
           ...this.eventBridge.eventBase(eventContext),
         });
+        runtimeControlResult.surface_projection = surfaceProjection;
         this.eventBridge.emitLifecycleEndEvent("completed", runtimeControlResult.elapsed_ms, eventContext, true);
       } else {
         runtimeControlResult.output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
@@ -942,10 +968,18 @@ export class ChatRunner {
       const output = formatBlockedRuntimeControlRoute(selectedRoute);
       this.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
       await history.appendAssistantMessage(output, { eventContext });
+      const surfaceProjection = projectChatRunResultSurface({
+        output,
+        purpose: "chat/runtime-control blocked assistant output",
+        eventContext,
+        replyTarget: runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+        projectedAt: new Date().toISOString(),
+      });
       this.eventBridge.emitEvent({
         type: "assistant_final",
         text: output,
         persisted: true,
+        surface_projection: surfaceProjection,
         ...this.eventBridge.eventBase(eventContext),
       });
       const elapsed_ms = Date.now() - start;
@@ -954,6 +988,7 @@ export class ChatRunner {
         success: false,
         output,
         elapsed_ms,
+        surface_projection: surfaceProjection,
       });
     }
 
@@ -1915,18 +1950,58 @@ export class ChatRunner {
     return resolved;
   }
 
+  private projectEphemeralAssistantResultSurface(
+    output: string,
+    eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0],
+  ) {
+    return projectChatRunResultSurface({
+      output,
+      purpose: "chat/active-turn steer assistant output",
+      eventContext,
+      replyTarget: this.runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+      projectedAt: new Date().toISOString(),
+    });
+  }
+
   private async finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): Promise<ChatRunResult> {
+    const surfaceProjection = result.surface_projection ?? (
+      result.output
+        ? projectTextSurface({
+          surface: "chat",
+          text: result.output,
+          purpose: "non-persistent chat assistant output",
+          projectedAt: new Date().toISOString(),
+          replayKey: ["chat-non-persistent-output", eventContext.runId, eventContext.turnId].join(":"),
+          sourceEventRefs: [
+            normalSourceEventRef({
+              kind: "chat_turn",
+              ref: eventContext.turnId,
+              event_type: "assistant_final",
+              replay_key: ["chat-non-persistent-output", eventContext.runId, eventContext.turnId].join(":"),
+            }),
+          ],
+          runtimeGraphRefs: [
+            normalRuntimeGraphRef({
+              kind: "chat_run",
+              ref: eventContext.runId,
+              role: "source",
+            }),
+          ],
+        })
+        : undefined
+    );
     if (result.output) {
       this.eventBridge.emitEvent({
         type: "assistant_final",
         text: result.output,
         persisted: false,
+        ...(surfaceProjection ? { surface_projection: surfaceProjection } : {}),
         ...this.eventBridge.eventBase(eventContext),
       });
     }
     this.eventBridge.emitLifecycleEndEvent(result.success ? "completed" : "error", result.elapsed_ms, eventContext, false);
     await this.eventBridge.flushEventRecorder();
-    return result;
+    return surfaceProjection ? { ...result, surface_projection: surfaceProjection } : result;
   }
 }
 

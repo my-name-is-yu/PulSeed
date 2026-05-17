@@ -605,6 +605,7 @@ function makeRunner(input: {
     },
     ...(input.defaultWorktreePolicy ? { defaultWorktreePolicy: input.defaultWorktreePolicy } : {}),
     defaultExecutionPolicy: input.defaultExecutionPolicy,
+    cognitionMemoryBaseDir: path.join(input.workspace, ".pulseed-test-cognition"),
     cwd: input.workspace,
   });
 }

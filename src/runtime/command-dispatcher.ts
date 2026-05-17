@@ -23,6 +23,7 @@ export interface CommandDispatcherDeps {
     goalId: string | undefined,
     requestId: string,
     approved: boolean,
+    binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string },
     envelope: Envelope
   ) => Promise<void> | void;
   onRuntimeControl?: (
@@ -167,7 +168,14 @@ export class CommandDispatcher {
         if (!requestId || approved === undefined) {
           throw new Error("approval_response command is missing requestId or approved");
         }
-        await this.deps.onApprovalResponse?.(envelope.goal_id, requestId, approved, envelope);
+        await this.deps.onApprovalResponse?.(envelope.goal_id, requestId, approved, {
+          ...(this.readStringField(envelope.payload, "surfaceActionBindingId")
+            ? { surfaceActionBindingId: this.readStringField(envelope.payload, "surfaceActionBindingId") }
+            : {}),
+          ...(this.readStringField(envelope.payload, "surfaceActionBindingToken")
+            ? { surfaceActionBindingToken: this.readStringField(envelope.payload, "surfaceActionBindingToken") }
+            : {}),
+        }, envelope);
         return;
       }
       case "runtime_control": {

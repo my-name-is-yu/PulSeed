@@ -12,6 +12,11 @@ import type { ScheduleRunHistoryInput, ScheduleRunReason } from "./history.js";
 import { executeHeartbeatEntry } from "./engine-heartbeat.js";
 import { computeNextFireAt } from "./engine-mutations.js";
 import type { PersonalAgentRuntimeStore } from "../personal-agent/index.js";
+import {
+  admitScheduleCapability,
+  scheduleCapabilityAdmissionRefs,
+  scheduleEscalationCapabilityEntry,
+} from "./capability-admission.js";
 import { recordScheduleGoalRunDecision } from "./personal-agent-trace.js";
 
 const DEFAULT_RETRY_POLICY: ScheduleRetryPolicy = {
@@ -298,13 +303,49 @@ export async function executeEscalationTargetGoalForEngine(
     layer: "escalation" as const,
     metadata: undefined,
   };
+  const scheduledFor = context?.sourceResult.fired_at ?? now;
+  const capabilityEntry = scheduleEscalationCapabilityEntry(sourceEntry);
+  const capabilityAdmission = admitScheduleCapability(capabilityEntry, "escalation_goal", {
+    entry_id: sourceEntry.id,
+    goal_id: goalId,
+    scheduled_for: scheduledFor,
+    source_status: context?.sourceResult.status ?? null,
+  });
+  const capabilityRefs = scheduleCapabilityAdmissionRefs(capabilityAdmission);
+  if (capabilityAdmission.admission.status !== "allowed") {
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: host.personalAgentRuntime,
+      entry: capabilityEntry,
+      goalId,
+      firedAt: scheduledFor,
+      scheduledFor,
+      reason: "escalation_goal",
+      mode: "escalation_goal",
+      runPolicy: "bounded",
+      maxIterations: 10,
+      decision: "block",
+      capabilityDecision: "blocked",
+      decisionReason: capabilityAdmission.admission.reason,
+      capabilityRefs,
+    });
+    return ScheduleResultSchema.parse({
+      entry_id: randomUUID(),
+      status: "error",
+      duration_ms: 0,
+      fired_at: now,
+      goal_id: goalId,
+      error_message: capabilityAdmission.admission.reason,
+      failure_kind: "permanent",
+    });
+  }
+
   if (!host.coreLoop) {
     await recordScheduleGoalRunDecision({
       personalAgentRuntime: host.personalAgentRuntime,
-      entry: sourceEntry,
+      entry: capabilityEntry,
       goalId,
-      firedAt: context?.sourceResult.fired_at ?? now,
-      scheduledFor: context?.sourceResult.fired_at ?? now,
+      firedAt: scheduledFor,
+      scheduledFor,
       reason: "escalation_goal",
       mode: "escalation_goal",
       runPolicy: "bounded",
@@ -312,6 +353,7 @@ export async function executeEscalationTargetGoalForEngine(
       decision: "block",
       capabilityDecision: "missing",
       decisionReason: "Schedule escalation target goal was blocked because no DurableLoop capability was available.",
+      capabilityRefs,
     });
     return ScheduleResultSchema.parse({
       entry_id: randomUUID(),
@@ -328,16 +370,17 @@ export async function executeEscalationTargetGoalForEngine(
   try {
     await recordScheduleGoalRunDecision({
       personalAgentRuntime: host.personalAgentRuntime,
-      entry: sourceEntry,
+      entry: capabilityEntry,
       goalId,
-      firedAt: context?.sourceResult.fired_at ?? now,
-      scheduledFor: context?.sourceResult.fired_at ?? now,
+      firedAt: scheduledFor,
+      scheduledFor,
       reason: "escalation_goal",
       mode: "escalation_goal",
       runPolicy: "bounded",
       maxIterations: 10,
       decision: "allow",
       decisionReason: "Schedule escalation target goal was allowed to start a DurableLoop goal run.",
+      capabilityRefs,
     });
     const result = await host.coreLoop.run(goalId, { maxIterations: 10, runPolicy: "bounded" });
     return ScheduleResultSchema.parse({

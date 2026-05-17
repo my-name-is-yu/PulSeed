@@ -19,7 +19,7 @@ describe("TUI app approval helpers", () => {
       goal_id: "goal-1",
       primary_dimension: "operator_handoff",
       work_description: "Approve deployment",
-      rationale: "Needs operator approval before continuing.",
+      rationale: "Approve after checking CI.",
       approach: "Approve after checking CI.",
       status: "pending",
       created_at: "2026-05-10T00:00:00.000Z",

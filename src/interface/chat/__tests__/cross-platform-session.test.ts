@@ -4307,6 +4307,7 @@ describe("CrossPlatformChatSessionManager", () => {
         runtimeRoot,
         permissionGrantStore,
       });
+      const runtimeControlApprovalFn = vi.fn().mockResolvedValue(true);
       const manager = new CrossPlatformChatSessionManager(makeDeps({
         llmClient: createMockLLMClient([
           JSON.stringify({
@@ -4319,6 +4320,7 @@ describe("CrossPlatformChatSessionManager", () => {
           }),
         ]),
         runtimeControlService,
+        runtimeControlApprovalFn,
         permissionGrantStore,
       }));
 
@@ -4351,6 +4353,7 @@ describe("CrossPlatformChatSessionManager", () => {
           explicit: true,
         },
       })).resolves.toContain("Future covered actions will ask again or block");
+      expect(runtimeControlApprovalFn).toHaveBeenCalledWith(expect.stringContaining("revoke_permission"));
 
       await expect(permissionGrantStore.load("grant-chat-visible")).resolves.toMatchObject({
         state: "revoked",

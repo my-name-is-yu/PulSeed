@@ -24,6 +24,10 @@ import type {
   TypingIndicatorContext,
   TypingIndicatorSession,
 } from "./channel-adapter.js";
+import {
+  admitGatewayChannelActionCapabilityRecord,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
 
 export interface SeedyPresenceTransport {
   sendStatus(text: string): Promise<NonTuiDisplayMessageRef>;
@@ -55,12 +59,43 @@ export type SeedyPresenceProjectorOperation =
 
 export function createSeedyPresenceTransportFromNonTuiDisplay(
   transport: NonTuiDisplayTransport,
+  options: {
+    readonly channelType?: string;
+    readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
+  } = {},
 ): SeedyPresenceTransport {
+  const channelType = options.channelType ?? "non_tui";
+  const admit = async (
+    reportType: string,
+    input: { readonly reportId: string; readonly textLength: number },
+  ) => {
+    const record = admitGatewayChannelActionCapabilityRecord({
+      channelType,
+      reportType,
+      routeRef: `gateway_channel:${channelType}`,
+      reportId: input.reportId,
+      textLength: input.textLength,
+      callId: `gateway-presence:${channelType}:${reportType}:${input.reportId}`,
+    });
+    await options.capabilityDecisionRecorder?.(record);
+  };
   return {
-    sendStatus: (text) => transport.sendProgress(text),
-    editStatus: (ref, text) => transport.editProgress(ref, text),
-    deleteStatus: (ref) => transport.deleteProgress(ref),
-    sendFallbackAck: (text) => transport.sendProgress(text),
+    sendStatus: async (text) => {
+      await admit("presence_status_send", { reportId: "seedy_presence", textLength: text.length });
+      return transport.sendProgress(text);
+    },
+    editStatus: async (ref, text) => {
+      await admit("presence_status_edit", { reportId: ref.id, textLength: text.length });
+      return transport.editProgress(ref, text);
+    },
+    deleteStatus: async (ref) => {
+      await admit("presence_status_delete", { reportId: ref.id, textLength: 0 });
+      return transport.deleteProgress(ref);
+    },
+    sendFallbackAck: async (text) => {
+      await admit("presence_fallback_ack_send", { reportId: "seedy_fallback_ack", textLength: text.length });
+      return transport.sendProgress(text);
+    },
   };
 }
 

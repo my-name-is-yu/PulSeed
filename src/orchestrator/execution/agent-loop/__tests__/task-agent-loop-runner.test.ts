@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
 import { makeTask as makeFixtureTask } from "../../../../../tests/helpers/fixtures.js";
 import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
@@ -24,6 +24,20 @@ const { finalize, prepareTaskAgentLoopWorkspace } = vi.hoisted(() => ({
 vi.mock("../task-agent-loop-worktree.js", () => ({
   prepareTaskAgentLoopWorkspace,
 }));
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+function makeCognitionTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function makeTask(): Task {
   return makeFixtureTask({
@@ -111,7 +125,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("continues into the bounded runner through canonical grounding without legacy Soil prefetch", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-memory-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-memory-");
     await upsertRelationshipProfileItem(cognitionMemoryBaseDir, {
       stableKey: "task.status_style",
       kind: "preference",
@@ -217,7 +231,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("keeps task cognition replay records distinct across retry attempts", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-retry-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-retry-");
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -295,7 +309,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("updates task cognition replay with post-run command trace refs", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-trace-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-trace-");
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -392,7 +406,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-artifact-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-artifact-");
     try {
       finalize.mockResolvedValue({
         requestedCwd: cwd,

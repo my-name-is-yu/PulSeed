@@ -10,6 +10,7 @@ const ignoredDirNames = new Set([
   'node_modules',
   '.git',
   '.next',
+  '.obsidian',
   '.claude',
   '.claire',
   '.pulseed',
@@ -20,28 +21,28 @@ const ignoredDirNames = new Set([
   'web',
 ]);
 const ignoredRelativeDirs = new Set(['docs/archive']);
-const ignoredFileNames = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json']);
+const ignoredFileNames = new Set(['.DS_Store', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json']);
 const publicCurrentFiles = new Set([
   'README.md',
   'CONTRIBUTING.md',
   'docs/index.md',
-  'docs/start/index.md',
-  'docs/start/guide.md',
-  'docs/concepts/index.md',
-  'docs/concepts/mechanism.md',
-  'docs/operate/runtime.md',
-  'docs/operate/configuration.md',
-  'docs/operate/status.md',
-  'docs/architecture/index.md',
-  'docs/architecture/architecture-map.md',
-  'docs/architecture/module-map.md',
+  'docs/getting-started/first-run.md',
+  'docs/getting-started/guide.md',
+  'docs/getting-started/getting-started-map.md',
+  'docs/operating/operating-map.md',
+  'docs/runtime-architecture/source-orientation/core-concepts.md',
+  'docs/runtime-architecture/source-orientation/glossary.md',
+  'docs/runtime-architecture/source-orientation/mechanism.md',
+  'docs/runtime-architecture/source-orientation/source-architecture.md',
+  'docs/runtime-architecture/source-orientation/module-layout.md',
+  'docs/runtime-architecture/runtime-architecture-map.md',
+  'docs/operating/runtime-operations/runtime.md',
+  'docs/operating/runtime-operations/configuration.md',
+  'docs/operating/runtime-operations/status.md',
 ]);
 const publicCurrentDirs = [
-  'docs/start/',
-  'docs/operate/',
-  'docs/concepts/',
-  'docs/architecture/',
-  'docs/reference/',
+  'docs/getting-started/',
+  'docs/operating/',
 ];
 const retiredThinDocPaths = new Set([
   'docs/getting-started.md',
@@ -62,28 +63,42 @@ const retiredThinDocPaths = new Set([
   'docs/internal/index.md',
 ]);
 const retiredThinDocDirs = new Set([
+  'docs/architecture',
+  'docs/concepts',
+  'docs/design',
   'docs/guide',
   'docs/internal',
-  'docs/design/audits/docs-audit',
-  'docs/design/archive/design',
+  'docs/operate',
+  'docs/product',
+  'docs/reference',
+  'docs/start',
 ]);
 const docsWithRequiredStatus = [
   {
     label: 'product-design document',
-    matches: (relativePath) => relativePath.startsWith('docs/product/') && relativePath !== 'docs/product/index.md',
+    matches: (relativePath) =>
+      relativePath.startsWith('docs/product-direction/') &&
+      relativePath.endsWith('.md') &&
+      !relativePath.endsWith('-map.md'),
   },
   {
     label: 'design document',
     matches: (relativePath) =>
-      relativePath.startsWith('docs/design/') &&
-      relativePath !== 'docs/design/index.md' &&
-      relativePath.endsWith('.md'),
-  },
-  {
-    label: 'current public document',
-    matches: (relativePath) =>
+      [
+        'docs/runtime-architecture/',
+        'docs/companion-autonomy/',
+        'docs/goal-execution/',
+        'docs/knowledge-memory/',
+        'docs/extensions-tools/',
+        'docs/design-contracts/',
+      ].some((dir) => relativePath.startsWith(dir)) &&
       relativePath.endsWith('.md') &&
-      publicCurrentDirs.some((dir) => relativePath.startsWith(dir)),
+      !relativePath.endsWith('-map.md') &&
+      !relativePath.endsWith('/core-concepts.md') &&
+      !relativePath.endsWith('/glossary.md') &&
+      !relativePath.endsWith('/mechanism.md') &&
+      !relativePath.endsWith('/source-architecture.md') &&
+      !relativePath.endsWith('/module-layout.md'),
   },
 ];
 const stagingTermPatterns = [
@@ -150,8 +165,8 @@ const publicPolishPatterns = [
     message: 'public docs should avoid internal slice numbers unless quoted as historical context with a public explanation',
   },
 ];
-const productCompletionMatrixPath = 'docs/product/completion-matrix.md';
-const productClaimLedgerPath = 'docs/product/claim-ledger.md';
+const productCompletionMatrixPath = 'docs/product-direction/product-boundaries/completion-matrix.md';
+const productClaimLedgerPath = 'docs/product-direction/product-boundaries/claim-ledger.md';
 const productClaimLedgerSchemaVersion = 'pulseed-product-claim-ledger/v1';
 const productClaimClassifications = new Set([
   'current_operating_behavior',
@@ -168,11 +183,11 @@ const productClaimKinds = new Set([
 ]);
 const requiredClaimSourceRoots = [
   { label: 'README', matches: (relativePath) => relativePath === 'README.md' },
-  { label: 'start docs', matches: (relativePath) => relativePath.startsWith('docs/start/') },
-  { label: 'operate docs', matches: (relativePath) => relativePath.startsWith('docs/operate/') },
-  { label: 'reference docs', matches: (relativePath) => relativePath.startsWith('docs/reference/') },
-  { label: 'product docs', matches: (relativePath) => relativePath.startsWith('docs/product/') },
-  { label: 'design docs', matches: (relativePath) => relativePath.startsWith('docs/design/') },
+  { label: 'getting-started docs', matches: (relativePath) => relativePath.startsWith('docs/getting-started/') },
+  { label: 'operating docs', matches: (relativePath) => relativePath.startsWith('docs/operating/') },
+  { label: 'product-direction docs', matches: (relativePath) => relativePath.startsWith('docs/product-direction/') },
+  { label: 'runtime-architecture docs', matches: (relativePath) => relativePath.startsWith('docs/runtime-architecture/') },
+  { label: 'knowledge-memory docs', matches: (relativePath) => relativePath.startsWith('docs/knowledge-memory/') },
 ];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
@@ -192,15 +207,6 @@ for (const filePath of markdownFiles) {
   const relativePath = toPosixPath(path.relative(repoRoot, filePath) || path.basename(filePath));
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
-
-  if (
-    relativePath.startsWith('docs/design/') &&
-    relativePath !== 'docs/design/index.md' &&
-    relativePath.endsWith('.md') &&
-    relativePath.split('/').length !== 4
-  ) {
-    issues.push(formatIssue(relativePath, 1, 'design documents must use docs/design/<category>/<page>.md with no deeper nesting'));
-  }
 
   if (retiredThinDocPaths.has(relativePath)) {
     issues.push(formatIssue(relativePath, 1, 'retired thin docs path was recreated; link to the flattened page instead'));
@@ -276,12 +282,6 @@ for (const filePath of markdownFiles) {
         }
       }
 
-      if (
-        relativePath.startsWith('docs/design/history/') &&
-        /^##\s+Current\b/.test(markdownLine)
-      ) {
-        issues.push(formatIssue(relativePath, lineNumber, 'historical design pages should use dated snapshot wording instead of current-status headings'));
-      }
     }
 
     for (const target of findMarkdownLinkTargets(markdownLine)) {
@@ -345,13 +345,13 @@ function collectNonMarkdownDocsFiles(rootDir) {
     for (const entry of entries) {
       const entryPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name.startsWith('.dist-delete-')) {
+        if (ignoredDirNames.has(entry.name) || entry.name.startsWith('.dist-delete-')) {
           continue;
         }
         walkDocs(entryPath);
         continue;
       }
-      if (!entry.isFile()) {
+      if (!entry.isFile() || ignoredFileNames.has(entry.name)) {
         continue;
       }
       if (!entry.name.endsWith('.md')) {
@@ -465,14 +465,40 @@ function getPublicBoundaryIssue(sourceRelativePath, targetRelativePath) {
     return null;
   }
 
-  if (
-    targetRelativePath.startsWith('docs/design/') &&
-    targetRelativePath !== 'docs/design/index.md'
-  ) {
-    return `current operating doc links directly to a design document instead of the design index: ${targetRelativePath}`;
+  if (isClusterMap(sourceRelativePath)) {
+    return null;
+  }
+
+  if (isDesignContractDoc(targetRelativePath) && !isClusterMap(targetRelativePath)) {
+    return `current operating doc links directly to a design contract document instead of a cluster map: ${targetRelativePath}`;
   }
 
   return null;
+}
+
+function isClusterMap(relativePath) {
+  return relativePath === 'docs/index.md' || relativePath.endsWith('-map.md');
+}
+
+function isDesignContractDoc(relativePath) {
+  if (
+    relativePath === 'docs/runtime-architecture/source-orientation/core-concepts.md' ||
+    relativePath === 'docs/runtime-architecture/source-orientation/glossary.md' ||
+    relativePath === 'docs/runtime-architecture/source-orientation/mechanism.md' ||
+    relativePath === 'docs/runtime-architecture/source-orientation/source-architecture.md' ||
+    relativePath === 'docs/runtime-architecture/source-orientation/module-layout.md'
+  ) {
+    return false;
+  }
+
+  return [
+    'docs/runtime-architecture/',
+    'docs/companion-autonomy/',
+    'docs/goal-execution/',
+    'docs/knowledge-memory/',
+    'docs/extensions-tools/',
+    'docs/design-contracts/',
+  ].some((dir) => relativePath.startsWith(dir));
 }
 
 function checkProductCompletionMatrix(issueList) {
@@ -516,7 +542,14 @@ function checkProductClaimLedger(issueList) {
   if (!Array.isArray(ledger.audit_scope) || ledger.audit_scope.length === 0) {
     issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger audit_scope must list audited doc roots'));
   }
-  for (const requiredRoot of ['README.md', 'docs/start', 'docs/operate', 'docs/reference', 'docs/product', 'docs/design']) {
+  for (const requiredRoot of [
+    'README.md',
+    'docs/getting-started',
+    'docs/operating',
+    'docs/product-direction',
+    'docs/runtime-architecture',
+    'docs/knowledge-memory',
+  ]) {
     if (!ledger.audit_scope?.some((entry) => typeof entry === 'string' && (entry === requiredRoot || entry.startsWith(`${requiredRoot}/`)))) {
       issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger audit_scope must include ${requiredRoot}`));
     }

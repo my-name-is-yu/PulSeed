@@ -13,6 +13,11 @@ import { SIGNAL_GATEWAY_DISPLAY_CONTRACT } from "./channel-display-policy.js";
 import { SIGNAL_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
+import {
+  admitGatewayNotificationCapabilityRecord,
+  createGatewayCapabilityDecisionRecorder,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
 import { ExternalAdapterIntervalPoller, formatExternalAdapterHttpFailure } from "./external-adapter-shell.js";
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
@@ -39,6 +44,11 @@ export interface SignalGatewayConfig {
   receive_timeout_ms: number;
 }
 
+export interface SignalGatewayRuntimeOptions {
+  runtimeBaseDir?: string;
+  capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
+}
+
 interface SignalReceivedMessage {
   id?: string;
   sender?: string;
@@ -56,7 +66,8 @@ export class SignalGatewayNotifier implements INotifier {
 
   constructor(
     private readonly client: SignalBridgeClient,
-    private readonly config: SignalGatewayConfig
+    private readonly config: SignalGatewayConfig,
+    private readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder,
   ) {}
 
   supports(eventType: NotificationEventType): boolean {
@@ -64,6 +75,8 @@ export class SignalGatewayNotifier implements INotifier {
   }
 
   async notify(event: NotificationEvent): Promise<void> {
+    const record = admitGatewayNotificationCapabilityRecord({ channelType: "signal", event });
+    await this.capabilityDecisionRecorder?.(record);
     await this.client.sendTextMessage({
       recipient: this.config.recipient_id,
       body: formatPlaintextNotification(event),
@@ -84,10 +97,12 @@ export class SignalGatewayAdapter implements ChannelAdapter {
   private readonly notifier: SignalGatewayNotifier;
   private readonly poller: ExternalAdapterIntervalPoller;
   private readonly seenMessageIds = new Set<string>();
+  private readonly capabilityDecisionRecorder: GatewayCapabilityDecisionRecorder | undefined;
 
-  constructor(private readonly config: SignalGatewayConfig) {
+  constructor(private readonly config: SignalGatewayConfig, options: SignalGatewayRuntimeOptions = {}) {
+    this.capabilityDecisionRecorder = options.capabilityDecisionRecorder;
     this.client = new SignalBridgeClient(config.bridge_url, config.account);
-    this.notifier = new SignalGatewayNotifier(this.client, config);
+    this.notifier = new SignalGatewayNotifier(this.client, config, this.capabilityDecisionRecorder);
     this.poller = new ExternalAdapterIntervalPoller({
       intervalMs: this.config.poll_interval_ms,
       pollOnce: () => this.pollOnce(),
@@ -95,8 +110,14 @@ export class SignalGatewayAdapter implements ChannelAdapter {
     });
   }
 
-  static fromConfigDir(configDir: string): SignalGatewayAdapter {
-    return new SignalGatewayAdapter(loadSignalGatewayConfig(configDir));
+  static fromConfigDir(configDir: string, options: SignalGatewayRuntimeOptions = {}): SignalGatewayAdapter {
+    return new SignalGatewayAdapter(loadSignalGatewayConfig(configDir), {
+      ...options,
+      capabilityDecisionRecorder: options.capabilityDecisionRecorder
+        ?? (options.runtimeBaseDir
+          ? createGatewayCapabilityDecisionRecorder({ baseDir: options.runtimeBaseDir })
+          : undefined),
+    });
   }
 
   getNotifier(): INotifier {
@@ -164,10 +185,15 @@ export class SignalGatewayAdapter implements ChannelAdapter {
           },
         },
         transport,
+        channelType: "signal",
+        capabilityDecisionRecorder: this.capabilityDecisionRecorder,
       });
       const presenceProjector = new SeedyPresenceProjector({
         presence: resolveGatewayChannelPresenceContract(this.presenceContract),
-        transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+        transport: createSeedyPresenceTransportFromNonTuiDisplay(transport, {
+          channelType: "signal",
+          capabilityDecisionRecorder: this.capabilityDecisionRecorder,
+        }),
         onError: (error, operation) => console.warn("SignalGatewayAdapter: presence projector failed", { operation, error }),
       });
       let reply: string | null = null;

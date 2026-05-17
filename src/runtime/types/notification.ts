@@ -125,6 +125,6 @@ export const NotificationResultSchema = z.object({
   delivered_at: z.string().datetime().optional(),
   error: z.string().optional(),
   suppressed: z.boolean().default(false),
-  suppression_reason: z.enum(["dnd", "cooldown", "filtered"]).optional(),
+  suppression_reason: z.enum(["dnd", "cooldown", "filtered", "capability_blocked"]).optional(),
 });
 export type NotificationResult = z.infer<typeof NotificationResultSchema>;

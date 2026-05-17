@@ -5,6 +5,7 @@ import type { GoalSchedule } from "../../platform/drive/types/drive.js";
 import type { GoalRunAdmissionTriggerKind, RuntimeGraphRef } from "../personal-agent/index.js";
 import { recordGoalRunAdmissionDecision } from "../personal-agent/index.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { projectOperatorHandoffSurfaceEvent } from "../operator-handoff-surface.js";
 import { errorMessage } from "./runner-errors.js";
 import { getDueWaitGoalIds, type WaitDeadlineResolution } from "./wait-deadline-resolver.js";
 
@@ -246,7 +247,7 @@ async function broadcastOpenOperatorHandoffs(context: GoalCycleRunnerContext, go
       if (handoff.goal_id && handoff.goal_id !== goalId) continue;
       if (broadcasted.has(handoff.handoff_id)) continue;
       broadcasted.add(handoff.handoff_id);
-      await context.eventServer.broadcast("operator_handoff_required", handoff);
+      await context.eventServer.broadcast("operator_handoff_required", projectOperatorHandoffSurfaceEvent(handoff));
     }
   } catch (err) {
     context.logger?.warn?.("Failed to broadcast operator handoffs", {

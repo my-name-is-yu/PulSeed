@@ -1,6 +1,12 @@
 import type { Logger } from "../../../runtime/logger.js";
 import type { Task } from "../../../base/types/task.js";
-import { AdapterRegistry, type AgentResult, type AgentTask, type IAdapter } from "../adapter-layer.js";
+import {
+  AdapterRegistry,
+  type AdapterCapabilityPlaneAdmission,
+  type AgentResult,
+  type AgentTask,
+  type IAdapter,
+} from "../adapter-layer.js";
 import type { GuardrailRunner } from "../../../platform/traits/guardrail-runner.js";
 import { ToolExecutor } from "../../../tools/executor.js";
 import { ToolRegistry } from "../../../tools/registry.js";
@@ -82,6 +88,12 @@ export async function executeTaskWithGuards(
     stateManager,
     toolExecutor: executionToolExecutor,
   });
+  const toolBackedAdapterAdmission: AdapterCapabilityPlaneAdmission = {
+    schema_version: "adapter-capability-plane-admission/v1",
+    boundary: "run_adapter_tool",
+    descriptor_id: "capability:run_adapter:run-adapter",
+    admission_id: `capability-admission:task-execution:${task.goal_id}:${task.id}:${adapter.adapterType}`,
+  };
 
   let result: AgentResult;
   try {
@@ -90,6 +102,8 @@ export async function executeTaskWithGuards(
       task,
       toolBackedAdapter,
       workspaceContext,
+      undefined,
+      { capabilityPlaneAdmission: toolBackedAdapterAdmission },
     ));
     if (isInvalidRunAdapterResult(result)) {
       await stateManager.saveTask({
@@ -191,6 +205,7 @@ function createToolBackedAdapter(input: {
   const traceStore = new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir });
   return {
     adapterType: adapter.adapterType,
+    capabilityPlaneBoundary: "run_adapter_tool",
     ...(adapter.capabilities !== undefined ? { capabilities: adapter.capabilities } : {}),
     ...(adapter.formatPrompt ? { formatPrompt: adapter.formatPrompt.bind(adapter) } : {}),
     ...(adapter.checkDuplicate ? { checkDuplicate: adapter.checkDuplicate.bind(adapter) } : {}),

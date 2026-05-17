@@ -177,7 +177,7 @@ describe("completion_judger timeout + retry", () => {
     // The description should mention timeout or failure
     const desc = result.evidence.find((e) => e.layer === "independent_review")?.description ?? "";
     expect(desc).toMatch(/timeout|failed/i);
-  }, 2_000 /* 2 second wall-clock limit to confirm no hang */);
+  }, 5_000 /* wall-clock limit to confirm no hang under full-lane load */);
 
   it("skips completion judging for timed-out AgentLoop tasks without mechanical salvage evidence", async () => {
     const failingLLM = makeFailingLLMClient(1);

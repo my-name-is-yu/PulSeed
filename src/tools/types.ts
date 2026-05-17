@@ -21,6 +21,10 @@ import type {
   PersonalAgentSourceKind,
   RuntimeGraphRef,
 } from "../runtime/personal-agent/index.js";
+import type {
+  CapabilityAdmissionDecision,
+  CapabilityDescriptor,
+} from "../runtime/capability-plane.js";
 
 // --- Tool Result ---
 
@@ -339,6 +343,10 @@ export interface ToolCallContext {
   };
   /** Typed capability operation context supplied by production caller paths. */
   capabilityExecution?: CapabilityExecutionContext;
+  /** Descriptor used by the Capability Plane for this exact tool admission. */
+  capabilityDescriptor?: CapabilityDescriptor;
+  /** Capability Plane admission decision for this exact tool call. */
+  capabilityAdmissionDecision?: CapabilityAdmissionDecision;
   /** Optional resolver that binds production tool calls to current capability operation contracts. */
   capabilityExecutionResolver?: CapabilityExecutionResolver;
   /** Optional subagent role for delegated runs. */

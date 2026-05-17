@@ -837,9 +837,10 @@ export class DaemonRunner {
   private async handleApprovalResponseCommand(
     goalId: string | undefined,
     requestId: string,
-    approved: boolean
+    approved: boolean,
+    binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string } = {}
   ): Promise<void> {
-    await handleApprovalResponseCommandFn(this as never, goalId, requestId, approved);
+    await handleApprovalResponseCommandFn(this as never, goalId, requestId, approved, binding);
   }
 
   private async runRuntimeStoreMaintenance(force = false): Promise<void> {

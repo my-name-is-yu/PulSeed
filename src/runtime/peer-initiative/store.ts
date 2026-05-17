@@ -302,6 +302,36 @@ export class PeerInitiativeStore {
     });
   }
 
+  async getLatestDeliveryForActionBinding(input: {
+    bindingId: string;
+    surface?: string;
+  }): Promise<PeerDeliveryRecord | null> {
+    const db = await this.database();
+    const bindingIds = input.bindingId.startsWith("sab:")
+      ? [input.bindingId, input.bindingId.slice("sab:".length)]
+      : [input.bindingId, `sab:${input.bindingId}`];
+    return db.read((sqlite) => {
+      const rows = input.surface
+        ? sqlite.prepare(`
+            SELECT delivery_json
+            FROM peer_deliveries, json_each(peer_deliveries.delivery_json, '$.outbound_message.action_bindings') AS binding
+            WHERE surface = ?
+              AND json_extract(binding.value, '$.binding_id') IN (?, ?)
+            ORDER BY COALESCE(delivered_at, json_extract(delivery_json, '$.delivered_at'), '') DESC, delivery_id DESC
+            LIMIT 1
+          `).all(input.surface, bindingIds[0], bindingIds[1]) as Array<{ delivery_json: string }>
+        : sqlite.prepare(`
+            SELECT delivery_json
+            FROM peer_deliveries, json_each(peer_deliveries.delivery_json, '$.outbound_message.action_bindings') AS binding
+            WHERE json_extract(binding.value, '$.binding_id') IN (?, ?)
+            ORDER BY COALESCE(delivered_at, json_extract(delivery_json, '$.delivered_at'), '') DESC, delivery_id DESC
+            LIMIT 1
+          `).all(bindingIds[0], bindingIds[1]) as Array<{ delivery_json: string }>;
+      const row = rows[0];
+      return row ? parsePeerDelivery(row.delivery_json) : null;
+    });
+  }
+
   async appendFeedbackProjection(input: PeerFeedbackProjection): Promise<PeerFeedbackProjection> {
     const projection = PeerFeedbackProjectionSchema.parse(input);
     const db = await this.database();

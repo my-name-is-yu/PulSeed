@@ -4,11 +4,18 @@ import {
 } from "./chat-session-port.js";
 import { normalizeAssistantDisplayText } from "../../orchestrator/execution/agent-loop/chat-display-output.js";
 import { EXTERNAL_SURFACE_METADATA_KEY } from "./channel-policy.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectTextSurface,
+  SurfaceProjectionSchema,
+  type SurfaceProjection,
+} from "../surface-projection-protocol.js";
 
 export type { GatewayChatDispatchInput } from "./chat-session-port.js";
 
 export type GatewayChatDispatchResult =
-  | { status: "ok"; text: string }
+  | { status: "ok"; text: string; surface_projection?: SurfaceProjection }
   | { status: "empty"; error: string }
   | { status: "error"; error: string };
 
@@ -53,14 +60,18 @@ export async function dispatchGatewayChatInputResult(
       ...(input.externalSurface ? { externalSurface: input.externalSurface } : {}),
       onEvent: input.onEvent,
     });
-    const text = normalizeManagerResult(result);
-    if (text === null) {
+    const normalized = normalizeManagerResult(result);
+    if (normalized === null) {
       return {
         status: "empty",
         error: "Gateway chat dispatcher did not return displayable assistant text.",
       };
     }
-    return { status: "ok", text };
+    return {
+      status: "ok",
+      text: normalized.text,
+      surface_projection: normalized.surfaceProjection ?? projectGatewayDispatchSurface(input, normalized.text),
+    };
   } catch (error) {
     return {
       status: "error",
@@ -79,12 +90,54 @@ export async function dispatchGatewayChatInput(
   return result.text;
 }
 
-function normalizeManagerResult(result: unknown): string | null {
+function normalizeManagerResult(result: unknown): { text: string; surfaceProjection?: SurfaceProjection } | null {
   if (typeof result === "string") {
-    return normalizeAssistantDisplayText({ finalText: result, output: null });
+    const text = normalizeAssistantDisplayText({ finalText: result, output: null });
+    return text === null ? null : { text };
   }
   if (typeof result === "object" && result !== null) {
-    return normalizeAssistantDisplayText({ output: result as Record<string, unknown> });
+    const record = result as Record<string, unknown>;
+    const parsedProjection = SurfaceProjectionSchema.safeParse(record["surface_projection"]);
+    const text = normalizeAssistantDisplayText({ output: record });
+    if (text === null) return null;
+    const surfaceProjection = parsedProjection.success && parsedProjection.data.view === "normal"
+      ? parsedProjection.data
+      : undefined;
+    return {
+      text,
+      ...(surfaceProjection ? { surfaceProjection } : {}),
+    };
   }
   return null;
+}
+
+function projectGatewayDispatchSurface(input: GatewayChatDispatchInput, text: string): SurfaceProjection {
+  const replayKey = [
+    "gateway-chat-dispatch",
+    input.platform,
+    input.conversation_id,
+    input.message_id ?? "no-message",
+  ].join(":");
+  return projectTextSurface({
+    surface: "gateway",
+    text,
+    purpose: "gateway chat dispatch assistant output",
+    projectedAt: new Date().toISOString(),
+    replayKey,
+    sourceEventRefs: [
+      normalSourceEventRef({
+        kind: "gateway_message",
+        ref: `${input.platform}:${input.conversation_id}:${input.message_id ?? "no-message"}`,
+        event_type: "assistant_final",
+        replay_key: replayKey,
+      }),
+    ],
+    runtimeGraphRefs: [
+      normalRuntimeGraphRef({
+        kind: "gateway_conversation",
+        ref: `${input.platform}:${input.conversation_id}`,
+        role: "target",
+      }),
+    ],
+  });
 }

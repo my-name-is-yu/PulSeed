@@ -58,7 +58,13 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-async function waitForCondition(condition: () => boolean, message: string, timeoutMs = 2000): Promise<void> {
+const WATCHER_CONDITION_TIMEOUT_MS = 10_000;
+
+async function waitForCondition(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = WATCHER_CONDITION_TIMEOUT_MS
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (condition()) {

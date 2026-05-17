@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { AdapterRegistry } from "../adapter-layer.js";
-import type { IAdapter, AgentTask, AgentResult } from "../adapter-layer.js";
+import { AdapterRegistry, adapterExecutionHasCapabilityPlaneAdmission } from "../adapter-layer.js";
+import type { IAdapter, AgentTask } from "../adapter-layer.js";
 
 // ─── Helpers ───
 
@@ -110,5 +110,62 @@ describe("AdapterRegistry — selectByCapability", () => {
   it("returns null when no adapter matches", () => {
     const result = registry.selectByCapability(["unknown_capability"]);
     expect(result).toBeNull();
+  });
+});
+
+describe("adapterExecutionHasCapabilityPlaneAdmission", () => {
+  const adapter: IAdapter = {
+    ...makeAdapter("tool-backed"),
+    capabilityPlaneBoundary: "run_adapter_tool",
+  };
+
+  it("rejects adapter self-assertion when task admission is missing", () => {
+    expect(adapterExecutionHasCapabilityPlaneAdmission({
+      prompt: "run",
+      timeout_ms: 1000,
+      adapter_type: "tool-backed",
+    }, adapter)).toBe(false);
+  });
+
+  it("rejects forged admissions whose boundary does not match the adapter boundary", () => {
+    expect(adapterExecutionHasCapabilityPlaneAdmission({
+      prompt: "run",
+      timeout_ms: 1000,
+      adapter_type: "tool-backed",
+      capability_plane_admission: {
+        schema_version: "adapter-capability-plane-admission/v1",
+        boundary: "provider_adapter",
+        descriptor_id: "capability:run_adapter:run-adapter",
+        admission_id: "capability-admission:test",
+      },
+    }, adapter)).toBe(false);
+  });
+
+  it("rejects malformed admissions without durable ids", () => {
+    expect(adapterExecutionHasCapabilityPlaneAdmission({
+      prompt: "run",
+      timeout_ms: 1000,
+      adapter_type: "tool-backed",
+      capability_plane_admission: {
+        schema_version: "adapter-capability-plane-admission/v1",
+        boundary: "run_adapter_tool",
+        descriptor_id: "",
+        admission_id: "",
+      },
+    }, adapter)).toBe(false);
+  });
+
+  it("accepts matching task admission and adapter boundary", () => {
+    expect(adapterExecutionHasCapabilityPlaneAdmission({
+      prompt: "run",
+      timeout_ms: 1000,
+      adapter_type: "tool-backed",
+      capability_plane_admission: {
+        schema_version: "adapter-capability-plane-admission/v1",
+        boundary: "run_adapter_tool",
+        descriptor_id: "capability:run_adapter:run-adapter",
+        admission_id: "capability-admission:test",
+      },
+    }, adapter)).toBe(true);
   });
 });

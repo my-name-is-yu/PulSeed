@@ -1,7 +1,14 @@
 import type { Logger } from "../../../runtime/logger.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
-import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
+import {
+  adapterExecutionHasCapabilityPlaneAdmission,
+  blockedDirectAdapterExecutionResult,
+  type AgentTask,
+  type AgentResult,
+  type AdapterCapabilityPlaneAdmission,
+  type IAdapter,
+} from "../adapter-layer.js";
 import type { Task } from "../../../base/types/task.js";
 import { TaskSchema } from "../../../base/types/task.js";
 import type { Strategy } from "../../../base/types/strategy.js";
@@ -25,6 +32,7 @@ export interface TaskExecutorDeps {
 
 interface ExecuteTaskOptions {
   diffBaseline?: ExecutionDiffBaseline;
+  capabilityPlaneAdmission?: AdapterCapabilityPlaneAdmission;
 }
 
 // ─── durationToMs ───
@@ -121,6 +129,9 @@ export async function executeTask(
     prompt,
     timeout_ms: timeoutMs,
     adapter_type: adapter.adapterType,
+    ...(options?.capabilityPlaneAdmission !== undefined
+      ? { capability_plane_admission: options.capabilityPlaneAdmission }
+      : {}),
     ...(allowedTools !== undefined ? { allowed_tools: allowedTools } : {}),
     ...(workspaceCwd !== undefined ? { cwd: workspaceCwd } : {}),
   };
@@ -137,31 +148,35 @@ export async function executeTask(
   // Execute
   let result: AgentResult;
   try {
-    // Generic dedup check — any adapter may optionally implement checkDuplicate
-    if (adapter.checkDuplicate) {
-      try {
-        const isDuplicate = await adapter.checkDuplicate(agentTask);
-        if (isDuplicate) {
-          // Return synthetic result — task already exists, skip execution
-          result = {
-            success: true,
-            output: 'Skipped: duplicate task detected by adapter',
-            error: null,
-            exit_code: 0,
-            elapsed_ms: 0,
-            stopped_reason: 'completed',
-          };
-          // End session and update task status without calling adapter.execute
-          const skipSummary = 'Task skipped: duplicate detected by adapter';
-          await sessionManager.endSession(session.id, skipSummary);
-          const skipNow = new Date().toISOString();
-          const skippedTask = { ...runningTask, status: 'completed' as const, completed_at: skipNow };
-          await stateManager.saveTask(skippedTask);
-          return result;
-        }
-      } catch { /* non-fatal: proceed with execution if dedup check fails */ }
+    if (!adapterExecutionHasCapabilityPlaneAdmission(agentTask, adapter)) {
+      result = blockedDirectAdapterExecutionResult(adapter.adapterType);
+    } else {
+      // Generic dedup check — any adapter may optionally implement checkDuplicate
+      if (adapter.checkDuplicate) {
+        try {
+          const isDuplicate = await adapter.checkDuplicate(agentTask);
+          if (isDuplicate) {
+            // Return synthetic result — task already exists, skip execution
+            result = {
+              success: true,
+              output: 'Skipped: duplicate task detected by adapter',
+              error: null,
+              exit_code: 0,
+              elapsed_ms: 0,
+              stopped_reason: 'completed',
+            };
+            // End session and update task status without calling adapter.execute
+            const skipSummary = 'Task skipped: duplicate detected by adapter';
+            await sessionManager.endSession(session.id, skipSummary);
+            const skipNow = new Date().toISOString();
+            const skippedTask = { ...runningTask, status: 'completed' as const, completed_at: skipNow };
+            await stateManager.saveTask(skippedTask);
+            return result;
+          }
+        } catch { /* non-fatal: proceed with execution if dedup check fails */ }
+      }
+      result = await adapter.execute(agentTask);
     }
-    result = await adapter.execute(agentTask);
   } catch (err) {
     result = {
       success: false,
@@ -230,6 +245,18 @@ export async function applyPostExecutionDiffScopeChecks(input: {
     input.result.diffEvidenceSource = diffArtifacts.evidenceSource;
     if (diffArtifacts.available) {
       const changedFiles = diffArtifacts.changedPaths;
+      const hasAdapterReportedChangedPaths = (input.fallbackChangedPaths ?? []).length > 0;
+      if (
+        !initiallySuccessful &&
+        diffArtifacts.evidenceSource !== "git" &&
+        !hasAdapterReportedChangedPaths
+      ) {
+        input.result.filesChangedPaths = [];
+        input.result.fileDiffs = [];
+        input.result.filesChanged = false;
+        return;
+      }
+
       input.result.filesChangedPaths = changedFiles;
       input.result.fileDiffs = diffArtifacts.fileDiffs;
       input.result.filesChanged = changedFiles.length > 0;

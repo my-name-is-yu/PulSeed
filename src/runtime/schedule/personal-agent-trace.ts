@@ -4,6 +4,7 @@ import {
   type CompanionCognitionOutput,
   type CognitionEventRef,
 } from "../cognition/index.js";
+import { descriptorFromScheduleEntry } from "../capability-plane.js";
 import {
   buildPersonalAgentDecisionTrace,
   stableId,
@@ -22,6 +23,7 @@ interface ScheduleTraceEntry {
   id: string;
   name: string;
   layer: ScheduleEntry["layer"] | "escalation";
+  updated_at?: string | null;
   metadata?: ScheduleEntry["metadata"];
 }
 
@@ -38,6 +40,7 @@ export interface ScheduleGoalRunTraceInput {
   decision: InterventionDecisionKind;
   capabilityDecision?: CapabilityRegistryDecisionKind;
   decisionReason: string;
+  capabilityRefs?: RuntimeGraphRef[];
 }
 
 export interface ScheduleJobDecisionTraceInput {
@@ -65,6 +68,7 @@ export interface ScheduleWaitResumeDecisionTraceInput {
   decision: InterventionDecisionKind;
   capabilityDecision?: CapabilityRegistryDecisionKind;
   decisionReason: string;
+  capabilityRefs?: RuntimeGraphRef[];
   currentRefs?: RuntimeGraphRef[];
   staleRefs?: RuntimeGraphRef[];
   auditRefs?: RuntimeGraphRef[];
@@ -145,8 +149,10 @@ export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceI
     decisionReason: input.decisionReason,
     capabilityDecision: input.capabilityDecision ?? (input.decision === "block" ? "missing" : "available"),
     capabilityRefs: [
+      ...scheduleCapabilityDescriptorRefs(input.entry, input.mode),
       { kind: "capability", ref: "durable_loop_goal_run" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
+      ...(input.capabilityRefs ?? []),
     ],
     policyRef: cognitionPolicyRef(cognition, "policy:schedule-goal-run-v1"),
     permissionRequired: false,
@@ -222,6 +228,7 @@ export async function recordScheduleJobDecision(input: ScheduleJobDecisionTraceI
     decisionReason: input.decisionReason,
     capabilityDecision: input.capabilityDecision ?? (input.decision === "block" ? "missing" : "available"),
     capabilityRefs: [
+      ...scheduleCapabilityDescriptorRefs(input.entry, `${input.jobKind}:${input.actionKind}`),
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
       { kind: "capability", ref: `schedule_job:${input.jobKind}:${input.actionKind}` },
       ...(input.capabilityRefs ?? []),
@@ -303,8 +310,10 @@ export async function recordScheduleWaitResumeDecision(input: ScheduleWaitResume
     decisionReason: input.decisionReason,
     capabilityDecision: input.capabilityDecision ?? (input.decision === "block" ? "blocked" : "available"),
     capabilityRefs: [
+      ...scheduleCapabilityDescriptorRefs(input.entry, "wait_resume"),
       { kind: "capability", ref: "schedule_wait_resume_attention" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
+      ...(input.capabilityRefs ?? []),
     ],
     policyRef: cognitionPolicyRef(cognition, "policy:schedule-wait-resume-v1"),
     permissionRequired: false,
@@ -400,4 +409,14 @@ function cognitionPolicyRef(
   return cognition.response_plan?.plan_id
     ? { kind: "response_plan", ref: cognition.response_plan.plan_id }
     : { kind: "intervention_policy", ref: fallback };
+}
+
+function scheduleCapabilityDescriptorRefs(entry: ScheduleTraceEntry, actionKind: string): RuntimeGraphRef[] {
+  const descriptor = descriptorFromScheduleEntry(entry, actionKind);
+  return [
+    { kind: "capability", ref: descriptor.capability_id },
+    { kind: "capability_provider", ref: descriptor.provider_ref },
+    { kind: "capability_operation", ref: descriptor.runtime_graph_refs.operation_ref },
+    { kind: "capability_readiness", ref: descriptor.readiness_state },
+  ];
 }

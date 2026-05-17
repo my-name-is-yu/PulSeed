@@ -288,8 +288,21 @@ describe("runDaemonGoalCycleLoop", () => {
           handoff_id: "handoff-live",
           goal_id: "goal-1",
           status: "open",
+          approval_prompt: expect.objectContaining({
+            approve_binding_id: expect.stringMatching(/^sab:/),
+          }),
+          surface_projection: expect.objectContaining({
+            surface: "approval",
+            view: "normal",
+          }),
         })
       );
+      const broadcastPayload = broadcast.mock.calls.find(([eventType]) =>
+        eventType === "operator_handoff_required"
+      )?.[1] as Record<string, unknown> | undefined;
+      expect(broadcastPayload).not.toHaveProperty("summary");
+      expect(broadcastPayload).not.toHaveProperty("current_status");
+      expect(broadcastPayload).not.toHaveProperty("evidence_refs");
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }

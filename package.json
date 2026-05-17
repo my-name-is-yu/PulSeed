@@ -50,7 +50,7 @@
     "build": "npm run clean && tsc -p tsconfig.build.json --incremental false && node scripts/fix-bin-mode.mjs",
     "build:watch": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "check:docs": "node scripts/check-docs.mjs",
-    "check:public-contracts": "node scripts/check-public-contracts.mjs && node scripts/check-companion-cognition-boundaries.mjs",
+    "check:public-contracts": "node scripts/check-public-contracts.mjs && node scripts/check-surface-projection-boundaries.mjs && node scripts/check-companion-cognition-boundaries.mjs",
     "check:companion-cognition-boundaries": "node scripts/check-companion-cognition-boundaries.mjs",
     "check:database-first-legacy-stores": "node scripts/check-database-first-legacy-stores.mjs",
     "check:subpackages": "node scripts/check-subpackages.mjs --changed",
@@ -87,7 +87,7 @@
     "tui:test": "node scripts/run-tui-test.mjs",
     "test:remote": "bash scripts/test-remote.sh",
     "test:remote:coverage": "bash scripts/test-remote.sh --coverage",
-    "lint:boundaries": "eslint -c eslint.config.mjs 'src/**/*.ts'",
+    "lint:boundaries": "eslint -c eslint.config.mjs 'src/**/*.ts' && node scripts/check-capability-plane-boundaries.mjs",
     "lint:quality": "eslint -c eslint.config.mjs 'src/**/*.ts' --report-unused-disable-directives"
   },
   "engines": {

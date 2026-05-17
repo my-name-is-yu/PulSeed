@@ -16,6 +16,7 @@ import { SLACK_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from "./ch
 import { SLACK_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
+import type { GatewayCapabilityDecisionRecorder } from "./gateway-channel-capability-admission.js";
 import { formatExternalAdapterHttpFailure } from "./external-adapter-shell.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
@@ -28,6 +29,7 @@ export interface SlackChannelAdapterConfig {
   channelGoalMap?: Record<string, string>;
   security?: ChannelAccessPolicy;
   routing?: ChannelRoutingPolicy;
+  capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
 }
 
 export interface SlackResponse {
@@ -259,10 +261,15 @@ export class SlackChannelAdapter implements ChannelAdapter {
         },
       },
       transport,
+      channelType: "slack",
+      capabilityDecisionRecorder: this.config.capabilityDecisionRecorder,
     });
     const presenceProjector = new SeedyPresenceProjector({
       presence: resolveGatewayChannelPresenceContract(this.presenceContract),
-      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport, {
+        channelType: "slack",
+        capabilityDecisionRecorder: this.config.capabilityDecisionRecorder,
+      }),
       onError: (error, operation) => console.warn("SlackChannelAdapter: presence projector failed", { operation, error }),
     });
 

@@ -123,6 +123,7 @@ export type ApprovalOrigin = z.infer<typeof ApprovalOriginSchema>;
 
 export const ApprovalRecordSchema = z.object({
   approval_id: z.string(),
+  surface_issuance_id: z.string().min(1).optional(),
   goal_id: z.string().optional(),
   request_envelope_id: z.string(),
   correlation_id: z.string(),
