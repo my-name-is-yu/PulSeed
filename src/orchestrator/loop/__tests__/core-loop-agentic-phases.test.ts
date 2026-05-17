@@ -695,6 +695,93 @@ describe("CoreLoop agentic phase hooks", () => {
     }));
   });
 
+  it("closes experiment records against the matching required plan instead of only the first one", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `task-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:task-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `task evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-task-experiment" },
+        record: { id: "consumption-task-experiment", stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: {
+          phase: "task_generation",
+          projectionKind: "task_generation_bias",
+          consumptionRecordId: "consumption-task-experiment",
+          preferredTargetDimension: "dim1",
+          taskBiasRefs: [],
+          avoidTaskPatternRefs: [],
+          requiredExperimentPlanIds: ["wrong-experiment-plan", "matching-experiment-plan"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied: vi.fn().mockResolvedValue(null),
+      markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
+      listExperimentPlans: vi.fn().mockResolvedValue([
+        {
+          id: "wrong-experiment-plan",
+          plannedConsumerPhase: "task_generation",
+          plannedTaskId: "other-task",
+          hypothesisIds: ["hypothesis-wrong"],
+          generalizationCandidateIds: [],
+        },
+        {
+          id: "matching-experiment-plan",
+          plannedConsumerPhase: "task_generation",
+          plannedTaskId: "task-1",
+          hypothesisIds: ["hypothesis-match"],
+          generalizationCandidateIds: [],
+        },
+      ]),
+      appendLifecycleEvent,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "experiment_record_closed",
+      plan_id: "matching-experiment-plan",
+      record: expect.objectContaining({
+        planId: "matching-experiment-plan",
+        taskId: "task-1",
+      }),
+    }));
+    expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "experiment_record_closed",
+      plan_id: "wrong-experiment-plan",
+    }));
+  });
+
   it("suppresses failed knowledge-refresh priors instead of marking them applied", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };

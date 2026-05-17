@@ -1093,23 +1093,31 @@ export class CoreIterationKernel {
       && iterationEvidence.length > 0
     ) {
       try {
-        const experimentPlanId = taskLearningProjection.requiredExperimentPlanIds[0]!;
-        const experimentPlan = (await this.deps.deps.experienceLearningStore.listExperimentPlans(goalId))
-          .find((plan) => plan.id === experimentPlanId) ?? null;
-        const matchesExperimentPlan = taskMatchesExperimentPlan({
-          taskResult: completedTaskResult,
-          projection: taskLearningProjection,
-          plan: experimentPlan,
-          planId: experimentPlanId,
-        });
-        if (matchesExperimentPlan) {
+        const experimentPlans = await this.deps.deps.experienceLearningStore.listExperimentPlans(goalId);
+        const experimentPlansById = new Map(experimentPlans.map((plan) => [plan.id, plan]));
+        let matchedExperimentPlanId: string | null = null;
+        let matchedExperimentPlan: LearningExperimentPlan | null = null;
+        for (const experimentPlanId of taskLearningProjection.requiredExperimentPlanIds) {
+          const experimentPlan = experimentPlansById.get(experimentPlanId) ?? null;
+          if (taskMatchesExperimentPlan({
+            taskResult: completedTaskResult,
+            projection: taskLearningProjection,
+            plan: experimentPlan,
+            planId: experimentPlanId,
+          })) {
+            matchedExperimentPlanId = experimentPlanId;
+            matchedExperimentPlan = experimentPlan;
+            break;
+          }
+        }
+        if (matchedExperimentPlanId) {
           const experimentClosedPayload = buildExperimentRecordClosedPayload({
             goalId,
             runId: runtimeEvidenceScope.run_id,
             loopIndex,
             taskResult: completedTaskResult,
-            planId: experimentPlanId,
-            plan: experimentPlan,
+            planId: matchedExperimentPlanId,
+            plan: matchedExperimentPlan,
             evidenceRefs: iterationEvidence.map((entry) => entry.id),
             eventRefs: iterationEvidence.flatMap((entry) =>
               entry.raw_refs
@@ -1143,7 +1151,7 @@ export class CoreIterationKernel {
         this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
           goalId,
           loopIndex,
-          planId: taskLearningProjection.requiredExperimentPlanIds[0],
+          planIds: taskLearningProjection.requiredExperimentPlanIds,
           error: err instanceof Error ? err.message : String(err),
         });
       }

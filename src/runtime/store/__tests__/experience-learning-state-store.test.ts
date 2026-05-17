@@ -139,6 +139,24 @@ describe("ExperienceLearningStateStore", () => {
     expect(snapshot.values.find((value) => value.name === "interaction_policy_bias_outcome_delta")?.validity.decision).toBe("valid");
   });
 
+  it("upserts metric baseline observations by logical scenario key when retry ids change", async () => {
+    await store.recordMetricBaselineObservation(makeBaselineObservation("task_work", "no_prior"));
+    await store.recordMetricBaselineObservation({
+      ...makeBaselineObservation("task_work", "no_prior"),
+      id: "metric-baseline:task_work:no_prior:retry",
+      observedAt: "2026-05-17T00:20:00.000Z",
+      numeratorValue: 3,
+      denominatorValue: 4,
+      value: 0.75,
+    });
+
+    const snapshot = await store.getMetricsSnapshot("goal-learning");
+    expect(snapshot.values.find((value) => value.name === "prior_outcome_delta")?.validity).toMatchObject({
+      decision: "invalid",
+      baseline_observation_ids: ["metric-baseline:task_work:no_prior:retry"],
+    });
+  });
+
   it("projects experience-learning refs into RuntimeGraph explanations", async () => {
     const payload = makeFramePayload();
     const append = await store.appendLifecycleEvent(payload);

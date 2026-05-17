@@ -482,12 +482,9 @@ export class ExperienceLearningStateStore {
           @observation_id, @baseline_id, @goal_id, @scenario_class, @run_kind, @run_ref,
           @observed_at, @metric_names_json, @observation_json
         )
-        ON CONFLICT(observation_id) DO UPDATE SET
-          baseline_id = excluded.baseline_id,
+        ON CONFLICT(baseline_id, scenario_class, run_kind, run_ref) DO UPDATE SET
+          observation_id = excluded.observation_id,
           goal_id = excluded.goal_id,
-          scenario_class = excluded.scenario_class,
-          run_kind = excluded.run_kind,
-          run_ref = excluded.run_ref,
           observed_at = excluded.observed_at,
           metric_names_json = excluded.metric_names_json,
           observation_json = excluded.observation_json
