@@ -324,7 +324,7 @@ describe("EventServer durable approval integration", () => {
     try {
       await server.start();
       const event = await waitForSseEvent(server.getPort(), "approval_required", server.getAuthToken());
-      expect(event).toEqual({
+      expect(event).toEqual(expect.objectContaining({
         requestId: "approval-sse",
         goalId: "goal-sse",
         task: {
@@ -334,7 +334,22 @@ describe("EventServer durable approval integration", () => {
         },
         expiresAt,
         restored: true,
-      });
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-sse",
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+          normal_view: expect.objectContaining({
+            redaction: expect.objectContaining({
+              raw_trace_ids_visible: false,
+              operator_refs_visible: false,
+            }),
+          }),
+        }),
+      }));
     } finally {
       await server.stop();
     }
@@ -374,7 +389,7 @@ describe("EventServer durable approval integration", () => {
       server.setApprovalBroker(broker);
 
       const event = await waitForSseEvent(server.getPort(), "approval_required", server.getAuthToken());
-      expect(event).toEqual({
+      expect(event).toEqual(expect.objectContaining({
         requestId: "approval-late-broker",
         goalId: "goal-sse",
         task: {
@@ -384,7 +399,22 @@ describe("EventServer durable approval integration", () => {
         },
         expiresAt,
         restored: true,
-      });
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-late-broker",
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+          normal_view: expect.objectContaining({
+            redaction: expect.objectContaining({
+              raw_trace_ids_visible: false,
+              operator_refs_visible: false,
+            }),
+          }),
+        }),
+      }));
     } finally {
       await server.stop();
     }
