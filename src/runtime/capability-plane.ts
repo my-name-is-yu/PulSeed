@@ -7,6 +7,8 @@ import type {
 } from "../tools/types.js";
 import type { MCPServerConfig } from "../base/types/mcp.js";
 import type { PluginState } from "./types/plugin.js";
+import type { AgentTask, IAdapter } from "../orchestrator/execution/adapter-layer.js";
+import type { ScheduleEntry } from "./types/schedule.js";
 import type {
   CapabilityOperationKind,
   CapabilityRiskClass,
@@ -176,6 +178,28 @@ export interface CapabilityAdmissionDecision {
   audit_refs: string[];
 }
 
+export interface CapabilityAdmissionExecutionContext {
+  preApproved?: boolean;
+  approvalFingerprint?: string | null;
+  authorityRefs?: readonly string[];
+  cwd?: string;
+  goalId?: string;
+  runId?: string | null;
+  sessionId?: string | null;
+  turnId?: string | null;
+  callId?: string | null;
+  stateEpoch?: string | null;
+}
+
+export interface CapabilityNormalSurfaceProjection {
+  schema_version: "capability-normal-surface-projection/v1";
+  capability_id: string;
+  readiness_state: CapabilityReadinessState;
+  safe_label: string;
+  action: CapabilityNormalSurfaceAffordance["action"];
+  visible: boolean;
+}
+
 export class CapabilityRegistry {
   private readonly descriptors = new Map<string, CapabilityDescriptor>();
   private readonly toolNameIndex = new Map<string, string>();
@@ -256,38 +280,93 @@ export class CapabilityPlane {
       });
     }
 
-    const fingerprint = fingerprintCapabilityApproval(descriptor, input.rawInput, input.context);
-    if (descriptor.readiness_state === "blocked" || descriptor.readiness_state === "disabled" || descriptor.readiness_state === "proposal") {
-      return capabilityAdmission({
-        status: "blocked",
-        reason: `${descriptor.capability_id} is ${descriptor.readiness_state}; it cannot execute until descriptor readiness is enabled and verified.`,
-        descriptor,
-        fingerprint,
-      });
-    }
-    if (descriptor.readiness_state === "verification_required" || descriptor.readiness_state === "degraded") {
-      return capabilityAdmission({
-        status: "blocked",
-        reason: `${descriptor.capability_id} requires verification before execution.`,
-        descriptor,
-        fingerprint,
-      });
-    }
-    if (descriptor.authority_requirements.approval_required && !input.context.preApproved) {
-      return capabilityAdmission({
-        status: "requires_approval",
-        reason: `${descriptor.capability_id} requires approval before ${descriptor.operation_kind}.`,
-        descriptor,
-        fingerprint,
-      });
-    }
+    return admitCapabilityDescriptor({
+      descriptor,
+      rawInput: input.rawInput,
+      context: {
+        preApproved: input.context.preApproved,
+        cwd: input.context.cwd,
+        goalId: input.context.goalId,
+        runId: input.context.runId ?? null,
+        sessionId: input.context.sessionId ?? null,
+        turnId: input.context.turnId ?? null,
+        callId: input.context.callId ?? null,
+        stateEpoch: input.context.hostToolState?.currentEpoch ?? input.context.hostToolState?.observedEpoch ?? null,
+      },
+    });
+  }
+}
+
+export function admitCapabilityDescriptor(input: {
+  descriptor: CapabilityDescriptor;
+  rawInput: unknown;
+  context?: CapabilityAdmissionExecutionContext;
+}): CapabilityAdmissionDecision {
+  const descriptor = CapabilityDescriptorSchema.parse(input.descriptor);
+  const context = input.context ?? {};
+  const fingerprint = fingerprintCapabilityDescriptor(descriptor, input.rawInput, context);
+  if (descriptor.readiness_state === "blocked" || descriptor.readiness_state === "disabled" || descriptor.readiness_state === "proposal") {
     return capabilityAdmission({
-      status: "allowed",
-      reason: `${descriptor.capability_id} admitted by descriptor readiness and authority requirements.`,
+      status: "blocked",
+      reason: `${descriptor.capability_id} is ${descriptor.readiness_state}; it cannot execute until descriptor readiness is enabled and verified.`,
       descriptor,
       fingerprint,
     });
   }
+  if (descriptor.readiness_state === "verification_required" || descriptor.readiness_state === "degraded") {
+    return capabilityAdmission({
+      status: "blocked",
+      reason: `${descriptor.capability_id} requires verification before execution.`,
+      descriptor,
+      fingerprint,
+    });
+  }
+  if (context.approvalFingerprint && context.approvalFingerprint !== fingerprint) {
+    return capabilityAdmission({
+      status: "blocked",
+      reason: `${descriptor.capability_id} approval fingerprint mismatch; refusing to execute stale or changed inputs.`,
+      descriptor,
+      fingerprint,
+    });
+  }
+  if (context.authorityRefs) {
+    const provided = new Set(context.authorityRefs);
+    const missing = descriptor.authority_requirements.required_refs.filter((ref) => !provided.has(ref));
+    if (missing.length > 0) {
+      return capabilityAdmission({
+        status: "blocked",
+        reason: `${descriptor.capability_id} missing descriptor authority refs: ${missing.join(", ")}.`,
+        descriptor,
+        fingerprint,
+      });
+    }
+  }
+  if (descriptor.authority_requirements.approval_required && context.preApproved !== true) {
+    return capabilityAdmission({
+      status: "requires_approval",
+      reason: `${descriptor.capability_id} requires approval before ${descriptor.operation_kind}.`,
+      descriptor,
+      fingerprint,
+    });
+  }
+  return capabilityAdmission({
+    status: "allowed",
+    reason: `${descriptor.capability_id} admitted by descriptor readiness and authority requirements.`,
+    descriptor,
+    fingerprint,
+  });
+}
+
+export function projectCapabilityNormalSurface(descriptor: CapabilityDescriptor): CapabilityNormalSurfaceProjection {
+  const parsed = CapabilityDescriptorSchema.parse(descriptor);
+  return {
+    schema_version: "capability-normal-surface-projection/v1",
+    capability_id: parsed.capability_id,
+    readiness_state: parsed.readiness_state,
+    safe_label: parsed.normal_surface_affordance.safe_label,
+    action: parsed.normal_surface_affordance.action,
+    visible: parsed.normal_surface_affordance.visible,
+  };
 }
 
 export function descriptorFromTool(tool: ITool): CapabilityDescriptor {
@@ -586,6 +665,409 @@ export function descriptorsFromPluginStates(pluginStates: readonly PluginState[]
   }));
 }
 
+export function descriptorFromAdapter(adapter: IAdapter, task?: Pick<AgentTask, "adapter_type" | "allowed_tools" | "cwd">): CapabilityDescriptor {
+  const providerRef = `adapter:${adapter.adapterType}`;
+  const capabilityId = `capability:direct_adapter:${adapter.adapterType}`;
+  const descriptorSeed = {
+    capability_id: capabilityId,
+    provider_kind: "direct_adapter",
+    provider_ref: providerRef,
+    operation_kind: "run",
+    adapter_type: adapter.adapterType,
+    task_adapter_type: task?.adapter_type ?? adapter.adapterType,
+  };
+  return capabilityDescriptor({
+    capabilityId,
+    providerKind: "direct_adapter",
+    providerRef,
+    operationKind: "run",
+    permissionLevel: "execute",
+    approvalRequired: true,
+    runtimeControlRequired: true,
+    externalActionAuthority: true,
+    requiredRefs: [
+      `adapter:${adapter.adapterType}:descriptor`,
+      "run_adapter_tool:admission",
+      "adapter:operation_specific_verification",
+    ],
+    fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
+    fingerprintInputFields: ["adapter_type", "prompt", "cwd", "allowed_tools"],
+    fingerprintStateRefs: [`adapter:${adapter.adapterType}:state`],
+    fingerprintSeed: descriptorSeed,
+    sandboxRequirement: {
+      mode: "danger_full_access",
+      network: true,
+      reason: "Direct adapter execution can run external agent processes and mutate local or remote state.",
+    },
+    credentialScope: {
+      kind: "external_service",
+      refs: [`adapter:${adapter.adapterType}:provider_credentials`],
+      normal_surface_visible: false,
+    },
+    costRiskClass: "high",
+    sideEffectProfile: "mutate",
+    rollbackPlan: {
+      kind: "manual",
+      steps: [
+        "Inspect the adapter execution event and RuntimeGraph refs.",
+        "Use captured file diffs, provider logs, or compensating commits to revert side effects.",
+      ],
+      operator_visible: true,
+    },
+    verificationProbe: {
+      kind: "production_caller_path",
+      required: true,
+      refs: [`adapter:${adapter.adapterType}:run-adapter-tool-path`],
+    },
+    readinessState: "verification_required",
+    normalSurfaceAffordance: {
+      visible: false,
+      safe_label: "Adapter execution requires operator review",
+      action: "operator_only",
+      raw_catalog_visible: false,
+      credential_scope_visible: false,
+      approval_fingerprint_visible: false,
+      policy_internals_visible: false,
+    },
+    operatorDiagnostics: {
+      explainable: true,
+      summary: `Adapter ${adapter.adapterType} is a direct execution provider and must enter through run-adapter or another explicit Capability Plane boundary.`,
+      diagnostic_refs: [
+        providerRef,
+        ...(adapter.capabilities ?? []).map((capability) => `adapter-capability:${capability}`),
+      ],
+    },
+    metadata: {
+      adapter_type: adapter.adapterType,
+      adapter_capabilities: adapter.capabilities ?? [],
+      task_allowed_tools: task?.allowed_tools ?? [],
+      task_cwd: task?.cwd ?? null,
+    },
+  });
+}
+
+export type ScheduleCapabilityDescriptorEntry = Pick<ScheduleEntry, "id" | "name" | "metadata"> & {
+  layer: ScheduleEntry["layer"] | "escalation";
+  updated_at?: string | null;
+};
+
+export function descriptorFromScheduleEntry(
+  entry: ScheduleCapabilityDescriptorEntry,
+  actionKind: string,
+): CapabilityDescriptor {
+  const providerRef = `schedule:${entry.id}`;
+  const operationKind: CapabilityOperationKind =
+    entry.layer === "heartbeat" ? "hint"
+      : entry.layer === "goal_trigger" ? "run"
+        : entry.layer === "escalation" ? "run"
+        : actionKind.includes("notification") || actionKind.includes("report") ? "send"
+          : "mutate";
+  const sideEffectProfile: CapabilitySideEffectProfile =
+    operationKind === "hint" ? "none"
+      : operationKind === "send" ? "send"
+        : operationKind === "run" ? "mutate"
+          : "mutate";
+  const riskClass: CapabilityCostRiskClass = sideEffectProfile === "none" ? "low" : "medium";
+  const capabilityId = `capability:schedule_tool:${entry.layer}:${actionKind}`;
+  const descriptorSeed = {
+    capability_id: capabilityId,
+    provider_kind: "schedule_tool",
+    provider_ref: providerRef,
+    operation_kind: operationKind,
+    entry_id: entry.id,
+    action_kind: actionKind,
+    entry_updated_at: entry.updated_at ?? "unknown",
+  };
+  return capabilityDescriptor({
+    capabilityId,
+    providerKind: "schedule_tool",
+    providerRef,
+    operationKind,
+    permissionLevel: sideEffectProfile === "none" ? "read_only" : "write_local",
+    approvalRequired: false,
+    runtimeControlRequired: sideEffectProfile !== "none",
+    externalActionAuthority: sideEffectProfile === "send",
+    requiredRefs: [
+      `schedule:${entry.id}:entry`,
+      `schedule:${entry.layer}:policy`,
+      `schedule:${entry.id}:replay_key`,
+    ],
+    fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
+    fingerprintInputFields: ["entry_id", "scheduled_for", "action_kind"],
+    fingerprintStateRefs: [`schedule:${entry.id}:updated_at:${entry.updated_at ?? "unknown"}`],
+    fingerprintSeed: descriptorSeed,
+    sandboxRequirement: {
+      mode: sideEffectProfile === "none" ? "none" : "workspace_write",
+      network: sideEffectProfile === "send",
+      reason: sideEffectProfile === "none"
+        ? "Schedule hinting does not mutate external state."
+        : "Schedule execution can update runtime state and may dispatch reports.",
+    },
+    credentialScope: {
+      kind: sideEffectProfile === "send" ? "external_service" : "none",
+      refs: sideEffectProfile === "send" ? [`schedule:${entry.id}:notification_route`] : [],
+      normal_surface_visible: false,
+    },
+    costRiskClass: riskClass,
+    sideEffectProfile,
+    rollbackPlan: {
+      kind: sideEffectProfile === "none" ? "none" : "append_only",
+      steps: sideEffectProfile === "none"
+        ? ["No mutation is expected."]
+        : ["Use schedule history and runtime event refs to suppress duplicates or append a correcting schedule action."],
+      operator_visible: true,
+    },
+    verificationProbe: {
+      kind: "production_caller_path",
+      required: sideEffectProfile !== "none",
+      refs: [`schedule:${entry.id}:${actionKind}:caller-path`],
+    },
+    readinessState: "executable_verified",
+    normalSurfaceAffordance: {
+      visible: false,
+      safe_label: "Schedule action is managed by runtime policy",
+      action: "operator_only",
+      raw_catalog_visible: false,
+      credential_scope_visible: false,
+      approval_fingerprint_visible: false,
+      policy_internals_visible: false,
+    },
+    operatorDiagnostics: {
+      explainable: true,
+      summary: `Schedule ${entry.layer} action ${actionKind} is represented by a CapabilityDescriptor and replay-keyed runtime trace.`,
+      diagnostic_refs: [providerRef, `schedule-layer:${entry.layer}`, `schedule-action:${actionKind}`],
+    },
+    metadata: {
+      entry_id: entry.id,
+      entry_name: entry.name,
+      layer: entry.layer,
+      action_kind: actionKind,
+      activation_kind: entry.metadata?.activation_kind ?? null,
+    },
+  });
+}
+
+export function descriptorFromGatewayChannelAction(input: {
+  channelType: string;
+  reportType: string;
+  routeRef?: string | null;
+}): CapabilityDescriptor {
+  const providerRef = `gateway_channel:${input.channelType}`;
+  const capabilityId = `capability:gateway_channel_action:${input.channelType}:${input.reportType}`;
+  const descriptorSeed = {
+    capability_id: capabilityId,
+    provider_kind: "gateway_channel_action",
+    provider_ref: providerRef,
+    operation_kind: "send",
+    report_type: input.reportType,
+    route_ref: input.routeRef ?? null,
+  };
+  return capabilityDescriptor({
+    capabilityId,
+    providerKind: "gateway_channel_action",
+    providerRef,
+    operationKind: "send",
+    permissionLevel: "write_remote",
+    approvalRequired: false,
+    runtimeControlRequired: true,
+    externalActionAuthority: true,
+    requiredRefs: [
+      `notification:${input.reportType}:policy`,
+      `gateway_channel:${input.channelType}:configured`,
+    ],
+    fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
+    fingerprintInputFields: ["report_id", "report_type", "channel_type"],
+    fingerprintStateRefs: [input.routeRef ?? `gateway_channel:${input.channelType}`],
+    fingerprintSeed: descriptorSeed,
+    sandboxRequirement: {
+      mode: "none",
+      network: true,
+      reason: "Gateway channel action sends to an external configured destination.",
+    },
+    credentialScope: {
+      kind: "runtime_secret",
+      refs: [`gateway_channel:${input.channelType}:credentials`],
+      normal_surface_visible: false,
+    },
+    costRiskClass: "medium",
+    sideEffectProfile: "send",
+    rollbackPlan: {
+      kind: "manual",
+      steps: [
+        "Inspect delivery/outbox RuntimeGraph refs.",
+        "Send a correcting follow-up or provider-specific revocation if available.",
+      ],
+      operator_visible: true,
+    },
+    verificationProbe: {
+      kind: "production_caller_path",
+      required: true,
+      refs: [`gateway_channel:${input.channelType}:${input.reportType}:dispatch`],
+    },
+    readinessState: "executable_verified",
+    normalSurfaceAffordance: {
+      visible: false,
+      safe_label: "External delivery is operator-managed",
+      action: "operator_only",
+      raw_catalog_visible: false,
+      credential_scope_visible: false,
+      approval_fingerprint_visible: false,
+      policy_internals_visible: false,
+    },
+    operatorDiagnostics: {
+      explainable: true,
+      summary: `Gateway channel ${input.channelType} can send ${input.reportType} only through descriptor-backed notification policy.`,
+      diagnostic_refs: [providerRef, `notification-report:${input.reportType}`],
+    },
+    metadata: {
+      channel_type: input.channelType,
+      report_type: input.reportType,
+      route_ref: input.routeRef ?? null,
+    },
+  });
+}
+
+export function descriptorFromRuntimeControlAction(action: string): CapabilityDescriptor {
+  const providerRef = "runtime_control:operator";
+  const capabilityId = `capability:runtime_control_action:${action}`;
+  const descriptorSeed = {
+    capability_id: capabilityId,
+    provider_kind: "runtime_control_action",
+    provider_ref: providerRef,
+    operation_kind: "mutate",
+    action,
+  };
+  return capabilityDescriptor({
+    capabilityId,
+    providerKind: "runtime_control_action",
+    providerRef,
+    operationKind: "mutate",
+    permissionLevel: "write_local",
+    approvalRequired: true,
+    runtimeControlRequired: true,
+    externalActionAuthority: false,
+    requiredRefs: [`runtime_control:${action}:actor`, `runtime_control:${action}:target`],
+    fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
+    fingerprintInputFields: ["actor", "target", "request"],
+    fingerprintStateRefs: [`runtime_control:${action}:state`],
+    fingerprintSeed: descriptorSeed,
+    sandboxRequirement: {
+      mode: "workspace_write",
+      network: false,
+      reason: "Runtime-control actions mutate local runtime state.",
+    },
+    credentialScope: {
+      kind: "none",
+      refs: [],
+      normal_surface_visible: false,
+    },
+    costRiskClass: "medium",
+    sideEffectProfile: "mutate",
+    rollbackPlan: {
+      kind: "append_only",
+      steps: ["Append a compensating runtime-control operation or restore from event-log projection."],
+      operator_visible: true,
+    },
+    verificationProbe: {
+      kind: "production_caller_path",
+      required: true,
+      refs: [`runtime_control:${action}:service`],
+    },
+    readinessState: "executable_verified",
+    normalSurfaceAffordance: {
+      visible: false,
+      safe_label: "Runtime control requires operator authority",
+      action: "operator_only",
+      raw_catalog_visible: false,
+      credential_scope_visible: false,
+      approval_fingerprint_visible: false,
+      policy_internals_visible: false,
+    },
+    operatorDiagnostics: {
+      explainable: true,
+      summary: `Runtime-control action ${action} is descriptor-backed and approval fingerprinted for operator use.`,
+      diagnostic_refs: [providerRef, `runtime-control-action:${action}`],
+    },
+    metadata: { action },
+  });
+}
+
+function capabilityDescriptor(input: {
+  capabilityId: string;
+  providerKind: CapabilityProviderKind;
+  providerRef: string;
+  operationKind: CapabilityOperationKind;
+  permissionLevel: string;
+  approvalRequired: boolean;
+  runtimeControlRequired: boolean;
+  externalActionAuthority: boolean;
+  requiredRefs: string[];
+  fingerprintDescriptorFields: string[];
+  fingerprintInputFields: string[];
+  fingerprintStateRefs: string[];
+  fingerprintSeed: unknown;
+  sandboxRequirement: CapabilitySandboxRequirement;
+  credentialScope: CapabilityCredentialScope;
+  costRiskClass: CapabilityCostRiskClass;
+  sideEffectProfile: CapabilitySideEffectProfile;
+  rollbackPlan: CapabilityRollbackPlan;
+  verificationProbe: CapabilityVerificationProbe;
+  readinessState: CapabilityReadinessState;
+  normalSurfaceAffordance: CapabilityNormalSurfaceAffordance;
+  operatorDiagnostics: CapabilityOperatorDiagnostics;
+  metadata?: Record<string, unknown>;
+}): CapabilityDescriptor {
+  return CapabilityDescriptorSchema.parse({
+    schema_version: "capability-descriptor/v1",
+    capability_id: input.capabilityId,
+    provider_kind: input.providerKind,
+    provider_ref: input.providerRef,
+    operation_kind: input.operationKind,
+    authority_requirements: {
+      descriptor_authority_required: true,
+      approval_required: input.approvalRequired,
+      runtime_control_required: input.runtimeControlRequired,
+      permission_level: input.permissionLevel,
+      external_action_authority: input.externalActionAuthority,
+      required_refs: input.requiredRefs,
+    },
+    approval_fingerprint_inputs: {
+      schema_version: "capability-approval-fingerprint-inputs/v1",
+      descriptor_fields: input.fingerprintDescriptorFields,
+      input_fields: input.fingerprintInputFields,
+      state_refs: input.fingerprintStateRefs,
+      fingerprint: stableId(input.fingerprintSeed),
+    },
+    sandbox_requirement: input.sandboxRequirement,
+    credential_scope: input.credentialScope,
+    cost_risk_class: input.costRiskClass,
+    side_effect_profile: input.sideEffectProfile,
+    rollback_plan: input.rollbackPlan,
+    verification_probe: input.verificationProbe,
+    readiness_state: input.readinessState,
+    normal_surface_affordance: input.normalSurfaceAffordance,
+    operator_diagnostics: input.operatorDiagnostics,
+    event_replay_refs: {
+      event_log_ref: `runtime-event:capability:${stableId(input.fingerprintSeed)}`,
+      replay_policy: input.sideEffectProfile === "none" || input.sideEffectProfile === "read"
+        ? "dedupe_by_idempotency_key"
+        : "side_effect_guard",
+      idempotency_scope: `${input.providerKind}:${input.providerRef}:${input.operationKind}`,
+      runtime_graph_refs: [
+        input.capabilityId,
+        input.providerRef,
+        `operation:${input.providerRef}:${input.operationKind}`,
+      ],
+    },
+    runtime_graph_refs: {
+      capability_ref: input.capabilityId,
+      provider_ref: input.providerRef,
+      operation_ref: `operation:${input.providerRef}:${input.operationKind}`,
+    },
+    metadata: input.metadata ?? {},
+  });
+}
+
 export function descriptorCapabilityExecutionContext(
   descriptor: CapabilityDescriptor,
   toolName: string,
@@ -613,6 +1095,22 @@ export function fingerprintCapabilityApproval(
   rawInput: unknown,
   context: Pick<ToolCallContext, "cwd" | "goalId" | "runId" | "sessionId" | "turnId" | "callId" | "hostToolState">,
 ): string {
+  return fingerprintCapabilityDescriptor(descriptor, rawInput, {
+    cwd: context.cwd,
+    goalId: context.goalId,
+    runId: context.runId ?? null,
+    sessionId: context.sessionId ?? null,
+    turnId: context.turnId ?? null,
+    callId: context.callId ?? null,
+    stateEpoch: context.hostToolState?.currentEpoch ?? context.hostToolState?.observedEpoch ?? null,
+  });
+}
+
+export function fingerprintCapabilityDescriptor(
+  descriptor: CapabilityDescriptor,
+  rawInput: unknown,
+  context: CapabilityAdmissionExecutionContext = {},
+): string {
   return stableId({
     descriptor: {
       capability_id: descriptor.capability_id,
@@ -633,7 +1131,7 @@ export function fingerprintCapabilityApproval(
       session_id: context.sessionId ?? null,
       turn_id: context.turnId ?? null,
       call_id: context.callId ?? null,
-      state_epoch: context.hostToolState?.currentEpoch ?? context.hostToolState?.observedEpoch ?? null,
+      state_epoch: context.stateEpoch ?? null,
     },
   });
 }

@@ -19,6 +19,11 @@ import type { InterventionDecisionKind, InterventionTargetEffect, PersonalAgentR
 import { buildPersonalAgentDecisionTrace } from "./personal-agent/index.js";
 import { projectNotificationAuthority } from "./control/execution-authority-decision.js";
 import type { InteractionAuthorityStore } from "./control/interaction-authority-store.js";
+import {
+  admitCapabilityDescriptor,
+  descriptorFromGatewayChannelAction,
+  type CapabilityDescriptor,
+} from "./capability-plane.js";
 
 // ─── Interface ───
 
@@ -192,6 +197,37 @@ export class NotificationDispatcher implements INotificationDispatcher {
     }
 
     for (const channel of acceptedChannels) {
+      const descriptor = this.gatewayChannelDescriptor(channel.type, report);
+      const admission = admitCapabilityDescriptor({
+        descriptor,
+        rawInput: {
+          report_id: report.id,
+          report_type: report.report_type,
+          channel_type: channel.type,
+        },
+        context: {
+          preApproved: true,
+          authorityRefs: descriptor.authority_requirements.required_refs,
+        },
+      });
+      if (admission.status !== "allowed") {
+        await this.recordNotificationDecision(report, [channel], {
+          decision: "block",
+          reason: admission.reason,
+          targetEffect: "none",
+          capabilityDecision: "blocked",
+          replayScope: `capability-blocked:${channel.type}`,
+        });
+        results.push({
+          channel_type: channel.type,
+          success: false,
+          suppressed: true,
+          suppression_reason: "capability_blocked",
+          error: admission.reason,
+        });
+        continue;
+      }
+
       const result = await this.sendToChannel(channel, report);
       results.push(result);
 
@@ -246,15 +282,37 @@ export class NotificationDispatcher implements INotificationDispatcher {
       severity: this.resolveSeverity(report.report_type),
     };
 
+    const admittedNotifiers = notifiers.filter((notifier) => {
+      const descriptor = this.gatewayChannelDescriptor(`plugin:${notifier.name}`, report);
+      const admission = admitCapabilityDescriptor({
+        descriptor,
+        rawInput: {
+          report_id: report.id,
+          report_type: report.report_type,
+          channel_type: `plugin:${notifier.name}`,
+        },
+        context: {
+          preApproved: true,
+          authorityRefs: descriptor.authority_requirements.required_refs,
+        },
+      });
+      if (admission.status !== "allowed") {
+        this.logger?.warn?.(`[NotificationDispatcher] plugin notifier "${notifier.name}" blocked by Capability Plane: ${admission.reason}`);
+        return false;
+      }
+      return true;
+    });
+    if (admittedNotifiers.length === 0) return;
+
     const settlements = await Promise.allSettled(
-      notifiers.map((n) => n.notify(event))
+      admittedNotifiers.map((n) => n.notify(event))
     );
 
     let delivered = false;
     for (let i = 0; i < settlements.length; i++) {
       const result = settlements[i];
       if (result.status === "rejected") {
-        const notifierName = notifiers[i].name;
+        const notifierName = admittedNotifiers[i].name;
         const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
         this.logger?.error(`[NotificationDispatcher] plugin notifier "${notifierName}" failed: ${reason}`);
       } else {
@@ -460,13 +518,35 @@ export class NotificationDispatcher implements INotificationDispatcher {
       decision,
       decisionReason: reason,
       capabilityDecision: override?.capabilityDecision ?? (decision === "allow" ? "available" : "not_applicable"),
-      capabilityRefs: channels.map((channel) => ({ kind: "notification_channel", ref: channel.type })),
+      capabilityRefs: [
+        ...channels.flatMap((channel) => this.gatewayChannelCapabilityRefs(channel.type, report)),
+        ...(hasPluginRoute ? [{ kind: "notification_channel", ref: "plugin_notifier_route" }] : []),
+      ],
       policyRef: { kind: "intervention_policy", ref: "policy:notification-interruption-v1" },
       currentRefs: [
         { kind: "report", ref: report.id },
         ...(report.goal_id ? [{ kind: "goal", ref: report.goal_id }] : []),
       ],
     }));
+  }
+
+  private gatewayChannelDescriptor(channelType: string, report: Report): CapabilityDescriptor {
+    return descriptorFromGatewayChannelAction({
+      channelType,
+      reportType: report.report_type,
+      routeRef: `${channelType}:${report.goal_id ?? "goal:none"}`,
+    });
+  }
+
+  private gatewayChannelCapabilityRefs(channelType: string, report: Report): Array<{ kind: string; ref: string }> {
+    const descriptor = this.gatewayChannelDescriptor(channelType, report);
+    return [
+      { kind: "capability", ref: descriptor.capability_id },
+      { kind: "capability_provider", ref: descriptor.provider_ref },
+      { kind: "capability_operation", ref: descriptor.runtime_graph_refs.operation_ref },
+      { kind: "capability_readiness", ref: descriptor.readiness_state },
+      { kind: "notification_channel", ref: channelType },
+    ];
   }
 }
 

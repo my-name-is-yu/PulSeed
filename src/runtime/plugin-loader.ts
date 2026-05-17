@@ -27,6 +27,7 @@ import type { IScheduleSource } from "./schedule/source.js";
 export interface PluginLoaderOptions {
   controlBaseDir?: string;
   runtimeStateStore?: PluginChannelRuntimeStateStore;
+  pluginExecutionMode?: "proposal_first" | "legacy_load";
 }
 
 /**
@@ -48,6 +49,7 @@ export class PluginLoader {
   private scheduleSources: Map<string, IScheduleSource> = new Map();
   private readonly logger?: Logger;
   private readonly runtimeStateStore: PluginChannelRuntimeStateStore;
+  private readonly pluginExecutionMode: "proposal_first" | "legacy_load";
 
   constructor(
     adapterRegistry: AdapterRegistry,
@@ -66,6 +68,7 @@ export class PluginLoader {
     this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(
       options.controlBaseDir ?? inferPluginStateBaseDir(this.pluginsDir),
     );
+    this.pluginExecutionMode = options.pluginExecutionMode ?? "proposal_first";
   }
 
   /**
@@ -137,6 +140,12 @@ export class PluginLoader {
         `[PluginLoader] Skipping incompatible plugin "${manifest.name}": requires PulSeed ${range}, got ${pulseedVersion}`
       );
       const state = this.buildIncompatibleState(manifest, pulseedVersion, range);
+      await this.persistPluginState(state);
+      return state;
+    }
+
+    if (this.pluginExecutionMode === "proposal_first") {
+      const state = this.buildCapabilityProposalState(manifest);
       await this.persistPluginState(state);
       return state;
     }
@@ -327,6 +336,22 @@ export class PluginLoader {
       name: manifest.name,
       manifest,
       status: "loaded",
+      loaded_at: new Date().toISOString(),
+      trust_score: 0,
+      usage_count: 0,
+      success_count: 0,
+      failure_count: 0,
+    });
+    this.pluginStates.set(manifest.name, state);
+    return state;
+  }
+
+  buildCapabilityProposalState(manifest: PluginManifest): PluginState {
+    const state = PluginStateSchema.parse({
+      name: manifest.name,
+      manifest,
+      status: "disabled",
+      error_message: "Plugin import is proposal-first; runtime enable/run requires CapabilityDescriptor mapping, operator review, approval fingerprint checks, and operation-specific verification.",
       loaded_at: new Date().toISOString(),
       trust_score: 0,
       usage_count: 0,

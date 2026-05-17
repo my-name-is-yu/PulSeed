@@ -54,7 +54,8 @@ function makeIsolatedControlDir(): string {
 
 function makeIsolatedPluginLoader(
   pluginsDir?: string,
-  notifierRegistry = makeNotifierRegistry()
+  notifierRegistry = makeNotifierRegistry(),
+  pluginExecutionMode: "proposal_first" | "legacy_load" = "proposal_first",
 ): PluginLoader {
   const controlBaseDir = makeIsolatedControlDir();
   const resolvedPluginsDir = pluginsDir ?? path.join(controlBaseDir, "plugins");
@@ -65,7 +66,7 @@ function makeIsolatedPluginLoader(
     resolvedPluginsDir,
     undefined,
     undefined,
-    { controlBaseDir }
+    { controlBaseDir, pluginExecutionMode }
   );
 }
 
@@ -321,14 +322,13 @@ describe("PluginLoader version compatibility", () => {
     expect(state.error_message).toMatch(/1\.2\.3abc/);
   });
 
-  it("proceeds normally when no version constraints are specified", async () => {
+  it("records a proposal-first disabled state when no version constraints are specified", async () => {
     const manifest = makeValidManifest({ name: "compat-plugin" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    vi.spyOn(loader, "loadOne").mockResolvedValueOnce(loader.buildSuccessState(manifest));
-
     const state = await loader.loadOne(path.join(pluginRoot, "compat-plugin"));
-    expect(state.status).toBe("loaded");
+    expect(state.status).toBe("disabled");
+    expect(state.error_message).toMatch(/proposal-first/);
   });
 });
 
@@ -730,7 +730,10 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      tmpDir
+      tmpDir,
+      undefined,
+      undefined,
+      { controlBaseDir: tmpDir }
     );
   });
 
@@ -815,7 +818,10 @@ describe("PluginLoader cross-platform session exposure", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      tmpDir
+      tmpDir,
+      undefined,
+      undefined,
+      { controlBaseDir: tmpDir, pluginExecutionMode: "legacy_load" }
     );
   });
 
@@ -823,7 +829,7 @@ describe("PluginLoader cross-platform session exposure", () => {
     fsSync.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
-  it("exposes the registered cross-platform session getter before plugin import", async () => {
+  it("exposes the registered cross-platform session getter before explicit legacy plugin import", async () => {
     const pluginDir = path.join(tmpDir, "global-aware-plugin");
     fsSync.mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
     fsSync.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify(makeValidManifest({

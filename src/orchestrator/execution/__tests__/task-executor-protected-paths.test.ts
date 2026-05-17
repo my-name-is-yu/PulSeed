@@ -109,6 +109,7 @@ describe("executeTask protected paths", () => {
     } as unknown as SessionManager;
     adapter = {
       adapterType: "mock",
+      capabilityPlaneBoundary: "test",
       execute: vi.fn().mockResolvedValue({
         success: true,
         output: "done",
@@ -156,6 +157,7 @@ describe("executeTask protected paths", () => {
     } as AgentResult);
     adapter = {
       adapterType: "mock",
+      capabilityPlaneBoundary: "test",
       execute,
     } as unknown as IAdapter;
     execFileSyncFn = makeChangedPathsExecFileSync(["src/changed.ts", ".env"]);

@@ -68,6 +68,7 @@ import {
   type InterventionDecisionKind,
   type RuntimeGraphRef,
 } from "../personal-agent/index.js";
+import { descriptorFromRuntimeControlAction } from "../capability-plane.js";
 
 export interface RuntimeControlRequest {
   intent: RuntimeControlIntent;
@@ -1641,7 +1642,10 @@ export class RuntimeControlService {
       decision,
       decisionReason,
       capabilityDecision,
-      capabilityRefs: [{ kind: "runtime_automation_domain", ref: request.domain }],
+      capabilityRefs: [
+        ...runtimeControlDescriptorRefs(`automation:${request.domain}:${request.action}`),
+        { kind: "runtime_automation_domain", ref: request.domain },
+      ],
       policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
       permissionRequired,
       cognitionSituation: cognition.situation_model,
@@ -1716,6 +1720,7 @@ function stableRuntimeControlRef(value: string): string {
 
 function runtimeControlCapabilityRefs(request: RuntimeControlRequest): RuntimeGraphRef[] {
   const refs: RuntimeGraphRef[] = [
+    ...runtimeControlDescriptorRefs(request.intent.kind),
     { kind: "runtime_control_capability", ref: request.intent.kind },
   ];
   for (const capability of request.intent.permissionCapabilities ?? []) {
@@ -1861,9 +1866,22 @@ function runtimeControlOperationCapabilityRefs(
   request: RuntimeControlRequest,
 ): RuntimeGraphRef[] {
   if (operation.kind !== request.intent.kind) {
-    return [{ kind: "runtime_control_capability", ref: operation.kind }];
+    return [
+      ...runtimeControlDescriptorRefs(operation.kind),
+      { kind: "runtime_control_capability", ref: operation.kind },
+    ];
   }
   return runtimeControlCapabilityRefs(request);
+}
+
+function runtimeControlDescriptorRefs(action: string): RuntimeGraphRef[] {
+  const descriptor = descriptorFromRuntimeControlAction(action);
+  return [
+    { kind: "capability", ref: descriptor.capability_id },
+    { kind: "capability_provider", ref: descriptor.provider_ref },
+    { kind: "capability_operation", ref: descriptor.runtime_graph_refs.operation_ref },
+    { kind: "capability_readiness", ref: descriptor.readiness_state },
+  ];
 }
 
 function runtimeControlOperationCurrentRefs(operation: RuntimeControlOperation): RuntimeGraphRef[] {
