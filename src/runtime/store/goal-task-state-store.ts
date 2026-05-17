@@ -1136,6 +1136,7 @@ function upsertGoal(sqlite: SqliteDatabase, goal: Goal, archived: 0 | 1): void {
       provenance_refs: [{ kind: "goal", ref: goal.id }],
     });
   }
+  deleteGoalParentRuntimeGraphEdges(sqlite, goal.id);
   if (goal.parent_id) {
     insertRuntimeGraphEdgeIfNodesExist(sqlite, {
       schema_version: "runtime-graph-edge/v1",
@@ -1157,6 +1158,14 @@ function upsertGoal(sqlite: SqliteDatabase, goal: Goal, archived: 0 | 1): void {
       archived = excluded.archived,
       goal_json = excluded.goal_json
   `).run(goal.id, goal.parent_id ?? null, goal.status, goal.updated_at, archived, JSON.stringify(goal));
+}
+
+function deleteGoalParentRuntimeGraphEdges(sqlite: SqliteDatabase, goalId: string): void {
+  sqlite.prepare(`
+    DELETE FROM personal_agent_runtime_graph_edges
+    WHERE edge_kind = 'parent_of'
+      AND to_node_id = ?
+  `).run(goalRuntimeGraphNodeId(goalId));
 }
 
 function goalRuntimeGraphNodeId(goalId: string): string {

@@ -136,3 +136,12 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:docs`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `e9bccafb` found:
+  - P2: goal re-parent apply could leave a stale previous `parent_of` RuntimeGraph edge for the same child goal.
+- Follow-up fixes reconcile goal parent edges in both the production goal write path and projection rebuild apply before inserting the current parent edge, and add contract coverage that perturbs a stale edge before apply. Focused verification passed:
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run typecheck`
+  - `npm run test:contracts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`

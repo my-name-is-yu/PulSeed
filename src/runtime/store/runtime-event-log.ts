@@ -1128,6 +1128,7 @@ function upsertGoalProjection(sqlite: SqliteDatabase, goalInput: Goal, archived:
 
 function upsertGoalParentProjectionEdge(sqlite: SqliteDatabase, goalInput: Goal): void {
   const goal = GoalSchema.parse(goalInput);
+  deleteGoalParentProjectionEdges(sqlite, goal.id);
   if (!goal.parent_id) return;
   insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
     schema_version: "runtime-graph-edge/v1",
@@ -1138,6 +1139,14 @@ function upsertGoalParentProjectionEdge(sqlite: SqliteDatabase, goalInput: Goal)
     created_at: validIsoOrNow(goal.updated_at),
     provenance_refs: [{ kind: "goal", ref: goal.id }],
   });
+}
+
+function deleteGoalParentProjectionEdges(sqlite: SqliteDatabase, goalId: string): void {
+  sqlite.prepare(`
+    DELETE FROM personal_agent_runtime_graph_edges
+    WHERE edge_kind = 'parent_of'
+      AND to_node_id = ?
+  `).run(goalProjectionRuntimeGraphNodeId(goalId));
 }
 
 function deleteGoalProjection(sqlite: SqliteDatabase, goalId: string): void {

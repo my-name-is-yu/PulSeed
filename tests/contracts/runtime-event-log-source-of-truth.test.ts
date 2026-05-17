@@ -1038,6 +1038,84 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
+  it("reconciles goal parent RuntimeGraph edges from current event-backed goal state during apply", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const goalStore = new GoalTaskStateStore(runtimeRoot, { controlBaseDir: root });
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const parentA = makeGoal({
+        id: "parent-goal-a",
+        title: "Original parent",
+        updated_at: "2026-05-16T00:00:00.000Z",
+      });
+      const parentB = makeGoal({
+        id: "parent-goal-b",
+        title: "Current parent",
+        updated_at: "2026-05-16T00:00:01.000Z",
+      });
+      const childWithParentA = makeGoal({
+        id: "child-goal",
+        parent_id: parentA.id,
+        title: "Child under original parent",
+        updated_at: "2026-05-16T00:00:02.000Z",
+      });
+      const childWithParentB = {
+        ...childWithParentA,
+        parent_id: parentB.id,
+        title: "Child under current parent",
+        updated_at: "2026-05-16T00:00:03.000Z",
+      };
+
+      await goalStore.saveGoal(parentA);
+      await goalStore.saveGoal(parentB);
+      await goalStore.saveGoal(childWithParentA);
+      await goalStore.saveGoal(childWithParentB);
+
+      await expect(readGoalParentEdgeSourceNodeIds(runtimeRoot, root, childWithParentB.id)).resolves.toEqual([
+        `runtime-graph:goal:${parentB.id}`,
+      ]);
+      await mutateRuntimeControlDatabase(runtimeRoot, root, (sqlite) => {
+        const staleEdge = {
+          schema_version: "runtime-graph-edge/v1",
+          edge_id: `runtime-graph:edge:goal-parent:${parentA.id}:${childWithParentB.id}`,
+          edge_kind: "parent_of",
+          from_node_id: `runtime-graph:goal:${parentA.id}`,
+          to_node_id: `runtime-graph:goal:${childWithParentB.id}`,
+          created_at: "2026-05-16T00:00:02.000Z",
+          provenance_refs: [{ kind: "goal", ref: childWithParentB.id }],
+        };
+        sqlite.prepare(`
+          INSERT OR REPLACE INTO personal_agent_runtime_graph_edges (
+            edge_id, edge_kind, from_node_id, to_node_id, created_at, edge_json
+          )
+          VALUES (@edge_id, @edge_kind, @from_node_id, @to_node_id, @created_at, json(@edge_json))
+        `).run({
+          ...staleEdge,
+          edge_json: JSON.stringify(staleEdge),
+        });
+      });
+      await expect(readGoalParentEdgeSourceNodeIds(runtimeRoot, root, childWithParentB.id)).resolves.toEqual([
+        `runtime-graph:goal:${parentA.id}`,
+        `runtime-graph:goal:${parentB.id}`,
+      ]);
+
+      const applied = await eventLog.applyProjectionRebuild();
+
+      expect(applied.current_state_projection_rows.goal_records).toBe(3);
+      await expect(goalStore.loadGoal(childWithParentB.id)).resolves.toMatchObject({
+        id: childWithParentB.id,
+        parent_id: parentB.id,
+        title: "Child under current parent",
+      });
+      await expect(readGoalParentEdgeSourceNodeIds(runtimeRoot, root, childWithParentB.id)).resolves.toEqual([
+        `runtime-graph:goal:${parentB.id}`,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("selects current-state apply rows by parsed timestamp instants", async () => {
     const root = fixtureRoot();
     try {
@@ -1416,6 +1494,26 @@ async function readRuntimeGraphNodeIds(
         ORDER BY node_id ASC
       `).all(...nodeIds) as Array<{ node_id: string }>);
     return rows.map((row) => row.node_id);
+  } finally {
+    db.close();
+  }
+}
+
+async function readGoalParentEdgeSourceNodeIds(
+  runtimeRoot: string,
+  controlBaseDir: string,
+  goalId: string,
+): Promise<string[]> {
+  const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir });
+  try {
+    const rows = db.read((sqlite) => sqlite.prepare(`
+        SELECT from_node_id
+        FROM personal_agent_runtime_graph_edges
+        WHERE edge_kind = 'parent_of'
+          AND to_node_id = ?
+        ORDER BY from_node_id ASC
+      `).all(`runtime-graph:goal:${goalId}`) as Array<{ from_node_id: string }>);
+    return rows.map((row) => row.from_node_id);
   } finally {
     db.close();
   }

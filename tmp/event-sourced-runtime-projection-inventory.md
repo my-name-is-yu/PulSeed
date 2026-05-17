@@ -89,6 +89,9 @@ not current-state row apply targets:
   `outbox_records`, and goal/task RuntimeGraph nodes, runs rebuild apply, and
   proves the five apply-supported current-state projections are restored while
   the side-effect outbox queue is not recreated.
+- The same contract file proves goal re-parenting has a single current
+  RuntimeGraph `parent_of` edge in the production write path and after rebuild
+  apply, even if a stale parent edge is manually reintroduced before apply.
 - The same contract test rejects trace-scoped current-state apply and proves
   no projection row is restored from partial trace history.
 - Runtime operation contract coverage now proves same-timestamp content
