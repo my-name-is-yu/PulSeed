@@ -2,14 +2,25 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_EVAL_THRESHOLDS, computeEvalMetrics, mergeMetricAccumulators, thresholdFailures } from "./metrics.js";
-import { runEvalScenario, writeEvalFailureArtifacts } from "./runner.js";
+import { runEvalScenario, writeEvalFailureArtifacts, type EvalScenarioRunResult } from "./runner.js";
 import { evalLabScenarios } from "./scenarios.js";
 import {
   EvalCoverageSchema,
+  EvalScenarioSchema,
   EvalRunArtifactSchema,
   type EvalCoverage,
   type EvalRunArtifact,
 } from "./types.js";
+
+const scenarioRuns = new Map<string, Promise<EvalScenarioRunResult>>();
+
+function runScenarioOnce(scenarioId: string, scenario = evalLabScenarios.find((item) => item.scenario_id === scenarioId)!): Promise<EvalScenarioRunResult> {
+  const existing = scenarioRuns.get(scenarioId);
+  if (existing) return existing;
+  const next = runEvalScenario(scenario);
+  scenarioRuns.set(scenarioId, next);
+  return next;
+}
 
 describe("Long-run Evaluation Lab", () => {
   it("defines a reusable scenario catalog with all required companion-quality coverage", () => {
@@ -26,10 +37,17 @@ describe("Long-run Evaluation Lab", () => {
     }
   });
 
+  it.each(evalLabScenarios.map((scenario) => [scenario.scenario_id, scenario] as const))("scenario %s", async (scenarioId, scenario) => {
+    const result = await runScenarioOnce(scenarioId, scenario);
+    expect(EvalRunArtifactSchema.parse(result.artifact)).toBeTruthy();
+    expect(result.artifact.failures).toEqual([]);
+    expect(result.artifact.reproduction_command).toContain(`scenario ${scenarioId}`);
+  });
+
   it("runs deterministic local scenarios through production caller paths and event-log replay", async () => {
-    const results = [];
+    const results: EvalScenarioRunResult[] = [];
     for (const scenario of evalLabScenarios) {
-      results.push(await runEvalScenario(scenario));
+      results.push(await runScenarioOnce(scenario.scenario_id, scenario));
     }
 
     const metrics = computeEvalMetrics(mergeMetricAccumulators(results.map((result) => result.metricAccumulator)));
@@ -49,17 +67,43 @@ describe("Long-run Evaluation Lab", () => {
     ]) {
       expect(productionPaths.has(requiredPath)).toBe(true);
     }
+    const eventTypes = new Set(results.flatMap((result) =>
+      Array.isArray(result.artifact.replay_summary["runtime_event_types"])
+        ? result.artifact.replay_summary["runtime_event_types"] as string[]
+        : []
+    ));
+    for (const eventType of [
+      "gateway.chat.ingress.recorded",
+      "gateway.telegram.delivery.recorded",
+      "memory.correction.recorded",
+      "schedule.wake.recorded",
+      "tool.call.recorded",
+    ]) {
+      expect(eventTypes.has(eventType)).toBe(true);
+    }
 
     for (const result of results) {
       expect(EvalRunArtifactSchema.parse(result.artifact)).toBeTruthy();
+      expect(result.artifact.failures).toEqual([]);
       expect(result.artifact.replay_summary).toMatchObject({
         event_log_rebuild_path: "RuntimeEventLogStore.rebuildProjections",
+        replay_phase: "restart_store_and_rebuild_from_persisted_runtime_events",
         replay_equivalent: true,
+        side_effects_suppressed_after_replay: true,
       });
       expect(result.artifact.runtime_event_refs.length).toBeGreaterThan(0);
       expect(result.artifact.runtime_graph_refs.length).toBeGreaterThan(0);
       await expect(fsp.access(result.artifactPath)).resolves.toBeUndefined();
     }
+    const duplicateReplay = results
+      .find((result) => result.artifact.scenario_id === "duplicate-delivery-prevention-after-replay")!
+      .artifact.replay_summary["side_effect_replay_assertions"];
+    expect(duplicateReplay).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "outbox_replay_side_effect_guard",
+        duplicate_suppressed_after_rebuild: true,
+      }),
+    ]));
   });
 
   it("exports PR-blocking failure artifacts with the reproduction command", async () => {
@@ -109,6 +153,39 @@ describe("Long-run Evaluation Lab", () => {
       }
       await expect(fsp.readFile(path.join(dir, "reproduction-command.txt"), "utf8"))
         .resolves.toContain("npm run test:eval-lab");
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes failure artifacts when a scenario step assertion throws", async () => {
+    const base = evalLabScenarios[0]!;
+    const scenarioId = "eval-lab-step-failure-artifact";
+    const brokenScenario = EvalScenarioSchema.parse({
+      ...base,
+      scenario_id: scenarioId,
+      seed: "eval-lab-step-failure-seed",
+      fake_controls: {
+        ...base.fake_controls,
+        plugin_capability: {
+          ...base.fake_controls.plugin_capability,
+          capability_id: `capability:${scenarioId}`,
+        },
+      },
+      steps: base.steps.map((step) =>
+        step.kind === "user_turn"
+          ? { ...step, expected_assistant: "this substring is intentionally absent" }
+          : step
+      ),
+    });
+    const dir = path.resolve("tmp", "eval-failures", scenarioId);
+    await fsp.rm(dir, { recursive: true, force: true });
+    await expect(runEvalScenario(brokenScenario)).rejects.toThrow(/intentionally absent/);
+    try {
+      await expect(fsp.access(path.join(dir, "scenario.json"))).resolves.toBeUndefined();
+      await expect(fsp.access(path.join(dir, "event-log-replay-trace.json"))).resolves.toBeUndefined();
+      await expect(fsp.readFile(path.join(dir, "metrics.json"), "utf8"))
+        .resolves.toContain("scenario_pass_rate");
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }

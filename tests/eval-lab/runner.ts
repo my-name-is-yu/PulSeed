@@ -1,5 +1,6 @@
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import { vi } from "vitest";
 import { z } from "zod/v3";
 import type { IAdapter } from "../../src/orchestrator/execution/adapter-layer.js";
 import type {
@@ -10,8 +11,8 @@ import type {
   LLMStreamHandlers,
 } from "../../src/base/llm/llm-client.js";
 import { StateManager } from "../../src/base/state/state-manager.js";
-import { ChatRunner, type ChatRunnerDeps } from "../../src/interface/chat/chat-runner.js";
-import type { SelectedChatRoute } from "../../src/interface/chat/ingress-router.js";
+import type { ChatRunnerDeps } from "../../src/interface/chat/chat-runner.js";
+import { CrossPlatformChatSessionManager } from "../../src/interface/chat/cross-platform-session.js";
 import { KnowledgeManager } from "../../src/platform/knowledge/knowledge-manager.js";
 import { runUserMemoryOperation } from "../../src/platform/corrections/user-memory-operations.js";
 import {
@@ -60,10 +61,12 @@ interface RunContext {
   eventLog: RuntimeEventLogStore;
   authorityStore: InteractionAuthorityStore;
   personalAgentRuntime: PersonalAgentRuntimeStore;
+  chatManager: CrossPlatformChatSessionManager | null;
   transcript: JsonObject[];
   surfaceProjections: JsonObject[];
   operatorProjections: JsonObject[];
   productionCallerPaths: Set<string>;
+  replaySideEffectChecks: Array<(context: RunContext) => Promise<JsonObject>>;
   metrics: EvalMetricAccumulator;
   memoryByKey: Map<string, string>;
   sensitiveMemoryValues: string[];
@@ -88,40 +91,76 @@ export async function runEvalScenario(scenario: EvalScenario): Promise<EvalScena
       eventLog: new RuntimeEventLogStore(root.runtimeRoot, { controlBaseDir: root.root }),
       authorityStore: new InteractionAuthorityStore(root.runtimeRoot, { controlBaseDir: root.root }),
       personalAgentRuntime,
+      chatManager: null,
       transcript: [],
       surfaceProjections: [],
       operatorProjections: [],
       productionCallerPaths: new Set(),
+      replaySideEffectChecks: [],
       metrics: createMetricAccumulator(),
       memoryByKey: new Map(),
       sensitiveMemoryValues: [],
     };
 
-    await recordScenarioAdmission(context);
-    for (const step of scenario.steps) {
-      await runStep(context, step);
+    let scenarioError: unknown = null;
+    try {
+      await recordScenarioAdmission(context);
+      for (const step of scenario.steps) {
+        await runStep(context, step);
+      }
+      context.metrics.scenarioPasses += 1;
+    } catch (error) {
+      scenarioError = error;
     }
-
-    const replaySummary = await buildReplaySummary(context);
-    context.metrics.replayChecks += 1;
-    if (replaySummary.replay_equivalent === true) context.metrics.replayEquivalentCount += 1;
-    context.metrics.scenarioCount += 1;
-    context.metrics.scenarioPasses += 1;
-
-    const metrics = computeEvalMetrics(context.metrics);
-    const failures = thresholdFailures(metrics, scenario.metric_thresholds)
-      .map((message) => ({ kind: "metric_threshold", message }));
-    const artifact = await buildEvalRunArtifact(context, metrics, replaySummary, failures);
-    const artifactPath = await persistEvalRunArtifact(artifact);
+    const artifactResult = await finishScenarioRun(context, scenarioError);
+    if (scenarioError) {
+      throw scenarioError;
+    }
+    if (artifactResult.artifact.failures.length > 0) {
+      throw new Error(`Eval scenario ${scenario.scenario_id} failed thresholds: ${artifactResult.artifact.failures.map((failure) => failure["message"]).join("; ")}`);
+    }
     return {
-      artifact,
-      artifactPath,
+      artifact: artifactResult.artifact,
+      artifactPath: artifactResult.artifactPath,
       metricAccumulator: context.metrics,
     };
   } finally {
     guard.restore();
     await root.cleanup();
   }
+}
+
+async function finishScenarioRun(
+  context: RunContext,
+  scenarioError: unknown,
+): Promise<{ artifact: EvalRunArtifact; artifactPath: string }> {
+  const replaySummary = await buildReplaySummary(context);
+  context.metrics.replayChecks += 1;
+  if (replaySummary.replay_equivalent === true) context.metrics.replayEquivalentCount += 1;
+  context.metrics.scenarioCount += 1;
+  const metrics = computeEvalMetrics(context.metrics);
+  const failures = [
+    ...(replaySummary.replay_equivalent === true
+      ? []
+      : [{ kind: "replay_equivalence", message: "Runtime Event Log rebuild was not equivalent after restart." }]),
+    ...(replaySummary.side_effects_suppressed_after_replay === false
+      ? [{ kind: "replay_side_effect_guard", message: "A side effect repeated after replay rebuild." }]
+      : []),
+    ...thresholdFailures(metrics, context.scenario.metric_thresholds)
+      .map((message) => ({ kind: "metric_threshold", message })),
+    ...(scenarioError
+      ? [{
+        kind: "scenario_error",
+        message: scenarioError instanceof Error ? scenarioError.message : String(scenarioError),
+      }]
+      : []),
+  ];
+  const artifact = await buildEvalRunArtifact(context, metrics, replaySummary, failures);
+  const artifactPath = await persistEvalRunArtifact(artifact);
+  if (failures.length > 0) {
+    await writeEvalFailureArtifacts(artifact);
+  }
+  return { artifact, artifactPath };
 }
 
 export async function writeEvalFailureArtifacts(
@@ -230,40 +269,56 @@ async function runUserTurn(context: RunContext, step: Extract<EvalStep, { kind: 
     }
   }
 
-  const runner = new ChatRunner({
-    stateManager: context.stateManager,
-    adapter: mockAdapter(),
-    llmClient: scriptedLlmClient(context.scriptedLlm),
-    personalAgentRuntime: context.personalAgentRuntime,
-  } as unknown as ChatRunnerDeps);
-  const result = await runner.execute(step.input, context.root.workspaceRoot, 10_000, {
-    selectedRoute: gatewayModelRoute(),
+  if (!context.chatManager) {
+    context.chatManager = new CrossPlatformChatSessionManager({
+      stateManager: context.stateManager,
+      adapter: mockAdapter(),
+      llmClient: scriptedLlmClient(context.scriptedLlm),
+      personalAgentRuntime: context.personalAgentRuntime,
+    } as unknown as ChatRunnerDeps);
+  }
+  const output = await context.chatManager.processIncomingMessage({
+    text: step.input,
+    channel: "plugin_gateway",
+    platform: "telegram",
+    identity_key: context.scenario.fake_controls.telegram_gateway.user_id,
+    conversation_id: context.scenario.fake_controls.telegram_gateway.conversation_id,
+    sender_id: context.scenario.fake_controls.telegram_gateway.user_id,
+    user_id: context.scenario.fake_controls.telegram_gateway.user_id,
+    message_id: `message:${context.scenario.scenario_id}:${context.transcript.length + 1}`,
+    cwd: context.root.workspaceRoot,
+    timeoutMs: 10_000,
+    runtimeControl: {
+      allowed: true,
+      approvalMode: "interactive",
+    },
   });
+  context.productionCallerPaths.add("CrossPlatformChatSessionManager.processIncomingMessage");
+  context.productionCallerPaths.add("IngressRouter.selectRoute");
   context.productionCallerPaths.add("ChatRunner.execute");
   context.transcript.push({
     kind: "chat_turn",
     input: step.input,
-    output: result.output,
+    output,
     recalled,
-    success: result.success,
+    success: true,
   });
   context.surfaceProjections.push({
     kind: "chat_surface",
-    output: result.output,
+    output,
     memory_keys_used: step.memory_refs,
     raw_refs_visible: false,
   });
   for (const value of context.sensitiveMemoryValues) {
     context.metrics.sensitiveLeakChecks += 1;
-    if (result.output.includes(value)) context.metrics.sensitiveLeaks += 1;
+    if (output.includes(value)) context.metrics.sensitiveLeaks += 1;
   }
-  if (!result.success || !result.output.includes(step.expected_assistant)) {
-    throw new Error(`Scenario ${context.scenario.scenario_id} chat output did not include ${step.expected_assistant}: ${result.output}`);
+  if (!output.includes(step.expected_assistant)) {
+    throw new Error(`Scenario ${context.scenario.scenario_id} chat output did not include ${step.expected_assistant}: ${output}`);
   }
 }
 
 async function runScheduleWake(context: RunContext, step: Extract<EvalStep, { kind: "schedule_wake" }>): Promise<void> {
-  context.clock.advance(step.advance_ms);
   const engine = new ScheduleEngine({
     baseDir: context.root.root,
     stateManager: context.stateManager,
@@ -287,21 +342,37 @@ async function runScheduleWake(context: RunContext, step: Extract<EvalStep, { ki
       skip_if_active: false,
     },
   });
-  engine.getEntries()[0]!.next_fire_at = "2026-05-16T00:00:00.000Z";
+  const dueAtMs = context.clock.nowMs() + step.advance_ms;
+  engine.getEntries()[0]!.next_fire_at = new Date(dueAtMs).toISOString();
   await engine.saveEntries();
-  await engine.loadEntries();
-  const results = await engine.tick();
+  let beforeAdvanceCount = 0;
+  let afterAdvanceCount = 0;
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(context.clock.date());
+    await engine.loadEntries();
+    beforeAdvanceCount = (await engine.tick()).length;
+    context.clock.advance(step.advance_ms);
+    vi.setSystemTime(context.clock.date());
+    await engine.loadEntries();
+    afterAdvanceCount = (await engine.tick()).length;
+  } finally {
+    vi.useRealTimers();
+  }
   context.operatorProjections.push({
     kind: "schedule_wake",
     entry_id: entry.id,
-    result_count: results.length,
+    before_advance_result_count: beforeAdvanceCount,
+    after_advance_result_count: afterAdvanceCount,
   });
   context.surfaceProjections.push({
     kind: "schedule_surface",
-    wake_recorded: results.length > 0,
+    wake_recorded: beforeAdvanceCount === 0 && afterAdvanceCount > 0,
   });
   context.productionCallerPaths.add("ScheduleEngine.tick");
-  if (results.length === 0) throw new Error(`Schedule wake did not fire for ${context.scenario.scenario_id}`);
+  if (beforeAdvanceCount !== 0 || afterAdvanceCount === 0) {
+    throw new Error(`Schedule wake did not respect fake time for ${context.scenario.scenario_id}`);
+  }
 }
 
 async function runApprovalResponse(context: RunContext, step: Extract<EvalStep, { kind: "approval_response" }>): Promise<void> {
@@ -373,6 +444,22 @@ async function runDeliveryReplay(context: RunContext, step: Extract<EvalStep, { 
   await recordPeerDelivery(context, step.delivery_id, {
     canSend: true,
     transportMessageRef: `telegram-message:${step.delivery_id}`,
+  });
+  context.replaySideEffectChecks.push(async (replayContext) => {
+    const replayOutbox = new OutboxStore(replayContext.root.runtimeRoot, { controlBaseDir: replayContext.root.root });
+    const replay = await replayOutbox.append({
+      event_type: "eval_lab_peer_delivery",
+      goal_id: `goal:${replayContext.scenario.scenario_id}`,
+      correlation_id: step.delivery_id,
+      created_at: replayContext.clock.nowMs() + 10_000,
+      payload: { delivery_id: step.delivery_id },
+    });
+    return {
+      kind: "outbox_replay_side_effect_guard",
+      first_seq: first.seq,
+      replay_seq: replay.seq,
+      duplicate_suppressed_after_rebuild: replay.seq === first.seq,
+    };
   });
   context.metrics.duplicateSideEffectOpportunities += step.duplicate_attempts;
   context.metrics.duplicateSideEffectCount += duplicateCount;
@@ -577,20 +664,33 @@ async function recordPeerDelivery(
 
 async function buildReplaySummary(context: RunContext): Promise<JsonObject> {
   const before = await context.eventLog.rebuildProjections();
-  const after = await new RuntimeEventLogStore(context.root.runtimeRoot, { controlBaseDir: context.root.root }).rebuildProjections();
-  const events = await context.eventLog.listEvents({ limit: null });
+  const restartedEventLog = new RuntimeEventLogStore(context.root.runtimeRoot, { controlBaseDir: context.root.root });
+  const after = await restartedEventLog.rebuildProjections();
+  const sideEffectReplayAssertions = [];
+  for (const check of context.replaySideEffectChecks) {
+    sideEffectReplayAssertions.push(await check(context));
+  }
+  const events = await restartedEventLog.listEvents({ limit: null });
   const firstTraceId = events[0]?.trace_id ?? null;
-  const explanation = firstTraceId ? await context.eventLog.explainTrace(firstTraceId) : null;
+  const explanation = firstTraceId ? await restartedEventLog.explainTrace(firstTraceId) : null;
+  const replayEquivalent = stableComparable(before) === stableComparable(after);
+  const sideEffectsSuppressed = sideEffectReplayAssertions.every((assertion) =>
+    assertion["duplicate_suppressed_after_rebuild"] !== false
+  );
   return {
     schema_version: "pulseed.eval-lab.replay-summary/v1",
     event_log_rebuild_path: "RuntimeEventLogStore.rebuildProjections",
     explain_trace_path: firstTraceId ? "RuntimeEventLogStore.explainTrace" : null,
-    replay_equivalent: stableComparable(before) === stableComparable(after),
+    replay_phase: "restart_store_and_rebuild_from_persisted_runtime_events",
+    replay_equivalent: replayEquivalent,
+    side_effects_suppressed_after_replay: sideEffectsSuppressed,
     source_event_count: before.source_event_count,
+    runtime_event_types: Array.from(new Set(events.map((event) => event.event_type))).sort(),
     runtime_graph_edge_count: before.runtime_graph_evidence.edge_count,
     first_trace_id: firstTraceId,
     explained_event_count: explanation?.events.length ?? 0,
     rebuilt_projection_names: projectionNames(before),
+    side_effect_replay_assertions: sideEffectReplayAssertions,
   };
 }
 
@@ -629,7 +729,7 @@ async function buildEvalRunArtifact(
     replay_summary: replaySummary,
     metrics,
     failures,
-    reproduction_command: `npm run test:eval-lab -- --run tests/eval-lab/eval-lab.test.ts -t ${context.scenario.scenario_id}`,
+    reproduction_command: `npm run test:eval-lab -- --run tests/eval-lab/eval-lab.test.ts -t "scenario ${context.scenario.scenario_id}"`,
     production_caller_paths: Array.from(context.productionCallerPaths).sort(),
   });
   if (failures.length > 0) {
@@ -685,16 +785,6 @@ function scriptedLlmClient(scripted: ScriptedLlm): ILLMClient {
       const parsed = JSON.parse(content) as unknown;
       return schema ? schema.parse(parsed) : parsed;
     }) as ILLMClient["parseJSON"],
-  };
-}
-
-function gatewayModelRoute(): SelectedChatRoute {
-  return {
-    kind: "gateway_model_loop",
-    reason: "direct_model_tool_loop",
-    replyTargetPolicy: "turn_reply_target",
-    eventProjectionPolicy: "turn_only",
-    concurrencyPolicy: "session_serial",
   };
 }
 
