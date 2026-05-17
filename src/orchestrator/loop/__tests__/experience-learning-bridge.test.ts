@@ -8,6 +8,7 @@ import { ExperienceLearningStateStore } from "../../../runtime/store/experience-
 import { RuntimeEventLogStore } from "../../../runtime/store/runtime-event-log.js";
 import { makeEmptyIterationResult } from "../loop-result-types.js";
 import { ExperienceLearningBridge } from "../durable-loop/experience-learning-bridge.js";
+import { createSkippedTaskResult } from "../../execution/task/task-execution-types.js";
 
 describe("ExperienceLearningBridge", () => {
   let tmpDir: string;
@@ -261,6 +262,47 @@ describe("ExperienceLearningBridge", () => {
       }),
     ]);
   });
+
+  it("does not treat duplicate skips or approval gates as repeated failures", async () => {
+    const bridge = new ExperienceLearningBridge(store);
+    const goal = makeGoal({
+      id: "goal-learning",
+      dimensions: [makeDimension({ name: "dim-learning", label: "Learning Dimension" })],
+    });
+
+    const skippedResult = makeEmptyIterationResult(goal.id, 0);
+    skippedResult.taskResult = createSkippedTaskResult(goal.id, "dim-learning");
+    await expect(bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 0,
+      result: skippedResult,
+      iterationEvidence: [makeEvidence("evidence-skip", 0)],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    })).resolves.toEqual(expect.objectContaining({
+      status: "noop",
+      reasonCode: "no_learning_trigger",
+    }));
+
+    const approvalDeniedResult = makeApprovalDeniedResult(goal.id, 1);
+    await expect(bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 1,
+      result: approvalDeniedResult,
+      iterationEvidence: [makeEvidence("evidence-approval", 1)],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    })).resolves.toEqual(expect.objectContaining({
+      status: "noop",
+      reasonCode: "no_learning_trigger",
+    }));
+
+    await expect(store.listFrames(goal.id)).resolves.toEqual([]);
+  });
 });
 
 function makeFailureResult(goalId: string, loopIndex: number, dimensionName = "dim-learning") {
@@ -299,6 +341,19 @@ function makeFailureResult(goalId: string, loopIndex: number, dimensionName = "d
       timestamp: new Date().toISOString(),
     },
     action: "discard",
+  };
+  return result;
+}
+
+function makeApprovalDeniedResult(goalId: string, loopIndex: number, dimensionName = "dim-learning") {
+  const result = makeFailureResult(goalId, loopIndex, dimensionName);
+  result.taskResult = {
+    ...result.taskResult!,
+    task: {
+      ...result.taskResult!.task,
+      status: "pending",
+    },
+    action: "approval_denied",
   };
   return result;
 }

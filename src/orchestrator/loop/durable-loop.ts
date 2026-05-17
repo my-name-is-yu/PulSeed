@@ -108,6 +108,7 @@ export class CoreLoop {
   private pendingIterationDirectives = new Map<string, import("./loop-result-types.js").NextIterationDirective>();
   /** Tracks goals that have already been through auto-decompose this run. */
   private decomposedGoals = new Set<string>();
+  private ownedExperienceLearningStore: ExperienceLearningStateStore | null = null;
   /** Optional TimeHorizonEngine for adaptive observation interval (Gap 4). */
   private timeHorizonEngine?: ITimeHorizonEngine;
   /** Last known pacing result — updated each iteration for adaptive delay. */
@@ -137,7 +138,9 @@ export class CoreLoop {
       ? deps.stateManager.getBaseDir()
       : null;
     if (!deps.experienceLearningStore && baseDir) {
-      deps.experienceLearningStore = new ExperienceLearningStateStore(baseDir, { controlBaseDir: baseDir });
+      const ownedStore = new ExperienceLearningStateStore(baseDir, { controlBaseDir: baseDir });
+      deps.experienceLearningStore = ownedStore;
+      this.ownedExperienceLearningStore = ownedStore;
     }
     if (!deps.experienceLearningBridge && deps.experienceLearningStore) {
       deps.experienceLearningBridge = new ExperienceLearningBridge(deps.experienceLearningStore);
@@ -534,6 +537,13 @@ export class CoreLoop {
    */
   stop(): void {
     this.stopped = true;
+  }
+
+  async close(): Promise<void> {
+    if (!this.ownedExperienceLearningStore) return;
+    const store = this.ownedExperienceLearningStore;
+    this.ownedExperienceLearningStore = null;
+    await store.close();
   }
 
   /**

@@ -442,6 +442,18 @@ describe("CoreLoop agentic phase hooks", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
+  it("closes the internally owned experience-learning store", async () => {
+    const { deps } = createDeps(tmpDir);
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const ownedStore = deps.experienceLearningStore as ExperienceLearningStateStore;
+    const closeSpy = vi.spyOn(ownedStore, "close");
+
+    await loop.close();
+    await loop.close();
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("feeds observe and replanning summaries into task cycle context and records phase results", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };

@@ -131,12 +131,25 @@ function noop(reasonCode: NonNullable<ExperienceLearningBridgeResult["reasonCode
 
 function selectFrameTrigger(result: LoopIterationResult): ExperienceFrameTrigger | null {
   if (result.error) return "contradiction";
-  if (result.taskResult && result.taskResult.action !== "completed") return "repeated_failure";
+  if (isActualTaskFailure(result)) return "repeated_failure";
   if (result.toolVerification && !result.toolVerification.mechanicalPassed) return "verification_result";
   if (result.stallDetected) return "bottleneck";
   if (result.metricTrendContext) return "high_uncertainty";
   if (result.nextIterationDirective) return "goal_signal";
   return null;
+}
+
+function isActualTaskFailure(result: LoopIterationResult): boolean {
+  const taskResult = result.taskResult;
+  if (!taskResult) return false;
+  if (taskResult.action === "completed") return false;
+  if (taskResult.action === "approval_denied" || taskResult.action === "capability_acquiring") return false;
+  if (taskResult.task.id === "skipped") return false;
+  if (taskResult.verificationResult.verdict !== "fail") return false;
+  return taskResult.task.status === "error"
+    || taskResult.task.status === "timed_out"
+    || taskResult.task.status === "cancelled"
+    || taskResult.task.status === "blocked";
 }
 
 function buildExperienceFrame(input: ExperienceLearningBridgeInput, trigger: ExperienceFrameTrigger): ExperienceFrame {
