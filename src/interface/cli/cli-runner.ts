@@ -405,10 +405,10 @@ async function main(): Promise<void> {
   const runner = new CLIRunner();
   try {
     const code = await runner.run(argv);
-    process.exit(code);
+    process.exitCode = code;
   } catch (err) {
     logger.error(formatOperationError("execute CLI entry point", err));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

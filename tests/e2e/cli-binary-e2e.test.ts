@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { BackgroundRunLedger } from "../../src/runtime/store/background-run-store.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 const execFileAsync = promisify(execFile);
@@ -58,5 +59,33 @@ describe.skipIf(!RUN_BINARY_E2E)("built CLI binary", () => {
     expect(result.stderr).toContain("Error: --goal <id> is required for pulseed run.");
     expect(result.stderr).toContain("Usage: pulseed run --goal <id>");
     expect(result.stderr).not.toContain("required for \\.");
+  });
+
+  it("flushes large JSON output before process exit", async () => {
+    expect(fs.existsSync(CLI_PATH), `Build first with \`npm run build\`; missing ${CLI_PATH}`).toBe(true);
+    tmpDir = makeTempDir("pulseed-cli-binary-large-json-");
+    const runtimeRoot = path.join(tmpDir, "runtime");
+    const ledger = new BackgroundRunLedger(runtimeRoot, { controlBaseDir: tmpDir });
+    const largeTitle = "large-json-pipe-smoke ".repeat(24);
+    for (let index = 0; index < 180; index += 1) {
+      await ledger.create({
+        id: `run:large-json:${index}`,
+        kind: "process_run",
+        status: "succeeded",
+        notify_policy: "silent",
+        reply_target_source: "none",
+        parent_session_id: null,
+        goal_id: null,
+        title: `${largeTitle}${index}`,
+        workspace: tmpDir,
+      });
+    }
+
+    const result = await runBuiltCli(["runtime", "runs", "--json"], tmpDir);
+
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(65_536);
+    const parsed = JSON.parse(result.stdout) as { background_runs: Array<{ id: string }> };
+    expect(parsed.background_runs).toHaveLength(180);
   });
 });
