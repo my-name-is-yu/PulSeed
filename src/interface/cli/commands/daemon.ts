@@ -75,6 +75,8 @@ import {
 } from "./daemon-status-health.js";
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
+const DETACHED_DAEMON_READY_TIMEOUT_MS = 10_000;
+const DETACHED_DAEMON_READY_POLL_MS = 250;
 
 interface CmdStartOptions {
   childCommandArgs?: string[];
@@ -84,6 +86,37 @@ type StopDaemonOutcome =
   | { status: "not_running"; messages: string[] }
   | { status: "stopped"; messages: string[] }
   | { status: "failed"; messages: string[] };
+
+async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: number): Promise<
+  | { ready: true; port: number }
+  | { ready: false; port: number; detail: string }
+> {
+  const deadline = Date.now() + DETACHED_DAEMON_READY_TIMEOUT_MS;
+  let lastPort = 0;
+  let lastDetail = "daemon health endpoint was not checked";
+
+  while (Date.now() < deadline) {
+    const running = await isDaemonRunning(baseDir);
+    lastPort = running.port;
+    if (running.running) {
+      return { ready: true, port: running.port };
+    }
+    lastDetail = `no healthy daemon response on port ${running.port}`;
+    if (eventServerPort > 0) {
+      const probe = await probeDaemonHealth({ host: "127.0.0.1", port: eventServerPort });
+      lastPort = eventServerPort;
+      if (probe.ok) {
+        return { ready: true, port: eventServerPort };
+      }
+      lastDetail = probe.error
+        ? `no healthy daemon response on port ${eventServerPort}: ${probe.error}`
+        : `no healthy daemon response on port ${eventServerPort}`;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DETACHED_DAEMON_READY_POLL_MS));
+  }
+
+  return { ready: false, port: lastPort, detail: lastDetail };
+}
 
 function resolveStatusArtifactExpectation(params: {
   activeGoalIds: string[];
@@ -227,8 +260,14 @@ export async function cmdStart(
     process.exit(1);
   }
 
-  // --detach: spawn a detached process and exit immediately.
-  // The detached process becomes the watchdog parent.
+  if (!isWatchdogChild && await pidManager.isRunning()) {
+    const info = await pidManager.readPID();
+    logger.error(`Daemon already running (PID: ${info?.pid})`);
+    process.exit(1);
+  }
+
+  // --detach: spawn a background watchdog and only report success after the
+  // daemon command surface is actually ready for follow-up commands.
   if (values.detach) {
     const scriptPath = process.argv[1]!;
     const childArgs = (options.childCommandArgs ?? process.argv.slice(2))
@@ -247,14 +286,16 @@ export async function cmdStart(
       console.error("Failed to start daemon: no PID assigned");
       process.exit(1);
     }
-    console.log(`Daemon started in background (PID: ${child.pid})`);
+    const readiness = await waitForDetachedDaemonReady(baseDir, resolvedDaemonConfig.event_server_port);
+    if (!readiness.ready) {
+      console.error(
+        `Daemon process started in background (PID: ${child.pid}), but the command surface was not ready within ${DETACHED_DAEMON_READY_TIMEOUT_MS}ms: ${readiness.detail}.`
+      );
+      console.error("Run `pulseed daemon status` or `pulseed logs` to inspect startup.");
+      process.exit(1);
+    }
+    console.log(`Daemon started in background (PID: ${child.pid}, port: ${readiness.port})`);
     process.exit(0);
-  }
-
-  if (!isWatchdogChild && await pidManager.isRunning()) {
-    const info = await pidManager.readPID();
-    logger.error(`Daemon already running (PID: ${info?.pid})`);
-    process.exit(1);
   }
 
   if (shouldUseWatchdog) {
