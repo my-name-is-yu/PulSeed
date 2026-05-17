@@ -150,10 +150,15 @@ export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): st
   return null;
 }
 
-export function readDaemonAuthTokenPort(baseDir?: string): number | null {
+export function readDaemonAuthTokenMetadata(baseDir?: string): DaemonAuthToken | null {
   const tokenFile = readDaemonAuthTokenFile(baseDir);
-  return tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
-    ? tokenFile.token.port
+  return tokenFile.status === "found" ? tokenFile.token : null;
+}
+
+export function readDaemonAuthTokenPort(baseDir?: string): number | null {
+  const token = readDaemonAuthTokenMetadata(baseDir);
+  return token !== null && isDaemonProbePort(token.port)
+    ? token.port
     : null;
 }
 

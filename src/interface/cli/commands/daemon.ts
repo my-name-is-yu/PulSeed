@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonStateSchema, DaemonConfigSchema } from "../../../base/types/daemon.js";
-import type { DaemonState, DaemonConfig } from "../../../base/types/daemon.js";
+import type { DaemonState, DaemonConfig, PIDInfo } from "../../../base/types/daemon.js";
 import type { Task } from "../../../base/types/task.js";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -30,7 +30,12 @@ import {
   RuntimeHealthStore,
 } from "../../../runtime/store/index.js";
 import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
-import { isDaemonRunning, probeDaemonHealth, readDaemonAuthTokenPort } from "../../../runtime/daemon/client.js";
+import {
+  isDaemonRunning,
+  probeDaemonHealth,
+  readDaemonAuthTokenMetadata,
+} from "../../../runtime/daemon/client.js";
+import type { DaemonAuthToken } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
@@ -77,6 +82,7 @@ import {
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
 const DETACHED_DAEMON_READY_TIMEOUT_MS = 10_000;
 const DETACHED_DAEMON_READY_POLL_MS = 250;
+const DETACHED_DAEMON_TOKEN_FRESHNESS_SKEW_MS = 1_000;
 
 interface CmdStartOptions {
   childCommandArgs?: string[];
@@ -87,38 +93,50 @@ type StopDaemonOutcome =
   | { status: "stopped"; messages: string[] }
   | { status: "failed"; messages: string[] };
 
-async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: number): Promise<
+async function waitForDetachedDaemonReady(params: {
+  baseDir: string;
+  eventServerPort: number;
+  expectedWatchdogPid: number;
+  startedAtMs: number;
+}): Promise<
   | { ready: true; port: number }
   | { ready: false; port: number; detail: string }
 > {
+  const { baseDir, eventServerPort, expectedWatchdogPid, startedAtMs } = params;
   const deadline = Date.now() + DETACHED_DAEMON_READY_TIMEOUT_MS;
   let lastPort = 0;
   let lastDetail = "daemon health endpoint was not checked";
 
   while (Date.now() < deadline) {
-    const running = await isDaemonRunning(baseDir, {
-      eventServerPort,
-      timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
-    });
-    lastPort = running.port;
-    if (running.running) {
-      return { ready: true, port: running.port };
-    }
-    lastDetail = `no healthy daemon response on port ${running.port}`;
-    const directProbePort = resolveDetachedDaemonProbePort(baseDir, eventServerPort, running.port);
-    if (directProbePort !== null) {
-      const probe = await probeDaemonHealth({
-        host: "127.0.0.1",
-        port: directProbePort,
-        timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
+    const ownership = await readDetachedDaemonOwnership(baseDir, expectedWatchdogPid);
+    if (!ownership) {
+      lastDetail = `daemon pid file is not owned by spawned watchdog PID ${expectedWatchdogPid}`;
+    } else {
+      const token = readFreshDetachedDaemonToken({
+        baseDir,
+        eventServerPort,
+        ownership,
+        startedAtMs,
       });
-      lastPort = directProbePort;
-      if (probe.ok) {
-        return { ready: true, port: directProbePort };
+      const directProbePort = token?.port ?? null;
+      if (directProbePort === null) {
+        lastDetail = "fresh daemon token for the spawned runtime was not available";
+      } else {
+        lastPort = directProbePort;
       }
-      lastDetail = probe.error
-        ? `no healthy daemon response on port ${directProbePort}: ${probe.error}`
-        : `no healthy daemon response on port ${directProbePort}`;
+      if (directProbePort !== null) {
+        const probe = await probeDaemonHealth({
+          host: "127.0.0.1",
+          port: directProbePort,
+          timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
+        });
+        if (probe.ok) {
+          return { ready: true, port: directProbePort };
+        }
+        lastDetail = probe.error
+          ? `no healthy daemon response on port ${directProbePort}: ${probe.error}`
+          : `no healthy daemon response on port ${directProbePort}`;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, DETACHED_DAEMON_READY_POLL_MS));
   }
@@ -130,16 +148,40 @@ function detachedDaemonReadyProbeTimeoutMs(deadline: number): number {
   return Math.max(1, Math.min(DETACHED_DAEMON_READY_POLL_MS, deadline - Date.now()));
 }
 
-function resolveDetachedDaemonProbePort(
-  baseDir: string,
-  eventServerPort: number,
-  runningProbePort: number,
-): number | null {
-  if (eventServerPort > 0) return eventServerPort;
-  if (eventServerPort === 0) {
-    return readDaemonAuthTokenPort(baseDir);
+async function readDetachedDaemonOwnership(baseDir: string, expectedWatchdogPid: number): Promise<PIDInfo | null> {
+  const info = await new PIDManager(baseDir).readPID();
+  if (!info) return null;
+  if (info.owner_pid === expectedWatchdogPid || info.watchdog_pid === expectedWatchdogPid) {
+    return info;
   }
-  return runningProbePort > 0 ? runningProbePort : null;
+  return null;
+}
+
+function readFreshDetachedDaemonToken(params: {
+  baseDir: string;
+  eventServerPort: number;
+  ownership: PIDInfo;
+  startedAtMs: number;
+}): DaemonAuthToken | null {
+  const token = readDaemonAuthTokenMetadata(params.baseDir);
+  if (!token) return null;
+  if (!isFreshDetachedDaemonToken(token, params.startedAtMs)) return null;
+  const runtimePid = params.ownership.runtime_pid ?? params.ownership.pid;
+  if (token.pid !== runtimePid) return null;
+  if (!isDetachedDaemonProbePort(token.port)) return null;
+  if (params.eventServerPort > 0 && token.port !== params.eventServerPort) return null;
+  return token;
+}
+
+function isFreshDetachedDaemonToken(token: DaemonAuthToken, startedAtMs: number): boolean {
+  if (!token.created_at) return false;
+  const createdAtMs = Date.parse(token.created_at);
+  return Number.isFinite(createdAtMs)
+    && createdAtMs >= startedAtMs - DETACHED_DAEMON_TOKEN_FRESHNESS_SKEW_MS;
+}
+
+function isDetachedDaemonProbePort(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
 }
 
 function resolveStatusArtifactExpectation(params: {
@@ -297,6 +339,7 @@ export async function cmdStart(
     const childArgs = (options.childCommandArgs ?? process.argv.slice(2))
       .filter((arg) => arg !== "--detach" && arg !== "-d");
 
+    const startedAtMs = Date.now();
     const child = spawn(process.execPath, [scriptPath, ...childArgs], {
       detached: true,
       stdio: "ignore",
@@ -310,7 +353,12 @@ export async function cmdStart(
       console.error("Failed to start daemon: no PID assigned");
       process.exit(1);
     }
-    const readiness = await waitForDetachedDaemonReady(baseDir, resolvedDaemonConfig.event_server_port);
+    const readiness = await waitForDetachedDaemonReady({
+      baseDir,
+      eventServerPort: resolvedDaemonConfig.event_server_port,
+      expectedWatchdogPid: child.pid,
+      startedAtMs,
+    });
     if (!readiness.ready) {
       console.error(
         `Daemon process started in background (PID: ${child.pid}), but the command surface was not ready within ${DETACHED_DAEMON_READY_TIMEOUT_MS}ms: ${readiness.detail}.`

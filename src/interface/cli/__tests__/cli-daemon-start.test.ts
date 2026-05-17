@@ -27,7 +27,7 @@ const {
   spawnUnrefMock,
   isDaemonRunningMock,
   probeDaemonHealthMock,
-  readDaemonAuthTokenPortMock,
+  readDaemonAuthTokenMetadataMock,
   cliLoggerMock,
 } = vi.hoisted(() => ({
   buildDepsMock: vi.fn(),
@@ -67,7 +67,7 @@ const {
     latency_ms: 0,
     health: { status: "ok" },
   }),
-  readDaemonAuthTokenPortMock: vi.fn().mockReturnValue(null),
+  readDaemonAuthTokenMetadataMock: vi.fn().mockReturnValue(null),
   cliLoggerMock: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -94,7 +94,7 @@ vi.mock("node:os", async (importOriginal) => {
 vi.mock("../../../runtime/daemon/client.js", () => ({
   isDaemonRunning: isDaemonRunningMock,
   probeDaemonHealth: probeDaemonHealthMock,
-  readDaemonAuthTokenPort: readDaemonAuthTokenPortMock,
+  readDaemonAuthTokenMetadata: readDaemonAuthTokenMetadataMock,
 }));
 
 vi.mock("../setup.js", () => ({
@@ -257,8 +257,8 @@ describe("cmdStart", () => {
       latency_ms: 0,
       health: { status: "ok" },
     });
-    readDaemonAuthTokenPortMock.mockReset();
-    readDaemonAuthTokenPortMock.mockReturnValue(null);
+    readDaemonAuthTokenMetadataMock.mockReset();
+    readDaemonAuthTokenMetadataMock.mockReturnValue(null);
     cliLoggerMock.info.mockClear();
     cliLoggerMock.warn.mockClear();
     cliLoggerMock.error.mockClear();
@@ -685,15 +685,33 @@ describe("cmdStart", () => {
   });
 
   it("waits for detached daemon readiness before reporting startup success", async () => {
-    isDaemonRunningMock
-      .mockResolvedValueOnce({ running: false, port: 41700 })
-      .mockResolvedValueOnce({ running: true, port: 41700 });
-    probeDaemonHealthMock.mockResolvedValueOnce({
-      ok: false,
-      port: 41700,
-      latency_ms: 1,
-      error: "connect ECONNREFUSED 127.0.0.1:41700",
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
     });
+    readDaemonAuthTokenMetadataMock.mockReturnValue({
+      token: "runtime-token",
+      host: "127.0.0.1",
+      port: 41700,
+      pid: 23456,
+      created_at: new Date(Date.now() + 1_000).toISOString(),
+    });
+    probeDaemonHealthMock
+      .mockResolvedValueOnce({
+        ok: false,
+        port: 41700,
+        latency_ms: 1,
+        error: "connect ECONNREFUSED 127.0.0.1:41700",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        port: 41700,
+        latency_ms: 1,
+        health: { status: "ok" },
+      });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
       throw new Error(`process.exit:${code ?? ""}`);
     }) as typeof process.exit);
@@ -716,12 +734,7 @@ describe("cmdStart", () => {
         })
       );
       expect(spawnUnrefMock).toHaveBeenCalledOnce();
-      expect(isDaemonRunningMock).toHaveBeenCalledTimes(2);
-      expect(isDaemonRunningMock).toHaveBeenNthCalledWith(
-        1,
-        "/tmp/pulseed-daemon-start-base",
-        { eventServerPort: 41700, timeoutMs: expect.any(Number) },
-      );
+      expect(pidReadPIDMock).toHaveBeenCalled();
       expect(probeDaemonHealthMock).toHaveBeenCalledWith({
         host: "127.0.0.1",
         port: 41700,
@@ -741,8 +754,20 @@ describe("cmdStart", () => {
       JSON.stringify({ event_server_port: 0 }),
       "utf-8"
     );
-    isDaemonRunningMock.mockResolvedValueOnce({ running: false, port: 0 });
-    readDaemonAuthTokenPortMock.mockReturnValue(45678);
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock.mockReturnValue({
+      token: "runtime-token",
+      host: "127.0.0.1",
+      port: 45678,
+      pid: 23456,
+      created_at: new Date(Date.now() + 1_000).toISOString(),
+    });
     probeDaemonHealthMock.mockResolvedValueOnce({
       ok: true,
       port: 45678,
@@ -762,11 +787,7 @@ describe("cmdStart", () => {
         { childCommandArgs: ["daemon", "start", "--detach"] },
       )).rejects.toThrow("process.exit:0");
 
-      expect(isDaemonRunningMock).toHaveBeenCalledWith(
-        "/tmp/pulseed-daemon-start-base",
-        { eventServerPort: 0, timeoutMs: expect.any(Number) },
-      );
-      expect(readDaemonAuthTokenPortMock).toHaveBeenCalledWith("/tmp/pulseed-daemon-start-base");
+      expect(readDaemonAuthTokenMetadataMock).toHaveBeenCalledWith("/tmp/pulseed-daemon-start-base");
       expect(probeDaemonHealthMock).toHaveBeenCalledWith({
         host: "127.0.0.1",
         port: 45678,
@@ -786,10 +807,22 @@ describe("cmdStart", () => {
       JSON.stringify({ event_server_port: 0 }),
       "utf-8"
     );
-    isDaemonRunningMock
-      .mockResolvedValueOnce({ running: false, port: 41700 })
-      .mockResolvedValueOnce({ running: true, port: 45678 });
-    readDaemonAuthTokenPortMock.mockReturnValue(null);
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({
+        token: "runtime-token",
+        host: "127.0.0.1",
+        port: 45678,
+        pid: 23456,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
       throw new Error(`process.exit:${code ?? ""}`);
     }) as typeof process.exit);
@@ -803,8 +836,74 @@ describe("cmdStart", () => {
         { childCommandArgs: ["daemon", "start", "--detach"] },
       )).rejects.toThrow("process.exit:0");
 
-      expect(probeDaemonHealthMock).not.toHaveBeenCalled();
+      expect(probeDaemonHealthMock).toHaveBeenCalledOnce();
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45678,
+        timeoutMs: expect.any(Number),
+      });
       expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45678)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("ignores daemon-token ports that do not belong to the spawned runtime", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock
+      .mockReturnValueOnce({
+        token: "stale-token",
+        host: "127.0.0.1",
+        port: 45678,
+        pid: 99999,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      .mockReturnValueOnce({
+        token: "runtime-token",
+        host: "127.0.0.1",
+        port: 45679,
+        pid: 23456,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      });
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 45679,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(probeDaemonHealthMock).toHaveBeenCalledOnce();
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45679,
+        timeoutMs: expect.any(Number),
+      });
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45679)");
     } finally {
       exitSpy.mockRestore();
       logSpy.mockRestore();
