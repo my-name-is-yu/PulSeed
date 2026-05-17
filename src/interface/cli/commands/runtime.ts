@@ -1205,7 +1205,13 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
       values.json ? printJson(rebuild) : printRuntimeEventProjectionRebuild(rebuild);
       return 0;
     }
-    const applied = await store.applyProjectionRebuild({ traceId: values.trace });
+    if (values.trace) {
+      logger.error(
+        "Error: trace-scoped projection apply is not supported. Use --dry-run with --trace for inspection, or omit --trace to apply the full event log.",
+      );
+      return 1;
+    }
+    const applied = await store.applyProjectionRebuild();
     values.json ? printJson(applied) : printRuntimeEventProjectionApply(applied);
     return 0;
   }

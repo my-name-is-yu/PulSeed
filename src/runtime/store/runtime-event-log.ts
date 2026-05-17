@@ -381,6 +381,11 @@ export class RuntimeEventLogStore {
   }
 
   async applyProjectionRebuild(options: { traceId?: string } = {}): Promise<RuntimeEventProjectionApplyResult> {
+    if (options.traceId) {
+      throw new Error(
+        "Trace-scoped projection apply is not supported; use rebuild --dry-run --trace for inspection or omit --trace to apply the full event log.",
+      );
+    }
     const appliedAt = new Date().toISOString();
     const db = await this.database();
     const applied = db.transaction((sqlite) => {
@@ -396,7 +401,7 @@ export class RuntimeEventLogStore {
       const currentStateProjectionRows = applyEventBackedCurrentStateProjections(
         sqlite,
         sourceEvents,
-        { pruneStaleRows: !options.traceId },
+        { pruneStaleRows: true },
       );
       for (const snapshot of snapshots) {
         upsertProjectionSnapshot(sqlite, snapshot);

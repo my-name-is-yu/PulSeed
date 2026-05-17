@@ -576,11 +576,20 @@ describe("runtime event log source-of-truth contract", () => {
       await clearProjectionTables(runtimeRoot, root, ["DELETE FROM attention_commitment_candidates"]);
       await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
 
-      const applied = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      const traceApplyCommand = await captureConsoleError(() =>
+        cmdRuntime(new StateManager(root), ["event-log", "rebuild", "--trace", events[0]!.trace_id, "--json"])
+      );
+      expect(traceApplyCommand.code).toBe(1);
+      expect(traceApplyCommand.output).toContain("trace-scoped projection apply is not supported");
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
+      await expect(eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id }))
+        .rejects.toThrow("Trace-scoped projection apply is not supported");
+
+      const applied = await eventLog.applyProjectionRebuild();
       expect(applied.snapshots).toEqual(expect.arrayContaining([
         expect.objectContaining({
           projection_name: "attention_commitment_lifecycle_summary",
-          scope: { kind: "trace", ref: events[0]!.trace_id },
+          scope: { kind: "control_db", ref: "default" },
         }),
       ]));
       expect(applied.current_state_projection_rows.attention_commitment_candidates).toBe(1);
@@ -603,7 +612,7 @@ describe("runtime event log source-of-truth contract", () => {
         limit: null,
       });
       expect(firstRebuildEvents).toHaveLength(1);
-      const appliedAgain = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      const appliedAgain = await eventLog.applyProjectionRebuild();
       expect(appliedAgain.rebuild.source_event_count).toBe(2);
       expect(appliedAgain.rebuild.runtime_graph_evidence.source_event_refs).toEqual(
         events.map((event) => event.event_id).sort(),
@@ -643,12 +652,14 @@ describe("runtime event log source-of-truth contract", () => {
       });
 
       await store.save(operation);
-      await store.save(RuntimeControlOperationSchema.parse({
+      const verifiedOperation = RuntimeControlOperationSchema.parse({
         ...operation,
         state: "verified",
         updated_at: "2026-05-16T00:01:00.000Z",
         completed_at: "2026-05-16T00:01:00.000Z",
-      }));
+      });
+      await store.save(verifiedOperation);
+      await store.save(verifiedOperation);
 
       const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
       const events = await eventLog.listEvents({
@@ -679,7 +690,7 @@ describe("runtime event log source-of-truth contract", () => {
 
       await clearProjectionTables(runtimeRoot, root, ["DELETE FROM runtime_operations"]);
       await expect(store.load(operation.operation_id)).resolves.toBeNull();
-      const applied = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      const applied = await eventLog.applyProjectionRebuild();
       expect(applied.current_state_projection_rows.runtime_operations).toBe(1);
       await expect(store.load(operation.operation_id)).resolves.toMatchObject({
         operation_id: operation.operation_id,
@@ -1227,6 +1238,19 @@ function commitmentCandidate() {
 async function captureConsoleLog(run: () => Promise<number>): Promise<{ code: number; output: string }> {
   const lines: string[] = [];
   const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  });
+  try {
+    const code = await run();
+    return { code, output: lines.join("\n") };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+async function captureConsoleError(run: () => Promise<number>): Promise<{ code: number; output: string }> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     lines.push(args.map((arg) => String(arg)).join(" "));
   });
   try {

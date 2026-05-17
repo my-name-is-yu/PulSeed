@@ -166,13 +166,14 @@ Rebuildable projections currently include:
 - runtime-control operation summary
 - attention commitment lifecycle summary
 
-Without `--dry-run`, `pulseed runtime event-log rebuild` applies event-backed
-current-state rows for goals, tasks, interaction authority decisions,
-runtime-control operations, and attention commitments, then stores those
-rebuildable summaries as typed projection snapshots scoped either to the
-requested trace or to the whole control DB. The apply recipe is deterministic
-over `runtime_events` and RuntimeGraph evidence; it does not read current-state
-projection tables as hidden truth. Outbox queues, peer delivery receipts,
+Without `--dry-run` and without `--trace`, `pulseed runtime event-log rebuild`
+applies event-backed current-state rows for goals, tasks, interaction authority
+decisions, runtime-control operations, and attention commitments, then stores
+those rebuildable summaries as typed projection snapshots scoped to the whole
+control DB. The apply recipe is deterministic over the full `runtime_events`
+set and RuntimeGraph evidence; it does not read current-state projection tables
+as hidden truth. Trace-scoped rebuild is inspection-only because traces are
+action-scoped, not full entity histories. Outbox queues, peer delivery receipts,
 schedule owner/history rows, tool effects, memory truth owner rows, approval
 wait rows, and daemon/session liveness rows are summary-only or owner-table
 boundaries rather than current-state apply targets.

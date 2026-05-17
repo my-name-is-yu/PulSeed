@@ -11,8 +11,9 @@ behavior and by whether the current-state row is actually a rebuild target.
 - `newly converted in this PR`: this PR added the typed event append and
   RuntimeGraph linkage before the projection/current-state write.
 - `current-state apply-supported`: `pulseed runtime event-log rebuild` without
-  `--dry-run` deterministically restores the relevant current-state rows from
-  `runtime_events` and RuntimeGraph evidence.
+  `--dry-run` and without `--trace` deterministically restores the relevant
+  current-state rows from the full `runtime_events` set and RuntimeGraph
+  evidence.
 - `rebuild-summary-only`: rebuild emits deterministic operator/debug summary
   snapshots, but does not rewrite current-state owner/queue/history rows.
 - `true narrow owner table`: the table owns live state directly by design and is
@@ -27,7 +28,7 @@ behavior and by whether the current-state row is actually a rebuild target.
 | `goal_records` | Already event-sourced before this PR through `GoalTaskStateStore.recordGoalTaskMutation()`. | Current-state apply-supported, newly broadened in this PR. | `GoalTaskStateStore.save/archive/delete` appends `runtime-event-payload/goal-task-mutation/v1`; the event linker writes RuntimeGraph event/target evidence; the store writes `goal_records` and goal/milestone RuntimeGraph source-of-truth nodes; apply now restores `goal_records` plus goal/milestone RuntimeGraph source-of-truth nodes from the final typed mutation event. No external side effect is replayed; repeated apply reuses the same projection rebuild event. |
 | `task_records` | Already event-sourced before this PR through `GoalTaskStateStore.recordGoalTaskMutation()`. | Current-state apply-supported, newly broadened in this PR. | Task save/delete appends `runtime-event-payload/goal-task-mutation/v1`; RuntimeGraph event/target evidence is linked; the store writes `task_records` and task RuntimeGraph source-of-truth nodes; apply now restores `task_records`, task nodes, and goal-task edges from typed task mutation events. No external side effect is replayed; repeated apply is idempotent. |
 | `interaction_authority_decisions` | Already event-sourced before this PR through `InteractionAuthorityStore.recordDecision()`. | Current-state apply-supported, newly broadened in this PR. | `recordDecision()` appends `runtime-event-payload/authority-decision/v1`; RuntimeGraph links authority and side-effect refs; the store writes `interaction_authority_decisions`; apply now restores the decision row from the typed authority payload. Duplicate side effects are suppressed by the authority store's side-effect-guard disposition and replay metadata. |
-| `runtime_operations` | Newly converted in this PR. | Current-state apply-supported. | `RuntimeOperationStore.save()` now appends `runtime-event-payload/runtime-control-operation/v1` before the `runtime_operations` write; RuntimeGraph links source/target/projection refs; apply restores the latest terminal/current operation row from typed events. Runtime-control operation rows are projection state only, and repeated rebuild apply reuses the same projection event. |
+| `runtime_operations` | Newly converted in this PR. | Current-state apply-supported. | `RuntimeOperationStore.save()` now appends `runtime-event-payload/runtime-control-operation/v1` before the `runtime_operations` write when the operation transition is not a no-op; RuntimeGraph links source/target/projection refs; apply restores the latest terminal/current operation row from typed events. Runtime-control operation rows are projection state only, and repeated rebuild apply reuses the same projection event. |
 | `attention_commitment_candidates` | Newly converted in this PR. | Current-state apply-supported. | `AttentionStateStore.saveCommitmentCandidates()` and commitment lifecycle control append `runtime-event-payload/attention-commitment/v1` before candidate projection writes; RuntimeGraph links commitment/materialization/feedback/suppression refs; apply restores the final candidate row from typed events. Replay is guarded by commitment replay keys and does not duplicate commitment materialization side effects. |
 | Shadow-held / ask-confirmation / watching / active-care commitment refs | Newly converted in this PR as part of the attention commitment lifecycle event. | Current-state apply-supported for the candidate row; lifecycle/materialization/feedback/suppression summaries are rebuild-summary-only. | The current candidate row is restored from the final commitment event. Operator lifecycle summaries expose materialization, feedback, and suppression refs without replaying transport or user-visible effects. |
 | Notification/outbox dedupe projection and `outbox_records` | Already event-sourced before this PR through outbox admission traces. | Rebuild-summary-only for `notification_outbox_dedupe_state`; `outbox_records` is a side-effect queue/dedupe owner, not apply-supported. | `OutboxStore.append()` records a personal-agent trace before enqueue and dedupes by correlation/payload. Rebuild derives notification/outbox dedupe state from events/RuntimeGraph. Apply intentionally does not recreate `outbox_records`; the broader apply test deletes the queue, rebuilds summaries, and proves the queue stays empty while dedupe evidence is present. Replay tests prove duplicate appends reuse the existing queue item and distinct side-effect refs stay distinct. |
@@ -40,8 +41,9 @@ behavior and by whether the current-state row is actually a rebuild target.
 
 ## Current-State Apply Targets
 
-`pulseed runtime event-log rebuild` without `--dry-run` now records the rebuild
-event first, then restores these event-backed current-state rows:
+`pulseed runtime event-log rebuild` without `--dry-run` and without `--trace`
+now records the rebuild event first, then restores these event-backed
+current-state rows:
 
 - `goal_records`
 - `task_records`
@@ -50,8 +52,11 @@ event first, then restores these event-backed current-state rows:
 - `runtime_operations`
 - `attention_commitment_candidates`
 
-The apply path is deterministic over `runtime_events` and RuntimeGraph evidence.
-It does not read current-state projection tables as hidden truth.
+The apply path is deterministic over the full `runtime_events` set and
+RuntimeGraph evidence. It does not read current-state projection tables as
+hidden truth. Trace-scoped rebuild remains an operator/debug inspection path
+only; applying current-state rows from a single trace is rejected because traces
+are action-scoped and do not contain full entity history.
 
 ## Rebuild-Summary-Only Projections
 
@@ -83,6 +88,8 @@ not current-state row apply targets:
   `outbox_records`, and goal/task RuntimeGraph nodes, runs rebuild apply, and
   proves the five apply-supported current-state projections are restored while
   the side-effect outbox queue is not recreated.
+- The same contract test rejects trace-scoped current-state apply and proves
+  no projection row is restored from partial trace history.
 - `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
   does not duplicate outbox notifications, schedule runs, denied tool calls,
   peer deliveries, memory correction effects, or commitment operations while

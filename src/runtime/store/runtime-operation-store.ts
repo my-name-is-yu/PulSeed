@@ -161,10 +161,12 @@ export class RuntimeOperationStore {
     const db = await this.database();
     db.transaction((sqlite) => {
       const previous = loadRuntimeOperation(sqlite, parsed.operation_id);
-      appendRuntimeEventEnvelopeInTransaction(
-        sqlite,
-        runtimeEventFromRuntimeControlOperationTransition(parsed, previous),
-      );
+      if (!isNoopRuntimeOperationTransition(parsed, previous)) {
+        appendRuntimeEventEnvelopeInTransaction(
+          sqlite,
+          runtimeEventFromRuntimeControlOperationTransition(parsed, previous),
+        );
+      }
       persistStateTransitionWithAudit({
         current: parsed,
         emitAudit: options.emitEvent,
@@ -240,6 +242,15 @@ function upsertRuntimeOperation(
     updated_at: operation.updated_at,
     operation_json: RuntimeOperationJsonCodec.stringify(operation),
   });
+}
+
+function isNoopRuntimeOperationTransition(
+  operation: RuntimeControlOperation,
+  previous: RuntimeControlOperation | null,
+): boolean {
+  return previous !== null
+    && previous.state === operation.state
+    && previous.updated_at === operation.updated_at;
 }
 
 function insertRuntimeOperationEvent(

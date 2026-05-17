@@ -10,7 +10,7 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
 
 - Branch: `yu/event-sourced-runtime-projection-closure`
 - Base: `origin/main`
-- PR state: draft PR #2003; moved back to draft for the additional completeness audit before requesting a fresh GitHub Codex review.
+- PR state: ready PR #2003; GitHub Codex review findings are being cleared before merge.
 - Session language: Japanese
 - GitHub-facing artifacts: English
 
@@ -33,7 +33,8 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
 - [x] Expand current-state apply beyond runtime operations and attention commitments to goals, tasks, and interaction authority decisions.
 - [x] Reclassify summary-only and narrow owner domains in the inventory.
 - [x] Re-run full verification after the completeness pass.
-- [ ] Request and clear GitHub Codex review.
+- [x] Request GitHub Codex review after the completeness pass.
+- [ ] Clear latest GitHub Codex review.
 
 ## Notes
 
@@ -94,4 +95,18 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
   - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
   - `npm run check:database-first-legacy-stores`
+  - `git diff --check`
+- GitHub Codex review on `24901f87` found:
+  - P1: trace-scoped rebuild apply could mutate current-state tables from partial action-scoped history.
+  - P2: no-op runtime operation saves appended extra `runtime_control.operation.recorded` events.
+- Follow-up fixes reject trace-scoped current-state apply at the store and CLI boundary, document trace rebuild as dry-run/inspection-only, and suppress runtime operation event append for unchanged state/updated-at transitions. Focused verification passed:
+  - `node -v` -> `v24.15.0`
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run test:contracts`
+  - `npm run test:unit -- --run src/runtime/control/__tests__/runtime-control-service.test.ts src/runtime/__tests__/runtime-control-result-routing.test.ts src/runtime/store/__tests__/runtime-control-store-migration.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run check:docs`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`

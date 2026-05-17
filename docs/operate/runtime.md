@@ -158,6 +158,8 @@ pulseed runtime memory-provenance [--json]
 
 These are operator and debugging surfaces. They may expose raw IDs and
 diagnostic labels that normal user-facing chat should hide by default.
+`event-log rebuild --trace` is inspection-only and must be combined with
+`--dry-run`; current-state apply uses the full event log with no trace filter.
 `peer-initiative-capability` is the exception that deliberately narrows the
 current product claim: resident peer initiative delivery is Telegram-only.
 
