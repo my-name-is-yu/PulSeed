@@ -1,6 +1,8 @@
 # Concepts
 
 > Status: Current concepts index. This page explains code-backed concepts before readers enter design history.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Use this page when you want to understand how PulSeed works before reading
 design documents or source code.

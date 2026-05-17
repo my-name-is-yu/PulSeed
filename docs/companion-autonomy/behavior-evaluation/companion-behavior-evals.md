@@ -2,6 +2,8 @@
 
 > Status: Implemented contract and regression coverage. Slow semantic evals remain
 > a separate lane and must not gate ordinary CI.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Behavior Evaluation](./behavior-evaluation-map.md).
 

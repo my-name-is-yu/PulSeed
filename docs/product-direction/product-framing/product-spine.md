@@ -3,6 +3,8 @@
 > Status: Product design spine grounded in the current implementation. This page
 > explains PulSeed's public direction and architecture balance; it is not a
 > complete operating guide.
+> Doc status: north_star_direction
+> Grounding use: design_context
 
 Primary map: [Product Framing](./product-framing-map.md).
 

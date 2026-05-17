@@ -4,6 +4,8 @@
 > `src/runtime/decision/`. It does not define a new memory store and does not
 > replace Surface, Soil, KnowledgeManager, or the correction/quarantine
 > substrate.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Relationship And Memory Surface](./relationship-memory-map.md).
 

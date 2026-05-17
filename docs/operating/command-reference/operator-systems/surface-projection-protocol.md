@@ -2,6 +2,8 @@
 
 > Status: Current reference. This page describes the shared projection contract
 > used by current user-visible surfaces and the explicit current boundaries.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 PulSeed's user-visible surfaces should render a typed `SurfaceProjection`
 instead of directly exposing raw traces, memory internals, policy rationale,

@@ -2,6 +2,8 @@
 
 > Status: Active design contract for bounded execution, ToolExecutor admission,
 > and production caller paths. Exact command behavior remains code-owned.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Planning Workflow](./planning-workflow-map.md).
 

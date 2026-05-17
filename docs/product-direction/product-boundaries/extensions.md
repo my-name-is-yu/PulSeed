@@ -2,6 +2,8 @@
 
 > Status: Product extension design. Items here are not current behavior unless
 > they also appear in current operating docs backed by current code.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Product Boundaries](./product-boundaries-map.md).
 

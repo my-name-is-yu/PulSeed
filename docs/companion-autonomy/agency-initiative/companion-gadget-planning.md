@@ -2,6 +2,8 @@
 
 > Status: Implemented design contract. Runtime truth remains the TypeScript
 > contracts and production caller paths listed below.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Initiative Core](./initiative-core-map.md).
 

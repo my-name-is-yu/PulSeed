@@ -1,6 +1,8 @@
 # Product Completion Scenario Matrix
 
 > Status: Product design boundary document. This page separates current code-backed behavior from operator/debug behavior, design-only or future direction, migration/debug/export/config/workspace boundaries, and unsupported/overclaim territory.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Product Boundaries](./product-boundaries-map.md).
 

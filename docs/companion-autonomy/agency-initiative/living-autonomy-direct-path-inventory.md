@@ -1,6 +1,8 @@
 # Living Autonomy Direct-Path Inventory
 
 > Status: initial increment implementation inventory for the non-GUI Living-Feeling Autonomy foundation. Verify behavior against source code before treating this as final runtime policy.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Initiative Core](./initiative-core-map.md).
 

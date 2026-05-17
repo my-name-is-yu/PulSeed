@@ -3,6 +3,8 @@
 > Status: Public documentation boundary contract. This page explains how PulSeed
 > keeps public design docs, current behavior docs, and operator/debug docs aligned
 > with implementation truth.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Product Boundaries](./product-boundaries-map.md).
 

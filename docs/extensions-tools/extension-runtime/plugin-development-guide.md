@@ -1,6 +1,8 @@
 # Plugin Development Guide
 
 > Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Extension Runtime](./extension-runtime-map.md).
 

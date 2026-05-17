@@ -2,6 +2,8 @@
 
 > Status: Active design contract for bounded self-initiated companion messages.
 > This page describes the current implementation shape and product boundaries.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Initiative Core](./initiative-core-map.md).
 

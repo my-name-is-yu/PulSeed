@@ -1,23 +1,42 @@
 # CLI Reference
 
 > Status: Current CLI reference. This page should track the CLI registry and help surface.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 This page lists the current `pulseed` command surface. It is derived from
 the CLI command registry and help text.
+
+```mermaid
+flowchart TD
+  cli["pulseed CLI"]
+  tui["TUI and chat"]
+  goals["Goals and tasks"]
+  daemon["Daemon and schedules"]
+  runtime["Runtime diagnostics"]
+  operators["Gateway, MCP, memory, plugins"]
+
+  cli --> tui
+  cli --> goals
+  cli --> daemon
+  cli --> runtime
+  cli --> operators
+```
 
 ## Global
 
 ```bash
 pulseed
+pulseed tui
 pulseed --version
 pulseed help
 pulseed --yes run --goal <goal-id>
-pulseed --dev status --goal <goal-id>
+pulseed --dev status [--goal <goal-id>] [--details|--diagnostic]
 ```
 
-Bare `pulseed` launches the TUI. `--yes` / `-y` auto-approves supported prompts
-for commands that accept it. `--dev` enables development mode for the current
-process.
+Bare `pulseed` and `pulseed tui` launch the TUI. `--yes` / `-y` auto-approves
+supported prompts for commands that accept it. `--dev` enables development mode
+for the current process.
 
 ## Setup And Configuration
 
@@ -53,7 +72,7 @@ pulseed run --goal <goal-id>
 pulseed run --goal <goal-id> --max-iterations <n>
 pulseed run --goal <goal-id> --resident
 pulseed run --goal <goal-id> --workspace <path>
-pulseed status --goal <goal-id> [--details]
+pulseed status [--goal <goal-id>] [--details|--diagnostic]
 pulseed report --goal <goal-id>
 pulseed log --goal <goal-id>
 pulseed approval list [--resolved]
@@ -71,6 +90,7 @@ pulseed daemon restart
 pulseed daemon status
 pulseed daemon ping
 pulseed cron --goal <goal-id>
+pulseed daemon cron --goal <goal-id>
 ```
 
 ## Runtime Diagnostics
@@ -90,13 +110,25 @@ pulseed runtime experiment-queues [--json]
 pulseed runtime experiment-queue <id> [--json]
 pulseed runtime proactive-quality [--json]
 pulseed runtime proactive-calibration [--json]
+pulseed runtime resident-activation status [--json]
+pulseed runtime resident-activation propose [--json]
+pulseed runtime resident-activation accept <proposal-id> [--json]
 pulseed runtime peer-initiative-capability [--json]
 pulseed runtime proactive-feedback --intervention <id> --outcome <accepted|ignored|dismissed|corrected|overreach>
 pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
+pulseed runtime attention-continuity [--json]
+pulseed runtime cognition-replay [--view <normal|operator|internal>] [--json]
+pulseed runtime situation-frame <frame-id> [--json]
+pulseed runtime initiative-trace <ref> [--normal] [--json]
+pulseed runtime attention-state [--json]
+pulseed runtime intervention-decision <decision-id> [--json]
+pulseed runtime capability-decision <decision-id> [--json]
 pulseed runtime capability explain <capability-id> [--json]
+pulseed runtime runtime-graph <node-id|ref> [--json]
 pulseed runtime graph explain <trace-id> [--json]
 pulseed runtime event-log rebuild [--dry-run] [--trace <trace-id>] [--json]
 pulseed runtime replay --trace <trace-id> [--json]
+pulseed runtime memory-provenance [--json]
 ```
 
 `proactive-feedback` also accepts `--follow-through-success` and `--json`.
@@ -118,6 +150,43 @@ internals, or policy internals.
 `surface_projection` field that follows the shared
 [Surface Projection Protocol](../operator-systems/surface-projection-protocol.md) contract for
 status/report projection metadata.
+
+## Chat And TUI Slash Commands
+
+ChatRunner-owned commands in chat-mode routing:
+
+```text
+/help
+/sessions
+/history [id]
+/title <title>
+/resume [chat]
+/cleanup [--dry-run]
+/compact
+/context
+/status [goal-id] [--details]
+/goals
+/tasks [goal-id]
+/task <task-id> [goal-id]
+/track
+/tend
+/config
+/model [model] [effort]
+/permissions [args]
+/plugins
+/usage [scope]
+/review
+/fork [title]
+/undo
+```
+
+TUI-local visible commands include `/run`, `/start`, `/stop`, `/exit`,
+`/clear`, `/dashboard`, `/settings`, and `/report`. `/clear` is
+surface-specific: the TUI clears visible messages locally, while chat-mode
+routing can clear persisted conversation history. The TUI suggestion list may
+show both ChatRunner commands and local shell actions; ChatRunner remains the
+source for saved chat, status, goal/task, configuration, permission, usage,
+review, fork, and undo semantics.
 
 ## Schedules
 

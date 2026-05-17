@@ -3,6 +3,8 @@
 > Status: Active design contract for PulSeed's long-running goal engine. Goal
 > orchestration is current implementation, but it is one capability inside the
 > broader personal-agent friend runtime.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Planning Workflow](./planning-workflow-map.md).
 

@@ -2,6 +2,8 @@
 
 > Status: Product design scenarios. These examples illustrate intended PulSeed
 > behavior, not a current operating capability reference.
+> Doc status: north_star_direction
+> Grounding use: design_context
 
 Primary map: [Product Framing](./product-framing-map.md).
 

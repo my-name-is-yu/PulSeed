@@ -2,6 +2,8 @@
 
 > Status: Active runtime design contract. This page covers resident runtime,
 > control operations, eventing, schedules, queues, health, and replay semantics.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Runtime Governance](./runtime-governance-map.md).
 

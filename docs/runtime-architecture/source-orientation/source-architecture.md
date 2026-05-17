@@ -1,6 +1,8 @@
 # Architecture Map
 
 > Status: Current architecture overview. This page maps source ownership; typed stores and runtime schemas remain the source of truth.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 This is the architecture map for the current codebase.
 ## 1. Top-level picture

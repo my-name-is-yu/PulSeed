@@ -1,6 +1,8 @@
 # Relationship Memory And Surface
 
 > Status: Active design contract. Verify exact behavior against source code and current operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Relationship And Memory Surface](./relationship-memory-map.md).
 
@@ -35,12 +37,18 @@ Knowing more is not the goal. Relating better is the goal.
 
 This layer sits between raw evidence and attention:
 
-```text
-Dream / traces / observations / goals
-  -> governed memory and relationship context
-  -> scoped Surface projection
-  -> companion state and signal context
-  -> urge and agenda formation
+```mermaid
+flowchart LR
+  evidence["Dream, traces, observations, goals"]
+  memory["Governed memory and relationship context"]
+  surface["Scoped Surface projection"]
+  state["Companion state and signal context"]
+  urge["Urge and agenda formation"]
+
+  evidence --> memory
+  memory --> surface
+  surface --> state
+  state --> urge
 ```
 
 The boundary rule is:

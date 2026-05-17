@@ -2,6 +2,8 @@
 
 > Status: Active design contract for current attention and companion-presence
 > runtime paths. Exact behavior is owned by current schemas, stores, and tests.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Attention And Presence](./attention-presence-map.md).
 

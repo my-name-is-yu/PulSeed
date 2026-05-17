@@ -2,6 +2,8 @@
 
 > Status: Active design contract for capabilities, plugins, skills, channels,
 > MCP, readiness, admission, and autonomy boundaries.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Extension Runtime](./extension-runtime-map.md).
 

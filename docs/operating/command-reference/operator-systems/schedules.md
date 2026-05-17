@@ -1,6 +1,8 @@
 # Schedule Reference
 
 > Status: Current schedule reference. This page describes ScheduleEngine layers, triggers, and boundaries.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 PulSeed schedules are managed by the ScheduleEngine.
 

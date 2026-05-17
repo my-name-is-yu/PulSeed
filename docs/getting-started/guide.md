@@ -1,6 +1,8 @@
 # Guide
 
 > Status: Current user guide. This page describes practical workflows backed by current CLI and runtime docs.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 Use this section when you want to operate PulSeed after installation.
 

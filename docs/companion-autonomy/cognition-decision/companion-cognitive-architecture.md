@@ -3,6 +3,8 @@
 > Status: Active design contract for the local-first companion cognition
 > architecture. Code, schemas, and tests remain the source of truth for exact
 > behavior.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Cognition And Decision](./cognition-decision-map.md).
 
