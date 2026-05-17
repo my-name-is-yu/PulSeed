@@ -299,30 +299,35 @@ export function App({
 
   const loopState = isDaemonMode ? daemonLoopState : (standaloneHook?.loopState ?? IDLE_LOOP_STATE);
   const startLoop = isDaemonMode
-    ? (goalId: string) => {
+    ? async (goalId: string) => {
         const replayKey = ["tui_start_goal", "daemon_app", goalId].join(":");
-        recordExplicitCommandDecision({
-          baseDir: stateManager.getBaseDir(),
-          surface: "tui",
-          command: "/start",
-          sourceId: `tui /start:daemon_app:${goalId}`,
-          sourceEpoch: goalId,
-          replayKey,
-          target: {
-            kind: "run",
-            ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
-            effect: "create_run",
-            summary: `Start goal ${goalId} from TUI daemon mode.`,
-          },
-          decisionReason: "Explicit TUI /start was allowed to start daemon-backed durable goal work.",
-          capabilityRefs: [{ kind: "capability", ref: "daemon_goal_start" }],
-          currentRefs: [{ kind: "goal", ref: goalId }],
-          auditRefs: [{ kind: "goal", ref: goalId }],
-        })
-          .then(() => daemonClient!.startGoal(goalId))
-          .catch(() => {});
+        try {
+          await recordExplicitCommandDecision({
+            baseDir: stateManager.getBaseDir(),
+            surface: "tui",
+            command: "/start",
+            sourceId: `tui /start:daemon_app:${goalId}`,
+            sourceEpoch: goalId,
+            replayKey,
+            target: {
+              kind: "run",
+              ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
+              effect: "create_run",
+              summary: `Start goal ${goalId} from TUI daemon mode.`,
+            },
+            decisionReason: "Explicit TUI /start was allowed to start daemon-backed durable goal work.",
+            capabilityRefs: [{ kind: "capability", ref: "daemon_goal_start" }],
+            currentRefs: [{ kind: "goal", ref: goalId }],
+            auditRefs: [{ kind: "goal", ref: goalId }],
+          });
+        } catch {
+          // The audit trace must not prevent an explicit operator start command.
+        }
+        await daemonClient!.startGoal(goalId).catch(() => {});
       }
-    : (standaloneHook?.start ?? (() => {}));
+    : async (goalId: string) => {
+        standaloneHook?.start(goalId);
+      };
   const stopLoop = isDaemonMode
     ? async () => {
         if (daemonLoopState.goalId) {
@@ -820,7 +825,7 @@ export function App({
           }
 
           if (result.startLoop) {
-            startLoop(result.startLoop.goalId);
+            await startLoop(result.startLoop.goalId);
           }
           if (result.stopLoop) {
             await stopLoop();
@@ -839,7 +844,7 @@ export function App({
             const runnableGoals = await listRunnableStartGoals(stateManager);
             const goal = goalArg ? selectRunnableStartGoal(runnableGoals, goalArg) : undefined;
             if (goal) {
-              startLoop(goal.id);
+              await startLoop(goal.id);
               setMessages((prev) => [...prev, {
                 id: randomUUID(), role: "pulseed" as const,
                 text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
