@@ -56,6 +56,12 @@ import {
   replacementGrantInput,
 } from "./runtime-control-permission-grants.js";
 import {
+  CompanionCognitionKernel,
+  type CompanionCognitionInput,
+  type CompanionCognitionOutput,
+  type CognitionEventRef,
+} from "../cognition/index.js";
+import {
   PersonalAgentRuntimeStore,
   buildPersonalAgentDecisionTrace,
   type CapabilityRegistryDecisionKind,
@@ -1396,6 +1402,77 @@ export class RuntimeControlService {
     return this.now().toISOString();
   }
 
+  private async evaluateRuntimeControlKernel(input: {
+    request: RuntimeControlRequest;
+    operation?: RuntimeControlOperation;
+    kind: string;
+    targetRef: RuntimeGraphRef;
+    decision: InterventionDecisionKind;
+    decisionReason: string;
+    currentRefs: RuntimeGraphRef[];
+    approvalRefs: RuntimeGraphRef[];
+    replayStage: string;
+  }): Promise<CompanionCognitionOutput> {
+    const emittedAt = this.nowIso();
+    const operationRef = input.operation
+      ? { kind: "runtime_control_operation", ref: input.operation.operation_id }
+      : { kind: "runtime_control_intent", ref: input.kind };
+    const replayKey = [
+      "runtime_control_kernel",
+      input.kind,
+      input.operation?.operation_id ?? runtimeControlHighWatermark(input.request),
+      input.replayStage,
+    ].join(":");
+    const eventRef: CognitionEventRef = {
+      ref: `${operationRef.kind}:${operationRef.ref}:${input.replayStage}`,
+      source_store: "runtime_operation",
+      source_event_type: "runtime_control_response",
+      schema_version: 1,
+      source_epoch: input.kind,
+      high_watermark: input.operation ? runtimeControlOperationHighWatermark(input.operation) : runtimeControlHighWatermark(input.request),
+      replay_key: replayKey,
+      redaction_policy: "metadata_only",
+    };
+    const cognitionId = `cognition:runtime-control:${input.operation?.operation_id ?? input.kind}:${input.replayStage}`;
+    const cognitionInput: CompanionCognitionInput = {
+      cognition_id: cognitionId,
+      caller_path: "runtime_control_response",
+      event_refs: [eventRef],
+      working_context: {
+        input_ref: eventRef,
+        route_ref: { kind: "runtime_control", ref: input.kind },
+        runtime_graph_refs: input.currentRefs,
+        authority_state_refs: input.approvalRefs,
+        turn_started_at: emittedAt,
+        hidden_prompt_content_materialized: false,
+      },
+      runtime_context: {
+        runtime_item_refs: [
+          operationRef,
+          input.targetRef,
+        ],
+        approval_refs: input.approvalRefs,
+        active_control_state_refs: [
+          { kind: "runtime_control_decision", ref: input.decision },
+          { kind: "runtime_control_reason", ref: stableRuntimeControlRef(input.decisionReason) },
+        ],
+        operator_handoff_ref: operationRef,
+        phase_ref: { kind: "runtime_control_phase", ref: input.replayStage },
+      },
+      memory_context_request: {
+        request_id: `${cognitionId}:memory-request`,
+        requested_uses: ["runtime_grounding", "ask_for_confirmation"],
+        caller_path: "runtime_control_response",
+        query_ref: eventRef,
+        surface_projection_required: true,
+        side_effect_authorization_allowed: false,
+        include_sensitive_content: false,
+      },
+      surface_target: "internal_audit",
+    };
+    return new CompanionCognitionKernel().evaluateRuntimeControlResponse(cognitionInput);
+  }
+
   private async recordRuntimeControlResultTrace(
     request: RuntimeControlRequest,
     result: RuntimeControlResult,
@@ -1438,6 +1515,21 @@ export class RuntimeControlService {
       : permissionRequired
         ? `Runtime control ${kind} requires policy confirmation before execution.`
         : `Runtime control ${kind} is allowed by the typed control policy.`);
+    const currentRefs = [
+      ...runtimeControlCurrentRefs(request),
+      ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+    ];
+    const cognition = await this.evaluateRuntimeControlKernel({
+      request,
+      operation,
+      kind,
+      targetRef,
+      decision,
+      decisionReason,
+      currentRefs,
+      approvalRefs: permissionRequired ? [{ kind: "approval", ref: `runtime-control:${kind}` }] : [],
+      replayStage: options.replayStage ?? decision,
+    });
     await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
       callerPath: "runtime_control",
       source: {
@@ -1468,12 +1560,14 @@ export class RuntimeControlService {
       capabilityRefs: operation
         ? runtimeControlOperationCapabilityRefs(operation, request)
         : runtimeControlCapabilityRefs(request),
-      policyRef: { kind: "runtime_control_policy", ref: "policy:runtime-control-v1" },
+      policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
       permissionRequired,
+      cognitionSituation: cognition.situation_model,
       currentRefs: [
-        ...runtimeControlCurrentRefs(request),
-        ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+        ...currentRefs,
+        { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
       ],
+      auditRefs: [{ kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` }],
       ...(options.outcomeSummary
         ? {
             outcomeEvent: {
@@ -1501,6 +1595,23 @@ export class RuntimeControlService {
     const targetRef = operation
       ? runtimeControlOperationTargetRef(operation)
       : { kind: "runtime_automation" as const, ref: `${request.domain}:${request.action}` };
+    const currentRefs = [
+      ...(request.handoffId ? [{ kind: "auth_handoff", ref: request.handoffId }] : []),
+      ...(request.sessionId ? [{ kind: "browser_session", ref: request.sessionId }] : []),
+      ...(request.providerId ? [{ kind: "provider", ref: request.providerId }] : []),
+      ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+    ];
+    const cognition = await this.evaluateRuntimeControlKernel({
+      request: automationAsRuntimeControlRequest(request),
+      operation,
+      kind: `automation:${request.domain}:${request.action}`,
+      targetRef,
+      decision,
+      decisionReason,
+      currentRefs,
+      approvalRefs: permissionRequired ? [{ kind: "approval", ref: `runtime-automation:${request.domain}:${request.action}` }] : [],
+      replayStage: options.replayStage ?? decision,
+    });
     await this.personalAgentRuntime.recordTrace(buildPersonalAgentDecisionTrace({
       callerPath: "runtime_control",
       source: {
@@ -1531,14 +1642,14 @@ export class RuntimeControlService {
       decisionReason,
       capabilityDecision,
       capabilityRefs: [{ kind: "runtime_automation_domain", ref: request.domain }],
-      policyRef: { kind: "runtime_control_policy", ref: "policy:runtime-automation-v1" },
+      policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
       permissionRequired,
+      cognitionSituation: cognition.situation_model,
       currentRefs: [
-        ...(request.handoffId ? [{ kind: "auth_handoff", ref: request.handoffId }] : []),
-        ...(request.sessionId ? [{ kind: "browser_session", ref: request.sessionId }] : []),
-        ...(request.providerId ? [{ kind: "provider", ref: request.providerId }] : []),
-        ...(operation ? runtimeControlOperationCurrentRefs(operation) : []),
+        ...currentRefs,
+        { kind: "cognition_response_plan", ref: cognition.response_plan.plan_id },
       ],
+      auditRefs: [{ kind: "cognition_audit", ref: `${cognition.cognition_id}:audit` }],
       ...(options.outcomeSummary
         ? {
             outcomeEvent: {
@@ -1596,6 +1707,11 @@ function runtimeControlTargetRef(intent: RuntimeControlIntent): RuntimeGraphRef 
     };
   }
   return { kind: "runtime_control_intent", ref: intent.kind };
+}
+
+function stableRuntimeControlRef(value: string): string {
+  const normalized = value.replace(/[^a-zA-Z0-9:_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized.slice(0, 120) || "runtime-control-reason";
 }
 
 function runtimeControlCapabilityRefs(request: RuntimeControlRequest): RuntimeGraphRef[] {

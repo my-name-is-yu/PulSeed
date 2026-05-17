@@ -6,7 +6,7 @@ import {
   type ResidentOperationBoundaryResult,
 } from "../capability-operation-planner.js";
 import {
-  CompanionCognitionService,
+  CompanionCognitionKernel,
   FileCognitionAuditSink,
   InMemoryCognitionAuditSink,
   createRelationshipProfileCognitionMemoryPort,
@@ -1638,6 +1638,11 @@ export async function evaluateResidentProactiveCognition(input: {
       operation_boundary: operationBoundary,
       ...(input.operationActivityMetadata.operation_plan_id ? { operation_plan_ref: input.operationActivityMetadata.operation_plan_id } : {}),
       max_delivery_kind: maxDeliveryKind,
+      store_ref: {
+        kind: "attention_state_store",
+        ref: "resident_attention",
+      },
+      handoff_state: "resident_operation_selected",
       feedback_policy_refs: [],
     },
     goal_context: input.goalId
@@ -1676,7 +1681,7 @@ export async function evaluateResidentProactiveCognition(input: {
 
   try {
     const auditSink = new InMemoryCognitionAuditSink();
-    const output = await new CompanionCognitionService({
+    const output = await new CompanionCognitionKernel({
       auditSink,
       ...(input.baseDir
         ? {

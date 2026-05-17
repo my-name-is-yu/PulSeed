@@ -198,9 +198,9 @@ describe("chat character policy caller paths", () => {
 
     expect(result).toMatchObject({ success: true, output: "relationship-aware reply" });
     const system = firstSystemPrompt(llmClient);
-    expect(system).toContain("relationship_surface_ref: relationship-normal-surface:chat:");
+    expect(system).toContain("relationship_surface_ref: cognition:chat:");
     expect(system).toContain("relationship_surface_projection_ref: surface_projection:surface:relationship-profile:chat:");
-    expect(system).toContain("relationship_core_memory_projection_ref: memory_projection:core-memory:relationship-normal-surface:chat:");
+    expect(system).toContain("relationship_core_memory_projection_ref: memory_projection:core-memory:cognition:chat:");
     expect(system).toContain("relationship_character_policy_ref: character_policy_projection:character_config_policy:character-policy:chat:");
     expect(system).toContain("relationship_included_count: 1");
     expect(system).toContain("relationship_included[0]: role=preference; use=tone_adaptation");

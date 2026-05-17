@@ -95,6 +95,12 @@ export function relationshipTurnRefForCognitionInput(
       ref: input.attention_context?.attention_input_ref.ref ?? input.working_context.input_ref.ref,
     });
   }
+  if (input.caller_path === "schedule_wake") {
+    return RelationshipProjectionTurnRefSchema.parse({
+      kind: "resident_turn",
+      ref: input.working_context.input_ref.ref,
+    });
+  }
   return RelationshipProjectionTurnRefSchema.parse({
     kind: "task_turn",
     ref: input.runtime_context?.phase_ref?.ref ?? input.working_context.input_ref.ref,

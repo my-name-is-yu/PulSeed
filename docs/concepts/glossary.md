@@ -16,6 +16,7 @@ implementation.
 | Attention | The design layer that turns observations, schedules, context, and internal signals into held urges, quiet work, expression candidates, or silence. | Attention does not bypass runtime control, approval, or safety gates. |
 | Surface | A governed projection of memory and context into one runtime situation. | Surface is not the full memory store and not permission. Stale, sensitive, forbidden, or out-of-scope memory can be withheld. |
 | SituationFrame | Typed snapshot of relevant runtime, memory, goal, and surface context for a decision. | A frame is evidence input, not authority to act by itself. |
+| CompanionCognitionKernel | Shared advisory boundary that turns typed surface/runtime/attention/memory refs into candidate action, response, memory-use audit, authority handoff, commitment handoff, reflection, and replay refs. | It does not execute side effects, grant approval, mutate canonical memory, deliver notifications, or expose raw refs to normal surfaces. |
 | InterventionPolicy | Policy that decides when PulSeed may interrupt, hold, suppress, ask, or stay quiet. | It narrows expression and action; it does not grant execution authority. |
 | Readiness | Technical evidence that a capability can perform a specific operation. | Readiness is not permission, admission, or autonomy. |
 | Admission | Runtime-control decision that a concrete operation may proceed under current scope, actor, target, state, and policy. | Admission is operation-specific and can fail closed on stale or ambiguous state. |

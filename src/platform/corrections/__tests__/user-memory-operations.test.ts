@@ -267,7 +267,28 @@ describe("user memory correction operations", () => {
 
   it("records durable admission before runtime memory correction ledger effects", async () => {
     const order: string[] = [];
-    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function () {
+    const traces: Array<{
+      situation_frame?: {
+        cognition_situation?: {
+          caller_path?: string;
+          stale_target_refs?: Array<{ kind: string; ref: string }>;
+          current_target_refs?: Array<{ kind: string; ref: string }>;
+        };
+        policy_refs?: Array<{ kind: string; ref: string }>;
+        current_refs?: Array<{ kind: string; ref: string }>;
+        withheld_memory_refs?: Array<{ kind: string; ref: string }>;
+      };
+      intervention_decisions?: Array<{ policy_ref?: { kind: string; ref: string } }>;
+      initiative_events?: Array<{ event_type: string; audit_refs?: Array<{ kind: string; ref: string }> }>;
+      memory_audits?: Array<{
+        memory_ref: { kind: string; ref: string };
+        action: string;
+        invalidated?: boolean;
+        withheld_reason?: string;
+      }>;
+    }> = [];
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function (_trace) {
+      traces.push(_trace);
       order.push("trace");
       return {} as never;
     });
@@ -287,6 +308,87 @@ describe("user memory correction operations", () => {
     });
 
     expect(order).toEqual(["trace", "append"]);
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({
+      situation_frame: {
+        cognition_situation: {
+          caller_path: "memory_truth_operation",
+          missing_memory_refs: [{ kind: "memory", ref: "evidence-1" }],
+          stale_target_refs: [{ kind: "runtime_evidence", ref: "evidence-1" }],
+          current_target_refs: expect.arrayContaining([
+            { kind: "runtime_evidence", ref: "evidence-1" },
+            { kind: "goal", ref: "goal-1" },
+          ]),
+        },
+        policy_refs: [expect.objectContaining({ kind: "response_plan" })],
+        current_refs: expect.arrayContaining([
+          expect.objectContaining({ kind: "cognition_response_plan" }),
+        ]),
+        withheld_memory_refs: [{ kind: "runtime_evidence", ref: "evidence-1" }],
+      },
+      intervention_decisions: [expect.objectContaining({
+        policy_ref: expect.objectContaining({ kind: "response_plan" }),
+      })],
+      initiative_events: expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "memory_updated",
+          audit_refs: expect.arrayContaining([
+            expect.objectContaining({ kind: "cognition_audit" }),
+          ]),
+        }),
+      ]),
+    });
+    expect(traces[0]?.memory_audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        memory_ref: { kind: "runtime_evidence", ref: "evidence-1" },
+        action: "invalidate",
+        invalidated: true,
+        withheld_reason: "deleted",
+      }),
+    ]));
+  });
+
+  it("does not project replacement memory as stale when correcting with a replacement", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const traces: Array<{
+      situation_frame?: {
+        cognition_situation?: {
+          stale_target_refs?: Array<{ kind: string; ref: string }>;
+          current_target_refs?: Array<{ kind: string; ref: string }>;
+        };
+      };
+    }> = [];
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function (_trace) {
+      traces.push(_trace);
+      return {} as never;
+    });
+
+    const result = await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      goalId: "goal-1",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    const replacementRef = {
+      kind: "memory",
+      ref: result.replacement!.ref.id,
+    };
+    expect(traces).toHaveLength(1);
+    expect(traces[0]?.situation_frame?.cognition_situation?.stale_target_refs).toEqual([
+      { kind: "memory", ref: "memory-old" },
+    ]);
+    expect(traces[0]?.situation_frame?.cognition_situation?.stale_target_refs).not.toContainEqual(replacementRef);
+    expect(traces[0]?.situation_frame?.cognition_situation?.current_target_refs).toEqual(expect.arrayContaining([
+      replacementRef,
+    ]));
   });
 
   it("replays the same runtime memory correction input without duplicate ledger effects", async () => {

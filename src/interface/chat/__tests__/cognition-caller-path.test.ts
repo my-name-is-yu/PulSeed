@@ -13,6 +13,10 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
 import { upsertRelationshipProfileItem } from "../../../platform/profile/relationship-profile.js";
 import {
+  applyCommitmentLifecycleControl,
+  type CommitmentCandidate,
+} from "../../../runtime/attention/index.js";
+import {
   CompanionCognitionService,
   createRelationshipProfileCognitionMemoryPort,
   type CompanionCognitionInput,
@@ -123,6 +127,170 @@ describe("chat caller path cognition integration", () => {
     ]));
   });
 
+  it("hands #2000 chat commitment shadow intake to the cognition kernel across turns", async () => {
+    const stateManager = makeStateManager();
+    const service = new CompanionCognitionService();
+    const evaluateTurn = vi.fn((input: CompanionCognitionInput) => service.evaluateTurn(input));
+    const classifier = {
+      classify: vi.fn(async (input) => {
+        const [openCommitment] = input.openCommitments ?? [];
+        if (openCommitment) {
+          return {
+            outcome: "completion" as const,
+            target_commitment_id: openCommitment.commitmentId,
+            owner: "pulseed" as const,
+            confidence: 0.94,
+            sensitivity: "internal" as const,
+            allowed_memory_use: "attention_only" as const,
+            nudge_policy: "ask_first" as const,
+            watch_vector: ["completion_correction" as const],
+            user_state: {
+              high_load: false,
+              tired: false,
+              overreach_feedback: false,
+            },
+            priority_evidence_overrides: {},
+            model_or_classifier_version: "test-commitment-classifier",
+            reason: "The user explicitly completed the current commitment.",
+          };
+        }
+        return {
+          outcome: "candidate" as const,
+          summary: "Check the deployment result tomorrow",
+          target_commitment_id: null,
+          due: {
+            window_start: null,
+            window_end: null,
+            uncertainty: "medium" as const,
+            reason: "The user described a follow-up for tomorrow without an exact time.",
+          },
+          owner: "pulseed" as const,
+          confidence: 0.91,
+          sensitivity: "internal" as const,
+          allowed_memory_use: "attention_only" as const,
+          nudge_policy: "ask_first" as const,
+          watch_vector: ["related_conversation" as const],
+          user_state: {
+            high_load: false,
+            tired: false,
+            overreach_feedback: false,
+          },
+          priority_evidence_overrides: {
+            commitment_relevance: 0.9,
+          },
+          model_or_classifier_version: "test-commitment-classifier",
+          reason: "The user delegated a bounded follow-up.",
+        };
+      }),
+    } satisfies NonNullable<ChatRunnerDeps["commitmentCandidateClassifier"]>;
+    const storedCommitments: CommitmentCandidate[] = [];
+    const attentionStateStore = {
+      saveCycle: vi.fn(async (input) => {
+        const accepted = [...(input.attentionInputs ?? [])];
+        return {
+          accepted,
+          duplicates: [],
+          records: accepted.map((attentionInput) => ({
+            input: attentionInput,
+            disposition: "accepted" as const,
+          })),
+        };
+      }),
+      saveCommitmentCandidates: vi.fn(async (candidates) => {
+        for (const candidate of candidates) {
+          const index = storedCommitments.findIndex((stored) => stored.commitment_id === candidate.commitment_id);
+          if (index >= 0) {
+            storedCommitments[index] = candidate;
+          } else {
+            storedCommitments.push(candidate);
+          }
+        }
+        return { accepted: [...candidates], duplicates: [] };
+      }),
+      listCommitmentCandidates: vi.fn(async () => storedCommitments),
+      applyCommitmentControl: vi.fn(async (input) => {
+        const index = storedCommitments.findIndex((candidate) => candidate.commitment_id === input.commitmentId);
+        if (index < 0) return null;
+        const updated = applyCommitmentLifecycleControl({
+          candidate: storedCommitments[index]!,
+          control: input.control,
+          now: input.now,
+          feedbackRef: input.feedbackRef,
+          snoozeUntil: input.snoozeUntil,
+          reason: input.reason,
+        });
+        storedCommitments[index] = updated;
+        return updated;
+      }),
+    } satisfies NonNullable<ChatRunnerDeps["attentionStateStore"]>;
+    const runner = new ChatRunner({
+      stateManager,
+      adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
+      chatAgentLoopRunner: {
+        execute: vi.fn().mockResolvedValue(agentResult()),
+      } as unknown as ChatRunnerDeps["chatAgentLoopRunner"],
+      companionCognitionService: { evaluateTurn },
+      commitmentCandidateClassifier: classifier,
+      attentionStateStore,
+    });
+
+    const first = await runner.execute("明日デプロイ結果を見ておいて", testHome!, 10_000, {
+      selectedRoute: agentLoopRoute(),
+    });
+    const second = await runner.execute("それはもう終わった", testHome!, 10_000, {
+      selectedRoute: agentLoopRoute(),
+    });
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(classifier.classify).toHaveBeenCalledTimes(2);
+    expect(classifier.classify.mock.calls[1]?.[0].openCommitments).toEqual([
+      expect.objectContaining({
+        summary: "Check the deployment result tomorrow",
+      }),
+    ]);
+    expect(evaluateTurn).toHaveBeenCalledTimes(2);
+    const firstAttentionContext = evaluateTurn.mock.calls[0]?.[0].attention_context;
+    const secondAttentionContext = evaluateTurn.mock.calls[1]?.[0].attention_context;
+    expect(firstAttentionContext?.commitment_ref?.ref).toEqual(secondAttentionContext?.commitment_ref?.ref);
+    expect(firstAttentionContext?.commitment_ref?.ref).toEqual(expect.stringMatching(/^chat:/));
+    expect(firstAttentionContext).toMatchObject({
+      commitment_ref: { kind: "commitment", ref: expect.any(String) },
+      store_ref: { kind: "attention_state_store", ref: "commitment_candidates" },
+      handoff_state: "candidate_saved",
+      max_delivery_kind: "hold",
+    });
+    expect(secondAttentionContext).toMatchObject({
+      commitment_ref: { kind: "commitment", ref: expect.any(String) },
+      store_ref: { kind: "attention_state_store", ref: "commitment_candidates" },
+      handoff_state: "control_applied",
+      max_delivery_kind: "hold",
+    });
+
+    const cognitionRecords = await allCognitionRecords(stateManager);
+    expect(cognitionRecords).toHaveLength(2);
+    expect(cognitionRecords.map((record) => record.payload)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stable_output: expect.objectContaining({
+          commitment_handoff: expect.objectContaining({
+            state: "candidate_saved",
+            uses_attention_state_store: true,
+            creates_parallel_commitment_store: false,
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        stable_output: expect.objectContaining({
+          commitment_handoff: expect.objectContaining({
+            state: "control_applied",
+            uses_attention_state_store: true,
+            creates_parallel_commitment_store: false,
+          }),
+        }),
+      }),
+    ]));
+  });
+
   it("uses the same cognition contract for gateway model-loop turns", async () => {
     const stateManager = makeStateManager();
     const service = new CompanionCognitionService();
@@ -145,6 +313,9 @@ describe("chat caller path cognition integration", () => {
       session_context: {
         route_kind: "gateway_model_loop",
       },
+      working_context: {
+        current_language_hint: "ja",
+      },
       memory_context_request: {
         caller_path: "chat_user_turn",
         side_effect_authorization_allowed: false,
@@ -154,6 +325,21 @@ describe("chat caller path cognition integration", () => {
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords).toHaveLength(1);
+    expect(cognitionRecords[0]?.payload).toMatchObject({
+      stable_output: {
+        model_context_policy: {
+          surface: "gateway_chat",
+          local_fact_policy: "tool_required_for_current_state",
+          tool_use_policy: "use_available_tools_for_inspection_or_state",
+          runtime_control_policy: "provided_authorization_tools_only",
+          language_policy: {
+            mode: "same_as_current_input",
+            hint: "ja",
+          },
+          hidden_policy_state_visible_to_normal_user: false,
+        },
+      },
+    });
   });
 
   it("fails closed before agent execution when durable personal-agent trace persistence fails", async () => {
@@ -162,11 +348,58 @@ describe("chat caller path cognition integration", () => {
       execute: vi.fn().mockResolvedValue(agentResult()),
     } as unknown as ChatRunnerDeps["chatAgentLoopRunner"];
     const recordTrace = vi.fn().mockRejectedValue(new Error("trace store unavailable"));
+    const classifier = {
+      classify: vi.fn(async () => ({
+        outcome: "candidate" as const,
+        summary: "Check the deployment result tomorrow",
+        target_commitment_id: null,
+        due: {
+          window_start: null,
+          window_end: null,
+          uncertainty: "medium" as const,
+          reason: "The user described a follow-up for tomorrow without an exact time.",
+        },
+        owner: "pulseed" as const,
+        confidence: 0.91,
+        sensitivity: "internal" as const,
+        allowed_memory_use: "attention_only" as const,
+        nudge_policy: "ask_first" as const,
+        watch_vector: ["related_conversation" as const],
+        user_state: {
+          high_load: false,
+          tired: false,
+          overreach_feedback: false,
+        },
+        priority_evidence_overrides: {
+          commitment_relevance: 0.9,
+        },
+        model_or_classifier_version: "test-commitment-classifier",
+        reason: "The user delegated a bounded follow-up.",
+      })),
+    } satisfies NonNullable<ChatRunnerDeps["commitmentCandidateClassifier"]>;
+    const attentionStateStore = {
+      saveCycle: vi.fn(async (input) => {
+        const accepted = [...(input.attentionInputs ?? [])];
+        return {
+          accepted,
+          duplicates: [],
+          records: accepted.map((attentionInput) => ({
+            input: attentionInput,
+            disposition: "accepted" as const,
+          })),
+        };
+      }),
+      saveCommitmentCandidates: vi.fn(async (candidates) => ({ accepted: [...candidates], duplicates: [] })),
+      listCommitmentCandidates: vi.fn(async () => []),
+      applyCommitmentControl: vi.fn(async () => null),
+    } satisfies NonNullable<ChatRunnerDeps["attentionStateStore"]>;
     const runner = new ChatRunner({
       stateManager,
       adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
       chatAgentLoopRunner: agentLoopRunner,
       personalAgentRuntime: { recordTrace },
+      commitmentCandidateClassifier: classifier,
+      attentionStateStore,
     });
 
     const result = await runner.execute("普通の相談です", testHome!, 10_000, {
@@ -177,6 +410,9 @@ describe("chat caller path cognition integration", () => {
     expect(result.output).toContain("durable SituationFrame");
     expect(recordTrace).toHaveBeenCalledOnce();
     expect(agentLoopRunner?.execute).not.toHaveBeenCalled();
+    expect(classifier.classify).toHaveBeenCalledOnce();
+    expect(attentionStateStore.saveCycle).not.toHaveBeenCalled();
+    expect(attentionStateStore.saveCommitmentCandidates).not.toHaveBeenCalled();
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords[0]?.payload).toMatchObject({
@@ -290,6 +526,14 @@ async function latestSession(stateManager: StateManager) {
   const first = sessions[0];
   if (!first) return null;
   return new ChatSessionDataStore(resolveChatStateBaseDir(stateManager)).load(first.id);
+}
+
+async function allCognitionRecords(stateManager: StateManager) {
+  const catalog = new ChatSessionCatalog(stateManager);
+  const sessions = await catalog.listSessions();
+  const store = new ChatSessionDataStore(resolveChatStateBaseDir(stateManager));
+  const loaded = await Promise.all(sessions.map((session) => store.load(session.id)));
+  return loaded.flatMap((session) => session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? []);
 }
 
 function agentLoopRoute(): SelectedChatRoute {

@@ -2,6 +2,7 @@ import {
   buildSignalContextFromAttentionInputs,
   createCommitmentAttentionInput,
   createCommitmentCandidate,
+  type AttentionInput,
   type AttentionInputIntakeResult,
   type CommitmentCandidate,
   type CommitmentCandidateClassifier,
@@ -14,22 +15,34 @@ import type { ChatTurnContext } from "./turn-context.js";
 
 export interface ChatCommitmentAttentionResult {
   candidate: CommitmentCandidate | null;
+  attentionInput: AttentionInput | null;
   attentionInputIntake: AttentionInputIntakeResult | null;
+  pendingControl: ChatCommitmentPendingControl | null;
   diagnostic: string | null;
 }
 
-export async function recordChatTurnCommitmentAttention(input: {
+export interface ChatCommitmentPendingControl {
+  commitmentId: string;
+  control: CommitmentLifecycleControl;
+  now: string;
+  feedbackRef: string;
+  reason: string;
+}
+
+export async function prepareChatTurnCommitmentAttention(input: {
   turnContext: ChatTurnContext;
   classifier: CommitmentCandidateClassifier | null;
   store: Pick<
     AttentionStateStore,
-    "saveCommitmentCandidates" | "saveCycle" | "listCommitmentCandidates" | "applyCommitmentControl"
+    "listCommitmentCandidates"
   >;
 }): Promise<ChatCommitmentAttentionResult> {
   if (!input.classifier) {
     return {
       candidate: null,
+      attentionInput: null,
       attentionInputIntake: null,
+      pendingControl: null,
       diagnostic: "commitment attention classifier unavailable; shadow write skipped",
     };
   }
@@ -76,23 +89,25 @@ export async function recordChatTurnCommitmentAttention(input: {
     if (!target) {
       return {
         candidate: null,
+        attentionInput: null,
         attentionInputIntake: null,
+        pendingControl: null,
         diagnostic: `commitment classifier outcome ${extraction.outcome} had no current target; no lifecycle control applied`,
       };
     }
-    const updated = await input.store.applyCommitmentControl({
+    const pendingControl: ChatCommitmentPendingControl = {
       commitmentId: target.commitment_id,
       control: controlForExtraction(extraction),
       now: turn.startedAt,
       feedbackRef: `feedback:chat-commitment:${turn.turnId}:${extraction.outcome}`,
       reason: extraction.reason,
-    });
+    };
     return {
-      candidate: updated,
+      candidate: target,
+      attentionInput: null,
       attentionInputIntake: null,
-      diagnostic: updated
-        ? `commitment candidate ${updated.materialization_state} after ${extraction.outcome}`
-        : `commitment classifier target ${target.commitment_id} was not found during lifecycle control`,
+      pendingControl,
+      diagnostic: `commitment candidate lifecycle control prepared after ${extraction.outcome}`,
     };
   }
 
@@ -110,7 +125,9 @@ export async function recordChatTurnCommitmentAttention(input: {
   if (!candidate) {
     return {
       candidate: null,
+      attentionInput: null,
       attentionInputIntake: null,
+      pendingControl: null,
       diagnostic: extraction.outcome === "candidate"
         ? "commitment classifier produced a low-confidence candidate; shadow write held out"
         : `commitment classifier outcome ${extraction.outcome}; no candidate written`,
@@ -118,24 +135,74 @@ export async function recordChatTurnCommitmentAttention(input: {
   }
 
   const attentionInput = createCommitmentAttentionInput({ candidate });
-  const attentionInputIntake = await input.store.saveCycle({
-    attentionInputs: [attentionInput],
-    signalContext: buildSignalContextFromAttentionInputs({
-      inputs: [attentionInput],
-      assembled_at: turn.startedAt,
-      signal_context_id: `signal:chat-commitment:${turn.turnId}`,
-    }),
-    recordedAt: turn.startedAt,
-  });
-  await input.store.saveCommitmentCandidates([candidate]);
-
   return {
     candidate,
+    attentionInput,
+    attentionInputIntake: null,
+    pendingControl: null,
+    diagnostic: "commitment attention candidate prepared in shadow mode",
+  };
+}
+
+export async function persistPreparedChatTurnCommitmentAttention(input: {
+  prepared: ChatCommitmentAttentionResult;
+  turnContext: ChatTurnContext;
+  store: Pick<
+    AttentionStateStore,
+    "saveCommitmentCandidates" | "saveCycle" | "applyCommitmentControl"
+  >;
+}): Promise<ChatCommitmentAttentionResult> {
+  const { prepared } = input;
+  if (prepared.pendingControl) {
+    const updated = await input.store.applyCommitmentControl(prepared.pendingControl);
+    return {
+      ...prepared,
+      candidate: updated,
+      pendingControl: null,
+      diagnostic: updated
+        ? `commitment candidate ${updated.materialization_state} after lifecycle control`
+        : `commitment classifier target ${prepared.pendingControl.commitmentId} was not found during lifecycle control`,
+    };
+  }
+
+  if (!prepared.attentionInput || !prepared.candidate) {
+    return prepared;
+  }
+  const attentionInputIntake = await input.store.saveCycle({
+    attentionInputs: [prepared.attentionInput],
+    signalContext: buildSignalContextFromAttentionInputs({
+      inputs: [prepared.attentionInput],
+      assembled_at: input.turnContext.modelVisible.turn.startedAt,
+      signal_context_id: `signal:chat-commitment:${input.turnContext.modelVisible.turn.turnId}`,
+    }),
+    recordedAt: input.turnContext.modelVisible.turn.startedAt,
+  });
+  await input.store.saveCommitmentCandidates([prepared.candidate]);
+
+  return {
+    ...prepared,
     attentionInputIntake,
+    pendingControl: null,
     diagnostic: attentionInputIntake && attentionInputIntake.accepted.length > 0
       ? "commitment attention candidate recorded in shadow mode"
       : "commitment attention candidate replay key was already recorded",
   };
+}
+
+export async function recordChatTurnCommitmentAttention(input: {
+  turnContext: ChatTurnContext;
+  classifier: CommitmentCandidateClassifier | null;
+  store: Pick<
+    AttentionStateStore,
+    "saveCommitmentCandidates" | "saveCycle" | "listCommitmentCandidates" | "applyCommitmentControl"
+  >;
+}): Promise<ChatCommitmentAttentionResult> {
+  const prepared = await prepareChatTurnCommitmentAttention(input);
+  return persistPreparedChatTurnCommitmentAttention({
+    prepared,
+    turnContext: input.turnContext,
+    store: input.store,
+  });
 }
 
 function isCommitmentControlOutcome(

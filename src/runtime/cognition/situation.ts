@@ -42,6 +42,11 @@ export function assembleSituationModel(input: {
       ...(goal?.active_goals.map((activeGoal) => activeGoal.goal_ref) ?? []),
       ...(runtime?.runtime_item_refs ?? []),
       ...(attention?.agenda_ref ? [attention.agenda_ref] : []),
+      ...(cognitionInput.working_context.runtime_event_refs ?? []),
+      ...(cognitionInput.working_context.runtime_graph_refs ?? []),
+      ...(cognitionInput.working_context.authority_state_refs ?? []),
+      ...(cognitionInput.working_context.memory_truth_refs ?? []),
+      ...(cognitionInput.working_context.relationship_permission_refs ?? []),
     ],
     stale_target_refs: [
       ...(session?.stale_reply_target_refs ?? []),

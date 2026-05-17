@@ -222,6 +222,33 @@ function relationshipProfileBindingForCognitionRequest(
       target: "agent_loop",
     };
   }
+  if (request.caller_path === "schedule_wake") {
+    return {
+      callerPath: "resident_attention_cycle",
+      purpose: "companion_cognition_schedule_wake",
+      requestedUse: requestedUseFor(request, ["attention_prioritization", "runtime_grounding", "behavioral_inhibition"]),
+      scope: "resident_behavior",
+      target: "daemon",
+    };
+  }
+  if (request.caller_path === "runtime_control_response") {
+    return {
+      callerPath: "task_agent_loop",
+      purpose: "companion_cognition_runtime_control",
+      requestedUse: requestedUseFor(request, ["runtime_grounding", "ask_for_confirmation", "behavioral_inhibition"]),
+      scope: "local_planning",
+      target: "agent_loop",
+    };
+  }
+  if (request.caller_path === "memory_truth_operation") {
+    return {
+      callerPath: "chat_gateway_model_loop",
+      purpose: "companion_cognition_memory_truth_operation",
+      requestedUse: requestedUseFor(request, ["behavioral_inhibition", "user_facing_reference", "runtime_grounding"]),
+      scope: "memory_retrieval",
+      target: "chat",
+    };
+  }
   return {
     callerPath: "chat_gateway_model_loop",
     purpose: "companion_cognition_chat_turn",

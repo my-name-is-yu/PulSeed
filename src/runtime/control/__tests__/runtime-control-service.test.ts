@@ -618,6 +618,15 @@ describe("RuntimeControlService", () => {
       const traces = recordTrace.mock.calls.map((call) =>
         call[0] as {
           trace_id: string;
+          situation_frame: {
+            cognition_situation?: {
+              caller_path?: string;
+              approval_refs?: Array<{ kind: string; ref: string }>;
+              current_target_refs?: Array<{ kind: string; ref: string }>;
+            };
+            policy_refs: Array<{ kind: string; ref: string }>;
+            current_refs: Array<{ kind: string; ref: string }>;
+          };
           intervention_decisions: Array<{ decision: string; permission_required: boolean; target_effect: string }>;
           task_candidates: Array<{ materialization_state: string }>;
           initiative_events: Array<{ event_type: string }>;
@@ -630,10 +639,27 @@ describe("RuntimeControlService", () => {
         permission_required: true,
         target_effect: "mutate_runtime_control",
       });
+      expect(traces[0]?.situation_frame).toMatchObject({
+        cognition_situation: {
+          caller_path: "runtime_control_response",
+          approval_refs: [{ kind: "approval", ref: "runtime-automation:backpressure:reset" }],
+        },
+        policy_refs: [expect.objectContaining({ kind: "response_plan" })],
+        current_refs: expect.arrayContaining([
+          expect.objectContaining({ kind: "cognition_response_plan" }),
+        ]),
+      });
       expect(traces[1]?.intervention_decisions[0]).toMatchObject({
         decision: "allow",
         permission_required: false,
         target_effect: "mutate_runtime_control",
+      });
+      expect(traces[1]?.situation_frame.cognition_situation).toMatchObject({
+        caller_path: "runtime_control_response",
+        current_target_refs: expect.arrayContaining([
+          { kind: "runtime_control_intent", ref: "automation:backpressure:reset" },
+          { kind: "runtime_automation", ref: "backpressure:reset" },
+        ]),
       });
       expect(traces[1]?.task_candidates[0]?.materialization_state).toBe("materialized");
       expect(traces[2]?.initiative_events).toEqual(expect.arrayContaining([

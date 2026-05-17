@@ -588,15 +588,21 @@ describe("durable personal-agent runtime production paths", () => {
         intervention_decisions: [expect.objectContaining({
           decision: "allow",
           target_effect: "execute_tool",
-          policy_ref: { kind: "intervention_policy", ref: "policy:schedule-job-action-v1" },
+          policy_ref: expect.objectContaining({ kind: "response_plan" }),
         })],
         capability_decisions: [expect.objectContaining({ decision: "available" })],
+        situation_frame: expect.objectContaining({
+          cognition_situation: expect.objectContaining({ caller_path: "schedule_wake" }),
+          current_refs: expect.arrayContaining([
+            expect.objectContaining({ kind: "cognition_response_plan" }),
+          ]),
+        }),
       });
       expect(probeAdmission).toMatchObject({
         intervention_decisions: [expect.objectContaining({
           decision: "allow",
           target_effect: "execute_tool",
-          policy_ref: { kind: "intervention_policy", ref: "policy:schedule-job-action-v1" },
+          policy_ref: expect.objectContaining({ kind: "response_plan" }),
         })],
       });
       expect(order.indexOf("trace:scheduled_wake:tool_call")).toBeLessThan(order.indexOf("cron:query"));
