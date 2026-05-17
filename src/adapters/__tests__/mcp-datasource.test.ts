@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MCPDataSourceAdapter } from "../datasources/mcp-datasource.js";
+import { MCPToolMappingSchema } from "../types/mcp.js";
 import type { IMCPConnection } from "../../base/types/mcp.js";
 import type { MCPServerConfig } from "../../base/types/mcp.js";
 
@@ -88,6 +89,26 @@ describe("MCPDataSourceAdapter connect/disconnect", () => {
     const conn = makeConnection();
     const adapter = new MCPDataSourceAdapter(makeServerConfig(), conn);
     expect(adapter.config.type).toBe("mcp");
+  });
+});
+
+describe("MCP capability mapping schema", () => {
+  it("rejects capability kinds that CapabilityDescriptor cannot represent", () => {
+    expect(MCPToolMappingSchema.safeParse({
+      tool_name: "run_external",
+      dimension_pattern: "external",
+      capability_operation_kind: "execute",
+      capability_side_effect_profile: "execute",
+    }).success).toBe(false);
+  });
+
+  it("accepts descriptor-backed run operations with supported side-effect profiles", () => {
+    expect(MCPToolMappingSchema.safeParse({
+      tool_name: "run_external",
+      dimension_pattern: "external",
+      capability_operation_kind: "run",
+      capability_side_effect_profile: "mutate",
+    }).success).toBe(true);
   });
 });
 

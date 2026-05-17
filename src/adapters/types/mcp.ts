@@ -4,12 +4,35 @@ import { z } from "zod/v3";
 //
 // Maps a dimension name pattern (e.g. "test_*", "coverage") to an MCP tool call.
 
+const MCPCapabilityOperationKindSchema = z.enum([
+  "read",
+  "search",
+  "hint",
+  "prepare",
+  "send",
+  "write",
+  "publish",
+  "delete",
+  "mutate",
+  "run",
+]);
+
+const MCPCapabilitySideEffectProfileSchema = z.enum([
+  "none",
+  "read",
+  "send",
+  "write",
+  "publish",
+  "delete",
+  "mutate",
+]);
+
 export const MCPToolMappingSchema = z.object({
   tool_name: z.string(),
   dimension_pattern: z.string(),
   args_template: z.record(z.string(), z.unknown()).optional(),
-  capability_operation_kind: z.enum(["read", "write", "mutate", "send", "execute"]).optional(),
-  capability_side_effect_profile: z.enum(["none", "read", "write", "mutate", "send", "execute"]).optional(),
+  capability_operation_kind: MCPCapabilityOperationKindSchema.optional(),
+  capability_side_effect_profile: MCPCapabilitySideEffectProfileSchema.optional(),
   capability_readiness: z.enum([
     "proposal",
     "disabled",

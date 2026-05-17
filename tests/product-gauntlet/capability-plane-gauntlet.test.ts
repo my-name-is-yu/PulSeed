@@ -190,6 +190,10 @@ describe("capability plane product gauntlet", () => {
       });
       expect(runtimeControlAdmission.status).toBe("requires_approval");
       expect(runtimeControlDescriptor.rollback_plan.operator_visible).toBe(true);
+      const permissionAuditDescriptor = descriptorFromRuntimeControlAction("audit_permission_check");
+      expect(permissionAuditDescriptor.operation_kind).toBe("read");
+      expect(permissionAuditDescriptor.side_effect_profile).toBe("read");
+      expect(permissionAuditDescriptor.authority_requirements.approval_required).toBe(false);
 
       const normalProjection = projectCapabilityNormalSurface(runtimeControlDescriptor);
       const normalProjectionJson = JSON.stringify(normalProjection);

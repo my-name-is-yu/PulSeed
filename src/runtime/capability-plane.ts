@@ -1111,10 +1111,17 @@ function runtimeControlCapabilityRequiresApproval(action: string): boolean {
   return runtimeControlCapabilityOperationKind(action) !== "read";
 }
 
+const READ_RUNTIME_CONTROL_ACTIONS = new Set([
+  "inspect_run",
+  "inspect_session",
+  "inspect_companion_state",
+  "summarize_session_without_resuming",
+  "inspect_permission_boundary",
+  "audit_permission_check",
+]);
+
 function runtimeControlCapabilityOperationKind(action: string): CapabilityOperationKind {
-  if (action.startsWith("inspect_")
-    || action.endsWith(":inspect")
-    || action === "summarize_session_without_resuming") {
+  if (READ_RUNTIME_CONTROL_ACTIONS.has(action) || action.endsWith(":inspect")) {
     return "read";
   }
   return "mutate";
