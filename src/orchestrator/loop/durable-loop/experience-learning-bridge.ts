@@ -76,7 +76,8 @@ export class ExperienceLearningBridge implements ExperienceLearningBridgePort {
     const append = await this.store.appendLifecycleEvent(payload);
     const runtimeEventIds = [append.runtimeEvent.event.event_id];
     const frames = await this.store.listFrames(input.goalId);
-    for (const derivedPayload of buildDerivedLifecyclePayloads(input, trigger, frame, frames)) {
+    const existingCandidates = await this.store.listGeneralizationCandidates(input.goalId);
+    for (const derivedPayload of buildDerivedLifecyclePayloads(input, trigger, frame, frames, existingCandidates)) {
       const derivedAppend = await this.store.appendLifecycleEvent(derivedPayload);
       runtimeEventIds.push(derivedAppend.runtimeEvent.event.event_id);
     }
@@ -243,6 +244,7 @@ function buildDerivedLifecyclePayloads(
   trigger: ExperienceFrameTrigger,
   frame: ExperienceFrame,
   frames: readonly ExperienceFrame[],
+  existingCandidates: readonly GeneralizationCandidate[],
 ): ExperienceLearningRuntimeEventPayload[] {
   const now = new Date().toISOString();
   const scopedFrames = frames
@@ -262,7 +264,7 @@ function buildDerivedLifecyclePayloads(
       .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
   );
   const scope = frame.scope;
-  const dimensionName = input.goal?.dimensions[0]?.name ?? "goal_progress";
+  const dimensionName = deriveLearningDimensionName(input);
   const mainHypothesis = buildHypothesis(input, {
     idSuffix: "primary",
     trigger,
@@ -299,6 +301,9 @@ function buildDerivedLifecyclePayloads(
     scope,
     status: hasIndependentSupport ? "trial_reuse_ready" : "candidate",
   });
+  const existingCandidate = existingCandidates.find((item) => item.id === candidate.id) ?? null;
+  const candidateCanReceiveBridgeTransition = !existingCandidate
+    || !isPostExperimentCandidateStatus(existingCandidate.status);
   const readSet = probeSourceEvidenceRefs.map((ref) => microProbeReadRef(ref, probeSourceEvidenceRefs));
   const microProbePlan = MicroProbePlanSchema.parse({
     id: stableLearningId("micro-probe-plan", [candidate.id, sourceEvidenceRefs]),
@@ -332,7 +337,7 @@ function buildDerivedLifecyclePayloads(
     supportEvidenceRefs: probeSupportEvidenceRefs,
     supportEventRefs: sourceEventRefs,
   });
-  const readinessGate = hasIndependentSupport
+  const readinessGate = candidateCanReceiveBridgeTransition && hasIndependentSupport
     ? TrialReuseReadinessGateSchema.parse({
         id: stableLearningId("trial-reuse-gate", [candidate.id, input.loopIndex + 1]),
         candidateId: candidate.id,
@@ -350,25 +355,27 @@ function buildDerivedLifecyclePayloads(
         reasonCodes: ["independent_support", "n_plus_one", "low_risk"],
       })
     : null;
-  const transition = CandidateTransitionSchema.parse({
-    id: readinessGate?.sourceTransitionId ?? stableLearningId("candidate-transition", [candidate.id, "deferred", sourceEvidenceRefs]),
-    goalId: input.goalId,
-    ...(input.runId ? { runId: input.runId } : {}),
-    loopIndex: input.loopIndex,
-    targetKind: "generalization_candidate",
-    targetId: candidate.id,
-    fromStatus: "candidate",
-    toStatus: hasIndependentSupport ? "trial_reuse_ready" : "candidate",
-    reasonCode: hasIndependentSupport ? "trial_reuse_ready" : "deferred_requires_durableloop_experiment",
-    diagnosticLabel: hasIndependentSupport
-      ? "independent runtime evidence allowed a later trial-reuse experiment"
-      : "single-frame evidence stayed candidate-only",
-    microProbeRecordIds: [microProbeRecord.id],
-    evidenceRefs: sourceEvidenceRefs,
-    eventRefs: sourceEventRefs,
-    runtimeGraphRefs: [],
-    ...(readinessGate ? { readinessGateId: readinessGate.id } : {}),
-  }) satisfies CandidateTransition;
+  const transition = candidateCanReceiveBridgeTransition
+    ? CandidateTransitionSchema.parse({
+        id: readinessGate?.sourceTransitionId ?? stableLearningId("candidate-transition", [candidate.id, "deferred", sourceEvidenceRefs]),
+        goalId: input.goalId,
+        ...(input.runId ? { runId: input.runId } : {}),
+        loopIndex: input.loopIndex,
+        targetKind: "generalization_candidate",
+        targetId: candidate.id,
+        fromStatus: "candidate",
+        toStatus: hasIndependentSupport ? "trial_reuse_ready" : "candidate",
+        reasonCode: hasIndependentSupport ? "trial_reuse_ready" : "deferred_requires_durableloop_experiment",
+        diagnosticLabel: hasIndependentSupport
+          ? "independent runtime evidence allowed a later trial-reuse experiment"
+          : "single-frame evidence stayed candidate-only",
+        microProbeRecordIds: [microProbeRecord.id],
+        evidenceRefs: sourceEvidenceRefs,
+        eventRefs: sourceEventRefs,
+        runtimeGraphRefs: [],
+        ...(readinessGate ? { readinessGateId: readinessGate.id } : {}),
+      }) satisfies CandidateTransition
+    : null;
   const experimentPlan = readinessGate
     ? buildExperimentPlan(input, {
         now,
@@ -386,18 +393,20 @@ function buildDerivedLifecyclePayloads(
         experimentPlan,
       })
     : null;
-  const artifact = buildLearningArtifact(input, {
-    now,
-    trigger,
-    dimensionName,
-    frameIds: sourceFrameIds,
-    hypothesisIds: [mainHypothesis.id],
-    candidate,
-    experimentPlanIds: experimentPlan ? [experimentPlan.id] : [],
-    sourceEvidenceRefs,
-    status: hasIndependentSupport ? "trial_reuse_ready" : "tentative",
-  });
-  const prior = artifact.policyEffect.length > 0
+  const artifact = transition
+    ? buildLearningArtifact(input, {
+        now,
+        trigger,
+        dimensionName,
+        frameIds: sourceFrameIds,
+        hypothesisIds: [mainHypothesis.id],
+        candidate,
+        experimentPlanIds: experimentPlan ? [experimentPlan.id] : [],
+        sourceEvidenceRefs,
+        status: hasIndependentSupport ? "trial_reuse_ready" : "tentative",
+      })
+    : null;
+  const prior = transition && artifact && artifact.policyEffect.length > 0
     ? buildLearningPrior(input, {
         now,
         dimensionName,
@@ -412,12 +421,16 @@ function buildDerivedLifecyclePayloads(
   const payloads: ExperienceLearningRuntimeEventPayload[] = [
     hypothesisPayload(input, mainHypothesis, null, mainHypothesis.status, "frame_spawned_hypothesis", sourceEventRefs),
     hypothesisPayload(input, competingHypothesis, null, competingHypothesis.status, "competing_alternative_spawned", sourceEventRefs),
-    generalizationPayload(input, candidate, null, candidate.status, "deterministic_generalization_candidate", sourceEventRefs),
     microProbePayload(input, microProbePlan, microProbeRecord, sourceEventRefs),
-    candidateTransitionPayload(input, transition, readinessGate, trialReuseBudgetConsumption, sourceEventRefs),
   ];
+  if (transition) {
+    payloads.push(
+      generalizationPayload(input, candidate, null, candidate.status, "deterministic_generalization_candidate", sourceEventRefs),
+      candidateTransitionPayload(input, transition, readinessGate, trialReuseBudgetConsumption, sourceEventRefs),
+    );
+  }
   if (experimentPlan) payloads.push(experimentPlanPayload(input, experimentPlan, sourceEventRefs));
-  payloads.push(artifactPayload(input, artifact, null, artifact.status, "deterministic_compression", sourceEventRefs));
+  if (artifact) payloads.push(artifactPayload(input, artifact, null, artifact.status, "deterministic_compression", sourceEventRefs));
   if (prior) payloads.push(priorGeneratedPayload(input, prior, sourceEventRefs));
   return payloads;
 }
@@ -871,10 +884,17 @@ function hypothesisPayload(
   reasonCode: string,
   eventRefs: string[],
 ): ExperienceLearningRuntimeEventPayload {
+  const evidenceRefs = hypothesis.supportEvidenceRefs.length > 0 ? hypothesis.supportEvidenceRefs : hypothesis.spawnedFromFrameIds;
   return {
     ...payloadBase(input, {
-      idempotencyKey: `experience-learning:hypothesis:${hypothesis.id}:${toStatus}`,
-      evidenceRefs: hypothesis.supportEvidenceRefs.length > 0 ? hypothesis.supportEvidenceRefs : hypothesis.spawnedFromFrameIds,
+      idempotencyKey: transitionIdempotencyKey(input, {
+        kind: "hypothesis",
+        targetId: hypothesis.id,
+        toStatus,
+        evidenceRefs,
+        eventRefs,
+      }),
+      evidenceRefs,
       eventRefs,
       trust: hypothesis.trust,
       graphNodeRefs: [{ kind: "learning_hypothesis", ref: hypothesis.id }],
@@ -900,7 +920,13 @@ function generalizationPayload(
 ): ExperienceLearningRuntimeEventPayload {
   return {
     ...payloadBase(input, {
-      idempotencyKey: `experience-learning:generalization:${candidate.id}:${toStatus}`,
+      idempotencyKey: transitionIdempotencyKey(input, {
+        kind: "generalization",
+        targetId: candidate.id,
+        toStatus,
+        evidenceRefs: candidate.supportRefs,
+        eventRefs,
+      }),
       evidenceRefs: candidate.supportRefs,
       eventRefs,
       trust: candidate.trust,
@@ -1082,6 +1108,50 @@ function payloadBase(
       edge_refs: [],
     },
   } as Omit<ExperienceLearningRuntimeEventPayload, "event_kind">;
+}
+
+function transitionIdempotencyKey(
+  input: ExperienceLearningBridgeInput,
+  data: {
+    kind: "hypothesis" | "generalization";
+    targetId: string;
+    toStatus: string;
+    evidenceRefs: readonly string[];
+    eventRefs: readonly string[];
+  },
+): string {
+  const inputFingerprint = stableLearningId(`${data.kind}-transition-input`, [
+    input.loopIndex,
+    unique([...data.evidenceRefs, ...data.eventRefs]).sort(),
+  ]);
+  return `experience-learning:${data.kind}:${data.targetId}:${data.toStatus}:loop:${input.loopIndex}:${inputFingerprint}`;
+}
+
+function deriveLearningDimensionName(input: ExperienceLearningBridgeInput): string {
+  const goalDimensionNames = input.goal?.dimensions
+    .map((dimension) => dimension.name)
+    .filter((name) => name.length > 0) ?? [];
+  const candidates = unique([
+    ...input.iterationEvidence.map((entry) => entry.task?.primary_dimension ?? ""),
+    input.result.taskResult?.task.primary_dimension ?? "",
+    ...(input.result.taskResult?.task.target_dimensions ?? []),
+    input.result.stallReport?.dimension_name ?? "",
+    ...input.result.completionJudgment.blocking_dimensions,
+    ...input.result.completionJudgment.low_confidence_dimensions,
+    ...input.result.driveScores.map((score) => score.dimension_name),
+  ]);
+  return candidates.find((candidate) => goalDimensionNames.includes(candidate))
+    ?? candidates[0]
+    ?? goalDimensionNames[0]
+    ?? "goal_progress";
+}
+
+function isPostExperimentCandidateStatus(status: GeneralizationCandidate["status"]): boolean {
+  return status === "promoted"
+    || status === "narrowed"
+    || status === "falsified"
+    || status === "retired"
+    || status === "quarantined";
 }
 
 function microProbeReadRef(ref: string, allRefs: readonly string[]): MicroProbeReadSetEntry {

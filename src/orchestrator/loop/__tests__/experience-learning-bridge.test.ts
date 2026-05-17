@@ -26,7 +26,10 @@ describe("ExperienceLearningBridge", () => {
     const bridge = new ExperienceLearningBridge(store);
     const goal = makeGoal({
       id: "goal-learning",
-      dimensions: [makeDimension({ name: "dim-learning", label: "Learning Dimension" })],
+      dimensions: [
+        makeDimension({ name: "dim-first", label: "First Dimension" }),
+        makeDimension({ name: "dim-learning", label: "Learning Dimension" }),
+      ],
     });
 
     const first = await bridge.processIteration({
@@ -98,18 +101,36 @@ describe("ExperienceLearningBridge", () => {
       requiredExperimentPlanIds: [expect.stringContaining("learning-experiment-plan:")],
       taskBiasRefs: [],
     }));
+
+    const third = await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 2,
+      result: makeFailureResult(goal.id, 2),
+      iterationEvidence: [makeEvidence("evidence-3", 2)],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+    expect(third.status).toBe("processed");
+    const activeHypothesis = (await store.listHypotheses(goal.id)).find((hypothesis) =>
+      hypothesis.status === "active" && hypothesis.supportEvidenceRefs.includes("evidence-3")
+    );
+    expect(activeHypothesis?.supportEvidenceRefs).toEqual(["evidence-2", "evidence-3"]);
+    const updatedCandidate = (await store.listGeneralizationCandidates(goal.id))[0];
+    expect(updatedCandidate?.supportRefs).toEqual(["evidence-2", "evidence-3"]);
   });
 });
 
-function makeFailureResult(goalId: string, loopIndex: number) {
+function makeFailureResult(goalId: string, loopIndex: number, dimensionName = "dim-learning") {
   const result = makeEmptyIterationResult(goalId, loopIndex);
   result.taskResult = {
     task: {
       id: `task-${loopIndex}`,
       goal_id: goalId,
       strategy_id: null,
-      target_dimensions: ["dim-learning"],
-      primary_dimension: "dim-learning",
+      target_dimensions: [dimensionName],
+      primary_dimension: dimensionName,
       work_description: "Attempt a bounded learning task",
       rationale: "Exercise learning bridge",
       approach: "Use a reversible local task",
@@ -141,7 +162,7 @@ function makeFailureResult(goalId: string, loopIndex: number) {
   return result;
 }
 
-function makeEvidence(id: string, loopIndex: number): RuntimeEvidenceEntry {
+function makeEvidence(id: string, loopIndex: number, dimensionName = "dim-learning"): RuntimeEvidenceEntry {
   return RuntimeEvidenceEntrySchema.parse({
     schema_version: "runtime-evidence-entry-v1",
     id,
@@ -157,6 +178,10 @@ function makeEvidence(id: string, loopIndex: number): RuntimeEvidenceEntry {
       verdict: "fail",
       confidence: 0.8,
       summary: `verification failed ${loopIndex}`,
+    },
+    task: {
+      id: `task-${loopIndex}`,
+      primary_dimension: dimensionName,
     },
     outcome: "failed",
     raw_refs: [{ kind: "runtime_event", id: `runtime-event:${id}` }],
