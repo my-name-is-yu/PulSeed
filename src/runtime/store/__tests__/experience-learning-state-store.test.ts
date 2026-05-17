@@ -247,6 +247,24 @@ describe("ExperienceLearningStateStore", () => {
         generatedDecisionRefs: ["task:task-from-prior"],
       }),
     ]);
+    await expect(store.markPriorConsumptionApplied({
+      consumptionId: first!.record.id,
+      generatedDecisionRefs: ["task:replayed-prior"],
+      completedAt: "2026-05-17T00:07:00.000Z",
+    })).resolves.toBeNull();
+    await expect(store.listPriorConsumptionRecords(payload.prior_id)).resolves.toEqual([
+      expect.objectContaining({
+        id: first?.record.id,
+        stage: "applied",
+        generatedDecisionRefs: ["task:task-from-prior"],
+      }),
+    ]);
+    const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: tmpDir });
+    try {
+      await expect(eventLog.listEvents({ eventType: "experience_learning.prior.applied", limit: null })).resolves.toHaveLength(1);
+    } finally {
+      await eventLog.close();
+    }
 
     const exhausted = await store.resolvePriorForPhase({
       goalId: "goal-learning",

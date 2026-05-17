@@ -649,7 +649,7 @@ export class ExperienceLearningStateStore {
       if (!row) return null;
       const prior = LearningPriorSnapshotSchema.parse(JSON.parse(row.prior_json) as unknown);
       const current = LearningPriorConsumptionRecordSchema.parse(JSON.parse(row.consumption_json) as unknown);
-      if (current.stage === "suppressed") return null;
+      if (current.stage === "suppressed" || current.stage === "applied") return null;
       const consumption = LearningPriorConsumptionRecordSchema.parse({
         ...current,
         stage: "applied",
