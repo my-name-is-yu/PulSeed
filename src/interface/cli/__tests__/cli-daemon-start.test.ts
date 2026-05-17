@@ -771,6 +771,38 @@ describe("cmdStart", () => {
     }
   });
 
+  it("does not probe the default port for detached dynamic-port startup before the token file exists", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    isDaemonRunningMock
+      .mockResolvedValueOnce({ running: false, port: 41700 })
+      .mockResolvedValueOnce({ running: true, port: 45678 });
+    readDaemonAuthTokenPortMock.mockReturnValue(null);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(probeDaemonHealthMock).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45678)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("does not spawn a detached daemon over an existing runtime", async () => {
     pidIsRunningMock.mockResolvedValue(true);
     pidReadPIDMock.mockResolvedValue({ pid: 777 });

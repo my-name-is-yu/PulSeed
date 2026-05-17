@@ -126,7 +126,7 @@ function resolveDetachedDaemonProbePort(
 ): number | null {
   if (eventServerPort > 0) return eventServerPort;
   if (eventServerPort === 0) {
-    return readDaemonAuthTokenPort(baseDir) ?? (runningProbePort > 0 ? runningProbePort : null);
+    return readDaemonAuthTokenPort(baseDir);
   }
   return runningProbePort > 0 ? runningProbePort : null;
 }
