@@ -414,7 +414,6 @@ function materializeCommitmentsForResidentCycle(input: {
     }
     if (
       candidate.materialization_state === "watching"
-      || candidate.materialization_state === "ask_confirmation"
       || candidate.materialization_state === "candidate"
       || candidate.materialization_state === "snoozed"
     ) {

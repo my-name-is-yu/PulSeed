@@ -46,7 +46,7 @@ function scope(): AttentionScope {
 
 function commitmentCandidate(input: {
   extraction?: Record<string, unknown>;
-  state?: "shadow_held" | "watching" | "active_care" | "quieted" | "snoozed";
+  state?: "shadow_held" | "ask_confirmation" | "watching" | "active_care" | "quieted" | "snoozed";
 } = {}) {
   const candidate = createCommitmentCandidate({
     extraction: CommitmentCandidateExtractionSchema.parse({
@@ -202,5 +202,28 @@ describe("resident commitment attention caller path", () => {
       kind: "observation",
       summary: "Resident commitment attention remained trace-only.",
     });
+  });
+
+  it("keeps ask-first commitments confirmation-gated instead of auto-promoting them to active care", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    await store.saveCommitmentCandidates([commitmentCandidate({
+      extraction: {
+        nudge_policy: "ask_first",
+      },
+      state: "ask_confirmation",
+    })]);
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({ materialization_state: "ask_confirmation" }),
+    ]);
+
+    const handled = await runResidentCommitmentAttentionCycle(context(baseDir, store), NOW);
+
+    expect(handled).toBe(false);
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({ materialization_state: "ask_confirmation" }),
+    ]);
+    await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates()).resolves.toHaveLength(0);
   });
 });
