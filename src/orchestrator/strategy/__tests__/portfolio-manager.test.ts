@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PortfolioManager } from "../portfolio-manager.js";
@@ -99,12 +99,12 @@ function createMockStrategyManager(): StrategyManager {
   } as unknown as StrategyManager;
 }
 
-function createMockStateManager(): StateManager {
+function createMockStateManager(baseDir: string): StateManager {
   const stateManager = {
     readRaw: vi.fn().mockResolvedValue(null),
     writeRaw: vi.fn().mockResolvedValue(undefined),
     loadGoalState: vi.fn().mockReturnValue(null),
-    getBaseDir: vi.fn().mockReturnValue(""),
+    getBaseDir: vi.fn().mockReturnValue(baseDir),
   };
   Object.assign(stateManager, {
     loadWaitMetadata: vi.fn((goalId: string, strategyId: string) =>
@@ -131,18 +131,28 @@ function createMockStateManager(): StateManager {
 // ─── Tests ───
 
 describe("PortfolioManager", () => {
+  let defaultBaseDir: string;
   let pm: PortfolioManager;
   let mockStrategyManager: ReturnType<typeof createMockStrategyManager>;
   let mockStateManager: ReturnType<typeof createMockStateManager>;
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    defaultBaseDir = makeTempDir();
     mockStrategyManager = createMockStrategyManager();
-    mockStateManager = createMockStateManager();
+    mockStateManager = createMockStateManager(defaultBaseDir);
     pm = new PortfolioManager(
       mockStrategyManager as unknown as StrategyManager,
       mockStateManager as unknown as StateManager
     );
+  });
+
+  afterEach(() => {
+    try {
+      expect(fs.existsSync(path.join(process.cwd(), "state"))).toBe(false);
+    } finally {
+      fs.rmSync(defaultBaseDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 
   it("rejects non-finite rebalance interval config at construction", () => {
@@ -451,7 +461,7 @@ describe("PortfolioManager", () => {
 
       // Re-mock the dependencies since restoreAllMocks clears them
       mockStrategyManager = createMockStrategyManager();
-      mockStateManager = createMockStateManager();
+      mockStateManager = createMockStateManager(defaultBaseDir);
       (mockStrategyManager.getPortfolio as ReturnType<typeof vi.fn>).mockReturnValue(portfolio);
 
       // Now lastRebalanceTime should be in the past. But we restored mocks.

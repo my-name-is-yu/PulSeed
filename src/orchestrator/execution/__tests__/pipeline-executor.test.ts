@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { PipelineExecutor } from "../pipeline-executor.js";
 import type { PipelineExecutorDeps } from "../pipeline-executor.js";
 import { AdapterRegistry } from "../adapter-layer.js";
@@ -6,6 +8,7 @@ import type { IAdapter, AgentTask, AgentResult } from "../adapter-layer.js";
 import type { PipelineState, TaskPipeline } from "../../../base/types/pipeline.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { PersonalAgentDecisionTrace } from "../../../runtime/personal-agent/index.js";
+import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───
 
@@ -36,7 +39,7 @@ function makeAdapter(
   };
 }
 
-function makeStateManager() {
+function makeStateManager(baseDir: string) {
   const pipelines = new Map<string, PipelineState>();
   const loadPipeline = vi.fn(async (taskId: string): Promise<PipelineState | null> => pipelines.get(taskId) ?? null);
   const savePipeline = vi.fn(async (taskId: string, state: PipelineState): Promise<void> => {
@@ -44,11 +47,13 @@ function makeStateManager() {
   });
   const readRaw = vi.fn(async (_path: string): Promise<unknown | null> => null);
   const writeRaw = vi.fn(async (_path: string, _data: unknown) => undefined);
+  const getBaseDir = vi.fn(() => baseDir);
   return {
     loadPipeline,
     savePipeline,
     readRaw,
     writeRaw,
+    getBaseDir,
   };
 }
 
@@ -67,20 +72,30 @@ function makePipeline(overrides: Partial<TaskPipeline> = {}): TaskPipeline {
 // ─── Tests ───
 
 describe("PipelineExecutor", () => {
+  let tmpDir: string;
   let registry: AdapterRegistry;
   let stateManager: ReturnType<typeof makeStateManager>;
   let adapter: IAdapter;
   let deps: PipelineExecutorDeps;
 
   beforeEach(() => {
+    tmpDir = makeTempDir();
     registry = new AdapterRegistry();
-    stateManager = makeStateManager();
+    stateManager = makeStateManager(tmpDir);
     adapter = makeAdapter("mock");
     registry.register(adapter);
     deps = {
       stateManager: stateManager as unknown as PipelineExecutorDeps["stateManager"],
       adapterRegistry: registry,
     };
+  });
+
+  afterEach(() => {
+    try {
+      expect(fs.existsSync(path.join(process.cwd(), "state"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 
   // ─── 1. Normal sequential execution ───

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   CoreLoop,
   type LoopConfig,
@@ -315,7 +316,11 @@ describe("CoreLoop — capability_acquiring handler", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true , maxRetries: 3, retryDelay: 100 });
+    try {
+      expect(fs.existsSync(path.join(process.cwd(), "state"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
   });
 
   it("successful acquire -> verify(pass) -> register cycle", async () => {
@@ -480,7 +485,8 @@ describe("CoreLoop — capability_acquiring handler", () => {
       mocks.adapter,
       mocks.capabilityDetector as unknown as CapabilityDetector,
       new Map(),
-      undefined
+      undefined,
+      { baseDir: tmpDir }
     );
 
     const executeCall = (mocks.adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -506,7 +512,8 @@ describe("CoreLoop — capability_acquiring handler", () => {
       mocks.adapter,
       mocks.capabilityDetector as unknown as CapabilityDetector,
       new Map(),
-      undefined
+      undefined,
+      { baseDir: tmpDir }
     );
 
     expect(outcome).toEqual(

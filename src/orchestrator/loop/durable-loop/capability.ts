@@ -183,7 +183,10 @@ async function executeCapabilityAcquisitionAdapter(input: {
   prompt: string;
   options: CapabilityAcquisitionExecutionOptions;
 }): Promise<AgentResult> {
-  const baseDir = input.options.baseDir ?? process.cwd();
+  const baseDir = input.options.baseDir;
+  if (!baseDir) {
+    throw new Error("capability acquisition requires an explicit baseDir");
+  }
   const toolExecutor = input.options.toolExecutor ?? createRunAdapterToolExecutor(input.adapter, baseDir);
   const replayKey = [
     "capability_acquisition:run_adapter",
