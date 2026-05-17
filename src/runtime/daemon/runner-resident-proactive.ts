@@ -46,6 +46,8 @@ import {
 } from "../surface-projection-protocol.js";
 import {
   OutboundConversationMessageSchema,
+  type OutboundConversationDeliveryReceipt,
+  type OutboundConversationMessage,
   type OutboundConversationSurface,
 } from "../gateway/outbound-conversation.js";
 import {
@@ -110,6 +112,8 @@ import {
   type InterventionDecisionKind,
   type RuntimeGraphRef,
 } from "../personal-agent/index.js";
+
+const PEER_SURFACE_ACTION_BINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type ResidentPreemptiveTargetValidation =
   | { status: "not_preemptive" }
@@ -1180,9 +1184,10 @@ function projectPeerDeliverySurface(input: {
         }),
       ],
       operation_ref: action.action,
-      replay_key: replayKey,
+      replay_key: peerSurfaceActionBindingReplayKey(replayKey, action.action),
       redaction_class: "normal_safe",
       created_at: input.now,
+      expires_at: peerSurfaceActionBindingExpiresAt(input.now),
     })
   );
   const actions: SurfaceAction[] = input.actionButtons.map((action, index) => ({
@@ -1240,6 +1245,51 @@ function projectPeerDeliverySurface(input: {
       should_render: true,
       action_binding_ids: actionBindings.map((binding) => binding.binding_id),
     },
+  });
+}
+
+function peerSurfaceActionBindingReplayKey(replayKey: string, actionKind: string): string {
+  return `${replayKey}:${actionKind}`;
+}
+
+function peerSurfaceActionBindingExpiresAt(now: string): string {
+  const parsedNow = Date.parse(now);
+  const base = Number.isFinite(parsedNow) ? parsedNow : Date.now();
+  return new Date(base + PEER_SURFACE_ACTION_BINDING_TTL_MS).toISOString();
+}
+
+function attachPeerDeliveryReceiptToSurfaceBindings(
+  message: OutboundConversationMessage,
+  receipt: OutboundConversationDeliveryReceipt,
+): OutboundConversationMessage {
+  if (!receipt.transport_message_ref || !message.action_bindings || message.action_bindings.length === 0) {
+    return message;
+  }
+  const actionBindings: SurfaceActionBinding[] = message.action_bindings.map((binding) => ({
+    ...binding,
+    target: {
+      ...binding.target,
+      transport_message_ref: receipt.transport_message_ref,
+    },
+  }));
+  const surfaceProjection: SurfaceProjection | undefined = message.surface_projection
+    ? {
+      ...message.surface_projection,
+      action_bindings: actionBindings,
+      ...(message.surface_projection.delivery
+        ? {
+          delivery: {
+            ...message.surface_projection.delivery,
+            transport_ref: receipt.transport_message_ref,
+          },
+        }
+        : {}),
+    }
+    : undefined;
+  return OutboundConversationMessageSchema.parse({
+    ...message,
+    action_bindings: actionBindings,
+    ...(surfaceProjection ? { surface_projection: surfaceProjection } : {}),
   });
 }
 
@@ -1446,8 +1496,9 @@ async function deliverPeerInitiativeMessage(input: {
       };
     }
     const receipt = await port.sendOutboundConversationMessage(outbound);
+    const deliveredOutbound = attachPeerDeliveryReceiptToSurfaceBindings(outbound, receipt);
     const deliveredAuthorityDecision = await authorityStore.recordDecision(projectOutboundConversationAuthority({
-      message: outbound,
+      message: deliveredOutbound,
       currentTarget: target,
       receipt,
       decidedAt: receipt.delivered_at,
@@ -1468,7 +1519,7 @@ async function deliverPeerInitiativeMessage(input: {
       target_binding_ref: receipt.target_binding_ref,
       expression_decision_ref: input.expressionDecisionId,
       visibility_policy_ref: input.visibilityPolicyId,
-      outbound_message: outbound,
+      outbound_message: deliveredOutbound,
       authority_decision_ref: deliveredAuthorityDecision.decision_id,
       authority_decision: deliveredAuthorityDecision,
     });

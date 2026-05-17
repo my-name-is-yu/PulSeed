@@ -143,6 +143,21 @@ async function waitForPendingApproval(
   throw new Error(`Timed out waiting for pending approval: ${approvalId}`);
 }
 
+function surfaceApprovalBindingId(
+  broker: ApprovalBroker,
+  approvalId: string,
+  approved: boolean,
+): string {
+  const event = broker.getPendingApprovalEvents().find((pending) => pending.requestId === approvalId);
+  const bindingId = event?.surface_projection?.actions.find((action) =>
+    action.kind === (approved ? "approve" : "reject")
+  )?.binding_id;
+  if (!bindingId) {
+    throw new Error(`Missing surface approval binding for ${approvalId}`);
+  }
+  return bindingId;
+}
+
 describe("EventServer durable approval integration", () => {
   let tmpDir: string;
 
@@ -177,10 +192,12 @@ describe("EventServer durable approval integration", () => {
         action: "merge",
       });
       await waitForPendingApproval(store, "approval-http");
+      const approveBindingId = surfaceApprovalBindingId(broker, "approval-http", true);
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "approval-http",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);
@@ -273,10 +290,13 @@ describe("EventServer durable approval integration", () => {
         description: "Approve external action",
         action: "submit",
       }, { requestId: "handoff-shared" });
+      await waitForPendingApproval(new ApprovalStore(runtimeRoot), "handoff-shared");
+      const approveBindingId = surfaceApprovalBindingId(broker, "handoff-shared", true);
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "handoff-shared",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);

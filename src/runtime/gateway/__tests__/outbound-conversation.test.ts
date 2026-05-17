@@ -17,6 +17,13 @@ import {
   PeerInitiativeTriggerActionSchema,
   type OutboundConversationMessage,
 } from "../outbound-conversation.js";
+import {
+  createSurfaceActionBinding,
+  createSurfaceProjection,
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  surfaceActionBindingToken,
+} from "../../surface-projection-protocol.js";
 import { TelegramGatewayAdapter } from "../telegram-gateway-adapter.js";
 
 describe("gateway outbound conversation port", () => {
@@ -92,12 +99,6 @@ describe("gateway outbound conversation port", () => {
         body: JSON.stringify({
           chat_id: 12345,
           text: "今日も頑張ってね。",
-          reply_markup: {
-            inline_keyboard: [[{
-              text: "少なめ",
-              callback_data: "psp1:lt:peer-candidate:1",
-            }]],
-          },
         }),
       }),
     );
@@ -241,6 +242,48 @@ describe("gateway outbound conversation port", () => {
       outcomeDecisionId: "outcome:telegram:peer-feedback",
       feedbackEpoch: "2026-05-15T00:00:01.000Z",
     });
+    const sourceEventRefs = [normalSourceEventRef({
+      kind: "peer_delivery",
+      ref: `peer-delivery:${candidate.candidate_id}:telegram`,
+      event_type: "gateway.telegram.delivery.recorded",
+      occurred_at: "2026-05-15T00:00:02.000Z",
+      replay_key: `peer-delivery:${candidate.candidate_id}:telegram`,
+    })];
+    const runtimeGraphRefs = [normalRuntimeGraphRef({
+      kind: "peer_candidate",
+      ref: candidate.candidate_id,
+      role: "target",
+    })];
+    const surfaceProjection = createSurfaceProjection({
+      projection_id: `normal-surface:peer-initiative:${candidate.candidate_id}:telegram`,
+      surface: "telegram_peer_delivery",
+      view: "normal",
+      purpose: "Project a Telegram peer initiative delivery.",
+      redaction_class: "normal_safe",
+      projected_at: "2026-05-15T00:00:02.000Z",
+      replay_key: `peer-delivery:${candidate.candidate_id}:telegram`,
+      source_event_refs: sourceEventRefs,
+      runtime_graph_refs: runtimeGraphRefs,
+      panels: [{ panel_id: "body", body: "今日も頑張ってね。" }],
+    });
+    const lessLikeBinding = createSurfaceActionBinding({
+      action_kind: "less_like_this",
+      surface: "telegram_peer_delivery",
+      surface_instance_ref: "gateway:telegram:home_chat:12345",
+      target: {
+        kind: "peer_initiative_candidate",
+        ref: candidate.candidate_id,
+        conversation_id: "gateway:telegram:home_chat:12345",
+        transport_message_ref: "77",
+      },
+      source_projection_id: surfaceProjection.projection_id,
+      source_event_refs: sourceEventRefs,
+      runtime_graph_refs: runtimeGraphRefs,
+      replay_key: `${surfaceProjection.replay_key}:less_like_this`,
+      redaction_class: "normal_safe",
+      created_at: "2026-05-15T00:00:02.000Z",
+      expires_at: "2026-05-22T00:00:02.000Z",
+    });
     const outbound = {
       message_id: `peer-message:${candidate.candidate_id}`,
       surface: "telegram" as const,
@@ -260,6 +303,11 @@ describe("gateway outbound conversation port", () => {
         const parsed = PeerInitiativeFeedbackActionSchema.safeParse(action);
         return parsed.success ? [parsed.data] : [];
       }),
+      action_bindings: [lessLikeBinding],
+      surface_projection: {
+        ...surfaceProjection,
+        action_bindings: [lessLikeBinding],
+      },
     };
     await peerStore.upsertCandidate({ candidate, selectedState: "suggested" });
     await peerStore.recordDelivery({
@@ -317,7 +365,7 @@ describe("gateway outbound conversation port", () => {
       id: "callback-wrong-chat",
       from: { id: 42 },
       message: { message_id: 77, chat: { id: 99999 } },
-      data: `psp1:lt:${candidate.candidate_id}`,
+      data: `psb1:${surfaceActionBindingToken(lessLikeBinding)}`,
     });
     await (adapter as unknown as {
       processCallbackQuery(query: {
@@ -330,7 +378,7 @@ describe("gateway outbound conversation port", () => {
       id: "callback-wrong-message",
       from: { id: 42 },
       message: { message_id: 78, chat: { id: 12345 } },
-      data: `psp1:lt:${candidate.candidate_id}`,
+      data: `psb1:${surfaceActionBindingToken(lessLikeBinding)}`,
     });
     await (adapter as unknown as {
       processCallbackQuery(query: {
@@ -343,7 +391,7 @@ describe("gateway outbound conversation port", () => {
       id: "callback-1",
       from: { id: 42 },
       message: { message_id: 77, chat: { id: 12345 } },
-      data: `psp1:lt:${candidate.candidate_id}`,
+      data: `psb1:${surfaceActionBindingToken(lessLikeBinding)}`,
     });
     await (adapter as unknown as {
       processCallbackQuery(query: {
@@ -356,7 +404,7 @@ describe("gateway outbound conversation port", () => {
       id: "callback-2",
       from: { id: 42 },
       message: { message_id: 77, chat: { id: 12345 } },
-      data: `psp1:lt:${candidate.candidate_id}`,
+      data: `psb1:${surfaceActionBindingToken(lessLikeBinding)}`,
     });
 
     const feedbackRecords = await feedbackStore.listRecords();

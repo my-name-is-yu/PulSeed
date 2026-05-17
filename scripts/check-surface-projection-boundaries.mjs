@@ -97,6 +97,40 @@ for (const exportName of [
   }
 }
 
+const gatewayDispatch = existsSync("src/runtime/gateway/chat-session-dispatch.ts")
+  ? readFileSync("src/runtime/gateway/chat-session-dispatch.ts", "utf8")
+  : "";
+if (!gatewayDispatch.includes('parsedProjection.data.view === "normal"')) {
+  issues.push("src/runtime/gateway/chat-session-dispatch.ts must reject operator/debug projections from gateway session ports");
+}
+
+const telegramAdapter = existsSync("src/runtime/gateway/telegram-gateway-adapter.ts")
+  ? readFileSync("src/runtime/gateway/telegram-gateway-adapter.ts", "utf8")
+  : "";
+if (telegramAdapter.includes("getLatestDeliveryForCandidate")) {
+  issues.push("src/runtime/gateway/telegram-gateway-adapter.ts must not use candidate-only peer callback lookup for mutations");
+}
+if (!telegramAdapter.includes("Legacy Telegram peer callback protocol is not a mutation authority")) {
+  issues.push("src/runtime/gateway/telegram-gateway-adapter.ts must fail closed for legacy peer callback mutation attempts");
+}
+if (!telegramAdapter.includes("transportMessageRef: String(messageId)")) {
+  issues.push("src/runtime/gateway/telegram-gateway-adapter.ts must validate SurfaceActionBinding transport message refs");
+}
+
+const approvalBroker = existsSync("src/runtime/approval-broker.ts")
+  ? readFileSync("src/runtime/approval-broker.ts", "utf8")
+  : "";
+if (!approvalBroker.includes("validateApprovalResolutionBinding")) {
+  issues.push("src/runtime/approval-broker.ts must validate SurfaceActionBinding before non-conversational approval resolution");
+}
+
+const eventServer = existsSync("src/runtime/event/server.ts")
+  ? readFileSync("src/runtime/event/server.ts", "utf8")
+  : "";
+if (!eventServer.includes("validateEventServerApprovalBinding")) {
+  issues.push("src/runtime/event/server.ts direct approval fallback must validate SurfaceActionBinding before resolution");
+}
+
 const protocol = existsSync("src/runtime/surface-projection-protocol.ts")
   ? readFileSync("src/runtime/surface-projection-protocol.ts", "utf8")
   : "";

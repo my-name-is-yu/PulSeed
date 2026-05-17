@@ -44,8 +44,9 @@ instance, replay key, creation/expiry metadata, and redaction class.
 Production validation uses `validateSurfaceActionBinding(...)` before executing
 bound actions. The validator rejects stale, expired, wrong-surface,
 wrong-target, wrong-action, or wrong-replay bindings. Telegram peer initiative
-callbacks use this path for `psb1:` binding callbacks and keep the older
-candidate callback protocol only as a compatibility path.
+callbacks use this path for `psb1:` binding callbacks. Older candidate-only
+callback payloads are acknowledged but fail closed before feedback or trigger
+mutation.
 
 ## Boundaries
 

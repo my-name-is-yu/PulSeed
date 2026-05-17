@@ -9,6 +9,12 @@ import { ApprovalStore } from "../store/approval-store.js";
 import { DaemonStateStore } from "../store/daemon-state-store.js";
 import type { ApprovalRecord } from "../store/runtime-schemas.js";
 
+type ApprovalRequiredSseEvent = {
+  approval_prompt: {
+    approve_binding_id: string;
+  };
+};
+
 function makeDeps(tmpDir: string) {
   const mockCoreLoop = {
     run: vi.fn().mockResolvedValue({
@@ -244,7 +250,7 @@ describe("DaemonRunner durable approval restart", () => {
     });
 
     const authToken = (daemon as any)?.eventServer?.getAuthToken?.() as string;
-    const restored = await waitForSseEvent(port, "approval_required", authToken);
+    const restored = await waitForSseEvent(port, "approval_required", authToken) as ApprovalRequiredSseEvent;
     expect(restored).toEqual(
       expect.objectContaining({
         requestId: approvalId,
@@ -256,6 +262,7 @@ describe("DaemonRunner durable approval restart", () => {
     const approveResult = await request(port, "POST", "/goals/goal-1/approve", {
       requestId: approvalId,
       approved: true,
+      surface_action_binding_id: restored.approval_prompt.approve_binding_id,
     }, authToken);
     expect(approveResult.status).toBe(200);
 

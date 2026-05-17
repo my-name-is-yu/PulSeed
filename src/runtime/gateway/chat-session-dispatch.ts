@@ -100,9 +100,12 @@ function normalizeManagerResult(result: unknown): { text: string; surfaceProject
     const parsedProjection = SurfaceProjectionSchema.safeParse(record["surface_projection"]);
     const text = normalizeAssistantDisplayText({ output: record });
     if (text === null) return null;
+    const surfaceProjection = parsedProjection.success && parsedProjection.data.view === "normal"
+      ? parsedProjection.data
+      : undefined;
     return {
       text,
-      ...(parsedProjection.success ? { surfaceProjection: parsedProjection.data } : {}),
+      ...(surfaceProjection ? { surfaceProjection } : {}),
     };
   }
   return null;

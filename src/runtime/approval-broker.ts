@@ -2,6 +2,7 @@ import type { Logger } from "./logger.js";
 import {
   createSurfaceActionBinding,
   createSurfaceProjection,
+  findSurfaceActionBindingByToken,
   normalRuntimeGraphRef,
   normalSourceEventRef,
   renderSurfaceProjectionText,
@@ -74,6 +75,11 @@ export interface ConversationalApprovalOptions {
   deliverConversationalApproval?: (
     request: ConversationalApprovalRequest
   ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
+}
+
+export interface ApprovalResolutionBinding {
+  surfaceActionBindingId?: string;
+  surfaceActionBindingToken?: string;
 }
 
 export type PendingConversationalApprovalLookup =
@@ -217,10 +223,14 @@ export class ApprovalBroker {
   async resolveApproval(
     approvalId: string,
     approved: boolean,
-    responseChannel = "http"
+    responseChannel = "http",
+    binding: ApprovalResolutionBinding = {}
   ): Promise<boolean> {
     const pendingRecord = this.pending.get(approvalId)?.record ?? await this.store.loadPending(approvalId);
     if (pendingRecord?.origin) {
+      return false;
+    }
+    if (!pendingRecord || !validateApprovalResolutionBinding(pendingRecord, approved, binding, this.now())) {
       return false;
     }
     const resolved = await this.finalizeApproval(approvalId, {
@@ -710,6 +720,36 @@ function approvalActionBindingFor(
     return null;
   }
   return projection.action_bindings.find((binding) => binding.binding_id === bindingId) ?? null;
+}
+
+function validateApprovalResolutionBinding(
+  record: ApprovalRecord,
+  approved: boolean,
+  bindingInput: ApprovalResolutionBinding,
+  now: number,
+): boolean {
+  const surfaceProjection = projectApprovalSurface(record);
+  const expectedAction = approved ? "approve" : "reject";
+  const expectedBinding = approvalActionBindingFor(surfaceProjection, expectedAction);
+  if (!expectedBinding) {
+    return false;
+  }
+  const inputRef = bindingInput.surfaceActionBindingId ?? bindingInput.surfaceActionBindingToken;
+  if (!inputRef) {
+    return false;
+  }
+  const providedBinding = findSurfaceActionBindingByToken(surfaceProjection.action_bindings, inputRef);
+  if (!providedBinding || providedBinding.binding_id !== expectedBinding.binding_id) {
+    return false;
+  }
+  const validation = validateSurfaceActionBinding({
+    binding: providedBinding,
+    surface: "approval",
+    surfaceInstanceRef: approvalSurfaceInstanceRef(record),
+    actionKind: expectedAction,
+    now: safeEpochDateTime(now) ?? undefined,
+  });
+  return validation.status === "accepted";
 }
 
 function approvalSurfaceInstanceRef(record: ApprovalRecord): string {

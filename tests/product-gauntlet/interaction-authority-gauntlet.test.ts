@@ -262,7 +262,7 @@ describe("interaction authority product gauntlet", () => {
           id: "callback-fail",
           from: { id: 42 },
           message: { message_id: 77, chat: { id: 12345 } },
-          data: "psp1:lt:peer-candidate:throws",
+          data: "psb1:surface-binding-throws",
         },
       }, {
         update_id: 11,
@@ -286,7 +286,7 @@ describe("interaction authority product gauntlet", () => {
         runtimeBaseDir: context.runtimeRoot,
         controlBaseDir: context.controlBaseDir,
         peerInitiativeStore: {
-          getLatestDeliveryForCandidate: vi.fn(async () => {
+          getLatestDeliveryForActionBinding: vi.fn(async () => {
             throw new Error("fixture callback failure");
           }),
           appendFeedbackProjection: vi.fn(),
@@ -1594,10 +1594,10 @@ async function seedTelegramPeerDelivery(context: { runtimeRoot: string; controlB
     source_projection_id: surfaceProjection.projection_id,
     source_event_refs: sourceEventRefs,
     runtime_graph_refs: runtimeGraphRefs,
-    replay_key: `peer-delivery:${candidate.candidate_id}:telegram:less_like_this`,
+    replay_key: `${surfaceProjection.replay_key}:less_like_this`,
     redaction_class: "normal_safe",
     created_at: "2026-05-16T00:00:02.000Z",
-    expires_at: null,
+    expires_at: "2026-05-23T00:00:02.000Z",
   });
   const outbound = {
     message_id: `peer-message:${candidate.candidate_id}`,

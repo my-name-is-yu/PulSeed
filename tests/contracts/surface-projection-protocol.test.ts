@@ -126,5 +126,15 @@ describe("Surface Projection Protocol contracts", () => {
       transportMessageRef: "78",
       now: "2026-05-17T01:00:00.000Z",
     })).toMatchObject({ status: "rejected", reason: "target_mismatch" });
+
+    expect(validateSurfaceActionBinding({
+      binding,
+      surface: "telegram_peer_delivery",
+      surfaceInstanceRef: "gateway:telegram:home_chat:12345",
+      actionKind: "less_like_this",
+      conversationId: "gateway:telegram:home_chat:12345",
+      transportMessageRef: "77",
+      now: "2026-05-18T00:00:01.000Z",
+    })).toMatchObject({ status: "rejected", reason: "expired" });
   });
 });

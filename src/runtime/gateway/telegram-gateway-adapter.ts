@@ -99,12 +99,7 @@ function telegramOutboundChannelPolicyRef(channelName: string): string {
 
 function telegramPeerReplyMarkup(message: OutboundConversationMessage): TelegramInlineKeyboardMarkup | undefined {
   const actionBindings = message.action_bindings ?? [];
-  const buttons = actionBindings.length > 0
-    ? actionBindings.map(telegramPeerActionBindingButton)
-    : [
-      ...message.trigger_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
-      ...message.feedback_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
-    ];
+  const buttons = actionBindings.map(telegramPeerActionBindingButton);
   if (buttons.length === 0) return undefined;
   return {
     inline_keyboard: chunkButtons(buttons, 2),
@@ -117,20 +112,6 @@ function telegramPeerActionBindingButton(binding: SurfaceActionBinding): { text:
     callback_data: [
       TELEGRAM_SURFACE_BINDING_CALLBACK_PREFIX,
       surfaceActionBindingToken(binding),
-    ].join(":"),
-  };
-}
-
-function telegramPeerActionButton(
-  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"],
-  candidateId: string,
-): { text: string; callback_data: string } {
-  return {
-    text: telegramPeerActionLabel(action),
-    callback_data: [
-      TELEGRAM_PEER_ACTION_CALLBACK_PREFIX,
-      TELEGRAM_PEER_ACTION_CODE[action],
-      candidateId,
     ].join(":"),
   };
 }
@@ -168,6 +149,14 @@ function telegramPeerDeliveryMatchesCallback(
   if (delivery.target_binding_ref !== targetBindingRef) return false;
   if (delivery.outbound_message?.target_binding_ref !== targetBindingRef) return false;
   return !delivery.transport_message_ref || delivery.transport_message_ref === String(messageId);
+}
+
+function expectedTelegramSurfaceActionBindingReplayKey(
+  delivery: PeerDeliveryRecord | null | undefined,
+  binding: SurfaceActionBinding,
+): string | undefined {
+  const projectionReplayKey = delivery?.outbound_message?.surface_projection?.replay_key;
+  return projectionReplayKey ? `${projectionReplayKey}:${binding.action_kind}` : undefined;
 }
 
 function telegramPeerActionLabel(
@@ -267,7 +256,6 @@ interface TelegramGatewayRuntimeOptions {
     | "appendFeedbackProjection"
     | "getFeedbackProjectionForAction"
     | "getLatestDeliveryForActionBinding"
-    | "getLatestDeliveryForCandidate"
     | "getPreparedArtifact"
   >;
 }
@@ -408,7 +396,6 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     | "appendFeedbackProjection"
     | "getFeedbackProjectionForAction"
     | "getLatestDeliveryForActionBinding"
-    | "getLatestDeliveryForCandidate"
     | "getPreparedArtifact"
   >;
   private running = false;
@@ -655,15 +642,30 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
     this.timing.beginTurn({ updateId, messageId });
     await this.recordTiming();
+    if (parsedAction.kind === "legacy_peer_action") {
+      await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
+        callbackId: query.id,
+        candidateId: parsedAction.candidateId,
+        action: parsedAction.action,
+        callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
+        callbackTransportMessageRef: String(messageId),
+        deliveryMatches: false,
+        actionMatches: false,
+        reason: "Legacy Telegram peer callback protocol is not a mutation authority; a current SurfaceActionBinding callback is required.",
+      }));
+      await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
+        this.api.answerCallbackQuery(query.id, "PulSeed could not use that older button anymore.")
+      );
+      this.timing.markLifecycleEnd();
+      await this.recordTiming();
+      return;
+    }
     const delivery = parsedAction.kind === "surface_binding"
       ? await this.peerInitiativeStore.getLatestDeliveryForActionBinding({
         bindingId: parsedAction.bindingToken,
         surface: "telegram",
       })
-      : await this.peerInitiativeStore.getLatestDeliveryForCandidate({
-        candidateId: parsedAction.candidateId,
-        surface: "telegram",
-      });
+      : null;
     const actionBinding = parsedAction.kind === "surface_binding"
       ? findSurfaceActionBindingByToken(delivery?.outbound_message?.action_bindings ?? [], parsedAction.bindingToken)
       : null;
@@ -672,24 +674,22 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         binding: actionBinding,
         surface: "telegram_peer_delivery",
         surfaceInstanceRef: telegramOutboundTargetBindingRef(chatId),
+        actionKind: actionBinding.action_kind,
         conversationId: telegramOutboundTargetBindingRef(chatId),
+        transportMessageRef: String(messageId),
+        replayKey: expectedTelegramSurfaceActionBindingReplayKey(delivery, actionBinding),
         now: new Date().toISOString(),
       })
       : null;
-    const action = parsedAction.kind === "surface_binding"
-      ? actionBinding?.action_kind
-      : parsedAction.action;
-    const candidateId = parsedAction.kind === "surface_binding"
-      ? actionBinding?.target.ref
-      : parsedAction.candidateId;
+    const action = actionBinding?.action_kind;
+    const candidateId = actionBinding?.target.ref;
     const feedbackAction = delivery?.outbound_message?.feedback_actions.find((candidateAction) =>
       candidateAction.action === action
     );
     const triggerAction = delivery?.outbound_message?.trigger_actions.find((candidateAction) =>
       candidateAction.action === action
     );
-    const bindingAccepted = parsedAction.kind === "legacy_peer_action"
-      || bindingValidation?.status === "accepted";
+    const bindingAccepted = bindingValidation?.status === "accepted";
     const callbackAuthorityDecision = await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
       callbackId: query.id,
       candidateId,

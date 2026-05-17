@@ -71,6 +71,21 @@ function makeWaitPlan(): PermissionWaitCanonicalPlan {
   };
 }
 
+function surfaceApprovalBindingId(
+  broker: ApprovalBroker,
+  approvalId: string,
+  approved: boolean,
+): string {
+  const event = broker.getPendingApprovalEvents().find((pending) => pending.requestId === approvalId);
+  const bindingId = event?.surface_projection?.actions.find((action) =>
+    action.kind === (approved ? "approve" : "reject")
+  )?.binding_id;
+  if (!bindingId) {
+    throw new Error(`Missing surface approval binding for ${approvalId}`);
+  }
+  return bindingId;
+}
+
 describe("ApprovalBroker", () => {
   let tmpDir: string | null = null;
 
@@ -102,7 +117,10 @@ describe("ApprovalBroker", () => {
     expect(pending?.state).toBe("pending");
     await waitForBroadcast(broadcast, "approval_required", "approval-live");
 
-    await expect(broker.resolveApproval("approval-live", true, "tui")).resolves.toBe(true);
+    const approveBindingId = surfaceApprovalBindingId(broker, "approval-live", true);
+    await expect(broker.resolveApproval("approval-live", true, "tui", {
+      surfaceActionBindingId: approveBindingId,
+    })).resolves.toBe(true);
     await expect(request).resolves.toBe(true);
 
     expect(await store.loadPending("approval-live")).toBeNull();
@@ -119,6 +137,35 @@ describe("ApprovalBroker", () => {
       "approval_resolved",
       expect.objectContaining({ requestId: "approval-live", approved: true })
     );
+  });
+
+  it("rejects non-conversational approval responses without the matching surface binding", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      createId: () => "approval-binding-required",
+    });
+
+    const request = broker.requestApproval("goal-1", {
+      id: "task-binding",
+      description: "Review deployment plan",
+      action: "deploy",
+    });
+    await waitForPendingApproval(store, "approval-binding-required");
+    const approveBindingId = surfaceApprovalBindingId(broker, "approval-binding-required", true);
+    const rejectBindingId = surfaceApprovalBindingId(broker, "approval-binding-required", false);
+
+    await expect(broker.resolveApproval("approval-binding-required", true, "http")).resolves.toBe(false);
+    await expect(broker.resolveApproval("approval-binding-required", true, "http", {
+      surfaceActionBindingId: rejectBindingId,
+    })).resolves.toBe(false);
+    await expect(store.loadPending("approval-binding-required")).resolves.toMatchObject({ state: "pending" });
+
+    await expect(broker.resolveApproval("approval-binding-required", true, "http", {
+      surfaceActionBindingId: approveBindingId,
+    })).resolves.toBe(true);
+    await expect(request).resolves.toBe(true);
   });
 
   it("expires pending conversational approval records instead of resolving late replies", async () => {
@@ -188,7 +235,10 @@ describe("ApprovalBroker", () => {
     });
 
     await saveStarted;
-    const resolved = broker.resolveApproval("approval-race", true, "http");
+    const approveBindingId = surfaceApprovalBindingId(broker, "approval-race", true);
+    const resolved = broker.resolveApproval("approval-race", true, "http", {
+      surfaceActionBindingId: approveBindingId,
+    });
     await Promise.resolve();
     expect(broker.getPendingApprovalEvents()).toEqual([]);
     releaseSave();
@@ -350,7 +400,10 @@ describe("ApprovalBroker", () => {
     });
     await broker.start();
 
-    await expect(broker.resolveApproval("approval-unsafe-expiry-linked", true, "http")).resolves.toBe(true);
+    const approveBindingId = surfaceApprovalBindingId(broker, "approval-unsafe-expiry-linked", true);
+    await expect(broker.resolveApproval("approval-unsafe-expiry-linked", true, "http", {
+      surfaceActionBindingId: approveBindingId,
+    })).resolves.toBe(true);
     expect(await waitPlanStore.load("wait-unsafe-expiry")).toMatchObject({
       state: "approved",
       audit_events: expect.arrayContaining([

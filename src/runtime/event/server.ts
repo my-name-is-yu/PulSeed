@@ -9,6 +9,16 @@ import { DEFAULT_PORT } from "../port-utils.js";
 import type { ApprovalBroker } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import {
+  createSurfaceActionBinding,
+  createSurfaceProjection,
+  findSurfaceActionBindingByToken,
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  validateSurfaceActionBinding,
+  type SurfaceActionBinding,
+  type SurfaceProjection,
+} from "../surface-projection-protocol.js";
 import type { Envelope } from "../types/envelope.js";
 import type { SlackChannelAdapter } from "../gateway/slack-channel-adapter.js";
 import { EventServerAuth } from "./server-auth.js";
@@ -47,7 +57,12 @@ export class EventServer {
   private readonly router: EventServerRouter;
   private readonly approvalQueue = new Map<
     string,
-    { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (approved: boolean) => void;
+      timer: ReturnType<typeof setTimeout>;
+      surfaceInstanceRef: string;
+      surfaceProjection: SurfaceProjection;
+    }
   >();
   private envelopeHook?: (eventData: Record<string, unknown>) => void | Promise<void>;
   private commandEnvelopeHook?: (envelope: Envelope) => void | Promise<void>;
@@ -92,7 +107,7 @@ export class EventServer {
       async (eventType, data) => this.broadcast(eventType, data),
       () => this.commandEnvelopeHook,
       async (requestId) => this.canResolveApproval(requestId),
-      async (requestId, approved) => this.resolveApproval(requestId, approved),
+      async (requestId, approved, binding) => this.resolveApproval(requestId, approved, binding),
       () => this.slackChannelAdapter,
     );
     this.router = new EventServerRouter({
@@ -179,20 +194,44 @@ export class EventServer {
       return this.approvalBroker.requestApproval(goalId, task, undefined, options.requestId);
     }
     const requestId = options.requestId ?? `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.parse(createdAt) + 5 * 60 * 1000).toISOString();
+    const surface = projectEventServerApprovalSurface({
+      requestId,
+      goalId,
+      task,
+      createdAt,
+      expiresAt,
+    });
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         this.approvalQueue.delete(requestId);
         void this.broadcast("approval_resolved", { requestId, goalId, approved: false, reason: "timeout" });
         resolve(false);
       }, 5 * 60 * 1000);
-      this.approvalQueue.set(requestId, { resolve, timer });
-      void this.broadcast("approval_required", { requestId, goalId, task });
+      this.approvalQueue.set(requestId, {
+        resolve,
+        timer,
+        surfaceInstanceRef: surface.surfaceInstanceRef,
+        surfaceProjection: surface.projection,
+      });
+      void this.broadcast("approval_required", {
+        requestId,
+        goalId,
+        task,
+        approval_prompt: surface.projection.approval_prompt,
+        surface_projection: surface.projection,
+      });
     });
   }
 
-  async resolveApproval(requestId: string, approved: boolean): Promise<boolean> {
+  async resolveApproval(
+    requestId: string,
+    approved: boolean,
+    binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string } = {}
+  ): Promise<boolean> {
     if (this.approvalBroker) {
-      const resolved = await this.approvalBroker.resolveApproval(requestId, approved, "http");
+      const resolved = await this.approvalBroker.resolveApproval(requestId, approved, "http", binding);
       if (resolved) {
         await this.resolveOperatorHandoffApproval(requestId, approved, { allowAlreadyResolved: true });
         return true;
@@ -200,6 +239,9 @@ export class EventServer {
     }
     const entry = this.approvalQueue.get(requestId);
     if (entry) {
+      if (!validateEventServerApprovalBinding(entry, approved, binding)) {
+        return false;
+      }
       clearTimeout(entry.timer);
       this.approvalQueue.delete(requestId);
       entry.resolve(approved);
@@ -369,4 +411,157 @@ export class EventServer {
     }
     await this.auth.persistAuthToken();
   }
+}
+
+type EventServerApprovalTask = { id: string; description: string; action: string };
+
+function projectEventServerApprovalSurface(input: {
+  requestId: string;
+  goalId: string;
+  task: EventServerApprovalTask;
+  createdAt: string;
+  expiresAt: string;
+}): { projection: SurfaceProjection; surfaceInstanceRef: string } {
+  const surfaceInstanceRef = `approval:event:${input.requestId}`;
+  const projectionId = `surface:approval:${input.requestId}`;
+  const sourceEventRefs = [
+    normalSourceEventRef({
+      kind: "approval_request",
+      ref: input.requestId,
+      event_type: "approval_required",
+      occurred_at: input.createdAt,
+      replay_key: `approval:${input.requestId}`,
+    }),
+  ];
+  const runtimeGraphRefs = [
+    normalRuntimeGraphRef({
+      kind: "approval",
+      ref: input.requestId,
+      role: "target",
+    }),
+    normalRuntimeGraphRef({
+      kind: "goal",
+      ref: input.goalId,
+      role: "source",
+    }),
+  ];
+  const approveBinding = createEventServerApprovalBinding({
+    requestId: input.requestId,
+    actionKind: "approve",
+    projectionId,
+    surfaceInstanceRef,
+    createdAt: input.createdAt,
+    expiresAt: input.expiresAt,
+    sourceEventRefs,
+    runtimeGraphRefs,
+  });
+  const rejectBinding = createEventServerApprovalBinding({
+    requestId: input.requestId,
+    actionKind: "reject",
+    projectionId,
+    surfaceInstanceRef,
+    createdAt: input.createdAt,
+    expiresAt: input.expiresAt,
+    sourceEventRefs,
+    runtimeGraphRefs,
+  });
+  return {
+    surfaceInstanceRef,
+    projection: createSurfaceProjection({
+      projection_id: projectionId,
+      surface: "approval",
+      view: "normal",
+      purpose: "Project an event-server approval request into the current user-visible surface.",
+      redaction_class: "normal_safe",
+      projected_at: input.createdAt,
+      replay_key: `approval:${input.requestId}`,
+      source_event_refs: sourceEventRefs,
+      runtime_graph_refs: runtimeGraphRefs,
+      approval_prompt: {
+        approval_id: input.requestId,
+        prompt: `Approval required: ${input.task.description || input.task.action || input.task.id}`,
+        action: input.task.action || "unknown",
+        target_summary: input.task.description || input.task.id || "Approval required",
+        expires_at: input.expiresAt,
+        approve_binding_id: approveBinding.binding_id,
+        reject_binding_id: rejectBinding.binding_id,
+      },
+      actions: [
+        {
+          action_id: `approval:${input.requestId}:approve`,
+          kind: "approve",
+          label: "Approve",
+          style: "primary",
+          binding_id: approveBinding.binding_id,
+        },
+        {
+          action_id: `approval:${input.requestId}:reject`,
+          kind: "reject",
+          label: "Reject",
+          style: "danger",
+          binding_id: rejectBinding.binding_id,
+        },
+      ],
+      action_bindings: [approveBinding, rejectBinding],
+    }),
+  };
+}
+
+function createEventServerApprovalBinding(input: {
+  requestId: string;
+  actionKind: "approve" | "reject";
+  projectionId: string;
+  surfaceInstanceRef: string;
+  createdAt: string;
+  expiresAt: string;
+  sourceEventRefs: ReturnType<typeof normalSourceEventRef>[];
+  runtimeGraphRefs: ReturnType<typeof normalRuntimeGraphRef>[];
+}): SurfaceActionBinding {
+  return createSurfaceActionBinding({
+    action_kind: input.actionKind,
+    surface: "approval",
+    surface_instance_ref: input.surfaceInstanceRef,
+    target: {
+      kind: "approval",
+      ref: input.requestId,
+      surface_instance_ref: input.surfaceInstanceRef,
+    },
+    source_projection_id: input.projectionId,
+    source_event_refs: input.sourceEventRefs,
+    runtime_graph_refs: input.runtimeGraphRefs,
+    replay_key: `approval:${input.requestId}:${input.actionKind}:event`,
+    redaction_class: "normal_safe",
+    created_at: input.createdAt,
+    expires_at: input.expiresAt,
+  });
+}
+
+function validateEventServerApprovalBinding(
+  entry: {
+    surfaceInstanceRef: string;
+    surfaceProjection: SurfaceProjection;
+  },
+  approved: boolean,
+  bindingInput: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string },
+): boolean {
+  const expectedAction = approved ? "approve" : "reject";
+  const expectedBindingId = entry.surfaceProjection.actions.find((action) =>
+    action.kind === expectedAction
+  )?.binding_id;
+  const inputRef = bindingInput.surfaceActionBindingId ?? bindingInput.surfaceActionBindingToken;
+  if (!expectedBindingId || !inputRef) {
+    return false;
+  }
+  const binding = findSurfaceActionBindingByToken(entry.surfaceProjection.action_bindings, inputRef);
+  if (!binding || binding.binding_id !== expectedBindingId) {
+    return false;
+  }
+  const validation = validateSurfaceActionBinding({
+    binding,
+    surface: "approval",
+    surfaceInstanceRef: entry.surfaceInstanceRef,
+    actionKind: expectedAction,
+    now: new Date().toISOString(),
+  });
+  return validation.status === "accepted";
 }
