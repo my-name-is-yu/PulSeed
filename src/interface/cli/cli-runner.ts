@@ -40,6 +40,24 @@ import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 const logger = getCliLogger();
 
 const STATELESS_GLOBAL_FLAGS = new Set(["--yes", "-y", "--dev"]);
+const GLOBAL_USAGE_HELP_PARENTS = new Set([
+  "approval",
+  "capability",
+  "config",
+  "daemon",
+  "datasource",
+  "goal",
+  "knowledge",
+  "logs",
+  "notify",
+  "playbook",
+  "playbooks",
+  "plugin",
+  "provider",
+  "runtime",
+  "schedule",
+  "usage",
+]);
 
 function stripStatelessGlobalFlags(argv: readonly string[]): string[] {
   return argv.filter((arg) => !STATELESS_GLOBAL_FLAGS.has(arg));
@@ -56,6 +74,10 @@ function isHelpToken(arg: string | undefined): boolean {
 
 function includesHelpFlag(args: readonly string[]): boolean {
   return args.some((arg) => isHelpToken(arg));
+}
+
+function includesHelpOption(args: readonly string[]): boolean {
+  return args.some((arg) => arg === "--help" || arg === "-h");
 }
 
 function isParentHelpRequest(args: readonly string[], parent: "telegram" | "gateway"): boolean {
@@ -82,6 +104,13 @@ function getStatelessSetupHelpRequest(
     return { kind: "gateway_setup", args: args.slice(2) };
   }
   return null;
+}
+
+function isStatelessUsageHelpRequest(argv: readonly string[]): boolean {
+  const args = stripStatelessGlobalFlags(argv);
+  if (args.length < 2) return false;
+  return includesHelpOption(args.slice(1))
+    || (args.length === 2 && args[1] === "help" && GLOBAL_USAGE_HELP_PARENTS.has(args[0] ?? ""));
 }
 
 function isDefaultTuiLaunchRequest(argv: readonly string[]): boolean {
@@ -163,6 +192,10 @@ export class CLIRunner {
       }
       const { cmdGatewaySetup } = await import("./commands/gateway.js");
       return cmdGatewaySetup(statelessSetupHelp.args);
+    }
+    if (isStatelessUsageHelpRequest(argv)) {
+      printUsage();
+      return 0;
     }
 
     try {

@@ -474,6 +474,29 @@ describe("unknown subcommand", async () => {
     initSpy.mockRestore();
   });
 
+  it("exits with code 0 for subcommand help before state initialization", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const goalParentCode = await runCLI("goal", "--help");
+    const goalParentHelpCode = await runCLI("goal", "help");
+    const goalLeafCode = await runCLI("goal", "add", "--help");
+    const daemonParentCode = await runCLI("daemon", "--help");
+    const daemonParentHelpCode = await runCLI("daemon", "help");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(goalParentCode).toBe(0);
+    expect(goalParentHelpCode).toBe(0);
+    expect(goalLeafCode).toBe(0);
+    expect(daemonParentCode).toBe(0);
+    expect(daemonParentHelpCode).toBe(0);
+    expect(output).toContain("pulseed goal add");
+    expect(output).toContain("pulseed daemon start");
+    expect(initSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
   it("preserves setup-specific help before state initialization", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const initSpy = vi.spyOn(StateManager.prototype, "init");
