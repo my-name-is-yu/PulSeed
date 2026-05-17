@@ -593,7 +593,7 @@ describe("product completion gauntlet", () => {
   });
 
   it("keeps the product-completion matrix and existing gauntlet fixtures aligned with acceptance coverage", () => {
-    const matrix = readFileSync(path.resolve("docs/product/completion-matrix.md"), "utf8");
+    const matrix = readFileSync(path.resolve("docs/product-direction/product-boundaries/completion-matrix.md"), "utf8");
     for (const required of [
       "DB-first runtime-state ownership",
       "normal-surface redaction",
