@@ -142,6 +142,11 @@ import {
   prepareChatTurnCommitmentAttention,
   type ChatCommitmentAttentionResult,
 } from "./chat-commitment-attention.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectTextSurface,
+} from "../../runtime/surface-projection-protocol.js";
 
 export type {
   ChatRunResult,
@@ -1916,17 +1921,44 @@ export class ChatRunner {
   }
 
   private async finalizeNonPersistentResult(result: ChatRunResult, eventContext: Parameters<ChatRunnerEventBridge["eventBase"]>[0]): Promise<ChatRunResult> {
+    const surfaceProjection = result.surface_projection ?? (
+      result.output
+        ? projectTextSurface({
+          surface: "chat",
+          text: result.output,
+          purpose: "non-persistent chat assistant output",
+          projectedAt: new Date().toISOString(),
+          replayKey: ["chat-non-persistent-output", eventContext.runId, eventContext.turnId].join(":"),
+          sourceEventRefs: [
+            normalSourceEventRef({
+              kind: "chat_turn",
+              ref: eventContext.turnId,
+              event_type: "assistant_final",
+              replay_key: ["chat-non-persistent-output", eventContext.runId, eventContext.turnId].join(":"),
+            }),
+          ],
+          runtimeGraphRefs: [
+            normalRuntimeGraphRef({
+              kind: "chat_run",
+              ref: eventContext.runId,
+              role: "source",
+            }),
+          ],
+        })
+        : undefined
+    );
     if (result.output) {
       this.eventBridge.emitEvent({
         type: "assistant_final",
         text: result.output,
         persisted: false,
+        ...(surfaceProjection ? { surface_projection: surfaceProjection } : {}),
         ...this.eventBridge.eventBase(eventContext),
       });
     }
     this.eventBridge.emitLifecycleEndEvent(result.success ? "completed" : "error", result.elapsed_ms, eventContext, false);
     await this.eventBridge.flushEventRecorder();
-    return result;
+    return surfaceProjection ? { ...result, surface_projection: surfaceProjection } : result;
   }
 }
 

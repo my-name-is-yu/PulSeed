@@ -38,6 +38,7 @@ import type { CompanionCognitionService } from "../../runtime/cognition/companio
 import type { PersonalAgentRuntimeStore } from "../../runtime/personal-agent/index.js";
 import type { CommitmentCandidateClassifier } from "../../runtime/attention/index.js";
 import type { AttentionStateStore } from "../../runtime/store/attention-state-store.js";
+import type { SurfaceProjection } from "../../runtime/surface-projection-protocol.js";
 
 export type ChatRunnerTelegramSetupState = "unconfigured" | "partially_configured" | "configured";
 
@@ -125,6 +126,7 @@ export interface ChatRunResult {
   success: boolean;
   output: string;
   elapsed_ms: number;
+  surface_projection?: SurfaceProjection;
 }
 
 export interface RuntimeControlChatContext {

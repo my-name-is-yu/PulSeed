@@ -52,6 +52,13 @@ import {
   formatTelegramConfigProgressDetail,
   formatTelegramConfigureGuidance,
 } from "./telegram-setup-guidance.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectTextSurface,
+  type SurfaceKind,
+  type SurfaceProjection,
+} from "../../runtime/surface-projection-protocol.js";
 export {
   buildTelegramSetupGuidanceData,
   formatTelegramConfigureGuidance,
@@ -480,14 +487,22 @@ export async function executeGatewayModelLoopRoute(
       host.eventBridge.pushAssistantSnapshot(output, params.assistantBuffer, params.eventContext);
     }
     await params.history.appendAssistantMessage(output);
+    const surfaceProjection = projectChatRunResultSurface({
+      output,
+      purpose: "chat/gateway model-loop assistant output",
+      eventContext: params.eventContext,
+      turnContext: params.turnContext,
+      projectedAt: new Date().toISOString(),
+    });
     host.eventBridge.emitEvent({
       type: "assistant_final",
       text: output,
       persisted: true,
+      surface_projection: surfaceProjection,
       ...host.eventBridge.eventBase(params.eventContext),
     });
     host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, params.eventContext, true);
-    return { success: true, output, elapsed_ms };
+    return { success: true, output, elapsed_ms, surface_projection: surfaceProjection };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const evidence = err instanceof ToolLoopTerminalError
@@ -1291,6 +1306,52 @@ function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean
     && turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
 }
 
+function projectChatRunResultSurface(input: {
+  output: string;
+  purpose: string;
+  eventContext: ChatEventContext;
+  turnContext?: ChatTurnContext;
+  projectedAt: string;
+}): SurfaceProjection {
+  const replyTarget = input.turnContext?.modelVisible.runtime.replyTarget;
+  const surface: SurfaceKind = replyTarget?.surface === "gateway" ? "gateway" : "chat";
+  const replayKey = [
+    "chat-assistant-output",
+    input.eventContext.runId,
+    input.eventContext.turnId,
+    surface,
+  ].join(":");
+  return projectTextSurface({
+    surface,
+    text: input.output,
+    purpose: input.purpose,
+    projectedAt: input.projectedAt,
+    replayKey,
+    sourceEventRefs: [
+      normalSourceEventRef({
+        kind: "chat_turn",
+        ref: input.eventContext.turnId,
+        event_type: "assistant_final",
+        replay_key: replayKey,
+      }),
+    ],
+    runtimeGraphRefs: [
+      normalRuntimeGraphRef({
+        kind: "chat_run",
+        ref: input.eventContext.runId,
+        role: "source",
+      }),
+      ...(replyTarget?.conversation_id
+        ? [normalRuntimeGraphRef({
+          kind: "reply_target",
+          ref: `${replyTarget.surface ?? "chat"}:${replyTarget.conversation_id}:${replyTarget.message_id ?? "no-message"}`,
+          role: "target",
+        })]
+        : []),
+    ],
+  });
+}
+
 async function persistDirectRouteResult(
   host: ChatRunnerRouteHost,
   output: string,
@@ -1304,14 +1365,37 @@ async function persistDirectRouteResult(
     host.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
   }
   await history.appendAssistantMessage(output);
+  const surfaceProjection = projectTextSurface({
+    surface: "chat",
+    text: output,
+    purpose: "direct chat route assistant output",
+    projectedAt: new Date().toISOString(),
+    replayKey: ["chat-direct-output", eventContext.runId, eventContext.turnId].join(":"),
+    sourceEventRefs: [
+      normalSourceEventRef({
+        kind: "chat_turn",
+        ref: eventContext.turnId,
+        event_type: "assistant_final",
+        replay_key: ["chat-direct-output", eventContext.runId, eventContext.turnId].join(":"),
+      }),
+    ],
+    runtimeGraphRefs: [
+      normalRuntimeGraphRef({
+        kind: "chat_run",
+        ref: eventContext.runId,
+        role: "source",
+      }),
+    ],
+  });
   host.eventBridge.emitEvent({
     type: "assistant_final",
     text: output,
     persisted: true,
+    surface_projection: surfaceProjection,
     ...host.eventBridge.eventBase(eventContext),
   });
   host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
-  return { success: true, output, elapsed_ms };
+  return { success: true, output, elapsed_ms, surface_projection: surfaceProjection };
 }
 
 async function formatConfigureGuidance(
