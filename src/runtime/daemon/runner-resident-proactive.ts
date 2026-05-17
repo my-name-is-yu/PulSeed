@@ -413,9 +413,26 @@ function materializeCommitmentsForResidentCycle(input: {
       };
     }
     if (
-      candidate.materialization_state === "watching"
-      || candidate.materialization_state === "candidate"
-      || candidate.materialization_state === "snoozed"
+      candidate.nudge_policy === "ask_first"
+      && (
+        candidate.materialization_state === "watching"
+        || candidate.materialization_state === "candidate"
+        || candidate.materialization_state === "snoozed"
+      )
+    ) {
+      return {
+        ...candidate,
+        materialization_state: "ask_confirmation" as const,
+        updated_at: input.now,
+      };
+    }
+    if (
+      candidate.nudge_policy === "allowed"
+      && (
+        candidate.materialization_state === "watching"
+        || candidate.materialization_state === "candidate"
+        || candidate.materialization_state === "snoozed"
+      )
     ) {
       return {
         ...candidate,

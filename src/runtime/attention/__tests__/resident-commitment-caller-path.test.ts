@@ -226,4 +226,27 @@ describe("resident commitment attention caller path", () => {
     await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .listRecentCandidates()).resolves.toHaveLength(0);
   });
+
+  it("returns snoozed ask-first commitments to confirmation gate instead of active care", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    await store.saveCommitmentCandidates([commitmentCandidate({
+      extraction: {
+        nudge_policy: "ask_first",
+      },
+      state: "snoozed",
+    })]);
+
+    const handled = await runResidentCommitmentAttentionCycle(context(baseDir, store), NOW);
+
+    expect(handled).toBe(false);
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({
+        materialization_state: "ask_confirmation",
+        nudge_policy: "ask_first",
+      }),
+    ]);
+    await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates()).resolves.toHaveLength(0);
+  });
 });
