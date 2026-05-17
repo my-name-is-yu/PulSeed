@@ -44,7 +44,11 @@ export class EventServerCommandHandler {
   constructor(
     private readonly broadcast: (eventType: string, data: unknown) => Promise<void>,
     private readonly getCommandEnvelopeHook: () => ((envelope: Envelope) => void | Promise<void>) | undefined,
-    private readonly canResolveApproval: (requestId: string) => Promise<boolean>,
+    private readonly canResolveApproval: (
+      requestId: string,
+      approved: boolean,
+      binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string }
+    ) => Promise<boolean>,
     private readonly resolveApproval: (
       requestId: string,
       approved: boolean,
@@ -148,7 +152,7 @@ export class EventServerCommandHandler {
         const parsed = ApprovalResponseRequestSchema.parse(parseJsonObjectBody(body));
         const { requestId, approved } = parsed;
         const binding = approvalResponseBinding(parsed);
-        if (!(await this.canResolveApproval(requestId))) {
+        if (!(await this.canResolveApproval(requestId, approved, binding))) {
           writeJson(res, 404, { ok: false });
           return;
         }

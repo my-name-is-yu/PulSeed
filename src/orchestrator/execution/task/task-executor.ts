@@ -230,6 +230,18 @@ export async function applyPostExecutionDiffScopeChecks(input: {
     input.result.diffEvidenceSource = diffArtifacts.evidenceSource;
     if (diffArtifacts.available) {
       const changedFiles = diffArtifacts.changedPaths;
+      const hasAdapterReportedChangedPaths = (input.fallbackChangedPaths ?? []).length > 0;
+      if (
+        !initiallySuccessful &&
+        diffArtifacts.evidenceSource !== "git" &&
+        !hasAdapterReportedChangedPaths
+      ) {
+        input.result.filesChangedPaths = [];
+        input.result.fileDiffs = [];
+        input.result.filesChanged = false;
+        return;
+      }
+
       input.result.filesChangedPaths = changedFiles;
       input.result.fileDiffs = diffArtifacts.fileDiffs;
       input.result.filesChanged = changedFiles.length > 0;

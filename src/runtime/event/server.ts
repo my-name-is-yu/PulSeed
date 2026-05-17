@@ -10,6 +10,10 @@ import type { ApprovalBroker } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
 import {
+  validateOperatorHandoffSurfaceBinding,
+  type OperatorHandoffResolutionBinding,
+} from "../operator-handoff-surface.js";
+import {
   createSurfaceActionBinding,
   createSurfaceProjection,
   findSurfaceActionBindingByToken,
@@ -106,7 +110,7 @@ export class EventServer {
     this.commandHandler = new EventServerCommandHandler(
       async (eventType, data) => this.broadcast(eventType, data),
       () => this.commandEnvelopeHook,
-      async (requestId) => this.canResolveApproval(requestId),
+      async (requestId, approved, binding) => this.canResolveApproval(requestId, approved, binding),
       async (requestId, approved, binding) => this.resolveApproval(requestId, approved, binding),
       () => this.slackChannelAdapter,
     );
@@ -233,7 +237,10 @@ export class EventServer {
     if (this.approvalBroker) {
       const resolved = await this.approvalBroker.resolveApproval(requestId, approved, "http", binding);
       if (resolved) {
-        await this.resolveOperatorHandoffApproval(requestId, approved, { allowAlreadyResolved: true });
+        await this.resolveOperatorHandoffApproval(requestId, approved, {
+          allowAlreadyResolved: true,
+          trustedUpstreamApproval: true,
+        });
         return true;
       }
     }
@@ -246,27 +253,47 @@ export class EventServer {
       this.approvalQueue.delete(requestId);
       entry.resolve(approved);
       void this.broadcast("approval_resolved", { requestId, approved });
-      await this.resolveOperatorHandoffApproval(requestId, approved, { allowAlreadyResolved: true });
+      await this.resolveOperatorHandoffApproval(requestId, approved, {
+        allowAlreadyResolved: true,
+        trustedUpstreamApproval: true,
+      });
       return true;
     }
-    return this.resolveOperatorHandoffApproval(requestId, approved);
+    return this.resolveOperatorHandoffApproval(requestId, approved, { binding });
   }
 
-  private async canResolveApproval(requestId: string): Promise<boolean> {
+  private async canResolveApproval(
+    requestId: string,
+    approved: boolean,
+    binding: OperatorHandoffResolutionBinding = {},
+  ): Promise<boolean> {
     if (this.approvalBroker || this.approvalQueue.has(requestId)) return true;
     const handoff = await new RuntimeOperatorHandoffStore(this.runtimeRoot, this.controlDbOptions()).load(requestId);
-    return handoff?.status === "open";
+    return Boolean(
+      handoff?.status === "open"
+      && validateOperatorHandoffSurfaceBinding(handoff, approved, binding)
+    );
   }
 
   private async resolveOperatorHandoffApproval(
     requestId: string,
     approved: boolean,
-    options: { allowAlreadyResolved?: boolean } = {}
+    options: {
+      allowAlreadyResolved?: boolean;
+      trustedUpstreamApproval?: boolean;
+      binding?: OperatorHandoffResolutionBinding;
+    } = {}
   ): Promise<boolean> {
     const store = new RuntimeOperatorHandoffStore(this.runtimeRoot, this.controlDbOptions());
     const existing = await store.load(requestId);
     if (!existing) return false;
     if (existing.status !== "open") return options.allowAlreadyResolved === true;
+    if (
+      options.trustedUpstreamApproval !== true
+      && !validateOperatorHandoffSurfaceBinding(existing, approved, options.binding ?? {})
+    ) {
+      return false;
+    }
     const resolved = await store.resolve(requestId, approved ? "approved" : "dismissed");
     void this.broadcast("approval_resolved", {
       requestId,

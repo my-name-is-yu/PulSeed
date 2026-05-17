@@ -237,7 +237,16 @@ describe("DaemonClient snapshot + replay", () => {
       await expect(handoff).resolves.toEqual(expect.objectContaining({
         handoff_id: "handoff-snapshot",
         goal_id: "goal-1",
+        approval_prompt: expect.objectContaining({
+          approve_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+        }),
       }));
+      await expect(handoff).resolves.not.toHaveProperty("summary");
+      await expect(handoff).resolves.not.toHaveProperty("current_status");
     } finally {
       client.disconnect();
     }

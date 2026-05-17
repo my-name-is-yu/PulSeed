@@ -46,7 +46,9 @@ bound actions. The validator rejects stale, expired, wrong-surface,
 wrong-target, wrong-action, or wrong-replay bindings. Telegram peer initiative
 callbacks use this path for `psb1:` binding callbacks. Older candidate-only
 callback payloads are acknowledged but fail closed before feedback or trigger
-mutation.
+mutation. Operator handoffs are also projected as normal-safe approval surfaces;
+the daemon snapshot and SSE broadcast expose the projected prompt/action binding
+instead of the raw handoff record.
 
 ## Boundaries
 

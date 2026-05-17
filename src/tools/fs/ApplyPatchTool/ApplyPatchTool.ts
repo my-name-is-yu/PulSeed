@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod/v3";
 import type { ITool, PermissionCheckResult, ToolCallContext, ToolMetadata, ToolResult } from "../../types.js";
 import { validateProtectedPath } from "../FileValidationTool/protected-path-policy.js";
 import { resolveWorkspaceCwd } from "../../workspace-scope.js";
+
+const INITIAL_PATH = process.env.PATH ?? "";
 
 export const ApplyPatchInputSchema = z.object({
   patch: z.string().min(1),
@@ -191,16 +194,53 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
 
 function runGitApply(args: string[], patch: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd });
+    const child = spawn(resolveGitBinary(), args, { cwd });
+    let resolved = false;
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? -1 }));
+    child.on("error", (error) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ stdout, stderr: error.message, exitCode: -1 });
+    });
+    child.on("close", (code) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
     child.stdin.end(patch);
   });
+}
+
+function resolveGitBinary(): string {
+  const configured = process.env.PULSEED_GIT_BIN;
+  if (configured && isExecutableFile(configured)) return configured;
+  return findGitInPath(process.env.PATH ?? "")
+    ?? findGitInPath(INITIAL_PATH)
+    ?? ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(isExecutableFile)
+    ?? "git";
+}
+
+function findGitInPath(pathValue: string): string | null {
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "git");
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+function isExecutableFile(filePath: string): boolean {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function inspectUnifiedPatchPaths(patch: string): { paths: string[]; error?: string } {

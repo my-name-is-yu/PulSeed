@@ -3,7 +3,7 @@ import type { TriggerMapper } from "../trigger-mapper.js";
 import type { ApprovalBroker, ApprovalRequiredEvent } from "../approval-broker.js";
 import type { OutboxStore } from "../store/index.js";
 import type { RuntimeSessionRegistrySnapshot } from "../session-registry/types.js";
-import type { RuntimeOperatorHandoffRecord } from "../store/operator-handoff-store.js";
+import type { OperatorHandoffSurfaceEvent } from "../operator-handoff-surface.js";
 import type { RuntimeAutomationSnapshot } from "../store/index.js";
 import type { ResidentRuntimeInterfaceSnapshot } from "../resident-runtime-interface.js";
 
@@ -32,7 +32,7 @@ export interface EventServerSnapshot {
   guardrails?: Record<string, unknown> | null;
   runtime_automation?: RuntimeAutomationSnapshot;
   runtime_sessions?: RuntimeSessionRegistrySnapshot | null;
-  operator_handoffs?: RuntimeOperatorHandoffRecord[];
+  operator_handoffs?: OperatorHandoffSurfaceEvent[];
   resident_runtime_interface?: ResidentRuntimeInterfaceSnapshot;
 }
 

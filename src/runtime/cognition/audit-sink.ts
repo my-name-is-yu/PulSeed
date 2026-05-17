@@ -113,15 +113,23 @@ export class InMemoryCognitionAuditSink implements CognitionAuditSink {
 }
 
 export class FileCognitionAuditSink implements CognitionAuditSink {
-  constructor(private readonly baseDir: string, private readonly relativePath = "runtime/cognition-audit-records.json") {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly relativePath = "runtime/cognition-audit-records.json",
+    private readonly options: { lockTimeoutMs?: number } = {},
+  ) {}
 
   async recordCognition(record: CognitionReplayRecord): Promise<void> {
     const parsed = CognitionReplayRecordSchema.parse(record);
-    await withJsonFileMutationLock(this.path(), async () => {
-      const records = await this.list();
-      const next = [...records.filter((existing) => existing.record_id !== parsed.record_id), parsed];
-      await writeJsonFileAtomic(this.path(), next);
-    });
+    await withJsonFileMutationLock(
+      this.path(),
+      async () => {
+        const records = await this.list();
+        const next = [...records.filter((existing) => existing.record_id !== parsed.record_id), parsed];
+        await writeJsonFileAtomic(this.path(), next);
+      },
+      this.options.lockTimeoutMs !== undefined ? { timeoutMs: this.options.lockTimeoutMs } : {},
+    );
   }
 
   async list(): Promise<CognitionReplayRecord[]> {

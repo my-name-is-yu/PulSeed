@@ -5,6 +5,7 @@ import { EventServer } from "../event-server.js";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { projectOperatorHandoffSurfaceEvent } from "../operator-handoff-surface.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function createMockDriveSystem() {
@@ -212,7 +213,7 @@ describe("EventServer durable approval integration", () => {
   it("resolves durable operator handoffs through the goal approval endpoint", async () => {
     const runtimeRoot = path.join(tmpDir, "runtime");
     const handoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
-    await handoffStore.create({
+    const handoff = await handoffStore.create({
       handoff_id: "handoff-http",
       goal_id: "goal-1",
       triggers: ["deadline", "finalization"],
@@ -236,9 +237,19 @@ describe("EventServer durable approval integration", () => {
 
     try {
       await server.start();
+      const approveBindingId = projectOperatorHandoffSurfaceEvent(handoff).approval_prompt.approve_binding_id;
+      const missingBinding = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-http",
+        approved: true,
+      }, server.getAuthToken());
+
+      expect(missingBinding.status).toBe(404);
+      await expect(handoffStore.load("handoff-http")).resolves.toMatchObject({ status: "open" });
+
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "handoff-http",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);

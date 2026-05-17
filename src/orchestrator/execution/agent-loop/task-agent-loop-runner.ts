@@ -314,12 +314,12 @@ async function evaluateTaskAgentLoopCognition(input: {
   if (!replayRecord) return { output };
   let replayIndexEntry: CognitiveReplayIndexEntry | undefined;
   try {
-    await new FileCognitionAuditSink(input.baseDir).recordCognition(replayRecord);
+    await new FileCognitionAuditSink(input.baseDir, undefined, { lockTimeoutMs: 250 }).recordCognition(replayRecord);
     replayIndexEntry = createCognitiveReplayIndexEntry({
       indexEntryId: `${cognitionId}:replay-index`,
       record: replayRecord,
     });
-    await new FileCognitiveReplayIndexStore(input.baseDir).upsert(replayIndexEntry);
+    await new FileCognitiveReplayIndexStore(input.baseDir, undefined, { lockTimeoutMs: 250 }).upsert(replayIndexEntry);
   } catch {
     replayIndexEntry = undefined;
   }

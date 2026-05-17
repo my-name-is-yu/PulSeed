@@ -130,6 +130,30 @@ const eventServer = existsSync("src/runtime/event/server.ts")
 if (!eventServer.includes("validateEventServerApprovalBinding")) {
   issues.push("src/runtime/event/server.ts direct approval fallback must validate SurfaceActionBinding before resolution");
 }
+if (!eventServer.includes("validateOperatorHandoffSurfaceBinding")) {
+  issues.push("src/runtime/event/server.ts operator handoff approval resolution must validate SurfaceActionBinding");
+}
+
+const goalCycle = existsSync("src/runtime/daemon/runner-goal-cycle.ts")
+  ? readFileSync("src/runtime/daemon/runner-goal-cycle.ts", "utf8")
+  : "";
+if (!goalCycle.includes("projectOperatorHandoffSurfaceEvent(handoff)")) {
+  issues.push("src/runtime/daemon/runner-goal-cycle.ts must broadcast projected operator handoff surfaces instead of raw records");
+}
+
+const snapshotReader = existsSync("src/runtime/event/server-snapshot-reader.ts")
+  ? readFileSync("src/runtime/event/server-snapshot-reader.ts", "utf8")
+  : "";
+if (!snapshotReader.includes("operatorHandoffs.map(projectOperatorHandoffSurfaceEvent)")) {
+  issues.push("src/runtime/event/server-snapshot-reader.ts must expose projected operator handoff surfaces in normal snapshots");
+}
+
+const tuiApproval = existsSync("src/interface/tui/app-approval.ts")
+  ? readFileSync("src/interface/tui/app-approval.ts", "utf8")
+  : "";
+if (tuiApproval.includes("data.summary") || tuiApproval.includes("data.current_status")) {
+  issues.push("src/interface/tui/app-approval.ts must not render raw operator handoff summary/current_status on normal approval surfaces");
+}
 
 const protocol = existsSync("src/runtime/surface-projection-protocol.ts")
   ? readFileSync("src/runtime/surface-projection-protocol.ts", "utf8")

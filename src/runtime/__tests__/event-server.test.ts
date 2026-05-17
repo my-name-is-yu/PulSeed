@@ -1422,8 +1422,19 @@ describe("snapshot and outbox replay", () => {
         goal_id: "goal-1",
         status: "open",
         triggers: ["deadline", "finalization"],
+        approval_prompt: expect.objectContaining({
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+        }),
       }),
     ]);
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("summary");
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("current_status");
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("evidence_refs");
   });
 
   it("replays outbox events after the requested sequence", async () => {

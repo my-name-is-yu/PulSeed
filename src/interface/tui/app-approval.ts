@@ -7,8 +7,7 @@ export function normalizeApprovalTask(data: Record<string, unknown>): Task {
   }
   const goalId = String(data.goalId ?? data.goal_id ?? "");
   const title = String(data.title ?? "Operator handoff required");
-  const summary = String(data.summary ?? data.recommended_action ?? "Review this operator handoff before continuing.");
-  const currentStatus = String(data.current_status ?? "");
+  const summary = String(data.recommended_action ?? "Review this operator handoff before continuing.");
   const triggers = Array.isArray(data.triggers) ? data.triggers.map(String).join(", ") : "operator_handoff";
   return {
     id: String(data.handoff_id ?? data.requestId ?? "operator_handoff"),
@@ -18,7 +17,7 @@ export function normalizeApprovalTask(data: Record<string, unknown>): Task {
     primary_dimension: "operator_handoff",
     work_description: title,
     rationale: summary,
-    approach: String(data.recommended_action ?? currentStatus ?? "Operator decision required."),
+    approach: String(data.recommended_action ?? "Operator decision required."),
     success_criteria: [{
       description: "Operator has approved or rejected the handoff.",
       verification_method: "daemon approval response",
