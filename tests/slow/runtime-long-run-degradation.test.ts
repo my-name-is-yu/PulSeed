@@ -10,6 +10,8 @@ import {
   RuntimeEvidenceLedger,
   type RuntimeEvidenceEntry,
 } from "../../src/runtime/store/evidence-ledger.js";
+import { RuntimeEvidenceStateStore } from "../../src/runtime/store/runtime-evidence-state-store.js";
+import { SupervisorStateStore } from "../../src/runtime/store/supervisor-state-store.js";
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 const LONG_RUN_SIZES = [100, 500, 1000] as const;
@@ -39,14 +41,14 @@ describe("runtime long-run degradation coverage", () => {
       const maximizeRunId = `run:long:maximize:${size}`;
       const minimizeRunId = `run:long:minimize:${size}`;
 
-      await writeRunLedger(ledger, maximizeRunId, createMetricFixture({
+      await writeRunLedger(runtimeRoot, createMetricFixture({
         runId: maximizeRunId,
         size,
         label: "accuracy",
         direction: "maximize",
         valueAt: (index) => (index === 0 ? 0.99 : 0.5 + index / (size * 10)),
       }));
-      await writeRunLedger(ledger, minimizeRunId, createMetricFixture({
+      await writeRunLedger(runtimeRoot, createMetricFixture({
         runId: minimizeRunId,
         size,
         label: "loss",
@@ -73,7 +75,7 @@ describe("runtime long-run degradation coverage", () => {
       const runId = `run:long:memory-survival:${size}`;
       await seedActiveRun(runId, size);
       const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-      const summary = await writeIndexedRunLedger(ledger, runId, createMemorySurvivalFixture(runId, size));
+      const summary = await writeIndexedRunLedger(runtimeRoot, ledger, runId, createMemorySurvivalFixture(runId, size));
 
       const review = await createRuntimeDreamSidecarReview({ stateManager, runId });
       const memoryRefs = summary.dream_checkpoints.flatMap((checkpoint) =>
@@ -103,7 +105,7 @@ describe("runtime long-run degradation coverage", () => {
     const runId = "run:long:failed-lineages";
     await seedActiveRun(runId, 1000);
     const ledger = new RuntimeEvidenceLedger(runtimeRoot);
-    const summary = await writeIndexedRunLedger(ledger, runId, createFailedLineageFixture(runId, 1000));
+    const summary = await writeIndexedRunLedger(runtimeRoot, ledger, runId, createFailedLineageFixture(runId, 1000));
 
     const review = await createRuntimeDreamSidecarReview({ stateManager, runId });
 
@@ -125,7 +127,7 @@ describe("runtime long-run degradation coverage", () => {
   });
 
   async function seedActiveRun(runId: string, iterations: number): Promise<void> {
-    await stateManager.writeRaw("supervisor-state.json", {
+    await new SupervisorStateStore(runtimeRoot).save({
       workers: [{
         workerId: "long-run-worker",
         goalId: "goal-long-run",
@@ -360,21 +362,22 @@ function createFailedLineageFixture(runId: string, size: number): RuntimeEvidenc
 }
 
 async function writeRunLedger(
-  ledger: RuntimeEvidenceLedger,
-  runId: string,
+  runtimeRoot: string,
   entries: RuntimeEvidenceEntry[]
 ): Promise<void> {
-  const runPath = ledger.runPath(runId);
-  await fsp.mkdir(path.dirname(runPath), { recursive: true });
-  await fsp.writeFile(runPath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  const store = new RuntimeEvidenceStateStore(runtimeRoot);
+  for (const entry of entries) {
+    await store.append(entry);
+  }
 }
 
 async function writeIndexedRunLedger(
+  runtimeRoot: string,
   ledger: RuntimeEvidenceLedger,
   runId: string,
   entries: RuntimeEvidenceEntry[]
 ) {
-  await writeRunLedger(ledger, runId, entries);
+  await writeRunLedger(runtimeRoot, entries);
   return ledger.rebuildSummaryIndexForRun(runId);
 }
 
