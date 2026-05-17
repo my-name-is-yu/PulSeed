@@ -148,8 +148,12 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
   async call(input: ArcAgi3StartInput, context: ToolCallContext): Promise<ToolResult> {
     const startTime = Date.now();
     const runId = input.run_id ?? this.artifactStore.newRunId();
+    let openedCardId: string | null = null;
+    let client: ArcAgi3RestClient | null = null;
+    let attemptedArtifactCreate = false;
     try {
-      const client = this.client();
+      await this.artifactStore.assertRunIdAvailable(runId);
+      client = this.client();
       const modelIdentity = await resolveArcAgi3ModelIdentity(this.deps, context);
       const scorecard = await client.openScorecard({
         source_url: input.source_url,
@@ -161,10 +165,12 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
           model_id: modelIdentity.model_id,
         },
       }, context.abortSignal);
+      openedCardId = scorecard.card_id;
       const snapshot = await client.reset({
         game_id: input.game_id,
         card_id: scorecard.card_id,
       }, context.abortSignal);
+      attemptedArtifactCreate = true;
       const artifact = await this.artifactStore.create({
         runId,
         startInput: input,
@@ -186,7 +192,12 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
         claim_mode: ARC_AGI3_CLAIM_MODE,
       }, `Started ARC-AGI-3 online run ${runId} for ${input.game_id}.`, startTime, [this.artifactStore.runPath(runId)]);
     } catch (err) {
-      await this.artifactStore.recordFailure(runId, formatError(err));
+      if (client && openedCardId) {
+        await client.closeScorecard(openedCardId).catch(() => undefined);
+      }
+      if (attemptedArtifactCreate && await this.artifactStore.exists(runId)) {
+        await this.artifactStore.recordFailure(runId, formatError(err));
+      }
       return this.fail(formatError(err), startTime);
     }
   }

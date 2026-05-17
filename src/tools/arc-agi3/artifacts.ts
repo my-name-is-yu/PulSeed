@@ -36,6 +36,21 @@ export class ArcAgi3ArtifactStore {
     return path.join(this.runDir(runId), "scorecard.json");
   }
 
+  async exists(runId: string): Promise<boolean> {
+    try {
+      await fs.access(this.runDir(runId));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async assertRunIdAvailable(runId: string): Promise<void> {
+    if (await this.exists(runId)) {
+      throw new Error(`ARC-AGI-3 run_id already exists: ${runId}`);
+    }
+  }
+
   async create(input: {
     runId: string;
     startInput: ArcAgi3StartInput;
@@ -44,6 +59,7 @@ export class ArcAgi3ArtifactStore {
     snapshot: ArcAgi3Snapshot;
     pulseedCommit: string | null;
   }): Promise<ArcAgi3RunArtifact> {
+    await this.assertRunIdAvailable(input.runId);
     const now = new Date().toISOString();
     const resetEntry = ArcAgi3ActionLogEntrySchema.parse({
       at: now,

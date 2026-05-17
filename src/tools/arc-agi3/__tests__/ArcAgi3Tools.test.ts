@@ -306,6 +306,92 @@ describe("ARC-AGI-3 tools", () => {
   it("does not require ARC API credentials while merely registering ARC tools", () => {
     expect(() => createArcAgi3Tools()).not.toThrow();
   });
+
+  it("closes an opened scorecard when start fails before artifact creation", async () => {
+    const calls: Array<{ method: string; input?: unknown }> = [];
+    const client: ArcAgi3RestClient = {
+      async listGames() {
+        calls.push({ method: "listGames" });
+        return [];
+      },
+      async openScorecard(input) {
+        calls.push({ method: "openScorecard", input });
+        return { card_id: "card-reset-fails" };
+      },
+      async reset(input) {
+        calls.push({ method: "reset", input });
+        throw new Error("reset failed");
+      },
+      async action(input) {
+        calls.push({ method: "action", input });
+        return baseSnapshot;
+      },
+      async retrieveScorecard(cardId) {
+        calls.push({ method: "retrieveScorecard", input: { cardId } });
+        return { card_id: cardId };
+      },
+      async retrieveScorecardForGame(cardId, gameId) {
+        calls.push({ method: "retrieveScorecardForGame", input: { cardId, gameId } });
+        return { card_id: cardId };
+      },
+      async closeScorecard(cardId) {
+        calls.push({ method: "closeScorecard", input: { cardId } });
+        return { card_id: cardId };
+      },
+    };
+    const result = await new ArcAgi3StartTool({
+      client,
+      artifactStore,
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli" as const,
+      }),
+    }).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-reset-fails",
+    }, makeContext());
+
+    expect(result.success).toBe(false);
+    expect(calls.map((call) => call.method)).toEqual(["openScorecard", "reset", "closeScorecard"]);
+    expect(await artifactStore.exists("run-reset-fails")).toBe(false);
+  });
+
+  it("rejects duplicate run ids without mixing action logs or mutating prior artifacts", async () => {
+    const firstClient = makeMockClient();
+    const deps = {
+      client: firstClient,
+      artifactStore,
+      pulseedCommit: "commit-1",
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli" as const,
+      }),
+    };
+    const first = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-duplicate",
+    }, makeContext());
+    expect(first.success).toBe(true);
+
+    const secondClient = makeMockClient();
+    const second = await new ArcAgi3StartTool({
+      ...deps,
+      client: secondClient,
+    }).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-duplicate",
+    }, makeContext());
+
+    expect(second.success).toBe(false);
+    expect(second.summary).toContain("already exists");
+    expect(secondClient.calls).toEqual([]);
+    const artifact = JSON.parse(fs.readFileSync(artifactStore.runPath("run-duplicate"), "utf8"));
+    expect(artifact.failure_reason).toBeNull();
+    expect(artifact.submitted_action_log.map((entry: { action: string }) => entry.action)).toEqual(["RESET"]);
+    expect(fs.readFileSync(path.join(tmpDir, "runs", "run-duplicate", "actions.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
+  });
 });
 
 describe("ArcAgi3HttpClient", () => {
