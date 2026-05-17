@@ -165,6 +165,27 @@ function readProviderConfigTextSync(configPath: string): string {
   });
 }
 
+function inspectProviderConfigStoredApiKey(
+  configPath: string,
+  displayPath: string,
+): { status: "ok"; hasStoredApiKey: boolean } | { status: "warn"; detail: string } {
+  try {
+    const content = readProviderConfigTextSync(configPath);
+    const parsed = JSON.parse(content) as unknown;
+    const hasStoredApiKey =
+      parsed !== null &&
+      typeof parsed === "object" &&
+      typeof (parsed as Record<string, unknown>)["api_key"] === "string" &&
+      ((parsed as Record<string, string>)["api_key"] ?? "").length > 0;
+    return { status: "ok", hasStoredApiKey };
+  } catch (err) {
+    const detail = isTextFileSizeLimitError(err)
+      ? `${displayPath} exceeds ${DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES} bytes`
+      : `${displayPath} could not be parsed`;
+    return { status: "warn", detail };
+  }
+}
+
 function formatProviderConfigParseFailure(displayPath: string, err: unknown): string {
   if (isTextFileSizeLimitError(err)) {
     return `${displayPath} exceeds ${DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES} bytes`;
@@ -361,6 +382,30 @@ export function checkStateDirectoryPermissions(baseDir?: string): CheckResult {
   }
 }
 
+export function repairStateDirectoryPermissions(baseDir?: string): CheckResult {
+  const dir = baseDir ?? getPulseedDirPath();
+  const displayDir = dir.replace(process.env["HOME"] ?? "", "~");
+
+  if (!fs.existsSync(dir)) {
+    return { name: "State permissions repair", status: "warn", detail: `${displayDir} not found` };
+  }
+
+  try {
+    const mode = fs.statSync(dir).mode;
+    if (!isGroupOrWorldAccessible(mode)) {
+      return { name: "State permissions repair", status: "pass", detail: `${displayDir} already ${formatOctalMode(mode)}` };
+    }
+    fs.chmodSync(dir, 0o700);
+    return { name: "State permissions repair", status: "pass", detail: `${displayDir} set to 0700` };
+  } catch (err) {
+    return {
+      name: "State permissions repair",
+      status: "warn",
+      detail: `${displayDir} could not be repaired${err instanceof Error ? `: ${err.message}` : ""}`,
+    };
+  }
+}
+
 export function checkControlDatabase(baseDir?: string): CheckResult {
   const inspection = inspectControlDatabase({ baseDir });
   const home = process.env["HOME"] ?? "";
@@ -414,23 +459,12 @@ export function checkProviderConfigPermissions(baseDir?: string): CheckResult {
     return { name: "Provider permissions", status: "warn", detail: `${displayPath} not found` };
   }
 
-  let hasStoredApiKey = false;
-  try {
-    const content = readProviderConfigTextSync(configPath);
-    const parsed = JSON.parse(content) as unknown;
-    hasStoredApiKey =
-      parsed !== null &&
-      typeof parsed === "object" &&
-      typeof (parsed as Record<string, unknown>)["api_key"] === "string" &&
-      ((parsed as Record<string, string>)["api_key"] ?? "").length > 0;
-  } catch (err) {
-    const detail = isTextFileSizeLimitError(err)
-      ? `${displayPath} exceeds ${DOCTOR_PROVIDER_CONFIG_TEXT_MAX_BYTES} bytes`
-      : `${displayPath} could not be parsed`;
-    return { name: "Provider permissions", status: "warn", detail };
+  const apiKeyInspection = inspectProviderConfigStoredApiKey(configPath, displayPath);
+  if (apiKeyInspection.status === "warn") {
+    return { name: "Provider permissions", status: "warn", detail: apiKeyInspection.detail };
   }
 
-  if (!hasStoredApiKey) {
+  if (!apiKeyInspection.hasStoredApiKey) {
     return { name: "Provider permissions", status: "pass", detail: "no api_key stored in provider.json" };
   }
 
@@ -446,6 +480,39 @@ export function checkProviderConfigPermissions(baseDir?: string): CheckResult {
     return { name: "Provider permissions", status: "pass", detail: `${displayPath} is ${formatOctalMode(mode)}` };
   } catch {
     return { name: "Provider permissions", status: "warn", detail: `${displayPath} could not be inspected` };
+  }
+}
+
+export function repairProviderConfigPermissions(baseDir?: string): CheckResult {
+  const dir = baseDir ?? getPulseedDirPath();
+  const configPath = path.join(dir, "provider.json");
+  const displayPath = configPath.replace(process.env["HOME"] ?? "", "~");
+
+  if (!fs.existsSync(configPath)) {
+    return { name: "Provider permissions repair", status: "warn", detail: `${displayPath} not found` };
+  }
+
+  const apiKeyInspection = inspectProviderConfigStoredApiKey(configPath, displayPath);
+  if (apiKeyInspection.status === "warn") {
+    return { name: "Provider permissions repair", status: "warn", detail: apiKeyInspection.detail };
+  }
+  if (!apiKeyInspection.hasStoredApiKey) {
+    return { name: "Provider permissions repair", status: "pass", detail: "no api_key stored in provider.json" };
+  }
+
+  try {
+    const mode = fs.statSync(configPath).mode;
+    if (!isGroupOrWorldAccessible(mode)) {
+      return { name: "Provider permissions repair", status: "pass", detail: `${displayPath} already ${formatOctalMode(mode)}` };
+    }
+    fs.chmodSync(configPath, 0o600);
+    return { name: "Provider permissions repair", status: "pass", detail: `${displayPath} set to 0600` };
+  } catch (err) {
+    return {
+      name: "Provider permissions repair",
+      status: "warn",
+      detail: `${displayPath} could not be repaired${err instanceof Error ? `: ${err.message}` : ""}`,
+    };
   }
 }
 
@@ -744,6 +811,15 @@ export async function cmdDoctor(_args: string[]): Promise<number> {
   const repair = _args.includes("--repair");
 
   if (repair) {
+    const permissionRepairResults = [
+      repairStateDirectoryPermissions(baseDir),
+      repairProviderConfigPermissions(baseDir),
+    ];
+    for (const result of permissionRepairResults) {
+      const level = result.status === "warn" ? "warn" : "info";
+      console.log(`[repair][${level}] ${result.name}: ${result.detail}`);
+    }
+
     const runtimeRoot = await resolveRepairRuntimeRoot(baseDir);
     const runtimePaths = createRuntimeStorePaths(runtimeRoot);
     const repairLogger: RuntimeMaintenanceLogger = {
