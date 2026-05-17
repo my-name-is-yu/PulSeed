@@ -138,7 +138,8 @@ import { ToolExecutor } from "../../tools/executor.js";
 import { ToolPermissionManager } from "../../tools/permission.js";
 import { ConcurrencyController } from "../../tools/concurrency.js";
 import {
-  recordChatTurnCommitmentAttention,
+  persistPreparedChatTurnCommitmentAttention,
+  prepareChatTurnCommitmentAttention,
   type ChatCommitmentAttentionResult,
 } from "./chat-commitment-attention.js";
 
@@ -1052,7 +1053,7 @@ export class ChatRunner {
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
       try {
         if (this.commitmentCandidateClassifier) {
-          commitmentAttention = await this.recordShadowCommitmentAttention(baseTurnContext, eventContext);
+          commitmentAttention = await this.prepareShadowCommitmentAttention(baseTurnContext, eventContext);
         }
         shadowCognition = await this.evaluateShadowCognition(baseTurnContext, history, commitmentAttention);
       } catch (err) {
@@ -1096,6 +1097,9 @@ export class ChatRunner {
     if (shadowCognition) {
       try {
         await this.recordShadowCognition(shadowCognition, history);
+        if (commitmentAttention) {
+          commitmentAttention = await this.persistShadowCommitmentAttention(turnContext, commitmentAttention, eventContext);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const elapsed_ms = Date.now() - start;
@@ -1221,12 +1225,12 @@ export class ChatRunner {
     }
   }
 
-  private async recordShadowCommitmentAttention(
+  private async prepareShadowCommitmentAttention(
     turnContext: ChatTurnContext,
     eventContext: ChatEventContext,
   ): Promise<ChatCommitmentAttentionResult | null> {
     try {
-      const result = await recordChatTurnCommitmentAttention({
+      const result = await prepareChatTurnCommitmentAttention({
         turnContext,
         classifier: this.commitmentCandidateClassifier,
         store: this.attentionStateStore,
@@ -1248,6 +1252,42 @@ export class ChatRunner {
         type: "activity",
         kind: "checkpoint",
         message: `commitment attention shadow write failed: ${message}`,
+        sourceId: "attention.commitment.shadow.error",
+        transient: true,
+        ...this.eventBridge.eventBase(eventContext),
+      });
+      return null;
+    }
+  }
+
+  private async persistShadowCommitmentAttention(
+    turnContext: ChatTurnContext,
+    commitmentAttention: ChatCommitmentAttentionResult,
+    eventContext: ChatEventContext,
+  ): Promise<ChatCommitmentAttentionResult | null> {
+    try {
+      const result = await persistPreparedChatTurnCommitmentAttention({
+        prepared: commitmentAttention,
+        turnContext,
+        store: this.attentionStateStore,
+      });
+      if (result.diagnostic) {
+        this.eventBridge.emitEvent({
+          type: "activity",
+          kind: "checkpoint",
+          message: result.diagnostic,
+          sourceId: result.candidate?.commitment_id ?? "attention.commitment.shadow",
+          transient: true,
+          ...this.eventBridge.eventBase(eventContext),
+        });
+      }
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.eventBridge.emitEvent({
+        type: "activity",
+        kind: "checkpoint",
+        message: `commitment attention shadow persistence failed: ${message}`,
         sourceId: "attention.commitment.shadow.error",
         transient: true,
         ...this.eventBridge.eventBase(eventContext),
@@ -1326,7 +1366,8 @@ export class ChatRunner {
         ?? turnContext.hostOnly.runtime.fallbackReplyTarget
         ?? turnContext.modelVisible.runtime.replyTarget,
     );
-    const commitmentAttentionInput = commitmentAttention?.attentionInputIntake?.records[0]?.input
+    const commitmentAttentionInput = commitmentAttention?.attentionInput
+      ?? commitmentAttention?.attentionInputIntake?.records[0]?.input
       ?? commitmentAttention?.attentionInputIntake?.accepted[0]
       ?? null;
     const commitmentRef = commitmentAttention?.candidate
@@ -1408,7 +1449,7 @@ export class ChatRunner {
                 kind: "attention_state_store",
                 ref: "commitment_candidates",
               },
-              handoff_state: commitmentAttention?.attentionInputIntake
+              handoff_state: commitmentAttention?.attentionInputIntake || commitmentAttention?.attentionInput
                 ? "candidate_saved"
                 : commitmentRef
                   ? "control_applied"

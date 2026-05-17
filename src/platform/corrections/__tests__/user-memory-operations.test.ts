@@ -348,6 +348,49 @@ describe("user memory correction operations", () => {
     ]));
   });
 
+  it("does not project replacement memory as stale when correcting with a replacement", async () => {
+    await new KnowledgeMemoryStateStore(tmpDir).saveAgentMemoryStore({
+      entries: [memoryEntry()],
+      corrections: [],
+      last_consolidated_at: null,
+    });
+    const traces: Array<{
+      situation_frame?: {
+        cognition_situation?: {
+          stale_target_refs?: Array<{ kind: string; ref: string }>;
+          current_target_refs?: Array<{ kind: string; ref: string }>;
+        };
+      };
+    }> = [];
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function (_trace) {
+      traces.push(_trace);
+      return {} as never;
+    });
+
+    const result = await runUserMemoryOperation(stateManager, {
+      operation: "correct",
+      targetRef: { kind: "agent_memory", id: "memory-old" },
+      reason: "User corrected their editor preference.",
+      replacementValue: "The user prefers VS Code.",
+      replacementKey: "favorite-editor-current",
+      goalId: "goal-1",
+      now: "2026-05-02T01:00:00.000Z",
+    });
+
+    const replacementRef = {
+      kind: "memory",
+      ref: result.replacement!.ref.id,
+    };
+    expect(traces).toHaveLength(1);
+    expect(traces[0]?.situation_frame?.cognition_situation?.stale_target_refs).toEqual([
+      { kind: "memory", ref: "memory-old" },
+    ]);
+    expect(traces[0]?.situation_frame?.cognition_situation?.stale_target_refs).not.toContainEqual(replacementRef);
+    expect(traces[0]?.situation_frame?.cognition_situation?.current_target_refs).toEqual(expect.arrayContaining([
+      replacementRef,
+    ]));
+  });
+
   it("replays the same runtime memory correction input without duplicate ledger effects", async () => {
     const input = {
       operation: "forget" as const,

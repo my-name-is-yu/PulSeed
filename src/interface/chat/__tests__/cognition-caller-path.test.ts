@@ -348,11 +348,58 @@ describe("chat caller path cognition integration", () => {
       execute: vi.fn().mockResolvedValue(agentResult()),
     } as unknown as ChatRunnerDeps["chatAgentLoopRunner"];
     const recordTrace = vi.fn().mockRejectedValue(new Error("trace store unavailable"));
+    const classifier = {
+      classify: vi.fn(async () => ({
+        outcome: "candidate" as const,
+        summary: "Check the deployment result tomorrow",
+        target_commitment_id: null,
+        due: {
+          window_start: null,
+          window_end: null,
+          uncertainty: "medium" as const,
+          reason: "The user described a follow-up for tomorrow without an exact time.",
+        },
+        owner: "pulseed" as const,
+        confidence: 0.91,
+        sensitivity: "internal" as const,
+        allowed_memory_use: "attention_only" as const,
+        nudge_policy: "ask_first" as const,
+        watch_vector: ["related_conversation" as const],
+        user_state: {
+          high_load: false,
+          tired: false,
+          overreach_feedback: false,
+        },
+        priority_evidence_overrides: {
+          commitment_relevance: 0.9,
+        },
+        model_or_classifier_version: "test-commitment-classifier",
+        reason: "The user delegated a bounded follow-up.",
+      })),
+    } satisfies NonNullable<ChatRunnerDeps["commitmentCandidateClassifier"]>;
+    const attentionStateStore = {
+      saveCycle: vi.fn(async (input) => {
+        const accepted = [...(input.attentionInputs ?? [])];
+        return {
+          accepted,
+          duplicates: [],
+          records: accepted.map((attentionInput) => ({
+            input: attentionInput,
+            disposition: "accepted" as const,
+          })),
+        };
+      }),
+      saveCommitmentCandidates: vi.fn(async (candidates) => ({ accepted: [...candidates], duplicates: [] })),
+      listCommitmentCandidates: vi.fn(async () => []),
+      applyCommitmentControl: vi.fn(async () => null),
+    } satisfies NonNullable<ChatRunnerDeps["attentionStateStore"]>;
     const runner = new ChatRunner({
       stateManager,
       adapter: { adapterType: "mock", execute: vi.fn() } as ChatRunnerDeps["adapter"],
       chatAgentLoopRunner: agentLoopRunner,
       personalAgentRuntime: { recordTrace },
+      commitmentCandidateClassifier: classifier,
+      attentionStateStore,
     });
 
     const result = await runner.execute("普通の相談です", testHome!, 10_000, {
@@ -363,6 +410,9 @@ describe("chat caller path cognition integration", () => {
     expect(result.output).toContain("durable SituationFrame");
     expect(recordTrace).toHaveBeenCalledOnce();
     expect(agentLoopRunner?.execute).not.toHaveBeenCalled();
+    expect(classifier.classify).toHaveBeenCalledOnce();
+    expect(attentionStateStore.saveCycle).not.toHaveBeenCalled();
+    expect(attentionStateStore.saveCommitmentCandidates).not.toHaveBeenCalled();
     const session = await latestSession(stateManager);
     const cognitionRecords = session?.rolloutJournal?.filter((record) => record.kind === "cognition_audit") ?? [];
     expect(cognitionRecords[0]?.payload).toMatchObject({

@@ -448,6 +448,7 @@ async function evaluateMemoryTruthKernel(input: {
     input.memoryRef,
     ...(input.replacementRef ? [input.replacementRef] : []),
   ];
+  const staleMemoryRefs = [input.memoryRef];
   const cognitionInput: CompanionCognitionInput = {
     cognition_id: cognitionId,
     caller_path: "memory_truth_operation",
@@ -476,7 +477,7 @@ async function evaluateMemoryTruthKernel(input: {
             priority: "unknown",
           }],
           active_intention_refs: [],
-          stale_target_refs: memoryTruthRefs,
+          stale_target_refs: staleMemoryRefs,
         }
       : undefined,
     memory_context_request: {
