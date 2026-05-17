@@ -100,6 +100,7 @@ export async function toolGoalCreate(
       callId: `mcp:pulseed_goal_create:${argsFingerprint}`,
     });
     if (capabilityAdmission.admission.status !== "allowed") {
+      const requiresApproval = capabilityAdmission.admission.status === "requires_approval";
       await recordExplicitCommandDecision({
         baseDir: deps.baseDir,
         personalAgentRuntime: deps.personalAgentRuntime,
@@ -113,8 +114,8 @@ export async function toolGoalCreate(
           effect: "create_goal",
           summary: `Create MCP goal "${args.title}".`,
         },
-        decision: "block",
-        capabilityDecision: "blocked",
+        decision: requiresApproval ? "confirm_required" : "block",
+        capabilityDecision: requiresApproval ? "permission_required" : "blocked",
         decisionReason: capabilityAdmission.admission.reason,
         capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
         currentRefs: [{ kind: "mcp_tool", ref: "pulseed_goal_create" }],
@@ -300,6 +301,7 @@ export async function toolTrigger(
       callId: `mcp:pulseed_trigger:${eventId}`,
     });
     if (capabilityAdmission.admission.status !== "allowed") {
+      const requiresApproval = capabilityAdmission.admission.status === "requires_approval";
       await recordExplicitCommandDecision({
         baseDir: deps.baseDir,
         personalAgentRuntime: deps.personalAgentRuntime,
@@ -314,8 +316,8 @@ export async function toolTrigger(
           effect: "continue_route",
           summary: `Queue MCP trigger "${args.event_type}" from "${args.source}".`,
         },
-        decision: "block",
-        capabilityDecision: "blocked",
+        decision: requiresApproval ? "confirm_required" : "block",
+        capabilityDecision: requiresApproval ? "permission_required" : "blocked",
         decisionReason: capabilityAdmission.admission.reason,
         capabilityRefs: mcpServerCapabilityAdmissionRefs(capabilityAdmission),
         currentRefs: [
@@ -479,7 +481,7 @@ function admitMcpServerToolCapability(input: {
       arguments: input.args,
     },
     context: {
-      preApproved: true,
+      preApproved: input.sideEffectProfile === "none" || input.sideEffectProfile === "read",
       authorityRefs: descriptor.authority_requirements.required_refs,
       callId: input.callId,
     },
