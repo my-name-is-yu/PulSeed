@@ -86,6 +86,7 @@ interface RunContext {
   replaySideEffectChecks: Array<(context: RunContext) => Promise<JsonObject>>;
   metrics: EvalMetricAccumulator;
   memoryByKey: Map<string, string>;
+  correctedMemoryIds: Set<string>;
   sensitiveMemoryValues: string[];
 }
 
@@ -116,6 +117,7 @@ export async function runEvalScenario(scenario: EvalScenario): Promise<EvalScena
       replaySideEffectChecks: [],
       metrics: createMetricAccumulator(),
       memoryByKey: new Map(),
+      correctedMemoryIds: new Set(),
       sensitiveMemoryValues: [],
     };
 
@@ -264,6 +266,7 @@ async function runMemoryCorrection(context: RunContext, step: Extract<EvalStep, 
   const replacementId = result.replacement?.ref.id;
   if (!replacementId) throw new Error(`Correction ${step.replacement_key} did not create a replacement memory.`);
   context.memoryByKey.set(step.replacement_key, replacementId);
+  context.correctedMemoryIds.add(replacementId);
   context.metrics.correctedMemoryAttempts += 1;
   context.operatorProjections.push({
     kind: "memory_correction",
@@ -282,7 +285,7 @@ async function runUserTurn(context: RunContext, step: Extract<EvalStep, { kind: 
     if (hit.length > 0) {
       context.metrics.memoryRetrievalHits += 1;
       recalled.push({ key: ref, memory_id: hit[0]!.id });
-      if (ref.includes("current")) context.metrics.correctedMemoryReuses += 1;
+      if (context.correctedMemoryIds.has(hit[0]!.id)) context.metrics.correctedMemoryReuses += 1;
     }
   }
 
