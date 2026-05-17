@@ -260,6 +260,37 @@ verification execution materialize adapter side effects only through
 `run-adapter`; blocked, missing, or failed tool admission returns a
 non-executed result rather than falling back to direct adapter execution.
 
+## Capability Plane
+
+`CapabilityDescriptor` is the typed contract for executable capability
+admission. Descriptors include capability ID, provider kind, operation kind,
+authority requirements, approval fingerprint inputs, sandbox requirement,
+credential scope, cost/risk class, side-effect profile, rollback plan,
+verification probe, readiness state, normal-surface affordance, operator
+diagnostics, event/replay refs, and RuntimeGraph refs.
+
+The Capability Plane currently covers builtin ToolExecutor tools, file tools,
+run-adapter/direct-adapter boundaries, plugin proposals, foreign plugin import
+evidence, MCP tool mappings, schedule actions, gateway/channel sends, and
+runtime-control actions. ToolExecutor resolves a descriptor before `tool.call()`
+and blocks missing, disabled, proposal, degraded, or verification-required
+capabilities before side effects. Approval fingerprints bind descriptor facts,
+input, target, and state epoch; a stale or changed approval cannot resume the
+mutation path.
+
+Plugin import and MCP tool import are non-executable by default. They become
+runtime candidates only after descriptor mapping, operator review, explicit
+enablement, and operation-specific verification. Direct adapter execution in
+production is guarded: only the `run-adapter` ToolExecutor implementation,
+provider-adapter boundaries, descriptor internals, and tests are allowed to call
+adapter execution directly.
+
+Capability decisions append personal-agent trace refs that flow into Runtime
+Event Log and RuntimeGraph projections. Operator/debug surfaces may inspect the
+full descriptor with `pulseed runtime capability explain <capability-id>`.
+Normal surfaces receive only redacted affordances and must not expose credential
+scope, approval fingerprint inputs, raw catalog visibility, or policy internals.
+
 ## Interaction Authority Kernel
 
 `ExecutionAuthorityDecision` is the common contract for execution-adjacent
