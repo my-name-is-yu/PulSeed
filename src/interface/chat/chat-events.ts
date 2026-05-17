@@ -8,6 +8,7 @@ import type { OperationProgressItem } from "./operation-progress.js";
 import type { SeedyTurnPresence } from "./seedy-turn-presence.js";
 import type { UserInput } from "./user-input.js";
 import type { TurnOperation, TurnSteerOperation } from "./turn-protocol.js";
+import type { SurfaceProjection } from "../../runtime/surface-projection-protocol.js";
 
 export type { ChatEventContext } from "./turn-state.js";
 
@@ -39,6 +40,7 @@ export interface AssistantFinalEvent extends ChatEventBase {
   type: "assistant_final";
   text: string;
   persisted: boolean;
+  surface_projection?: SurfaceProjection;
 }
 
 export type ActivityKind = "lifecycle" | "commentary" | "checkpoint" | "diff" | "tool" | "plugin" | "skill";

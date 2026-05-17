@@ -345,15 +345,23 @@ function uniqueCognitionEventRefs(refs: readonly CognitionEventRef[]): Cognition
 }
 
 export class FileCognitiveReplayIndexStore implements CognitiveReplayIndexStore {
-  constructor(private readonly baseDir: string, private readonly relativePath = "runtime/cognitive-replay-index.json") {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly relativePath = "runtime/cognitive-replay-index.json",
+    private readonly options: { lockTimeoutMs?: number } = {},
+  ) {}
 
   async upsert(entry: CognitiveReplayIndexEntry): Promise<CognitiveReplayIndexEntry> {
     const parsed = CognitiveReplayIndexEntrySchema.parse(entry);
-    await withJsonFileMutationLock(this.path(), async () => {
-      const entries = await this.list();
-      const next = [...entries.filter((existing) => existing.index_entry_id !== parsed.index_entry_id), parsed];
-      await writeJsonFileAtomic(this.path(), next);
-    });
+    await withJsonFileMutationLock(
+      this.path(),
+      async () => {
+        const entries = await this.list();
+        const next = [...entries.filter((existing) => existing.index_entry_id !== parsed.index_entry_id), parsed];
+        await writeJsonFileAtomic(this.path(), next);
+      },
+      this.options.lockTimeoutMs !== undefined ? { timeoutMs: this.options.lockTimeoutMs } : {},
+    );
     return parsed;
   }
 

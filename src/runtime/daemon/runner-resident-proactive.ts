@@ -36,7 +36,18 @@ import { projectSurfaceDelivery, renderSurfaceDeliveryProjection } from "../atte
 import { attentionScopeKey } from "../attention/attention-scope.js";
 import { stableId } from "../attention/attention-refs.js";
 import {
+  createSurfaceActionBinding,
+  createSurfaceProjection,
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  type SurfaceAction,
+  type SurfaceActionBinding,
+  type SurfaceProjection,
+} from "../surface-projection-protocol.js";
+import {
   OutboundConversationMessageSchema,
+  type OutboundConversationDeliveryReceipt,
+  type OutboundConversationMessage,
   type OutboundConversationSurface,
 } from "../gateway/outbound-conversation.js";
 import {
@@ -47,6 +58,7 @@ import {
   PeerInitiativeStore,
   PeerInitiativeMessageSchema,
   type PeerInitiativeCandidate,
+  type PeerInitiativeMessage,
   type PeerInitiativeSelectedState,
   type PeerInitiativeSelection,
 } from "../peer-initiative/index.js";
@@ -100,6 +112,8 @@ import {
   type InterventionDecisionKind,
   type RuntimeGraphRef,
 } from "../personal-agent/index.js";
+
+const PEER_SURFACE_ACTION_BINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type ResidentPreemptiveTargetValidation =
   | { status: "not_preemptive" }
@@ -1125,6 +1139,181 @@ function createPeerInitiativeVisibilityPolicy(input: {
   });
 }
 
+function projectPeerDeliverySurface(input: {
+  candidate: PeerInitiativeCandidate;
+  peerMessage: PeerInitiativeMessage;
+  targetBindingRef: string;
+  channelPolicyRef: string;
+  actionButtons: PeerInitiativeMessage["action_buttons"];
+  deliveryId: string;
+  now: string;
+}): SurfaceProjection {
+  const replayKey = [
+    "peer-delivery",
+    input.candidate.idempotency_key,
+    input.peerMessage.surface,
+    input.targetBindingRef,
+  ].join(":");
+  const projectionId = `normal-surface:peer-initiative:${input.candidate.candidate_id}:${input.peerMessage.surface}`;
+  const actionBindings: SurfaceActionBinding[] = input.actionButtons.map((action) =>
+    createSurfaceActionBinding({
+      action_kind: action.action,
+      surface: "telegram_peer_delivery",
+      surface_instance_ref: input.targetBindingRef,
+      target: {
+        kind: "peer_initiative_candidate",
+        ref: input.candidate.candidate_id,
+        conversation_id: input.targetBindingRef,
+        message_id: input.peerMessage.message_id,
+        surface_instance_ref: input.targetBindingRef,
+      },
+      source_projection_id: projectionId,
+      source_event_refs: [
+        normalSourceEventRef({
+          kind: "peer_initiative_candidate",
+          ref: input.candidate.candidate_id,
+          event_type: "peer_delivery",
+          replay_key: replayKey,
+        }),
+      ],
+      runtime_graph_refs: [
+        normalRuntimeGraphRef({
+          kind: "peer_delivery",
+          ref: input.deliveryId,
+          role: "binding",
+        }),
+      ],
+      operation_ref: action.action,
+      replay_key: peerSurfaceActionBindingReplayKey(replayKey, action.action),
+      redaction_class: "normal_safe",
+      created_at: input.now,
+      expires_at: peerSurfaceActionBindingExpiresAt(input.now),
+    })
+  );
+  const actions: SurfaceAction[] = input.actionButtons.map((action, index) => ({
+    action_id: `surface-action:${input.peerMessage.message_id}:${action.action}`,
+    kind: action.action,
+    label: peerSurfaceActionLabel(action.action),
+    style: action.action === "approve_external_action" ? "primary" : "secondary",
+    binding_id: actionBindings[index]?.binding_id,
+    disabled: false,
+  }));
+  return createSurfaceProjection({
+    projection_id: projectionId,
+    surface: "telegram_peer_delivery",
+    view: "normal",
+    purpose: "Telegram peer initiative delivery projection",
+    redaction_class: "normal_safe",
+    projected_at: input.now,
+    replay_key: replayKey,
+    source_event_refs: [
+      normalSourceEventRef({
+        kind: "peer_initiative_candidate",
+        ref: input.candidate.candidate_id,
+        event_type: "peer_delivery",
+        replay_key: replayKey,
+      }),
+    ],
+    runtime_graph_refs: [
+      normalRuntimeGraphRef({
+        kind: "peer_delivery",
+        ref: input.deliveryId,
+        role: "projection",
+      }),
+      normalRuntimeGraphRef({
+        kind: "target_binding",
+        ref: input.targetBindingRef,
+        role: "target",
+      }),
+      normalRuntimeGraphRef({
+        kind: "channel_policy",
+        ref: input.channelPolicyRef,
+        role: "decision",
+      }),
+    ],
+    panels: [{
+      panel_id: `peer-message:${input.candidate.candidate_id}`,
+      body: input.peerMessage.text,
+    }],
+    actions,
+    action_bindings: actionBindings,
+    delivery: {
+      delivery_id: input.deliveryId,
+      surface: "telegram_peer_delivery",
+      mode: "transport",
+      text: input.peerMessage.text,
+      should_render: true,
+      action_binding_ids: actionBindings.map((binding) => binding.binding_id),
+    },
+  });
+}
+
+function peerSurfaceActionBindingReplayKey(replayKey: string, actionKind: string): string {
+  return `${replayKey}:${actionKind}`;
+}
+
+function peerSurfaceActionBindingExpiresAt(now: string): string {
+  const parsedNow = Date.parse(now);
+  const base = Number.isFinite(parsedNow) ? parsedNow : Date.now();
+  return new Date(base + PEER_SURFACE_ACTION_BINDING_TTL_MS).toISOString();
+}
+
+function attachPeerDeliveryReceiptToSurfaceBindings(
+  message: OutboundConversationMessage,
+  receipt: OutboundConversationDeliveryReceipt,
+): OutboundConversationMessage {
+  if (!receipt.transport_message_ref || !message.action_bindings || message.action_bindings.length === 0) {
+    return message;
+  }
+  const actionBindings: SurfaceActionBinding[] = message.action_bindings.map((binding) => ({
+    ...binding,
+    target: {
+      ...binding.target,
+      transport_message_ref: receipt.transport_message_ref,
+    },
+  }));
+  const surfaceProjection: SurfaceProjection | undefined = message.surface_projection
+    ? {
+      ...message.surface_projection,
+      action_bindings: actionBindings,
+      ...(message.surface_projection.delivery
+        ? {
+          delivery: {
+            ...message.surface_projection.delivery,
+            transport_ref: receipt.transport_message_ref,
+          },
+        }
+        : {}),
+    }
+    : undefined;
+  return OutboundConversationMessageSchema.parse({
+    ...message,
+    action_bindings: actionBindings,
+    ...(surfaceProjection ? { surface_projection: surfaceProjection } : {}),
+  });
+}
+
+function peerSurfaceActionLabel(action: PeerInitiativeMessage["action_buttons"][number]["action"]): string {
+  switch (action) {
+    case "show_prepared":
+      return "Show prepared note";
+    case "use_once":
+      return "Use once";
+    case "approve_external_action":
+      return "Approve external action";
+    case "more_like_this":
+      return "More like this";
+    case "less_like_this":
+      return "Less like this";
+    case "not_now":
+      return "Not now";
+    case "wrong_read":
+      return "Wrong read";
+    case "mute_this_kind":
+      return "Mute this kind";
+  }
+}
+
 async function deliverPeerInitiativeMessage(input: {
   context: Pick<DaemonRunnerResidentContext, "gateway" | "logger">;
   store: PeerInitiativeStore;
@@ -1218,6 +1407,15 @@ async function deliverPeerInitiativeMessage(input: {
     action_buttons: actionButtons,
     thread_behavior: "new_lightweight_thread",
   });
+  const surfaceProjection = projectPeerDeliverySurface({
+    candidate: input.candidate,
+    peerMessage,
+    targetBindingRef: target.target_binding_ref,
+    channelPolicyRef: target.channel_policy_ref,
+    actionButtons,
+    deliveryId,
+    now: input.now,
+  });
   const outbound = OutboundConversationMessageSchema.parse({
     message_id: peerMessage.message_id,
     surface,
@@ -1241,6 +1439,8 @@ async function deliverPeerInitiativeMessage(input: {
         || action.action === "wrong_read"
         || action.action === "mute_this_kind"
     ),
+    action_bindings: surfaceProjection.action_bindings,
+    surface_projection: surfaceProjection,
   });
   const claim = await input.store.claimDelivery({
     delivery_id: deliveryId,
@@ -1296,8 +1496,9 @@ async function deliverPeerInitiativeMessage(input: {
       };
     }
     const receipt = await port.sendOutboundConversationMessage(outbound);
+    const deliveredOutbound = attachPeerDeliveryReceiptToSurfaceBindings(outbound, receipt);
     const deliveredAuthorityDecision = await authorityStore.recordDecision(projectOutboundConversationAuthority({
-      message: outbound,
+      message: deliveredOutbound,
       currentTarget: target,
       receipt,
       decidedAt: receipt.delivered_at,
@@ -1318,7 +1519,7 @@ async function deliverPeerInitiativeMessage(input: {
       target_binding_ref: receipt.target_binding_ref,
       expression_decision_ref: input.expressionDecisionId,
       visibility_policy_ref: input.visibilityPolicyId,
-      outbound_message: outbound,
+      outbound_message: deliveredOutbound,
       authority_decision_ref: deliveredAuthorityDecision.decision_id,
       authority_decision: deliveredAuthorityDecision,
     });

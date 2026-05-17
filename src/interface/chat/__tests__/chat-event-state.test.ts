@@ -4,6 +4,7 @@ import { ChatRunnerEventBridge } from "../chat-runner-event-bridge.js";
 import type { ChatEvent } from "../chat-events.js";
 import { classifyFailureRecovery } from "../failure-recovery.js";
 import type { AgentLoopEvent } from "../../../orchestrator/execution/agent-loop/agent-loop-events.js";
+import { projectTextSurface } from "../../../runtime/surface-projection-protocol.js";
 
 describe("applyChatEventToMessages", () => {
   it("keeps activity as one updatable row per turn", () => {
@@ -751,6 +752,40 @@ describe("applyChatEventToMessages", () => {
       "Observed apply_patch (denied): TOOL NOT EXECUTED (approval_denied): Write access was denied.",
     ]);
     expect(messages[0]!.text).not.toContain("\"observation\"");
+  });
+
+  it("carries surface projections on ephemeral assistant finals", async () => {
+    const events: ChatEvent[] = [];
+    const bridge = new ChatRunnerEventBridge(() => (event) => {
+      events.push(event);
+    });
+    const context = { runId: "run-ephemeral", turnId: "turn-ephemeral" };
+    const projection = projectTextSurface({
+      surface: "chat",
+      text: "Interrupt requested.",
+      purpose: "chat/active-turn steer assistant output",
+      projectedAt: "2026-05-17T00:00:00.000Z",
+      replayKey: "chat-ephemeral:run-ephemeral:turn-ephemeral",
+    });
+
+    const result = bridge.emitEphemeralAssistantResult(
+      "stop",
+      "Interrupt requested.",
+      true,
+      Date.now(),
+      {
+        context,
+        surfaceProjection: projection,
+      },
+    );
+
+    expect(result.surface_projection).toBe(projection);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const finalEvent = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+      event.type === "assistant_final"
+    );
+    expect(finalEvent?.surface_projection).toStrictEqual(projection);
+    expect(finalEvent?.surface_projection).not.toHaveProperty("operator_debug_view");
   });
 
   it("emits plan_update bridge events with typed planning metadata", async () => {

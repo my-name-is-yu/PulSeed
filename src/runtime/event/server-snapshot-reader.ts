@@ -23,6 +23,10 @@ import {
   RuntimeOperatorHandoffStore,
   type RuntimeOperatorHandoffRecord,
 } from "../store/operator-handoff-store.js";
+import {
+  projectOperatorHandoffSurfaceEvent,
+  type OperatorHandoffSurfaceEvent,
+} from "../operator-handoff-surface.js";
 
 const JsonObjectSchema = z.object({}).catchall(z.unknown());
 
@@ -40,7 +44,7 @@ export interface EventServerSnapshotData {
   guardrails: Record<string, unknown> | null;
   runtime_automation: RuntimeAutomationSnapshot;
   runtime_sessions: RuntimeSessionRegistrySnapshot | null;
-  operator_handoffs: RuntimeOperatorHandoffRecord[];
+  operator_handoffs: OperatorHandoffSurfaceEvent[];
   resident_runtime_interface: ResidentRuntimeInterfaceSnapshot;
 }
 
@@ -87,7 +91,7 @@ export class EventServerSnapshotReader {
       guardrails,
       runtime_automation: runtimeAutomation,
       runtime_sessions: runtimeSessions,
-      operator_handoffs: operatorHandoffs,
+      operator_handoffs: operatorHandoffs.map(projectOperatorHandoffSurfaceEvent),
       resident_runtime_interface: residentRuntimeInterface,
     };
   }

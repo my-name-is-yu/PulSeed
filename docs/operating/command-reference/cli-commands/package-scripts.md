@@ -56,6 +56,10 @@ ToolExecutor non-execution, replay dedupe, and normal-surface redaction. Set
 `PULSEED_PRODUCT_GAUNTLET_DEBUG=1` to write local failure artifacts under
 `tmp/eval-failures/<scenario-id>/`.
 
+`npm run check:public-contracts` expects built `dist/` artifacts to exist. It
+checks package exports, package contents, the Surface Projection Protocol
+normal-surface boundary guard, and companion cognition boundaries.
+
 ## Runtime And Smoke Checks
 
 ```bash

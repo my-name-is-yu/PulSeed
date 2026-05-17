@@ -107,6 +107,10 @@ feedback calibration exist for other surfaces.
 The event-log commands are operator/debug surfaces. They expose runtime event
 IDs, RuntimeGraph lineage, idempotency keys, authority refs, and projection
 rebuild evidence that normal chat/status surfaces intentionally redact.
+`runtime sessions --json` and `runtime runs --json` include a
+`surface_projection` field that follows the shared
+[Surface Projection Protocol](../operator-systems/surface-projection-protocol.md) contract for
+status/report projection metadata.
 
 ## Schedules
 

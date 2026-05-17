@@ -545,7 +545,14 @@ describe("CoreLoop", async () => {
             },
           },
         });
-        await approvalBroker.resolveApproval(result.waitApprovalId!, false);
+        const rejectBindingId = approvalBroker.getPendingApprovalEvents()
+          .find((approval) => approval.requestId === result.waitApprovalId)
+          ?.surface_projection?.actions.find((action) => action.kind === "reject")
+          ?.binding_id;
+        expect(rejectBindingId).toBeDefined();
+        await approvalBroker.resolveApproval(result.waitApprovalId!, false, "test", {
+          surfaceActionBindingId: rejectBindingId,
+        });
       } finally {
         await approvalBroker.stop();
       }

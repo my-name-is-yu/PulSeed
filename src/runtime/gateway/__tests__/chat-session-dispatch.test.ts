@@ -11,6 +11,7 @@ import {
   evaluateChannelAccess,
   resolveChannelRoute,
 } from "../channel-policy.js";
+import { createSurfaceProjection, operatorSourceEventRef } from "../../surface-projection-protocol.js";
 
 const baseInput = {
   text: "status?",
@@ -196,6 +197,46 @@ describe("dispatchGatewayChatInput display contract", () => {
     expect(received.current?.externalSurface).toBeUndefined();
     expect(received.current?.metadata?.external_surface).toBeUndefined();
     expect(received.current?.metadata?.runtime_control_approved).toBe(true);
+  });
+
+  it("does not trust operator/debug projections returned by a gateway session port", async () => {
+    const operatorProjection = createSurfaceProjection({
+      surface: "gateway",
+      view: "operator_debug",
+      purpose: "Debug-only gateway trace.",
+      redaction_class: "operator_debug",
+      projected_at: "2026-05-17T00:00:00.000Z",
+      replay_key: "gateway:operator-debug",
+      source_event_refs: [operatorSourceEventRef({
+        kind: "runtime_trace",
+        ref: "trace:raw",
+        event_type: "debug_trace",
+      })],
+      panels: [{ panel_id: "debug", body: "Debug output" }],
+    });
+    registerGatewayChatSessionPort(async () => ({
+      processIncomingMessage: async () => ({
+        text: "Normal reply.",
+        surface_projection: operatorProjection,
+      }),
+    }));
+
+    const result = await dispatchGatewayChatInputResult(baseInput);
+
+    expect(result).toMatchObject({
+      status: "ok",
+      text: "Normal reply.",
+      surface_projection: expect.objectContaining({
+        surface: "gateway",
+        view: "normal",
+      }),
+    });
+    if (result.status === "ok") {
+      expect(result.surface_projection?.operator_debug_view).toBeUndefined();
+      expect(result.surface_projection?.source_event_refs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ visibility: "normal_safe" }),
+      ]));
+    }
   });
 
   it("renders denied typed tool observations as gateway display text", () => {

@@ -4288,6 +4288,21 @@ describe("ChatRunner", () => {
       expect(interrupted.success).toBe(true);
       expect(interrupted.output).toContain("Interrupted the active turn");
       expect(interrupted.output).toContain("Activity before interruption");
+      expect(interrupted.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/active-turn steer assistant output",
+      });
+      await vi.waitFor(() => {
+        const finalEvent = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+          event.type === "assistant_final"
+            && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+        );
+        expect(finalEvent?.surface_projection).toMatchObject({
+          surface: "chat",
+          view: "normal",
+        });
+      });
       const steer = events.find((event): event is Extract<ChatEvent, { type: "turn_steer" }> =>
         event.type === "turn_steer"
       );
@@ -4346,12 +4361,31 @@ describe("ChatRunner", () => {
       expect(interruptible.getSignal()?.aborted).toBe(false);
       expect(redirected.success).toBe(true);
       expect(redirected.output).toContain("background is not available yet");
+      expect(redirected.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/active-turn steer assistant output",
+      });
       expect(runner.hasActiveTurn()).toBe(true);
       expect(runner.getActiveSeedyPresence()).toMatchObject({
         phase: "acting",
         expected_next: "progress",
       });
-      expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(0);
+      await vi.waitFor(() => {
+        expect(events.some((event) =>
+          event.type === "assistant_final"
+            && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+        )).toBe(true);
+      });
+      const steerFinals = events.filter((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+        event.type === "assistant_final"
+          && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+      );
+      expect(steerFinals).toHaveLength(1);
+      expect(steerFinals[0]?.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+      });
       expect(events.filter((event) => event.type === "lifecycle_end")).toHaveLength(0);
 
       interruptible.resolveActive();
@@ -5426,15 +5460,31 @@ describe("ChatRunner", () => {
           stopped_reason: "completed",
         }),
       } as unknown as ChatAgentLoopRunner;
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         chatAgentLoopRunner,
         llmClient: createMockLLMClient([]),
+        onEvent: (event) => { events.push(event); },
       }));
 
       const result = await runner.execute("Can you inspect the background sessions from this chat?", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toContain("sessions_list");
+      expect(result.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/native agent-loop assistant output",
+      });
+      const finalEvent = [...events].reverse().find((event) => event.type === "assistant_final");
+      expect(finalEvent).toMatchObject({
+        type: "assistant_final",
+        surface_projection: {
+          surface: "chat",
+          view: "normal",
+        },
+      });
+      expect(finalEvent?.surface_projection).not.toHaveProperty("operator_debug_view");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
         message: "Can you inspect the background sessions from this chat?",
         toolCallContext: expect.objectContaining({

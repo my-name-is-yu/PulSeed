@@ -13,9 +13,11 @@ import {
 import type { Logger } from "../logger.js";
 
 export const EVENT_FILE_MAX_BYTES = EVENT_SPOOL_MAX_FILE_BYTES;
+const EVENT_FILE_RESCAN_INTERVAL_MS = 500;
 
 export class EventServerFileIngestion {
   private fileWatcher: fs.FSWatcher | null = null;
+  private fileWatcherRescanTimer: ReturnType<typeof setInterval> | null = null;
   private readonly processingFiles = new Set<string>();
   private readonly eventFileAttempts = new Map<string, number>();
   private readonly eventFileRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -41,6 +43,11 @@ export class EventServerFileIngestion {
       if ((eventType !== "rename" && eventType !== "change") || !filename) return;
       this.queueEventFile(String(filename), 0, generation);
     });
+    // fs.watch can drop temp-dir rename events; the spool remains authoritative.
+    this.fileWatcherRescanTimer = setInterval(() => {
+      void this.rescanEventFiles(generation);
+    }, EVENT_FILE_RESCAN_INTERVAL_MS);
+    this.fileWatcherRescanTimer.unref?.();
   }
 
   stop(): void {
@@ -48,6 +55,10 @@ export class EventServerFileIngestion {
     if (this.fileWatcher) {
       this.fileWatcher.close();
       this.fileWatcher = null;
+    }
+    if (this.fileWatcherRescanTimer) {
+      clearInterval(this.fileWatcherRescanTimer);
+      this.fileWatcherRescanTimer = null;
     }
     for (const timer of this.eventFileRetryTimers.values()) {
       clearTimeout(timer);
