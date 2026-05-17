@@ -57,6 +57,7 @@ export async function dispatchGoalCommand(
       yes?: boolean;
       parent?: string;
       workspace?: string;
+      json?: boolean;
     } = {};
     try {
       const parsed = parseArgs({
@@ -71,6 +72,7 @@ export async function dispatchGoalCommand(
           yes: { type: "boolean", short: "y" },
           parent: { type: "string" },
           workspace: { type: "string" },
+          json: { type: "boolean" },
         },
         allowPositionals: true,
         strict: false,
@@ -88,6 +90,11 @@ export async function dispatchGoalCommand(
     const workspacePathConstraint = addValues.workspace
       ? formatWorkspacePathConstraint(resolveWorkspacePath(addValues.workspace))
       : undefined;
+    const rawModeRequested = rawDimensions.length > 0 && !addValues.negotiate;
+    if (addValues.json && !rawModeRequested) {
+      logger.error("Error: pulseed goal add --json is currently supported only with raw --dim goals.");
+      return 1;
+    }
 
     // Auto-infer mode: title provided, no --dim, no --negotiate, no --no-refine
     const inferTitle = addValues.title || description;
@@ -139,7 +146,7 @@ export async function dispatchGoalCommand(
     }
 
     // Raw mode: --dim provided and --negotiate not set
-    if (rawDimensions.length > 0 && !addValues.negotiate) {
+    if (rawModeRequested) {
       const title = addValues.title || description;
       if (!title) {
         logger.error(
@@ -158,6 +165,7 @@ export async function dispatchGoalCommand(
         parent_id: addValues.parent,
         constraints: rawConstraints,
         deadline: addValues.deadline,
+        json: addValues.json,
       });
     }
 

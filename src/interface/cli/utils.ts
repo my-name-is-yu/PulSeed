@@ -149,6 +149,7 @@ Options (pulseed suggest):
 Options (pulseed goal add):
   --title <title>                     Goal title (raw mode)
   --dim <name:type:value>             Dimension spec, repeatable (raw mode, e.g. "tsc_error_count:min:0")
+  --json                              Print machine-readable result for raw --dim mode
   --no-refine                         Skip GoalRefiner and use the negotiation path directly
   --negotiate                         Alias: same as default (refine mode)
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)

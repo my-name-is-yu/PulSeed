@@ -1457,6 +1457,37 @@ describe("goal add raw mode", async () => {
     consoleSpy.mockRestore();
   });
 
+  it("prints machine-readable JSON for raw --dim goal add", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "--title", "json raw goal", "--dim", "todo_count:max:0", "--json");
+
+    expect(code).toBe(0);
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    const parsed = JSON.parse(output) as {
+      schema_version: string;
+      goal_id: string;
+      title: string;
+      run_command: string;
+    };
+    expect(parsed).toMatchObject({
+      schema_version: "goal-add-result-v1",
+      title: "json raw goal",
+    });
+    expect(parsed.goal_id).toMatch(/^goal_/);
+    expect(parsed.run_command).toBe(`pulseed run --goal ${parsed.goal_id}`);
+    consoleSpy.mockRestore();
+  });
+
+  it("rejects --json outside raw --dim goal add mode", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "json refine goal", "--json");
+
+    expect(code).toBe(1);
+    const output = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("--json is currently supported only with raw --dim goals");
+    errorSpy.mockRestore();
+  });
+
   it("exits with code 1 when --dim is provided but neither --title nor description is given", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const code = await runCLI("goal", "add", "--dim", "todo_count:max:0");
