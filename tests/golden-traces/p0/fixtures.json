@@ -2197,8 +2197,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_approval_denial_never_executes_write.json",
-          "sha256": "adfddad4f4d120c74ddcfdbad1747607816bce85a9aab8ce7a415d7bee74963b",
-          "size": 3302,
+          "sha256": "116f7251fd9a59ce196308bb7ecc946b38b33be98ec0888fee9c72945ea8c53f",
+          "size": 16944,
           "type": "file"
         }
       ],
@@ -2420,8 +2420,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_approval_target_args_mismatch_blocked.json",
-          "sha256": "663b3efb75c453e3960f84fcd6ed77289fbae5b97e4bfa21e60278374f926cf7",
-          "size": 3295,
+          "sha256": "f0f35d7d0797f73b34cc80014b03042da3b42baebdfcdbccca972b8624f1289a",
+          "size": 16980,
           "type": "file"
         }
       ],
@@ -2643,8 +2643,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_approval_other_tool_after_approval_blocked.json",
-          "sha256": "112ddb4b540d9c41e19f52ddd81c9df549124d0964b9a579a634e5bb0f36ad00",
-          "size": 3372,
+          "sha256": "d23ea916cc5f2e7dbe9868baa6e36c231e1cc6cd44465d347709e7bf4d38cb7b",
+          "size": 17434,
           "type": "file"
         }
       ],
@@ -2866,8 +2866,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/gateway_multi_approval_reentrant_same_turn.json",
-          "sha256": "9e07ada392570f44a7ae88cbd4020e4e29888b3f38188c5ffc666d4a6c201539",
-          "size": 6010,
+          "sha256": "287cf8a7e7f638db7a939c95dd5f8db655c5c651bcfc255b8009fc17039b9a0d",
+          "size": 33823,
           "type": "file"
         }
       ],
@@ -3097,8 +3097,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_origin_bound_stale_reply_rejected.json",
-          "sha256": "2c58be2cc433de10739ae86a0a5463906cfb1fcbf6f608ab84a11da692cc346c",
-          "size": 3560,
+          "sha256": "0a974e20c1a6f699d3d0fc3703358957aee531bf0b8a3b1d374f05b29a070652",
+          "size": 17026,
           "type": "file"
         }
       ],
@@ -3318,8 +3318,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_pending_restored_after_daemon_restart.json",
-          "sha256": "ce7faad80a944f11ea8b65952935820bb4f54f011279e1bf4e693436198029c0",
-          "size": 2871,
+          "sha256": "cab31029651b1c038261fa312d5e24754918f8acf312003886b17bdeac6dcab2",
+          "size": 16629,
           "type": "file"
         }
       ],
@@ -3544,8 +3544,8 @@
       "artifact_tree": [
         {
           "path": "state/approval/approval_delivery_unavailable_denies_not_executes.json",
-          "sha256": "1922e890f983ee3c37bd0690d2acbffaded03acf9452f8359bab1342feaa7804",
-          "size": 3555,
+          "sha256": "5e7838e7107baad8645d92f76c28c38936990c954c78aae22d2b1284705e8f41",
+          "size": 17532,
           "type": "file"
         }
       ],
@@ -7962,7 +7962,7 @@
       "artifact_tree": [
         {
           "path": "state/state/state_attention_schema_ahead_fail_closed.json",
-          "sha256": "6be8c44db5037c618b3061ab951a2922b5b3c6fbb582cab947d6c71a90498a17",
+          "sha256": "18bbb5ef20e1ebfa74036ddb05d6d798f70f95755ca417f347284ec96d290175",
           "size": 653,
           "type": "file"
         }

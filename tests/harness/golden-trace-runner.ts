@@ -666,6 +666,7 @@ async function runApprovalTrace(
   const broker = new ApprovalBroker({
     store,
     createId: () => `approval-${fixture.contract_name}`,
+    createSurfaceIssuanceId: createDeterministicApprovalSurfaceIssuanceId(fixture),
     now: () => Date.parse(fixture.input.fake_now),
     broadcast: (eventType, data) => events.push({ event_type: eventType, data: sanitizeUnknown(data) }),
     ...(delivery ? { deliverConversationalApproval: delivery } : {}),
@@ -729,6 +730,7 @@ async function runApprovalTrace(
     const restoredEvents: JsonObject[] = [];
     const restarted = new ApprovalBroker({
       store,
+      createSurfaceIssuanceId: createDeterministicApprovalSurfaceIssuanceId(fixture),
       now: () => Date.parse(fixture.input.fake_now) + 1_000,
       broadcast: (eventType, data) => restoredEvents.push({ event_type: eventType, data: sanitizeUnknown(data) }),
       deliverConversationalApproval: () => ({ delivered: true }),
@@ -826,6 +828,12 @@ async function runApprovalTrace(
     },
     assertions,
   });
+}
+
+function createDeterministicApprovalSurfaceIssuanceId(
+  fixture: GoldenTraceFixture,
+): (approvalId: string, sequence: number) => string {
+  return (approvalId, sequence) => `${approvalId}:issuance:${sequence}:${fixture.input.seed}`;
 }
 
 async function runScheduleTrace(

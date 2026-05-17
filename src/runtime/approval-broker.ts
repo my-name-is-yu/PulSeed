@@ -98,6 +98,7 @@ export interface ApprovalBrokerOptions {
   ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
   now?: () => number;
   createId?: () => string;
+  createSurfaceIssuanceId?: (approvalId: string, sequence: number) => string;
   defaultTimeoutMs?: number;
 }
 
@@ -119,6 +120,7 @@ export class ApprovalBroker {
   ) => Promise<ConversationalApprovalDelivery> | ConversationalApprovalDelivery;
   private readonly now: () => number;
   private readonly createId: () => string;
+  private readonly createSurfaceIssuanceId: (approvalId: string, sequence: number) => string;
   private readonly defaultTimeoutMs: number;
   private readonly pending = new Map<string, PendingApprovalSession>();
   private approvalIssuanceSequence = 0;
@@ -134,6 +136,9 @@ export class ApprovalBroker {
     this.createId =
       options.createId ??
       (() => `approval-${this.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    this.createSurfaceIssuanceId =
+      options.createSurfaceIssuanceId ??
+      ((approvalId, sequence) => `${approvalId}:issuance:${sequence}:${randomUUID()}`);
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 5 * 60 * 1000;
   }
 
@@ -371,7 +376,7 @@ export class ApprovalBroker {
 
   private createApprovalIssuanceId(approvalId: string): string {
     this.approvalIssuanceSequence += 1;
-    return `${approvalId}:issuance:${this.approvalIssuanceSequence}:${randomUUID()}`;
+    return this.createSurfaceIssuanceId(approvalId, this.approvalIssuanceSequence);
   }
 
   private async deliverIfConversational(
