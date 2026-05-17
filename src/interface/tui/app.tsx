@@ -443,6 +443,7 @@ export function App({
   useEffect(() => {
     return () => {
       clearCtrlCExitTimer();
+      sharedCtrlCPendingUntil = 0;
     };
   }, [clearCtrlCExitTimer]);
 

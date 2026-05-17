@@ -581,6 +581,59 @@ describe("TUI quit handling", () => {
     });
     screen.unmount();
   });
+
+  it("clears the shared Ctrl-C confirmation when the app unmounts", async () => {
+    const firstCoreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const firstScreen = render(React.createElement(App, {
+      coreLoop: firstCoreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    act(() => {
+      latestUseInputHandler()("c", { ctrl: true });
+    });
+
+    firstScreen.unmount();
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
+
+    const secondCoreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const secondScreen = render(React.createElement(App, {
+      coreLoop: secondCoreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    act(() => {
+      latestUseInputHandler()("c", { ctrl: true });
+    });
+
+    expect(secondCoreLoop.stop).not.toHaveBeenCalled();
+    expect(testState.exitApp).not.toHaveBeenCalled();
+
+    secondScreen.unmount();
+  });
 });
 
 describe("TUI shell execution", () => {
