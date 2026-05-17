@@ -182,6 +182,7 @@ export interface CapabilityAdmissionExecutionContext {
   preApproved?: boolean;
   approvalFingerprint?: string | null;
   authorityRefs?: readonly string[];
+  allowMissingAuthorityRefs?: boolean;
   cwd?: string;
   goalId?: string;
   runId?: string | null;
@@ -292,6 +293,7 @@ export class CapabilityPlane {
         turnId: input.context.turnId ?? null,
         callId: input.context.callId ?? null,
         stateEpoch: input.context.hostToolState?.currentEpoch ?? input.context.hostToolState?.observedEpoch ?? null,
+        allowMissingAuthorityRefs: true,
       },
     });
   }
@@ -329,10 +331,23 @@ export function admitCapabilityDescriptor(input: {
       fingerprint,
     });
   }
-  if (context.authorityRefs) {
-    const provided = new Set(context.authorityRefs);
-    const missing = descriptor.authority_requirements.required_refs.filter((ref) => !provided.has(ref));
+  const requiredRefs = descriptor.authority_requirements.required_refs;
+  if (requiredRefs.length > 0 && context.allowMissingAuthorityRefs !== true) {
+    const provided = new Set(context.authorityRefs ?? []);
+    const missing = requiredRefs.filter((ref) => !provided.has(ref));
     if (missing.length > 0) {
+      if (
+        descriptor.authority_requirements.approval_required
+        && context.preApproved !== true
+        && missing.every((ref) => ref.startsWith("approval:"))
+      ) {
+        return capabilityAdmission({
+          status: "requires_approval",
+          reason: `${descriptor.capability_id} requires approval authority refs before ${descriptor.operation_kind}: ${missing.join(", ")}.`,
+          descriptor,
+          fingerprint,
+        });
+      }
       return capabilityAdmission({
         status: "blocked",
         reason: `${descriptor.capability_id} missing descriptor authority refs: ${missing.join(", ")}.`,
@@ -470,28 +485,35 @@ export function descriptorFromTool(tool: ITool): CapabilityDescriptor {
 export function descriptorsFromMcpServers(servers: readonly MCPServerConfig[]): CapabilityDescriptor[] {
   return servers.flatMap((server) =>
     server.tool_mappings.map((mapping) => {
+      const readinessState = server.enabled ? mapping.capability_readiness ?? "disabled" : "disabled";
+      const operationKind = mapping.capability_operation_kind ?? "mutate";
+      const sideEffectProfile = mapping.capability_side_effect_profile
+        ?? (operationKind === "read" ? "read" : "mutate");
+      const mutates = sideEffectProfile !== "none" && sideEffectProfile !== "read";
       const capabilityId = `capability:mcp:${server.id}:${mapping.tool_name}`;
       const providerRef = `mcp:${server.id}`;
       const descriptorSeed = {
         capability_id: capabilityId,
         provider_kind: "mcp_tool",
         provider_ref: providerRef,
-        operation_kind: "mutate",
+        operation_kind: operationKind,
+        side_effect_profile: sideEffectProfile,
         tool_name: mapping.tool_name,
         enabled: server.enabled,
+        readiness_state: readinessState,
       };
       return CapabilityDescriptorSchema.parse({
         schema_version: "capability-descriptor/v1",
         capability_id: capabilityId,
         provider_kind: "mcp_tool",
         provider_ref: providerRef,
-        operation_kind: "mutate",
+        operation_kind: operationKind,
         authority_requirements: {
           descriptor_authority_required: true,
-          approval_required: true,
-          runtime_control_required: true,
-          permission_level: "write_remote",
-          external_action_authority: true,
+          approval_required: mutates,
+          runtime_control_required: mutates,
+          permission_level: mutates ? "write_remote" : "read_remote",
+          external_action_authority: mutates,
           required_refs: [
             `mcp_server:${server.id}:enabled`,
             `mcp_server:${server.id}:auth_or_env`,
@@ -516,14 +538,16 @@ export function descriptorsFromMcpServers(servers: readonly MCPServerConfig[]): 
           refs: [`mcp_server:${server.id}:env_or_remote_auth`],
           normal_surface_visible: false,
         },
-        cost_risk_class: "high",
-        side_effect_profile: "mutate",
+        cost_risk_class: mutates ? "high" : "medium",
+        side_effect_profile: sideEffectProfile,
         rollback_plan: {
-          kind: "manual",
-          steps: [
-            "Inspect the MCP operation-specific event and RuntimeGraph refs.",
-            "Use the MCP provider's compensating operation if one exists.",
-          ],
+          kind: mutates ? "manual" : "none",
+          steps: mutates
+            ? [
+                "Inspect the MCP operation-specific event and RuntimeGraph refs.",
+                "Use the MCP provider's compensating operation if one exists.",
+              ]
+            : ["No mutation is expected for a verified read-only MCP datasource mapping."],
           operator_visible: true,
         },
         verification_probe: {
@@ -531,7 +555,7 @@ export function descriptorsFromMcpServers(servers: readonly MCPServerConfig[]): 
           required: true,
           refs: [`mcp:${server.id}:${mapping.tool_name}:verification`],
         },
-        readiness_state: "disabled",
+        readiness_state: readinessState,
         normal_surface_affordance: {
           visible: false,
           safe_label: "MCP operation disabled pending mapping and verification",
@@ -562,11 +586,95 @@ export function descriptorsFromMcpServers(servers: readonly MCPServerConfig[]): 
           server_enabled: server.enabled,
           tool_name: mapping.tool_name,
           dimension_pattern: mapping.dimension_pattern,
+          capability_readiness: readinessState,
           imported_descriptor_proposal: true,
+          operation_kind: operationKind,
+          side_effect_profile: sideEffectProfile,
         },
       });
     })
   );
+}
+
+export function descriptorFromMcpServerTool(input: {
+  toolName: string;
+  operationKind: CapabilityOperationKind;
+  sideEffectProfile: CapabilitySideEffectProfile;
+  readinessState?: CapabilityReadinessState;
+}): CapabilityDescriptor {
+  const providerRef = "mcp_server:pulseed";
+  const capabilityId = `capability:mcp_server:pulseed:${input.toolName}`;
+  const mutates = input.sideEffectProfile !== "none" && input.sideEffectProfile !== "read";
+  const descriptorSeed = {
+    capability_id: capabilityId,
+    provider_kind: "mcp_tool",
+    provider_ref: providerRef,
+    operation_kind: input.operationKind,
+    tool_name: input.toolName,
+  };
+  return capabilityDescriptor({
+    capabilityId,
+    providerKind: "mcp_tool",
+    providerRef,
+    operationKind: input.operationKind,
+    permissionLevel: mutates ? "write_local" : "read_only",
+    approvalRequired: mutates,
+    runtimeControlRequired: mutates,
+    externalActionAuthority: mutates,
+    requiredRefs: [
+      `mcp_server:pulseed:${input.toolName}:descriptor`,
+      `mcp_server:pulseed:${input.toolName}:authority`,
+    ],
+    fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
+    fingerprintInputFields: ["tool_name", "arguments"],
+    fingerprintStateRefs: [`mcp_server:pulseed:${input.toolName}:state`],
+    fingerprintSeed: descriptorSeed,
+    sandboxRequirement: {
+      mode: mutates ? "workspace_write" : "none",
+      network: false,
+      reason: mutates
+        ? "PulSeed MCP server tool mutates local runtime state."
+        : "PulSeed MCP server tool reads local runtime state.",
+    },
+    credentialScope: {
+      kind: "none",
+      refs: [],
+      normal_surface_visible: false,
+    },
+    costRiskClass: mutates ? "medium" : "low",
+    sideEffectProfile: input.sideEffectProfile,
+    rollbackPlan: {
+      kind: mutates ? "append_only" : "none",
+      steps: mutates
+        ? ["Inspect the MCP server tool event and append a compensating runtime operation if needed."]
+        : ["No mutation is expected."],
+      operator_visible: true,
+    },
+    verificationProbe: {
+      kind: "production_caller_path",
+      required: mutates,
+      refs: [`mcp_server:pulseed:${input.toolName}:caller-path`],
+    },
+    readinessState: input.readinessState ?? (mutates ? "disabled" : "executable_verified"),
+    normalSurfaceAffordance: {
+      visible: false,
+      safe_label: mutates ? "MCP mutation disabled pending operator capability enablement" : "MCP read is descriptor-backed",
+      action: "operator_only",
+      raw_catalog_visible: false,
+      credential_scope_visible: false,
+      approval_fingerprint_visible: false,
+      policy_internals_visible: false,
+    },
+    operatorDiagnostics: {
+      explainable: true,
+      summary: `PulSeed MCP server tool ${input.toolName} is represented by a CapabilityDescriptor before execution.`,
+      diagnostic_refs: [providerRef, `mcp_server_tool:${input.toolName}`],
+    },
+    metadata: {
+      tool_name: input.toolName,
+      internal_mcp_server_tool: true,
+    },
+  });
 }
 
 export function descriptorsFromPluginStates(pluginStates: readonly PluginState[]): CapabilityDescriptor[] {
@@ -930,21 +1038,24 @@ export function descriptorFromGatewayChannelAction(input: {
 export function descriptorFromRuntimeControlAction(action: string): CapabilityDescriptor {
   const providerRef = "runtime_control:operator";
   const capabilityId = `capability:runtime_control_action:${action}`;
+  const operationKind = runtimeControlCapabilityOperationKind(action);
+  const sideEffectProfile = runtimeControlCapabilitySideEffectProfile(action);
+  const approvalRequired = runtimeControlCapabilityRequiresApproval(action);
   const descriptorSeed = {
     capability_id: capabilityId,
     provider_kind: "runtime_control_action",
     provider_ref: providerRef,
-    operation_kind: "mutate",
+    operation_kind: operationKind,
     action,
   };
   return capabilityDescriptor({
     capabilityId,
     providerKind: "runtime_control_action",
     providerRef,
-    operationKind: "mutate",
-    permissionLevel: "write_local",
-    approvalRequired: true,
-    runtimeControlRequired: true,
+    operationKind,
+    permissionLevel: sideEffectProfile === "read" ? "read_only" : "write_local",
+    approvalRequired,
+    runtimeControlRequired: sideEffectProfile !== "read",
     externalActionAuthority: false,
     requiredRefs: [`runtime_control:${action}:actor`, `runtime_control:${action}:target`],
     fingerprintDescriptorFields: ["capability_id", "provider_kind", "provider_ref", "operation_kind", "readiness_state"],
@@ -952,20 +1063,24 @@ export function descriptorFromRuntimeControlAction(action: string): CapabilityDe
     fingerprintStateRefs: [`runtime_control:${action}:state`],
     fingerprintSeed: descriptorSeed,
     sandboxRequirement: {
-      mode: "workspace_write",
+      mode: sideEffectProfile === "read" ? "none" : "workspace_write",
       network: false,
-      reason: "Runtime-control actions mutate local runtime state.",
+      reason: sideEffectProfile === "read"
+        ? "Runtime-control inspection reads local runtime state."
+        : "Runtime-control actions mutate local runtime state.",
     },
     credentialScope: {
       kind: "none",
       refs: [],
       normal_surface_visible: false,
     },
-    costRiskClass: "medium",
-    sideEffectProfile: "mutate",
+    costRiskClass: sideEffectProfile === "read" ? "low" : "medium",
+    sideEffectProfile,
     rollbackPlan: {
-      kind: "append_only",
-      steps: ["Append a compensating runtime-control operation or restore from event-log projection."],
+      kind: sideEffectProfile === "read" ? "none" : "append_only",
+      steps: sideEffectProfile === "read"
+        ? ["No mutation is expected."]
+        : ["Append a compensating runtime-control operation or restore from event-log projection."],
       operator_visible: true,
     },
     verificationProbe: {
@@ -990,6 +1105,23 @@ export function descriptorFromRuntimeControlAction(action: string): CapabilityDe
     },
     metadata: { action },
   });
+}
+
+function runtimeControlCapabilityRequiresApproval(action: string): boolean {
+  return runtimeControlCapabilityOperationKind(action) !== "read";
+}
+
+function runtimeControlCapabilityOperationKind(action: string): CapabilityOperationKind {
+  if (action.startsWith("inspect_")
+    || action.endsWith(":inspect")
+    || action === "summarize_session_without_resuming") {
+    return "read";
+  }
+  return "mutate";
+}
+
+function runtimeControlCapabilitySideEffectProfile(action: string): CapabilitySideEffectProfile {
+  return runtimeControlCapabilityOperationKind(action) === "read" ? "read" : "mutate";
 }
 
 function capabilityDescriptor(input: {

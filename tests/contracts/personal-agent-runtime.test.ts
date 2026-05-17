@@ -1370,22 +1370,34 @@ describe("durable personal-agent runtime production paths", () => {
         title: "MCP personal-agent goal",
         description: "Create through the real MCP tool surface.",
       });
-      const parsedMcp = JSON.parse(mcp.content[0].text) as { goal_id: string };
-      expect(parsedMcp.goal_id).toBeTruthy();
+      const parsedMcp = JSON.parse(mcp.content[0].text) as { error: string };
+      expect(parsedMcp.error).toContain("capability:mcp_server:pulseed:pulseed_goal_create is disabled");
+      const blockedMcpGoalId = `goal_${stableId(stableTestJson({
+        command: "pulseed_goal_create",
+        title: "MCP personal-agent goal",
+        description: "Create through the real MCP tool surface.",
+      })).slice(0, 16)}`;
+      const blockedMcpArgsFingerprint = stableId(stableTestJson({
+        title: "MCP personal-agent goal",
+        description: "Create through the real MCP tool surface.",
+      }));
+      const blockedMcpPendingRef = `pending:${blockedMcpArgsFingerprint}`;
+      await expect(stateManager.loadGoal(blockedMcpGoalId)).resolves.toBeNull();
       const mcpTrace = await store.loadTrace(stableTraceId([
         "explicit_command",
         "mcp",
         "pulseed_goal_create",
-        `pulseed_goal_create:${parsedMcp.goal_id}`,
-        parsedMcp.goal_id,
+        `pulseed_goal_create:${blockedMcpArgsFingerprint}`,
+        blockedMcpArgsFingerprint,
         "goal",
         "goal",
-        parsedMcp.goal_id,
+        blockedMcpPendingRef,
       ].join(":")));
       expect(mcpTrace).toMatchObject({
         situation_frame: expect.objectContaining({ source_kind: "explicit_command" }),
         task_candidates: [expect.objectContaining({ target_kind: "goal", desired_effect: "create_goal" })],
-        capability_decisions: [expect.objectContaining({ decision: "available" })],
+        capability_decisions: [expect.objectContaining({ decision: "blocked" })],
+        intervention_decisions: [expect.objectContaining({ decision: "block" })],
       });
 
       const triggerPayload = { goal_id: "goal-personal-agent", detail: "contract signal" };
@@ -1397,16 +1409,19 @@ describe("durable personal-agent runtime production paths", () => {
         event_type: "goal_signal",
         data: triggerPayload,
       });
-      const parsedTrigger = JSON.parse(mcpTrigger.content[0].text) as { event_id: string; status: string };
-      expect(parsedTrigger.status).toBe("queued");
-      const triggerPrefix = "mcp_trigger_";
-      expect(parsedTrigger.event_id.startsWith(triggerPrefix)).toBe(true);
-      const triggerSeed = parsedTrigger.event_id.slice(triggerPrefix.length);
+      const parsedTrigger = JSON.parse(mcpTrigger.content[0].text) as { error: string };
+      expect(parsedTrigger.error).toContain("capability:mcp_server:pulseed:pulseed_trigger is disabled");
+      const triggerSeed = stableId(stableTestJson({
+        source: "contract-mcp",
+        event_type: "goal_signal",
+        data: triggerPayload,
+      }));
       const triggerTrace = await store.loadTrace(stableTraceId(`mcp_trigger:${triggerSeed}`));
       expect(triggerTrace).toMatchObject({
         situation_frame: expect.objectContaining({ source_kind: "explicit_command" }),
         task_candidates: [expect.objectContaining({ target_kind: "attention_only", desired_effect: "continue_route" })],
-        intervention_decisions: [expect.objectContaining({ decision: "allow" })],
+        capability_decisions: [expect.objectContaining({ decision: "blocked" })],
+        intervention_decisions: [expect.objectContaining({ decision: "block" })],
       });
 
       const driveSystem = new DriveSystem(stateManager, {

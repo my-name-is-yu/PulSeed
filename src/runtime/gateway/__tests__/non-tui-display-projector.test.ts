@@ -12,6 +12,7 @@ import {
   resolveGatewayChannelDisplayContract,
 } from "../channel-display-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayTransport } from "../non-tui-display-projector.js";
+import type { GatewayChannelCapabilityAdmissionRecord } from "../gateway-channel-capability-admission.js";
 
 const base = {
   runId: "run-1",
@@ -83,6 +84,44 @@ function createTransport(): NonTuiDisplayTransport & { calls: string[] } {
 }
 
 describe("non-TUI display projector", () => {
+  it("records descriptor admission before sending gateway display output", async () => {
+    const transport = createTransport();
+    const order: string[] = [];
+    const recorder = vi.fn(async (record: GatewayChannelCapabilityAdmissionRecord) => {
+      order.push(`record:${record.reportType}:${record.admission.status}`);
+    });
+    const projector = new NonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport: {
+        ...transport,
+        sendFinal: vi.fn(async (text: string) => {
+          order.push(`sendFinal:${text}`);
+          return transport.sendFinal(text);
+        }),
+      },
+      channelType: "telegram",
+      capabilityDecisionRecorder: recorder,
+    });
+
+    await projector.handle({ ...base, type: "assistant_final", text: "hello", persisted: true });
+
+    expect(order).toEqual(["record:final_send:allowed", "sendFinal:hello"]);
+    expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+      channelType: "telegram",
+      reportType: "final_send",
+      descriptor: expect.objectContaining({
+        provider_kind: "gateway_channel_action",
+        runtime_graph_refs: expect.objectContaining({
+          capability_ref: "capability:gateway_channel_action:telegram:final_send",
+        }),
+      }),
+      admission: expect.objectContaining({
+        status: "allowed",
+        capability_fingerprint: expect.any(String),
+      }),
+    }));
+  });
+
   it("updates one progress surface for tool, activity, timeline, and operation events", async () => {
     const transport = createTransport();
     const projector = new NonTuiDisplayProjector({

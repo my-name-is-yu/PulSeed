@@ -1597,10 +1597,31 @@ describe("Escalation", () => {
   });
 
   it("escalation can run a direct goal target immediately", async () => {
-    const coreLoop = {
-      run: vi.fn().mockResolvedValue({ finalStatus: "completed", totalIterations: 1 }),
+    const order: string[] = [];
+    const traces: Array<{
+      replay_key: string;
+      capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
+    }> = [];
+    const personalAgentRuntime = {
+      recordTrace: vi.fn(async (trace: {
+        replay_key: string;
+        capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
+      }) => {
+        traces.push(trace);
+        order.push(`trace:${trace.replay_key}`);
+      }),
     };
-    const eng = new ScheduleEngine({ baseDir: tempDir, coreLoop: coreLoop as any });
+    const coreLoop = {
+      run: vi.fn(async () => {
+        order.push("run");
+        return { finalStatus: "completed", totalIterations: 1 };
+      }),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      coreLoop: coreLoop as any,
+      personalAgentRuntime: personalAgentRuntime as never,
+    });
 
     const escalatingEntry = await eng.addEntry({
       name: "direct-goal-escalation",
@@ -1637,6 +1658,19 @@ describe("Escalation", () => {
       maxIterations: 10,
       runPolicy: "bounded",
     });
+    const escalationTrace = traces.find((trace) => trace.replay_key.includes("schedule_goal_run:escalation_goal"));
+    expect(escalationTrace).toBeTruthy();
+    expect(order.indexOf(`trace:${escalationTrace!.replay_key}`)).toBeLessThan(order.indexOf("run"));
+    expect(escalationTrace?.capability_decisions?.[0]?.capability_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "capability_admission",
+        ref: expect.stringMatching(/^capability-admission:/),
+      }),
+      expect.objectContaining({
+        kind: "capability_fingerprint",
+        ref: expect.any(String),
+      }),
+    ]));
   });
 });
 
@@ -1953,6 +1987,68 @@ describe("Cron execution (Phase 3)", () => {
 // ─── Phase 3: GoalTrigger execution ───
 
 describe("GoalTrigger execution (Phase 3)", () => {
+  it("records capability admission before skip_if_active reads target goal state", async () => {
+    const dueAt = "2026-05-12T00:00:00.000Z";
+    const order: string[] = [];
+    const traces: Array<{
+      replay_key: string;
+      capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
+    }> = [];
+    const personalAgentRuntime = {
+      recordTrace: vi.fn(async (trace: {
+        replay_key: string;
+        capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
+      }) => {
+        traces.push(trace);
+        order.push(`trace:${trace.replay_key}`);
+      }),
+    };
+    const stateManager = {
+      loadGoal: vi.fn(async () => {
+        order.push("read");
+        return { id: "test-goal-id", title: "Active goal", status: "active" };
+      }),
+    };
+    const eng = new ScheduleEngine({
+      baseDir: tempDir,
+      stateManager: stateManager as never,
+      personalAgentRuntime: personalAgentRuntime as never,
+    });
+    const entry = await eng.addEntry(makeGoalTriggerEntry({
+      goal_trigger: {
+        goal_id: "test-goal-id",
+        max_iterations: 5,
+        skip_if_active: true,
+      },
+    }));
+
+    eng.getEntries()[0]!.next_fire_at = dueAt;
+    await eng.saveEntries();
+    await eng.loadEntries();
+
+    const results = await eng.tick();
+    const result = results.find((candidate) => candidate.entry_id === entry.id)!;
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      error_message: "goal test-goal-id is already active",
+    });
+    expect(order.slice(0, 2)).toEqual([
+      `trace:schedule_job:goal_trigger:inspect_active_goal:${entry.id}:${dueAt}`,
+      "read",
+    ]);
+    expect(traces[0]?.capability_decisions?.[0]?.capability_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "capability_admission",
+        ref: expect.stringMatching(/^capability-admission:/),
+      }),
+      expect.objectContaining({
+        kind: "capability_fingerprint",
+        ref: expect.any(String),
+      }),
+    ]));
+  });
+
   it("default wait-resume path writes attention state through configured runtime root and shared control DB", async () => {
     const configuredRuntimeRoot = path.join(tempDir, "configured-runtime-root");
     fs.writeFileSync(path.join(tempDir, "daemon.json"), JSON.stringify({
@@ -2012,6 +2108,7 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const order: string[] = [];
     const traces: Array<{
       replay_key: string;
+      capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
       situation_frame?: {
         cognition_situation?: {
           caller_path?: string;
@@ -2025,6 +2122,7 @@ describe("GoalTrigger execution (Phase 3)", () => {
     const personalAgentRuntime = {
       recordTrace: vi.fn(async (trace: {
         replay_key: string;
+        capability_decisions?: Array<{ capability_refs?: Array<{ kind: string; ref: string }> }>;
         situation_frame?: {
           cognition_situation?: {
             caller_path?: string;
@@ -2078,6 +2176,16 @@ describe("GoalTrigger execution (Phase 3)", () => {
       `trace:wait_resume:${entry.id}:${dueAt}`,
       "reevaluate",
     ]);
+    expect(traces[0]?.capability_decisions?.[0]?.capability_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "capability_admission",
+        ref: expect.stringMatching(/^capability-admission:/),
+      }),
+      expect.objectContaining({
+        kind: "capability_fingerprint",
+        ref: expect.any(String),
+      }),
+    ]));
 
     const replayedEntry = eng.getEntries().find((candidate) => candidate.id === entry.id)!;
     replayedEntry.next_fire_at = "2026-05-12T01:00:00.000Z";

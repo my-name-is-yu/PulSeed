@@ -55,7 +55,6 @@ function makeIsolatedControlDir(): string {
 function makeIsolatedPluginLoader(
   pluginsDir?: string,
   notifierRegistry = makeNotifierRegistry(),
-  pluginExecutionMode: "proposal_first" | "legacy_load" = "proposal_first",
 ): PluginLoader {
   const controlBaseDir = makeIsolatedControlDir();
   const resolvedPluginsDir = pluginsDir ?? path.join(controlBaseDir, "plugins");
@@ -66,7 +65,7 @@ function makeIsolatedPluginLoader(
     resolvedPluginsDir,
     undefined,
     undefined,
-    { controlBaseDir, pluginExecutionMode }
+    { controlBaseDir }
   );
 }
 
@@ -821,7 +820,7 @@ describe("PluginLoader cross-platform session exposure", () => {
       tmpDir,
       undefined,
       undefined,
-      { controlBaseDir: tmpDir, pluginExecutionMode: "legacy_load" }
+      { controlBaseDir: tmpDir }
     );
   });
 
@@ -829,7 +828,7 @@ describe("PluginLoader cross-platform session exposure", () => {
     fsSync.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
-  it("exposes the registered cross-platform session getter before explicit legacy plugin import", async () => {
+  it("keeps plugin loading proposal-first without exposing the cross-platform session getter", async () => {
     const pluginDir = path.join(tmpDir, "global-aware-plugin");
     fsSync.mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
     fsSync.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify(makeValidManifest({
@@ -850,9 +849,9 @@ describe("PluginLoader cross-platform session exposure", () => {
     const getter = vi.fn().mockResolvedValue({ manager: true });
     registerGlobalCrossPlatformChatSessionManager(getter);
 
-    await expect(loader.loadOne(pluginDir)).resolves.toMatchObject({ status: "loaded" });
+    await expect(loader.loadOne(pluginDir)).resolves.toMatchObject({ status: "disabled" });
     expect((globalThis as typeof globalThis & {
       __pulseedGetGlobalCrossPlatformChatSessionManager?: typeof getter;
-    }).__pulseedGetGlobalCrossPlatformChatSessionManager).toBe(getter);
+    }).__pulseedGetGlobalCrossPlatformChatSessionManager).toBeUndefined();
   });
 });

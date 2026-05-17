@@ -8,6 +8,17 @@ export const MCPToolMappingSchema = z.object({
   tool_name: z.string(),
   dimension_pattern: z.string(),
   args_template: z.record(z.string(), z.unknown()).optional(),
+  capability_operation_kind: z.enum(["read", "write", "mutate", "send", "execute"]).optional(),
+  capability_side_effect_profile: z.enum(["none", "read", "write", "mutate", "send", "execute"]).optional(),
+  capability_readiness: z.enum([
+    "proposal",
+    "disabled",
+    "configured",
+    "verification_required",
+    "executable_verified",
+    "degraded",
+    "blocked",
+  ]).optional(),
 });
 export type MCPToolMapping = z.infer<typeof MCPToolMappingSchema>;
 

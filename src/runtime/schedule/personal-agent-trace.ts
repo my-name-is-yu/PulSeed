@@ -40,6 +40,7 @@ export interface ScheduleGoalRunTraceInput {
   decision: InterventionDecisionKind;
   capabilityDecision?: CapabilityRegistryDecisionKind;
   decisionReason: string;
+  capabilityRefs?: RuntimeGraphRef[];
 }
 
 export interface ScheduleJobDecisionTraceInput {
@@ -67,6 +68,7 @@ export interface ScheduleWaitResumeDecisionTraceInput {
   decision: InterventionDecisionKind;
   capabilityDecision?: CapabilityRegistryDecisionKind;
   decisionReason: string;
+  capabilityRefs?: RuntimeGraphRef[];
   currentRefs?: RuntimeGraphRef[];
   staleRefs?: RuntimeGraphRef[];
   auditRefs?: RuntimeGraphRef[];
@@ -150,6 +152,7 @@ export async function recordScheduleGoalRunDecision(input: ScheduleGoalRunTraceI
       ...scheduleCapabilityDescriptorRefs(input.entry, input.mode),
       { kind: "capability", ref: "durable_loop_goal_run" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
+      ...(input.capabilityRefs ?? []),
     ],
     policyRef: cognitionPolicyRef(cognition, "policy:schedule-goal-run-v1"),
     permissionRequired: false,
@@ -310,6 +313,7 @@ export async function recordScheduleWaitResumeDecision(input: ScheduleWaitResume
       ...scheduleCapabilityDescriptorRefs(input.entry, "wait_resume"),
       { kind: "capability", ref: "schedule_wait_resume_attention" },
       { kind: "capability", ref: `schedule:${input.entry.layer}` },
+      ...(input.capabilityRefs ?? []),
     ],
     policyRef: cognitionPolicyRef(cognition, "policy:schedule-wait-resume-v1"),
     permissionRequired: false,

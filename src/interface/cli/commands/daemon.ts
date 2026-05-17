@@ -18,6 +18,7 @@ import { EventServer } from "../../../runtime/event/server.js";
 import {
   IngressGateway,
   SlackChannelAdapter,
+  createGatewayCapabilityDecisionRecorder,
   loadBuiltinGatewayIntegrations,
 } from "../../../runtime/gateway/index.js";
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
@@ -415,6 +416,7 @@ export async function cmdStart(
         signingSecret: slackGatewayConfig.signing_secret,
         botToken: slackGatewayConfig.bot_token,
         channelGoalMap: slackGatewayConfig.channel_goal_map,
+        capabilityDecisionRecorder: createGatewayCapabilityDecisionRecorder({ baseDir: daemonBaseDir }),
       });
       eventServer.setSlackChannelAdapter(slackAdapter, slackGatewayConfig.path);
       gateway.registerAdapter(slackAdapter);

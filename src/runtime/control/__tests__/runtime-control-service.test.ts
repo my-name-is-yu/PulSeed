@@ -167,7 +167,23 @@ describe("RuntimeControlService", () => {
       const operationStore = new RuntimeOperationStore(runtimeRoot);
       const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
       await permissionGrantStore.createActive(makeGrant());
-      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+      const order: string[] = [];
+      const traces: unknown[] = [];
+      const recordTrace = vi.fn(async (trace: unknown) => {
+        traces.push(trace);
+        order.push("trace");
+        return {} as never;
+      });
+      const originalListActive = permissionGrantStore.listActive.bind(permissionGrantStore);
+      vi.spyOn(permissionGrantStore, "listActive").mockImplementation(async () => {
+        order.push("read");
+        return originalListActive();
+      });
+      const service = new RuntimeControlService({
+        operationStore,
+        permissionGrantStore,
+        personalAgentRuntime: { recordTrace },
+      });
 
       const result = await service.request({
         intent: { kind: "inspect_permission_boundary", reason: "what is allowed" },
@@ -192,6 +208,24 @@ describe("RuntimeControlService", () => {
       expect(result.message).toContain("write_remote, network_send");
       expect(result.message).toContain("source=redacted");
       expect(result.message).not.toContain("raw approval text");
+      expect(order.slice(0, 2)).toEqual(["trace", "read"]);
+      expect(traces[0]).toEqual(expect.objectContaining({
+        capability_decisions: [
+          expect.objectContaining({
+            decision: "available",
+            capability_refs: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "capability_admission",
+                ref: expect.stringMatching(/^capability-admission:/),
+              }),
+              expect.objectContaining({
+                kind: "capability_fingerprint",
+                ref: expect.any(String),
+              }),
+            ]),
+          }),
+        ],
+      }));
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -205,6 +239,7 @@ describe("RuntimeControlService", () => {
       const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
       await permissionGrantStore.createActive(makeGrant());
       const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+      const approvalFn = vi.fn().mockResolvedValue(true);
 
       const result = await service.request({
         intent: { kind: "revoke_permission", reason: "revoke this permission" },
@@ -221,15 +256,50 @@ describe("RuntimeControlService", () => {
           conversation_id: "C123:1700.1",
           user_id: "U123",
         },
+        approvalFn,
       });
 
       expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(approvalFn).toHaveBeenCalledOnce();
       expect(result.message).toContain("Future covered actions will ask again or block");
       await expect(permissionGrantStore.load("grant-current-run")).resolves.toMatchObject({
         state: "revoked",
         revoked_by: "U123",
       });
       await expect(permissionGrantStore.listActive()).resolves.toHaveLength(0);
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("blocks mutating permission controls without an approval handler", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-permission-revoke-no-approval-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const operationStore = new RuntimeOperationStore(runtimeRoot);
+      const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
+      await permissionGrantStore.createActive(makeGrant());
+      const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+
+      const result = await service.request({
+        intent: { kind: "revoke_permission", reason: "revoke this permission" },
+        cwd: "/repo",
+        requestedBy: {
+          surface: "chat",
+          platform: "slack",
+          conversation_id: "C123:1700.1",
+          user_id: "U123",
+        },
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "failed",
+        message: "Runtime control requires approval, but no approval handler is configured.",
+      });
+      await expect(permissionGrantStore.load("grant-current-run")).resolves.toMatchObject({
+        state: "active",
+      });
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -349,6 +419,7 @@ describe("RuntimeControlService", () => {
       const permissionGrantStore = new PermissionGrantStore(runtimeRoot);
       await permissionGrantStore.createActive(makeGrant());
       const service = new RuntimeControlService({ operationStore, permissionGrantStore });
+      const narrowApprovalFn = vi.fn().mockResolvedValue(true);
 
       const narrowed = await service.request({
         intent: {
@@ -359,9 +430,11 @@ describe("RuntimeControlService", () => {
         },
         cwd: "/repo",
         requestedBy: { surface: "chat", user_id: "U123" },
+        approvalFn: narrowApprovalFn,
       });
 
       expect(narrowed).toMatchObject({ success: true, state: "verified" });
+      expect(narrowApprovalFn).toHaveBeenCalledOnce();
       await expect(permissionGrantStore.load("grant-current-run")).resolves.toMatchObject({
         state: "superseded",
       });
@@ -665,6 +738,70 @@ describe("RuntimeControlService", () => {
       expect(traces[2]?.initiative_events).toEqual(expect.arrayContaining([
         expect.objectContaining({ event_type: "action_outcome" }),
       ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("records automation inspect admission before reading automation stores", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-automation-inspect-trace-");
+    try {
+      const runtimeRoot = path.join(tmpDir, "runtime");
+      const order: string[] = [];
+      const traces: unknown[] = [];
+      const recordTrace = vi.fn(async (trace: unknown) => {
+        traces.push(trace);
+        order.push("trace");
+        return {} as never;
+      });
+      const authHandoffStore = new RuntimeAuthHandoffStore(runtimeRoot);
+      const handoff = await authHandoffStore.createPending({
+        providerId: "browser",
+        serviceKey: "mail.example.com",
+        workspace: "/repo",
+        browserSessionId: "sess-auth",
+        actorKey: "chat-1",
+        expiresAt: "2026-05-02T00:00:00.000Z",
+        taskSummary: "Inspect mail login",
+      });
+      const originalLoad = authHandoffStore.load.bind(authHandoffStore);
+      vi.spyOn(authHandoffStore, "load").mockImplementation(async (handoffId: string) => {
+        order.push("read");
+        return originalLoad(handoffId);
+      });
+      const service = new RuntimeControlService({
+        runtimeRoot,
+        authHandoffStore,
+        personalAgentRuntime: { recordTrace },
+      });
+
+      const result = await service.controlAutomation({
+        domain: "auth_handoff",
+        action: "inspect",
+        handoffId: handoff.handoff_id,
+        reason: "inspect auth handoff",
+        cwd: "/repo",
+      });
+
+      expect(result).toMatchObject({ success: true, state: "verified" });
+      expect(order.slice(0, 2)).toEqual(["trace", "read"]);
+      expect(traces[0]).toEqual(expect.objectContaining({
+        capability_decisions: [
+          expect.objectContaining({
+            decision: "available",
+            capability_refs: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "capability_admission",
+                ref: expect.stringMatching(/^capability-admission:/),
+              }),
+              expect.objectContaining({
+                kind: "capability_fingerprint",
+                ref: expect.any(String),
+              }),
+            ]),
+          }),
+        ],
+      }));
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -1053,6 +1190,7 @@ describe("RuntimeControlService", () => {
         reason: "user requested companion suspend",
         cwd: "/repo",
         requestedBy: { surface: "chat", user_id: "operator-1" },
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
@@ -1084,6 +1222,41 @@ describe("RuntimeControlService", () => {
       expect(recomputed.input.global_controls[0]?.affected_runtime_refs).not.toEqual(expect.arrayContaining([
         expect.stringMatching(/^runtime-control:/),
       ]));
+    } finally {
+      cleanupTempDir(tmpDir);
+    }
+  });
+
+  it("blocks companion-wide mutations without an approval handler", async () => {
+    const tmpDir = makeTempDir("pulseed-runtime-control-companion-no-approval-");
+    try {
+      const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
+      const service = new RuntimeControlService({
+        runtimeRoot: path.join(tmpDir, "runtime"),
+        operationStore,
+        sessionRegistry: {
+          snapshot: vi.fn().mockResolvedValue(snapshotWithRuns([makeRun()])),
+        },
+        now: () => new Date("2026-05-08T00:00:00.000Z"),
+      });
+
+      const result = await service.setCompanionControl({
+        control: "suspend_companion",
+        reason: "user requested companion suspend",
+        cwd: "/repo",
+        requestedBy: { surface: "chat", user_id: "operator-1" },
+      });
+      const recomputed = await service.recomputeCompanionState({
+        activeSurfaceRef: "surface:current",
+        currentTime: "2026-05-08T00:01:00.000Z",
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        state: "failed",
+        message: "Runtime control requires approval, but no approval handler is configured.",
+      });
+      expect(recomputed.snapshot.control_overlays).not.toContain("suspend_companion");
     } finally {
       cleanupTempDir(tmpDir);
     }
@@ -1178,12 +1351,14 @@ describe("RuntimeControlService", () => {
         reason: "operator wants quiet resident agenda",
         cwd: "/repo",
         requestedBy: { surface: "chat", user_id: "operator-1" },
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
       await service.setCompanionControl({
         control: "resume_companion",
         reason: "resume should not flush held agenda",
         cwd: "/repo",
         requestedBy: { surface: "chat", user_id: "operator-1" },
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
@@ -1520,7 +1695,9 @@ describe("RuntimeControlService", () => {
     try {
       const operationStore = new RuntimeOperationStore(path.join(tmpDir, "runtime"));
       const executor = vi.fn();
-      const approvalFn = vi.fn().mockResolvedValue(false);
+      const approvalFn = vi.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
       const service = new RuntimeControlService({
         runtimeRoot: path.join(tmpDir, "runtime"),
         operationStore,
@@ -1582,11 +1759,13 @@ describe("RuntimeControlService", () => {
         control: "suspend_companion",
         reason: "suspend companion",
         cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
       await service.setCompanionControl({
         control: "resume_companion",
         reason: "lift companion suspend",
         cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
       const recomputed = await service.recomputeCompanionState({
         activeSurfaceRef: "surface:current",
@@ -2117,6 +2296,7 @@ describe("RuntimeControlService", () => {
         control: "suspend_companion",
         reason: "suspend companion",
         cwd: "/repo",
+        approvalFn: vi.fn().mockResolvedValue(true),
       });
 
       const result = await service.resumeRun({

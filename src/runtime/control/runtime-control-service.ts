@@ -68,7 +68,12 @@ import {
   type InterventionDecisionKind,
   type RuntimeGraphRef,
 } from "../personal-agent/index.js";
-import { descriptorFromRuntimeControlAction } from "../capability-plane.js";
+import {
+  admitCapabilityDescriptor,
+  descriptorFromRuntimeControlAction,
+  type CapabilityAdmissionDecision,
+  type CapabilityDescriptor,
+} from "../capability-plane.js";
 
 export interface RuntimeControlRequest {
   intent: RuntimeControlIntent;
@@ -177,6 +182,7 @@ interface RuntimeControlTraceOptions {
   decisionReason?: string;
   replayStage?: string;
   outcomeSummary?: string;
+  capabilityRefs?: RuntimeGraphRef[];
 }
 
 type TargetResolution =
@@ -330,7 +336,15 @@ export class RuntimeControlService {
 
   async controlAutomation(request: RuntimeAutomationControlRequest): Promise<RuntimeControlResult> {
     const mutation = request.action !== "inspect";
-    await this.recordAutomationControlTrace(request, mutation);
+    let admission = this.admitAutomationControl(request, !mutation);
+    await this.recordAutomationControlTrace(request, mutation, {
+      capabilityRefs: runtimeControlAdmissionRefs(admission),
+    });
+    if (admission.status === "blocked") {
+      const result = await this.recordAutomationOperation(request, "blocked", false, admission.reason);
+      await this.recordAutomationResultTrace(request, result);
+      return result;
+    }
     if (mutation && !request.approvalFn) {
       const result = await this.recordAutomationOperation(request, "blocked", false, "Runtime automation mutation requires an approval surface.");
       await this.recordAutomationResultTrace(request, result);
@@ -343,13 +357,21 @@ export class RuntimeControlService {
         await this.recordAutomationResultTrace(request, result);
         return result;
       }
+      const finalAdmission = this.admitAutomationControl(request, true, admission?.capability_fingerprint ?? null);
+      if (finalAdmission.status !== "allowed") {
+        const result = await this.recordAutomationOperation(request, "blocked", false, finalAdmission.reason);
+        await this.recordAutomationResultTrace(request, result);
+        return result;
+      }
       await this.recordAutomationControlTrace(request, mutation, {
         decision: "allow",
         capabilityDecision: "available",
         permissionRequired: false,
         replayStage: "approved",
-        decisionReason: `Runtime automation ${request.domain}.${request.action} was approved by policy confirmation before execution.`,
+        decisionReason: `Runtime automation ${request.domain}.${request.action} was approved by Capability Plane descriptor admission before execution.`,
+        capabilityRefs: runtimeControlAdmissionRefs(finalAdmission),
       });
+      admission = finalAdmission;
     }
 
     const result = await this.applyAutomationControl(request);
@@ -449,18 +471,22 @@ export class RuntimeControlService {
       return this.toResult(inspected);
     }
 
+    const approved = await this.approveIfRequired(initial, request.approvalFn, request);
+    if (!approved.ok) return approved.result;
+    const operation = approved.operation;
+
     const quietWorkStop = control === "stop_all_quiet_work"
-      ? await this.stopActiveQuietWork(initial, runtimeItemsBeforeControl, request)
+      ? await this.stopActiveQuietWork(operation, runtimeItemsBeforeControl, request)
       : null;
     const agendaSuppression = isDurableAgendaSuppressionControl(control) && this.attentionStore
       ? await this.attentionStore.suppressAgendaForControl({
           control,
           reason: request.intent.reason,
           now: this.nowIso(),
-          auditRef: { kind: "audit_trace", id: `runtime-control-operation:${initial.operation_id}` },
+          auditRef: { kind: "audit_trace", id: `runtime-control-operation:${operation.operation_id}` },
         })
       : null;
-    const verified = await this.update(initial, "verified", {
+    const verified = await this.update(operation, "verified", {
       ok: quietWorkStop?.ok ?? true,
       message: [
         formatCompanionControlApplied(control, affectedRefs),
@@ -652,12 +678,14 @@ export class RuntimeControlService {
           const blocked = await this.update(initial, "blocked", { ok: false, message: selected.message });
           return this.toResult(blocked);
         }
+        const approval = await this.approveIfRequired(initial, request.approvalFn, request);
+        if (!approval.ok) return approval.result;
         const revoked = await this.permissionGrantStore.revoke(selected.grant.grant_id, {
           revoked_by: actorKey(request.requestedBy),
           reason: request.intent.reason,
-          audit_refs: [`runtime-control:${initial.operation_id}`],
+          audit_refs: [`runtime-control:${approval.operation.operation_id}`],
         });
-        const updated = await this.update(initial, revoked ? "verified" : "blocked", {
+        const updated = await this.update(approval.operation, revoked ? "verified" : "blocked", {
           ok: Boolean(revoked),
           message: revoked
             ? `Revoked PermissionGrant ${revoked.grant_id}. Future covered actions will ask again or block according to policy.`
@@ -687,9 +715,7 @@ export class RuntimeControlService {
           });
           return this.toResult(blocked);
         }
-        const approval = request.intent.kind === "extend_permission"
-          ? await this.approveIfRequired(initial, request.approvalFn, request)
-          : { ok: true as const, operation: initial };
+        const approval = await this.approveIfRequired(initial, request.approvalFn, request);
         if (!approval.ok) return approval.result;
 
         const replacementInput = replacementGrantInput(selected.grant, capabilities, request, approval.operation.operation_id);
@@ -1266,8 +1292,19 @@ export class RuntimeControlService {
     approvalFn: RuntimeControlRequest["approvalFn"],
     request?: RuntimeControlRequest,
   ): Promise<RuntimeControlStep> {
-    if (!requiresApproval(operation.kind)) {
-      return { ok: true, operation };
+    let initialAdmission: CapabilityAdmissionDecision | null = null;
+    if (!request) {
+      if (!requiresApproval(operation.kind)) {
+        return { ok: true, operation };
+      }
+    } else {
+      initialAdmission = this.admitRuntimeControlOperation(operation, request, false);
+      if (initialAdmission.status === "blocked") {
+        return this.failStep(operation, "blocked", initialAdmission.reason);
+      }
+      if (!requiresApproval(operation.kind) && initialAdmission.status === "allowed") {
+        return { ok: true, operation };
+      }
     }
 
     if (!approvalFn) {
@@ -1299,16 +1336,83 @@ export class RuntimeControlService {
       updated_at: this.nowIso(),
     });
     if (request) {
+      const finalAdmission = this.admitRuntimeControlOperation(
+        updated,
+        request,
+        true,
+        initialAdmission?.capability_fingerprint ?? null,
+      );
+      if (finalAdmission.status !== "allowed") {
+        return this.failStep(updated, "blocked", finalAdmission.reason);
+      }
       await this.recordRuntimeControlTrace(request, {
         operation: updated,
         decision: "allow",
         capabilityDecision: "available",
         permissionRequired: false,
         replayStage: "approved",
-        decisionReason: `Runtime control ${updated.kind} was approved by policy confirmation before execution.`,
+        decisionReason: `Runtime control ${updated.kind} was approved by Capability Plane descriptor admission before execution.`,
+        capabilityRefs: runtimeControlAdmissionRefs(finalAdmission),
       });
+      return { ok: true, operation: updated };
     }
     return { ok: true, operation: updated };
+  }
+
+  private admitRuntimeControlOperation(
+    operation: RuntimeControlOperation,
+    request: RuntimeControlRequest,
+    preApproved: boolean,
+    approvalFingerprint?: string | null,
+  ): CapabilityAdmissionDecision {
+    const descriptor = descriptorFromRuntimeControlAction(operation.kind);
+    return admitCapabilityDescriptor({
+      descriptor,
+      rawInput: {
+        actor: request.requestedBy ?? null,
+        target: operation.target ?? request.intent.target ?? null,
+        request: request.intent,
+        operation_id: operation.operation_id,
+      },
+      context: {
+        preApproved,
+        approvalFingerprint: approvalFingerprint ?? null,
+        authorityRefs: runtimeControlAuthorityRefs(descriptor),
+        cwd: request.cwd,
+        callId: operation.operation_id,
+        stateEpoch: operation.requested_at,
+      },
+    });
+  }
+
+  private admitAutomationControl(
+    request: RuntimeAutomationControlRequest,
+    preApproved: boolean,
+    approvalFingerprint?: string | null,
+  ): CapabilityAdmissionDecision {
+    const descriptor = descriptorFromRuntimeControlAction(runtimeAutomationDescriptorAction(request));
+    return admitCapabilityDescriptor({
+      descriptor,
+      rawInput: {
+        actor: request.requestedBy ?? null,
+        target: {
+          domain: request.domain,
+          action: request.action,
+          handoff_id: request.handoffId ?? null,
+          session_id: request.sessionId ?? null,
+          provider_id: request.providerId ?? null,
+          service_key: request.serviceKey ?? null,
+        },
+        request,
+      },
+      context: {
+        preApproved,
+        approvalFingerprint: approvalFingerprint ?? null,
+        authorityRefs: runtimeControlAuthorityRefs(descriptor),
+        cwd: request.cwd,
+        callId: runtimeAutomationSourceId(request),
+      },
+    });
   }
 
   private acknowledge(operation: RuntimeControlOperation): Promise<RuntimeControlOperation> {
@@ -1351,7 +1455,7 @@ export class RuntimeControlService {
 
   private async failStep(
     operation: RuntimeControlOperation,
-    state: Extract<RuntimeControlOperationState, "failed" | "cancelled">,
+    state: Extract<RuntimeControlOperationState, "failed" | "cancelled" | "blocked">,
     message: string
   ): Promise<RuntimeControlStep> {
     const saved = await this.update(operation, state, {
@@ -1498,6 +1602,13 @@ export class RuntimeControlService {
     const kind = operation?.kind ?? request.intent.kind;
     const permissionRequired = options.permissionRequired ?? requiresApproval(kind);
     const supported = isSupportedRuntimeControlKind(kind);
+    const traceCapabilityRefs = options.capabilityRefs ?? (
+      supported
+        ? runtimeControlAdmissionRefs(operation
+          ? this.admitRuntimeControlOperation(operation, request, !permissionRequired)
+          : this.admitRuntimeControlRequest(request, kind, !permissionRequired))
+        : []
+    );
     const targetRef = operation
       ? runtimeControlOperationTargetRef(operation)
       : runtimeControlTargetRef(request.intent);
@@ -1559,8 +1670,14 @@ export class RuntimeControlService {
       decisionReason,
       capabilityDecision,
       capabilityRefs: operation
-        ? runtimeControlOperationCapabilityRefs(operation, request)
-        : runtimeControlCapabilityRefs(request),
+        ? [
+            ...runtimeControlOperationCapabilityRefs(operation, request),
+            ...traceCapabilityRefs,
+          ]
+        : [
+            ...runtimeControlCapabilityRefs(request),
+            ...traceCapabilityRefs,
+          ],
       policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
       permissionRequired,
       cognitionSituation: cognition.situation_model,
@@ -1579,6 +1696,29 @@ export class RuntimeControlService {
           }
         : {}),
     }));
+  }
+
+  private admitRuntimeControlRequest(
+    request: RuntimeControlRequest,
+    kind: RuntimeControlOperationKind,
+    preApproved: boolean,
+  ): CapabilityAdmissionDecision {
+    const descriptor = descriptorFromRuntimeControlAction(kind);
+    return admitCapabilityDescriptor({
+      descriptor,
+      rawInput: {
+        actor: request.requestedBy ?? null,
+        target: request.intent.target ?? null,
+        request: request.intent,
+      },
+      context: {
+        preApproved,
+        authorityRefs: runtimeControlAuthorityRefs(descriptor),
+        cwd: request.cwd,
+        callId: runtimeControlSourceId(request),
+        stateEpoch: runtimeControlHighWatermark(request),
+      },
+    });
   }
 
   private async recordAutomationControlTrace(
@@ -1645,6 +1785,7 @@ export class RuntimeControlService {
       capabilityRefs: [
         ...runtimeControlDescriptorRefs(`automation:${request.domain}:${request.action}`),
         { kind: "runtime_automation_domain", ref: request.domain },
+        ...(options.capabilityRefs ?? []),
       ],
       policyRef: { kind: "response_plan", ref: cognition.response_plan.plan_id },
       permissionRequired,
@@ -1790,6 +1931,10 @@ function runtimeAutomationSourceId(request: RuntimeAutomationControlRequest): st
   return `automation:${request.domain}:${request.action}:${request.handoffId ?? request.sessionId ?? request.providerId ?? "target:none"}`;
 }
 
+function runtimeAutomationDescriptorAction(request: RuntimeAutomationControlRequest): string {
+  return `automation:${request.domain}:${request.action}`;
+}
+
 function runtimeAutomationReplayKey(request: RuntimeAutomationControlRequest, stage?: string): string {
   return [
     "runtime_control",
@@ -1884,6 +2029,19 @@ function runtimeControlDescriptorRefs(action: string): RuntimeGraphRef[] {
   ];
 }
 
+function runtimeControlAuthorityRefs(descriptor: CapabilityDescriptor): string[] {
+  return descriptor.authority_requirements.required_refs;
+}
+
+function runtimeControlAdmissionRefs(admission: CapabilityAdmissionDecision): RuntimeGraphRef[] {
+  return [
+    { kind: "capability_admission", ref: admission.admission_id },
+    ...(admission.capability_fingerprint
+      ? [{ kind: "capability_fingerprint", ref: admission.capability_fingerprint }]
+      : []),
+  ];
+}
+
 function runtimeControlOperationCurrentRefs(operation: RuntimeControlOperation): RuntimeGraphRef[] {
   const refs: RuntimeGraphRef[] = [
     { kind: "runtime_control_operation", ref: operation.operation_id },
@@ -1945,15 +2103,16 @@ function isRunControlKind(
 }
 
 function requiresApproval(kind: RuntimeControlOperationKind): boolean {
-  return kind === "restart_daemon"
-    || kind === "restart_gateway"
-    || kind === "reload_config"
-    || kind === "self_update"
-    || kind === "pause_run"
-    || kind === "resume_run"
-    || kind === "cancel_run"
-    || kind === "finalize_run"
-    || kind === "extend_permission";
+  return !isReadOnlyRuntimeControlKind(kind);
+}
+
+function isReadOnlyRuntimeControlKind(kind: RuntimeControlOperationKind): boolean {
+  return kind === "inspect_run"
+    || kind === "inspect_session"
+    || kind === "summarize_session_without_resuming"
+    || kind === "inspect_permission_boundary"
+    || kind === "audit_permission_check"
+    || kind === "inspect_companion_state";
 }
 
 function normalizeReplyTarget(target: RuntimeControlReplyTarget): RuntimeControlReplyTarget {

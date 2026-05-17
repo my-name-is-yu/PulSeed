@@ -125,7 +125,7 @@ export class MCPClientManager {
         connection = await createRealConnection(config);
       }
 
-      const adapter = new MCPDataSourceAdapter(config, connection);
+      const adapter = new MCPDataSourceAdapter(config, connection, { baseDir: this.baseDir });
       try {
         await adapter.connect();
         this.adapters.set(config.id, adapter);

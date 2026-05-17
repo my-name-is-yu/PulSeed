@@ -175,9 +175,18 @@ describe("capability plane product gauntlet", () => {
       expect(channelDescriptor.provider_kind).toBe("gateway_channel_action");
 
       const runtimeControlDescriptor = descriptorFromRuntimeControlAction("reload_config");
+      const missingAuthorityRuntimeControlAdmission = admitCapabilityDescriptor({
+        descriptor: runtimeControlDescriptor,
+        rawInput: { actor: "operator", target: "daemon", request: "reload_config" },
+      });
+      expect(missingAuthorityRuntimeControlAdmission.status).toBe("blocked");
+      expect(missingAuthorityRuntimeControlAdmission.reason).toContain("missing descriptor authority refs");
       const runtimeControlAdmission = admitCapabilityDescriptor({
         descriptor: runtimeControlDescriptor,
         rawInput: { actor: "operator", target: "daemon", request: "reload_config" },
+        context: {
+          authorityRefs: runtimeControlDescriptor.authority_requirements.required_refs,
+        },
       });
       expect(runtimeControlAdmission.status).toBe("requires_approval");
       expect(runtimeControlDescriptor.rollback_plan.operator_visible).toBe(true);
@@ -199,7 +208,7 @@ describe("capability plane product gauntlet", () => {
       expect(normalProjectionJson).not.toContain("raw_catalog");
 
       context.recordEvidence({
-        authorityDecisions: [staleApproval, mcpAdmission, pluginAdmission, channelAdmission, runtimeControlAdmission],
+        authorityDecisions: [staleApproval, mcpAdmission, pluginAdmission, channelAdmission, missingAuthorityRuntimeControlAdmission, runtimeControlAdmission],
         normalProjection,
         operatorDebugEvidence: {
           rollback_plan: runtimeControlDescriptor.rollback_plan,

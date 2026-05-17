@@ -243,7 +243,7 @@ describe("ToolExecutor", () => {
           turnId: "turn-1",
         }));
 
-        expect(order).toEqual(["trace", "call", "trace"]);
+        expect(order).toEqual(["trace", "trace", "call", "trace"]);
         expect(recordTrace).toHaveBeenCalledWith(expect.objectContaining({
           situation_frame: expect.objectContaining({
             caller_path: "explicit_user_command",
@@ -256,12 +256,13 @@ describe("ToolExecutor", () => {
             }),
           ],
           intervention_decisions: [
-            expect.objectContaining({
-              decision: "allow",
-              target_effect: "execute_tool",
-            }),
+            expect.objectContaining({ target_effect: "execute_tool" }),
           ],
         }));
+        expect(recordTrace.mock.calls.map((call) => {
+          const [trace] = call as unknown as [{ intervention_decisions: Array<{ decision: string }> }];
+          return trace.intervention_decisions[0]?.decision;
+        })).toEqual(["confirm_required", "allow", "allow"]);
         expect(recordTrace).toHaveBeenLastCalledWith(expect.objectContaining({
           initiative_events: expect.arrayContaining([
             expect.objectContaining({ event_type: "action_outcome" }),
@@ -341,6 +342,55 @@ describe("ToolExecutor", () => {
             expect.objectContaining({
               decision: "block",
               target_effect: "execute_tool",
+            }),
+          ],
+        }));
+      });
+
+      it("records the concrete Capability Plane admission id before tool.call", async () => {
+        const order: string[] = [];
+        const traces: unknown[] = [];
+        const recordTrace = vi.fn(async (trace: unknown) => {
+          traces.push(trace);
+          order.push("trace");
+          return {} as never;
+        });
+        const tool = createMockTool({
+          name: "admitted-read-tool",
+          call: vi.fn().mockImplementation(async () => {
+            order.push("call");
+            return {
+              success: true,
+              data: { result: "ok" },
+              summary: "read complete",
+              durationMs: 4,
+            } as ToolResult;
+          }),
+        });
+        const { executor } = createExecutor([tool]);
+
+        const result = await executor.execute("admitted-read-tool", { value: "x" }, createMockContext({
+          personalAgentRuntime: { recordTrace },
+          callId: "capability-admission-call-1",
+          sessionId: "session-1",
+        }));
+
+        expect(result.success).toBe(true);
+        expect(order.slice(0, 2)).toEqual(["trace", "call"]);
+        expect(traces[0]).toEqual(expect.objectContaining({
+          capability_decisions: [
+            expect.objectContaining({
+              decision: "available",
+              capability_refs: expect.arrayContaining([
+                expect.objectContaining({
+                  kind: "capability_admission",
+                  ref: expect.stringMatching(/^capability-admission:/),
+                }),
+                expect.objectContaining({
+                  kind: "capability_fingerprint",
+                  ref: expect.any(String),
+                }),
+              ]),
             }),
           ],
         }));

@@ -50,19 +50,25 @@ export async function loadBuiltinGatewayIntegrations(
           break;
         }
         case "whatsapp-webhook": {
-          const adapter = WhatsAppGatewayAdapter.fromConfigDir(location.channelDir);
+          const adapter = WhatsAppGatewayAdapter.fromConfigDir(location.channelDir, {
+            runtimeBaseDir: baseDir,
+          });
           adapters.push(adapter);
           notifiers.push({ name: "whatsapp-webhook", notifier: adapter.getNotifier() });
           break;
         }
         case "signal-bridge": {
-          const adapter = SignalGatewayAdapter.fromConfigDir(location.channelDir);
+          const adapter = SignalGatewayAdapter.fromConfigDir(location.channelDir, {
+            runtimeBaseDir: baseDir,
+          });
           adapters.push(adapter);
           notifiers.push({ name: "signal-bridge", notifier: adapter.getNotifier() });
           break;
         }
         case "discord-bot": {
-          const adapter = DiscordGatewayAdapter.fromConfigDir(location.channelDir);
+          const adapter = DiscordGatewayAdapter.fromConfigDir(location.channelDir, {
+            runtimeBaseDir: baseDir,
+          });
           adapters.push(adapter);
           notifiers.push({ name: "discord-bot", notifier: adapter.getNotifier() });
           break;

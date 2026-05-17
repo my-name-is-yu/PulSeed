@@ -194,11 +194,21 @@ function runGitApply(args: string[], patch: string, cwd: string): Promise<{ stdo
     const child = spawn("git", args, { cwd });
     let stdout = "";
     let stderr = "";
+    let settled = false;
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? -1 }));
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      resolve({ stdout, stderr: stderr || err.message, exitCode: -1 });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
     child.stdin.end(patch);
   });
 }

@@ -653,6 +653,7 @@ function makeTaskRunner(
       maxCompletionValidationAttempts: 1,
       ...options.defaultBudget,
     },
+    cognitionMemoryBaseDir: path.join(cwd, ".pulseed-test-cognition"),
     cwd,
     ...(options.createSession ? { createSession: options.createSession } : {}),
   });

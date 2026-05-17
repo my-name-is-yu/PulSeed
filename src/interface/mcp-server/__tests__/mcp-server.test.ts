@@ -1,6 +1,6 @@
 // ─── MCP Server Tool Tests ───
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -132,6 +132,48 @@ describe("pulseed_goal_status", () => {
     expect(data.goal.id).toBe("goal-abc");
     expect(data.latest_gap).toBeNull();
   });
+
+  it("records concrete Capability Plane admission before reading local goal state", async () => {
+    await createGoal(deps.stateManager, "goal-admitted");
+    const order: string[] = [];
+    const traces: unknown[] = [];
+    const recordTrace = vi.fn(async (trace: unknown) => {
+      traces.push(trace);
+      order.push("trace");
+      return {} as never;
+    });
+    const originalLoadGoal = deps.stateManager.loadGoal.bind(deps.stateManager);
+    vi.spyOn(deps.stateManager, "loadGoal").mockImplementation(async (goalId: string) => {
+      order.push("read");
+      return originalLoadGoal(goalId);
+    });
+
+    const result = await toolGoalStatus(
+      { ...deps, personalAgentRuntime: { recordTrace } },
+      { goal_id: "goal-admitted" },
+    );
+
+    const data = parseMCPText(result) as { goal: { id: string } };
+    expect(data.goal.id).toBe("goal-admitted");
+    expect(order.slice(0, 2)).toEqual(["trace", "read"]);
+    expect(traces[0]).toEqual(expect.objectContaining({
+      capability_decisions: [
+        expect.objectContaining({
+          decision: "available",
+          capability_refs: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "capability_admission",
+              ref: expect.stringMatching(/^capability-admission:/),
+            }),
+            expect.objectContaining({
+              kind: "capability_fingerprint",
+              ref: expect.any(String),
+            }),
+          ]),
+        }),
+      ],
+    }));
+  });
 });
 
 describe("pulseed_goal_create", () => {
@@ -148,17 +190,14 @@ describe("pulseed_goal_create", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a DB-backed goal and returns goal_id", async () => {
+  it("fails closed before mutating until the MCP capability descriptor is enabled and verified", async () => {
+    const loadGoal = vi.spyOn(deps.stateManager, "loadGoal");
     const result = await toolGoalCreate(deps, { title: "My Goal", description: "Do something" });
-    const data = parseMCPText(result) as { goal_id: string; title: string; status: string };
+    const data = parseMCPText(result) as { error: string };
 
-    expect(data.goal_id).toBeDefined();
-    expect(data.title).toBe("My Goal");
-    expect(data.status).toBe("active");
-
-    const saved = await deps.stateManager.loadGoal(data.goal_id);
-    expect(saved?.title).toBe("My Goal");
-    await expect(fsp.access(path.join(tmpDir, "goals", data.goal_id, "goal.json"))).rejects.toThrow();
+    expect(data.error).toContain("capability:mcp_server:pulseed:pulseed_goal_create is disabled");
+    expect(loadGoal).not.toHaveBeenCalled();
+    await expect(deps.stateManager.listGoalIds()).resolves.toEqual([]);
   });
 });
 
@@ -198,22 +237,15 @@ describe("pulseed_trigger", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates an event file", async () => {
+  it("fails closed before writing an event until the MCP capability descriptor is enabled and verified", async () => {
     const result = await toolTrigger(deps, {
       source: "test",
       event_type: "test.event",
       data: { key: "value" },
     });
-    const data = parseMCPText(result) as { event_id: string; status: string };
-    expect(data.event_id).toBeDefined();
-    expect(data.status).toBe("queued");
-
-    // Verify file was created
-    const filePath = path.join(tmpDir, "events", `${data.event_id}.json`);
-    const raw = await fsp.readFile(filePath, "utf-8");
-    const event = JSON.parse(raw);
-    expect(event.source).toBe("test");
-    expect(event.event_type).toBe("test.event");
-    expect(event.data.key).toBe("value");
+    const data = parseMCPText(result) as { error: string };
+    expect(data.error).toContain("capability:mcp_server:pulseed:pulseed_trigger is disabled");
+    const eventEntries = await fsp.readdir(path.join(tmpDir, "events"));
+    expect(eventEntries.some((entry) => entry.startsWith("mcp_trigger_"))).toBe(false);
   });
 });

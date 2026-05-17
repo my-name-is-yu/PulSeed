@@ -20,6 +20,22 @@ import type {
   MCPToolMapping,
   IMCPConnection,
 } from "../../base/types/mcp.js";
+import {
+  admitCapabilityDescriptor,
+  descriptorsFromMcpServers,
+  type CapabilityAdmissionDecision,
+  type CapabilityDescriptor,
+} from "../../runtime/capability-plane.js";
+import {
+  buildPersonalAgentDecisionTrace,
+  PersonalAgentRuntimeStore,
+  type RuntimeGraphRef,
+} from "../../runtime/personal-agent/index.js";
+
+export interface MCPDataSourceAdapterOptions {
+  baseDir?: string;
+  personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+}
 
 // ─── Glob pattern matcher ───
 
@@ -38,11 +54,15 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
 
   private readonly serverConfig: MCPServerConfig;
   private readonly connection: IMCPConnection;
+  private readonly traceBaseDir?: string;
+  private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private connected = false;
 
-  constructor(serverConfig: MCPServerConfig, connection: IMCPConnection) {
+  constructor(serverConfig: MCPServerConfig, connection: IMCPConnection, options: MCPDataSourceAdapterOptions = {}) {
     this.serverConfig = serverConfig;
     this.connection = connection;
+    this.traceBaseDir = options.baseDir;
+    this.personalAgentRuntime = options.personalAgentRuntime;
     this.sourceId = serverConfig.id;
 
     // Synthesize a minimal DataSourceConfig to satisfy the interface
@@ -98,6 +118,33 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
     let value: number | string | boolean | null = null;
 
     try {
+      const descriptor = descriptorsFromMcpServers([{ ...this.serverConfig, tool_mappings: [mapping] }])[0];
+      if (!descriptor) {
+        throw new Error(`Capability Plane could not describe MCP datasource tool ${mapping.tool_name}`);
+      }
+      const admission = admitCapabilityDescriptor({
+        descriptor,
+        rawInput: {
+          server_id: this.serverConfig.id,
+          tool_name: mapping.tool_name,
+          arguments: args,
+        },
+        context: {
+          preApproved: !descriptor.authority_requirements.approval_required,
+          authorityRefs: descriptor.authority_requirements.required_refs,
+          callId: `mcp-datasource:${this.serverConfig.id}:${mapping.tool_name}:${params.dimension_name}`,
+          stateEpoch: `${this.serverConfig.id}:${this.serverConfig.enabled ? "enabled" : "disabled"}`,
+        },
+      });
+      if (admission.status !== "allowed") {
+        throw new Error(`Capability Plane blocked MCP datasource tool ${mapping.tool_name}: ${admission.reason}`);
+      }
+      await this.recordCapabilityAdmission({
+        descriptor,
+        admission,
+        mapping,
+        dimensionName: params.dimension_name,
+      });
       const result = await this.connection.callTool(mapping.tool_name, args);
       raw = result;
 
@@ -139,5 +186,71 @@ export class MCPDataSourceAdapter implements IDataSourceAdapter {
     if (trimmed === "true") return true;
     if (trimmed === "false") return false;
     return coerceDataSourceObservationValue(trimmed);
+  }
+
+  private async recordCapabilityAdmission(input: {
+    descriptor: CapabilityDescriptor;
+    admission: CapabilityAdmissionDecision;
+    mapping: MCPToolMapping;
+    dimensionName: string;
+  }): Promise<void> {
+    const store = this.personalAgentRuntime
+      ?? (this.traceBaseDir ? new PersonalAgentRuntimeStore(this.traceBaseDir, { controlBaseDir: this.traceBaseDir }) : null);
+    if (!store) return;
+    const toolRef = `${this.serverConfig.id}:${input.mapping.tool_name}:${input.dimensionName}`;
+    const emittedAt = new Date().toISOString();
+    await store.recordTrace(buildPersonalAgentDecisionTrace({
+      callerPath: "external_signal",
+      source: {
+        sourceKind: "external_signal",
+        sourceId: `mcp-datasource:${toolRef}`,
+        emittedAt,
+        sourceEpoch: `${this.serverConfig.id}:${this.serverConfig.enabled ? "enabled" : "disabled"}`,
+        highWatermark: input.dimensionName,
+        replayKey: [
+          "mcp_datasource",
+          this.serverConfig.id,
+          input.mapping.tool_name,
+          input.dimensionName,
+          input.admission.admission_id,
+        ].join(":"),
+        summary: `MCP datasource tool ${input.mapping.tool_name} was admitted before execution.`,
+        sourceRef: { kind: "mcp_tool", ref: toolRef },
+      },
+      target: {
+        kind: "tool_call",
+        ref: { kind: "mcp_tool", ref: toolRef },
+        effect: "execute_tool",
+        summary: `Execute verified read-only MCP datasource mapping ${input.mapping.tool_name}.`,
+      },
+      decision: "allow",
+      decisionReason: input.admission.reason,
+      capabilityDecision: "available",
+      capabilityRefs: this.capabilityRefs(input.descriptor, input.admission, input.mapping),
+      policyRef: { kind: "intervention_policy", ref: "policy:capability-plane-mcp-datasource-v1" },
+      currentRefs: [
+        { kind: "mcp_server", ref: this.serverConfig.id },
+        { kind: "mcp_tool", ref: toolRef },
+      ],
+    }));
+  }
+
+  private capabilityRefs(
+    descriptor: CapabilityDescriptor,
+    admission: CapabilityAdmissionDecision,
+    mapping: MCPToolMapping,
+  ): RuntimeGraphRef[] {
+    return [
+      { kind: "capability", ref: descriptor.capability_id },
+      { kind: "capability_provider", ref: descriptor.provider_ref },
+      { kind: "capability_operation", ref: descriptor.runtime_graph_refs.operation_ref },
+      { kind: "capability_readiness", ref: descriptor.readiness_state },
+      { kind: "capability_admission", ref: admission.admission_id },
+      ...(admission.capability_fingerprint
+        ? [{ kind: "capability_fingerprint", ref: admission.capability_fingerprint }]
+        : []),
+      { kind: "mcp_server", ref: this.serverConfig.id },
+      { kind: "mcp_tool", ref: mapping.tool_name },
+    ];
   }
 }

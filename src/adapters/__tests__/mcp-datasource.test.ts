@@ -24,8 +24,20 @@ function makeServerConfig(overrides: Partial<MCPServerConfig> = {}): MCPServerCo
     command: "node",
     args: ["server.js"],
     tool_mappings: [
-      { tool_name: "get_coverage", dimension_pattern: "coverage" },
-      { tool_name: "get_test_count", dimension_pattern: "test_*" },
+      {
+        tool_name: "get_coverage",
+        dimension_pattern: "coverage",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      },
+      {
+        tool_name: "get_test_count",
+        dimension_pattern: "test_*",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      },
     ],
     enabled: true,
     ...overrides,
@@ -125,6 +137,100 @@ describe("MCPDataSourceAdapter.query with matching dimension", () => {
     expect(result.source_id).toBe("test-mcp-server");
   });
 
+  it("records descriptor admission and fingerprint before a verified read-only MCP call", async () => {
+    const order: string[] = [];
+    const recordTrace = vi.fn(async (trace: any) => {
+      order.push("trace");
+      return {
+        trace_id: trace.trace_id,
+        replay_key: trace.replay_key,
+        situation_frame: trace.situation_frame,
+        initiative_events: trace.initiative_events,
+        attention_transitions: trace.attention_transitions,
+        task_candidates: trace.task_candidates,
+        capability_decisions: trace.capability_decisions,
+        intervention_decisions: trace.intervention_decisions,
+        runtime_graph_nodes: trace.runtime_graph_nodes,
+        runtime_graph_edges: trace.runtime_graph_edges,
+        memory_audits: trace.memory_audits,
+      };
+    });
+    const tracedConn = makeConnection({
+      callTool: vi.fn(async () => {
+        order.push("callTool");
+        return { content: [{ type: "text", text: "42" }] };
+      }),
+    });
+    const tracedAdapter = new MCPDataSourceAdapter(makeServerConfig(), tracedConn, {
+      personalAgentRuntime: { recordTrace },
+    });
+
+    await tracedAdapter.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+    expect(order).toEqual(["trace", "callTool"]);
+    expect(recordTrace).toHaveBeenCalledOnce();
+    expect(recordTrace.mock.calls[0]?.[0]).toMatchObject({
+      situation_frame: {
+        caller_path: "external_signal",
+      },
+      capability_decisions: expect.arrayContaining([
+        expect.objectContaining({
+          decision: "available",
+          capability_refs: expect.arrayContaining([
+            expect.objectContaining({ kind: "capability_admission" }),
+            expect.objectContaining({ kind: "capability_fingerprint" }),
+            expect.objectContaining({ kind: "mcp_tool", ref: "get_coverage" }),
+          ]),
+        }),
+      ]),
+    });
+  });
+
+  it("fails closed before calling imported MCP tools without verified capability readiness", async () => {
+    const config = makeServerConfig({
+      tool_mappings: [
+        { tool_name: "get_coverage", dimension_pattern: "coverage" },
+      ],
+    });
+    const adapter2 = new MCPDataSourceAdapter(config, conn);
+
+    const result = await adapter2.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+    expect(conn.callTool).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      value: null,
+      raw: null,
+      source_id: "test-mcp-server",
+      metadata: {
+        error: expect.stringContaining("Capability Plane blocked MCP datasource tool get_coverage"),
+      },
+    });
+  });
+
+  it("does not treat executable readiness as approval for mutating MCP datasource tools", async () => {
+    const config = makeServerConfig({
+      tool_mappings: [
+        {
+          tool_name: "update_remote_metric",
+          dimension_pattern: "coverage",
+          capability_readiness: "executable_verified",
+        },
+      ],
+    });
+    const adapter2 = new MCPDataSourceAdapter(config, conn);
+
+    const result = await adapter2.query({ dimension_name: "coverage", timeout_ms: 5000 });
+
+    expect(conn.callTool).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      value: null,
+      raw: null,
+      metadata: {
+        error: expect.stringContaining("requires approval before mutate"),
+      },
+    });
+  });
+
   it("calls the correct tool for a wildcard-matched dimension", async () => {
     (conn.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       content: [{ type: "text", text: "100" }],
@@ -141,6 +247,9 @@ describe("MCPDataSourceAdapter.query with matching dimension", () => {
           tool_name: "get_metric",
           dimension_pattern: "coverage",
           args_template: { threshold: 80 },
+          capability_operation_kind: "read",
+          capability_side_effect_profile: "read",
+          capability_readiness: "executable_verified",
         },
       ],
     });
