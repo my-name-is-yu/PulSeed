@@ -5426,15 +5426,31 @@ describe("ChatRunner", () => {
           stopped_reason: "completed",
         }),
       } as unknown as ChatAgentLoopRunner;
+      const events: ChatEvent[] = [];
       const runner = new ChatRunner(makeDeps({
         chatAgentLoopRunner,
         llmClient: createMockLLMClient([]),
+        onEvent: (event) => { events.push(event); },
       }));
 
       const result = await runner.execute("Can you inspect the background sessions from this chat?", "/repo");
 
       expect(result.success).toBe(true);
       expect(result.output).toContain("sessions_list");
+      expect(result.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+        purpose: "chat/native agent-loop assistant output",
+      });
+      const finalEvent = [...events].reverse().find((event) => event.type === "assistant_final");
+      expect(finalEvent).toMatchObject({
+        type: "assistant_final",
+        surface_projection: {
+          surface: "chat",
+          view: "normal",
+        },
+      });
+      expect(finalEvent?.surface_projection).not.toHaveProperty("operator_debug_view");
       expect(chatAgentLoopRunner.execute).toHaveBeenCalledWith(expect.objectContaining({
         message: "Can you inspect the background sessions from this chat?",
         toolCallContext: expect.objectContaining({

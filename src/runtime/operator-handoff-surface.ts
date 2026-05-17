@@ -11,6 +11,8 @@ import {
   type SurfaceProjection,
 } from "./surface-projection-protocol.js";
 
+const OPERATOR_HANDOFF_BINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface OperatorHandoffSurfaceEvent {
   requestId: string;
   handoff_id: string;
@@ -35,14 +37,17 @@ export function projectOperatorHandoffSurface(record: RuntimeOperatorHandoffReco
   projection: SurfaceProjection;
 } {
   const surfaceInstanceRef = operatorHandoffSurfaceInstanceRef(record);
-  const projectionId = `surface:operator-handoff:${record.handoff_id}`;
+  const projectionVersion = operatorHandoffProjectionVersion(record);
+  const projectionId = `surface:operator-handoff:${record.handoff_id}:${projectionVersion}`;
+  const replayKey = operatorHandoffReplayKey(record);
+  const bindingExpiresAt = operatorHandoffBindingExpiresAt(record);
   const sourceEventRefs = [
     normalSourceEventRef({
       kind: "operator_handoff",
       ref: record.handoff_id,
       event_type: "operator_handoff_required",
       occurred_at: record.created_at,
-      replay_key: `operator-handoff:${record.handoff_id}`,
+      replay_key: replayKey,
     }),
   ];
   const runtimeGraphRefs = [
@@ -67,6 +72,8 @@ export function projectOperatorHandoffSurface(record: RuntimeOperatorHandoffReco
     actionKind: "approve",
     projectionId,
     surfaceInstanceRef,
+    replayKey,
+    bindingExpiresAt,
     sourceEventRefs,
     runtimeGraphRefs,
   });
@@ -75,6 +82,8 @@ export function projectOperatorHandoffSurface(record: RuntimeOperatorHandoffReco
     actionKind: "reject",
     projectionId,
     surfaceInstanceRef,
+    replayKey,
+    bindingExpiresAt,
     sourceEventRefs,
     runtimeGraphRefs,
   });
@@ -91,7 +100,7 @@ export function projectOperatorHandoffSurface(record: RuntimeOperatorHandoffReco
       purpose: "Project an operator handoff as a normal-safe approval surface.",
       redaction_class: "normal_safe",
       projected_at: record.updated_at,
-      replay_key: `operator-handoff:${record.handoff_id}`,
+      replay_key: replayKey,
       source_event_refs: sourceEventRefs,
       runtime_graph_refs: runtimeGraphRefs,
       panels: [{
@@ -105,19 +114,20 @@ export function projectOperatorHandoffSurface(record: RuntimeOperatorHandoffReco
         prompt,
         action: record.next_action.label,
         target_summary: record.title,
+        expires_at: bindingExpiresAt,
         approve_binding_id: approveBinding.binding_id,
         reject_binding_id: rejectBinding.binding_id,
       },
       actions: [
         {
-          action_id: `operator-handoff:${record.handoff_id}:approve`,
+          action_id: `${replayKey}:approve`,
           kind: "approve",
           label: "Approve",
           style: "primary",
           binding_id: approveBinding.binding_id,
         },
         {
-          action_id: `operator-handoff:${record.handoff_id}:reject`,
+          action_id: `${replayKey}:reject`,
           kind: "reject",
           label: "Reject",
           style: "danger",
@@ -177,6 +187,8 @@ function createOperatorHandoffActionBinding(input: {
   actionKind: "approve" | "reject";
   projectionId: string;
   surfaceInstanceRef: string;
+  replayKey: string;
+  bindingExpiresAt: string;
   sourceEventRefs: ReturnType<typeof normalSourceEventRef>[];
   runtimeGraphRefs: ReturnType<typeof normalRuntimeGraphRef>[];
 }): SurfaceActionBinding {
@@ -192,10 +204,10 @@ function createOperatorHandoffActionBinding(input: {
     source_projection_id: input.projectionId,
     source_event_refs: input.sourceEventRefs,
     runtime_graph_refs: input.runtimeGraphRefs,
-    replay_key: `operator-handoff:${input.record.handoff_id}:${input.actionKind}`,
+    replay_key: `${input.replayKey}:${input.actionKind}`,
     redaction_class: "normal_safe",
-    created_at: input.record.created_at,
-    expires_at: null,
+    created_at: input.record.updated_at,
+    expires_at: input.bindingExpiresAt,
   });
 }
 
@@ -235,5 +247,17 @@ function operatorHandoffSurfaceTask(record: RuntimeOperatorHandoffRecord): Task 
 }
 
 function operatorHandoffSurfaceInstanceRef(record: RuntimeOperatorHandoffRecord): string {
-  return `approval:operator-handoff:${record.handoff_id}`;
+  return `approval:operator-handoff:${record.handoff_id}:${operatorHandoffProjectionVersion(record)}`;
+}
+
+function operatorHandoffReplayKey(record: RuntimeOperatorHandoffRecord): string {
+  return `operator-handoff:${record.handoff_id}:${operatorHandoffProjectionVersion(record)}`;
+}
+
+function operatorHandoffProjectionVersion(record: RuntimeOperatorHandoffRecord): string {
+  return Date.parse(record.updated_at).toString(36);
+}
+
+function operatorHandoffBindingExpiresAt(record: RuntimeOperatorHandoffRecord): string {
+  return new Date(Date.parse(record.updated_at) + OPERATOR_HANDOFF_BINDING_TTL_MS).toISOString();
 }

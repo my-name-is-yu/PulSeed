@@ -362,16 +362,25 @@ export async function executeAgentLoopRoute(
     if (result.output) {
       host.eventBridge.pushAssistantSnapshot(result.output, assistantBuffer, eventContext);
     }
+    let surfaceProjection: SurfaceProjection | undefined;
     if (result.success) {
       const diffArtifact = await collectGitDiffArtifact(gitRoot);
       if (diffArtifact) {
         host.eventBridge.emitDiffArtifact(diffArtifact, eventContext);
       }
       await history.appendAssistantMessage(result.output);
+      surfaceProjection = projectChatRunResultSurface({
+        output: result.output,
+        purpose: "chat/native agent-loop assistant output",
+        eventContext,
+        turnContext,
+        projectedAt: new Date().toISOString(),
+      });
       host.eventBridge.emitEvent({
         type: "assistant_final",
         text: result.output,
         persisted: true,
+        surface_projection: surfaceProjection,
         ...host.eventBridge.eventBase(eventContext),
       });
       host.eventBridge.emitLifecycleEndEvent("completed", elapsed_ms, eventContext, true);
@@ -393,6 +402,7 @@ export async function executeAgentLoopRoute(
       success: result.success,
       output: result.output,
       elapsed_ms,
+      ...(surfaceProjection ? { surface_projection: surfaceProjection } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1306,14 +1316,19 @@ function shouldGateRuntimeEvidenceForTurn(turnContext: ChatTurnContext): boolean
     && turnContext.modelVisible.runtime.replyTarget?.surface === "gateway";
 }
 
-function projectChatRunResultSurface(input: {
+export function projectChatRunResultSurface(input: {
   output: string;
   purpose: string;
   eventContext: ChatEventContext;
   turnContext?: ChatTurnContext;
+  replyTarget?: {
+    surface?: string;
+    conversation_id?: string;
+    message_id?: string;
+  } | null;
   projectedAt: string;
 }): SurfaceProjection {
-  const replyTarget = input.turnContext?.modelVisible.runtime.replyTarget;
+  const replyTarget = input.turnContext?.modelVisible.runtime.replyTarget ?? input.replyTarget ?? null;
   const surface: SurfaceKind = replyTarget?.surface === "gateway" ? "gateway" : "chat";
   const replayKey = [
     "chat-assistant-output",

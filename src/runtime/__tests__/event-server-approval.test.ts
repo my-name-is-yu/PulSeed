@@ -213,7 +213,9 @@ describe("EventServer durable approval integration", () => {
   it("resolves durable operator handoffs through the goal approval endpoint", async () => {
     const runtimeRoot = path.join(tmpDir, "runtime");
     const handoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
-    const handoff = await handoffStore.create({
+    const initialCreatedAt = new Date(Date.now() - 60_000).toISOString();
+    const currentUpdatedAt = new Date().toISOString();
+    const initialHandoff = await handoffStore.create({
       handoff_id: "handoff-http",
       goal_id: "goal-1",
       triggers: ["deadline", "finalization"],
@@ -225,7 +227,25 @@ describe("EventServer durable approval integration", () => {
         label: "Approve finalization",
         approval_required: true,
       },
+      created_at: initialCreatedAt,
     });
+    const staleApproveBindingId = projectOperatorHandoffSurfaceEvent(initialHandoff).approval_prompt.approve_binding_id;
+    const currentHandoff = await handoffStore.create({
+      handoff_id: "handoff-http",
+      goal_id: "goal-1",
+      triggers: ["deadline", "finalization"],
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      current_status: "mode=finalization; retry=1",
+      recommended_action: "Approve updated finalization.",
+      next_action: {
+        label: "Approve updated finalization",
+        approval_required: true,
+      },
+      created_at: currentUpdatedAt,
+    });
+    const approveBindingId = projectOperatorHandoffSurfaceEvent(currentHandoff).approval_prompt.approve_binding_id;
+    expect(approveBindingId).not.toBe(staleApproveBindingId);
     const server = new EventServer(
       createMockDriveSystem() as never,
       {
@@ -237,7 +257,15 @@ describe("EventServer durable approval integration", () => {
 
     try {
       await server.start();
-      const approveBindingId = projectOperatorHandoffSurfaceEvent(handoff).approval_prompt.approve_binding_id;
+      const staleBinding = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-http",
+        approved: true,
+        surface_action_binding_id: staleApproveBindingId,
+      }, server.getAuthToken());
+
+      expect(staleBinding.status).toBe(404);
+      await expect(handoffStore.load("handoff-http")).resolves.toMatchObject({ status: "open" });
+
       const missingBinding = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "handoff-http",
         approved: true,

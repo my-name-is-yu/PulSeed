@@ -72,6 +72,7 @@ import {
   executeGatewayModelLoopRoute,
   formatBlockedRuntimeControlRoute,
   executeRuntimeControlRoute,
+  projectChatRunResultSurface,
   resolveSessionExecutionPolicy,
 } from "./chat-runner-routes.js";
 import { createTextUserInput, normalizeUserInput, replaceUserInputText, type UserInput } from "./user-input.js";
@@ -917,12 +918,21 @@ export class ChatRunner {
       if (runtimeControlResult.success) {
         await history.appendAssistantMessage(runtimeControlResult.output, { eventContext });
         this.eventBridge.emitCheckpoint("Runtime control completed", "The runtime-control operation produced a result.", eventContext, "complete");
+        const surfaceProjection = projectChatRunResultSurface({
+          output: runtimeControlResult.output,
+          purpose: "chat/runtime-control assistant output",
+          eventContext,
+          replyTarget: runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+          projectedAt: new Date().toISOString(),
+        });
         this.eventBridge.emitEvent({
           type: "assistant_final",
           text: runtimeControlResult.output,
           persisted: true,
+          surface_projection: surfaceProjection,
           ...this.eventBridge.eventBase(eventContext),
         });
+        runtimeControlResult.surface_projection = surfaceProjection;
         this.eventBridge.emitLifecycleEndEvent("completed", runtimeControlResult.elapsed_ms, eventContext, true);
       } else {
         runtimeControlResult.output = await this.eventBridge.emitLifecycleErrorEventWithFallback(
@@ -947,10 +957,18 @@ export class ChatRunner {
       const output = formatBlockedRuntimeControlRoute(selectedRoute);
       this.eventBridge.pushAssistantDelta(output, assistantBuffer, eventContext);
       await history.appendAssistantMessage(output, { eventContext });
+      const surfaceProjection = projectChatRunResultSurface({
+        output,
+        purpose: "chat/runtime-control blocked assistant output",
+        eventContext,
+        replyTarget: runtimeControlContext?.replyTarget ?? this.deps.runtimeReplyTarget ?? null,
+        projectedAt: new Date().toISOString(),
+      });
       this.eventBridge.emitEvent({
         type: "assistant_final",
         text: output,
         persisted: true,
+        surface_projection: surfaceProjection,
         ...this.eventBridge.eventBase(eventContext),
       });
       const elapsed_ms = Date.now() - start;
@@ -959,6 +977,7 @@ export class ChatRunner {
         success: false,
         output,
         elapsed_ms,
+        surface_projection: surfaceProjection,
       });
     }
 

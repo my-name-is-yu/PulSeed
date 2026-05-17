@@ -155,6 +155,20 @@ if (tuiApproval.includes("data.summary") || tuiApproval.includes("data.current_s
   issues.push("src/interface/tui/app-approval.ts must not render raw operator handoff summary/current_status on normal approval surfaces");
 }
 
+const operatorHandoffSurface = existsSync("src/runtime/operator-handoff-surface.ts")
+  ? readFileSync("src/runtime/operator-handoff-surface.ts", "utf8")
+  : "";
+for (const requiredSnippet of [
+  "operatorHandoffProjectionVersion(record)",
+  "operatorHandoffBindingExpiresAt(record)",
+  "created_at: input.record.updated_at",
+  "expires_at: input.bindingExpiresAt",
+]) {
+  if (!operatorHandoffSurface.includes(requiredSnippet)) {
+    issues.push(`src/runtime/operator-handoff-surface.ts is missing stale-binding guard invariant: ${requiredSnippet}`);
+  }
+}
+
 const protocol = existsSync("src/runtime/surface-projection-protocol.ts")
   ? readFileSync("src/runtime/surface-projection-protocol.ts", "utf8")
   : "";

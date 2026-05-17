@@ -48,7 +48,9 @@ callbacks use this path for `psb1:` binding callbacks. Older candidate-only
 callback payloads are acknowledged but fail closed before feedback or trigger
 mutation. Operator handoffs are also projected as normal-safe approval surfaces;
 the daemon snapshot and SSE broadcast expose the projected prompt/action binding
-instead of the raw handoff record.
+instead of the raw handoff record. Operator handoff bindings are versioned by
+the current record `updated_at` generation and expire, so a stale projected
+button cannot authorize a later updated handoff.
 
 ## Boundaries
 
