@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 
@@ -318,6 +319,7 @@ describe("run subcommand with real CoreLoop (max_iterations=1)", () => {
 
     // Exit code 0 = completed or max_iterations reached
     expect(code).toBe(0);
+    expect(fs.existsSync(path.join(tmpDir, "logs", "pulseed.log"))).toBe(true);
   }, 60_000);
 
   it("exits with code 1 when the goal ID does not exist in state", async () => {

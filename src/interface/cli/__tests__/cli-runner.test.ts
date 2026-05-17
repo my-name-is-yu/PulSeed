@@ -325,6 +325,18 @@ async function runCLI(...args: string[]): Promise<number> {
   return runner.run(args);
 }
 
+async function expectFileEventuallyContains(filePath: string, expected: string): Promise<void> {
+  let lastContent = "";
+  for (let i = 0; i < 50; i++) {
+    if (fs.existsSync(filePath)) {
+      lastContent = fs.readFileSync(filePath, "utf-8");
+      if (lastContent.includes(expected)) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(lastContent).toContain(expected);
+}
+
 // ─── Construction ─────────────────────────────────────────────────────────────
 
 // NOTE: All significant dependencies are replaced with vi.fn() mocks.
@@ -437,6 +449,37 @@ describe("unknown subcommand", async () => {
     expect(code).toBe(1);
   });
 
+  it("does not mask unknown subcommand help as global help", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const code = await runCLI("unknown-command", "--help");
+
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(code).toBe(1);
+    expect(errorOutput).toContain("Unknown subcommand");
+    expect(initSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
+  it("does not mask unknown child subcommands when help flags are present", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const goalCode = await runCLI("goal", "typo", "--help");
+    const daemonCode = await runCLI("daemon", "typo", "--help");
+
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(goalCode).toBe(1);
+    expect(daemonCode).toBe(1);
+    expect(errorOutput).toContain('Unknown goal subcommand: "typo"');
+    expect(errorOutput).toContain('Unknown daemon subcommand: "typo"');
+    expect(initSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
   // No-argument case now launches TUI (feat/default-tui), cannot test in vitest
 
   it("exits with code 0 for --help", async () => {
@@ -450,6 +493,9 @@ describe("unknown subcommand", async () => {
     expect(output).toContain("pulseed approval list");
     expect(output).toContain('pulseed goal add "<description>" --no-refine          Register a goal without refinement');
     expect(output).toContain("--no-refine                         Skip GoalRefiner and use the negotiation path directly");
+    expect(output).toContain("--iterations-per-cycle <n>          Bounded worker iteration cap for this start");
+    expect(output).toContain("--max-concurrent-goals <n>          Max concurrent daemon goal workers");
+    expect(output).toContain("--resident                          Treat --iterations-per-cycle as telemetry, not a lifecycle cap");
     expect(output).not.toContain("legacy LLM negotiation");
     expect(output).not.toContain("legacy negotiate()");
     expect(initSpy).not.toHaveBeenCalled();
@@ -471,6 +517,45 @@ describe("unknown subcommand", async () => {
     expect(output).toContain("pulseed daemon restart");
     expect(initSpy).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
+  it("exits with code 0 for subcommand help before state initialization", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const goalParentCode = await runCLI("goal", "--help");
+    const goalParentHelpCode = await runCLI("goal", "help");
+    const goalLeafCode = await runCLI("goal", "add", "--help");
+    const daemonParentCode = await runCLI("daemon", "--help");
+    const daemonParentHelpCode = await runCLI("daemon", "help");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(goalParentCode).toBe(0);
+    expect(goalParentHelpCode).toBe(0);
+    expect(goalLeafCode).toBe(0);
+    expect(daemonParentCode).toBe(0);
+    expect(daemonParentHelpCode).toBe(0);
+    expect(output).toContain("pulseed goal add");
+    expect(output).toContain("pulseed daemon start");
+    expect(initSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
+  it("does not treat trailing help as stateless usage for commands that accept text", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const code = await runCLI("goal", "add", "help");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(code).toBe(1);
+    expect(initSpy).toHaveBeenCalled();
+    expect(output).not.toContain("pulseed daemon ping");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
     initSpy.mockRestore();
   });
 
@@ -911,6 +996,10 @@ describe("run subcommand", async () => {
 
     expect(code).toBe(1);
     expect(vi.mocked(CoreLoop)).not.toHaveBeenCalled();
+    await expectFileEventuallyContains(
+      path.join(tmpDir, "logs", "pulseed.log"),
+      "--max-iterations must be a positive integer"
+    );
   });
 
   it("rejects bare --max-iterations before CoreLoop construction", async () => {
@@ -1382,6 +1471,37 @@ describe("goal add raw mode", async () => {
     expect(output).toContain("my raw goal");
     expect(output).toContain("Goal ID:");
     consoleSpy.mockRestore();
+  });
+
+  it("prints machine-readable JSON for raw --dim goal add", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "--title", "json raw goal", "--dim", "todo_count:max:0", "--json");
+
+    expect(code).toBe(0);
+    const output = consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    const parsed = JSON.parse(output) as {
+      schema_version: string;
+      goal_id: string;
+      title: string;
+      run_command: string;
+    };
+    expect(parsed).toMatchObject({
+      schema_version: "goal-add-result-v1",
+      title: "json raw goal",
+    });
+    expect(parsed.goal_id).toMatch(/^goal_/);
+    expect(parsed.run_command).toBe(`pulseed run --goal ${parsed.goal_id}`);
+    consoleSpy.mockRestore();
+  });
+
+  it("rejects --json outside raw --dim goal add mode", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const code = await runCLI("goal", "add", "json refine goal", "--json");
+
+    expect(code).toBe(1);
+    const output = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("--json is currently supported only with raw --dim goals");
+    errorSpy.mockRestore();
   });
 
   it("exits with code 1 when --dim is provided but neither --title nor description is given", async () => {

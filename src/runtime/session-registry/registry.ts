@@ -50,6 +50,7 @@ import {
   defaultIsPidAlive,
   filterRuns,
   filterSessions,
+  isActiveRunStatus,
   isProcessPidValue,
   isObject,
   mergeLedgerRunWithProjection,
@@ -75,6 +76,10 @@ interface RuntimeSessionRegistryDeps {
 interface SupervisorStateLike {
   workers?: unknown;
   updatedAt?: unknown;
+}
+
+interface SupervisorProjectionEvidence {
+  snapshotAvailable: boolean;
 }
 
 function chatLifecycleToRuntimeStatus(status: string | null | undefined): RuntimeSession["status"] {
@@ -121,14 +126,18 @@ export class RuntimeSessionRegistry {
     const warnings: RuntimeSessionRegistryWarning[] = [];
 
     await this.projectChatAndAgentSessions(sessions, backgroundRuns, warnings);
-    await this.projectSupervisorState(sessions, backgroundRuns, warnings);
+    const supervisorEvidence = await this.projectSupervisorState(sessions, backgroundRuns, warnings);
     await this.projectProcessSessions(backgroundRuns, warnings);
     await this.projectLedgerRuns(sessions, backgroundRuns, warnings);
 
     await this.syncRuntimeGraphSnapshot(generatedAt, sessions, backgroundRuns, warnings);
     const graphSnapshot = await this.loadRuntimeGraphSnapshot(warnings);
-    const finalSessions = graphSnapshot.sessions.length > 0 ? graphSnapshot.sessions : sessions;
-    const finalBackgroundRuns = graphSnapshot.backgroundRuns.length > 0 ? graphSnapshot.backgroundRuns : backgroundRuns;
+    const finalBackgroundRuns = mergeCurrentAndGraphBackgroundRuns(
+      backgroundRuns,
+      graphSnapshot.backgroundRuns,
+      supervisorEvidence,
+    );
+    const finalSessions = mergeCurrentAndGraphSessions(sessions, graphSnapshot.sessions, finalBackgroundRuns, supervisorEvidence);
 
     finalSessions.sort(compareByUpdatedAtThenId);
     finalBackgroundRuns.sort(compareByUpdatedAtThenId);
@@ -416,7 +425,7 @@ export class RuntimeSessionRegistry {
     sessions: RuntimeSession[],
     backgroundRuns: BackgroundRun[],
     warnings: RuntimeSessionRegistryWarning[],
-  ): Promise<void> {
+  ): Promise<SupervisorProjectionEvidence> {
     const runtimeRoot = resolveConfiguredDaemonRuntimeRoot(this.stateBaseDir);
     const source = sourceRef("supervisor_state", "current", null, null, null);
     let raw: SupervisorStateLike | null;
@@ -428,9 +437,9 @@ export class RuntimeSessionRegistry {
         source,
         message: `Failed to read supervisor state: ${messageFromError(error)}`,
       });
-      return;
+      return { snapshotAvailable: false };
     }
-    if (!raw) return;
+    if (!raw) return { snapshotAvailable: false };
 
     const state = raw;
     const workers = Array.isArray(state.workers) ? state.workers : [];
@@ -489,6 +498,7 @@ export class RuntimeSessionRegistry {
         source_refs: [supervisorSource],
       }));
     }
+    return { snapshotAvailable: true };
   }
 
   private async projectProcessSessions(
@@ -908,6 +918,69 @@ function backgroundRunFromGraphNode(node: RuntimeGraphNode): BackgroundRun | nul
   if (node.payload["runtime_graph_role"] !== "source_of_truth") return null;
   if (node.payload["entity_kind"] !== "run") return null;
   return BackgroundRunSchema.parse(node.payload["run"]);
+}
+
+function mergeCurrentAndGraphBackgroundRuns(
+  currentRuns: BackgroundRun[],
+  graphRuns: BackgroundRun[],
+  supervisorEvidence: SupervisorProjectionEvidence,
+): BackgroundRun[] {
+  const byId = new Map(currentRuns.map((run) => [run.id, run]));
+  for (const graphRun of graphRuns) {
+    if (byId.has(graphRun.id)) continue;
+    if (isStaleSupervisorGraphRun(graphRun, supervisorEvidence)) continue;
+    byId.set(graphRun.id, graphRun);
+  }
+  return [...byId.values()];
+}
+
+function mergeCurrentAndGraphSessions(
+  currentSessions: RuntimeSession[],
+  graphSessions: RuntimeSession[],
+  retainedRuns: BackgroundRun[],
+  supervisorEvidence: SupervisorProjectionEvidence,
+): RuntimeSession[] {
+  const retainedChildSessionIds = new Set(
+    retainedRuns
+      .map((run) => run.child_session_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
+  const byId = new Map(currentSessions.map((session) => [session.id, session]));
+  for (const graphSession of graphSessions) {
+    if (byId.has(graphSession.id)) continue;
+    if (
+      isStaleSupervisorGraphSession(graphSession, supervisorEvidence)
+      && !retainedChildSessionIds.has(graphSession.id)
+    ) {
+      continue;
+    }
+    byId.set(graphSession.id, graphSession);
+  }
+  return [...byId.values()];
+}
+
+function isStaleSupervisorGraphRun(
+  run: BackgroundRun,
+  supervisorEvidence: SupervisorProjectionEvidence,
+): boolean {
+  return supervisorEvidence.snapshotAvailable
+    && run.kind === "coreloop_run"
+    && isActiveRunStatus(run.status)
+    && isSupervisorOnlySource(run.source_refs);
+}
+
+function isStaleSupervisorGraphSession(
+  session: RuntimeSession,
+  supervisorEvidence: SupervisorProjectionEvidence,
+): boolean {
+  return supervisorEvidence.snapshotAvailable
+    && session.kind === "coreloop"
+    && session.status === "active"
+    && isSupervisorOnlySource(session.source_refs);
+}
+
+function isSupervisorOnlySource(sourceRefs: RuntimeSessionRef[]): boolean {
+  return sourceRefs.length > 0 && sourceRefs.every((ref) => ref.kind === "supervisor_state");
 }
 
 function validGraphDate(value: string | null | undefined, fallback: string): string {

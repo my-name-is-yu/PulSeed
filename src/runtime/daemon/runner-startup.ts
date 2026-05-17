@@ -2,6 +2,7 @@ import { EventServer } from "../event/server.js";
 import { HttpChannelAdapter } from "../gateway/index.js";
 import type { SupervisorState } from "../executor/index.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
+import { DaemonConfigSchema } from "../../base/types/daemon.js";
 import { RuntimeOperationStore } from "../store/index.js";
 import type { RuntimeControlDbStoreOptions } from "../store/index.js";
 import {
@@ -166,6 +167,7 @@ export async function startDaemonRunner(
       active_goals: mergedGoalIds,
       status: mergedGoalIds.length === 0 ? "idle" : "running",
       runtime_root: context.runtimeRoot ?? undefined,
+      effective_config: DaemonConfigSchema.parse(context.config ?? {}),
       crash_count: 0,
       last_error: null,
       last_resident_at: null,

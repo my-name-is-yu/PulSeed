@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { readJsonFileOrNull } from "../../../base/utils/json-io.js";
 import { DaemonStateSchema, DaemonConfigSchema } from "../../../base/types/daemon.js";
-import type { DaemonState, DaemonConfig } from "../../../base/types/daemon.js";
+import type { DaemonState, DaemonConfig, PIDInfo } from "../../../base/types/daemon.js";
 import type { Task } from "../../../base/types/task.js";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -22,15 +22,24 @@ import {
   loadBuiltinGatewayIntegrations,
 } from "../../../runtime/gateway/index.js";
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
-import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
+import {
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS,
+  RuntimeWatchdog,
+} from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import {
   DaemonStateStore,
   ProactiveInterventionStore,
+  RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
   RuntimeHealthStore,
 } from "../../../runtime/store/index.js";
 import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
-import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
+import {
+  isDaemonRunning,
+  probeDaemonHealth,
+  readDaemonAuthTokenMetadata,
+} from "../../../runtime/daemon/client.js";
+import type { DaemonAuthToken } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
@@ -75,9 +84,18 @@ import {
 } from "./daemon-status-health.js";
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
+const DETACHED_DAEMON_READY_TIMEOUT_BUFFER_MS = 5_000;
+const DETACHED_DAEMON_READY_TIMEOUT_MS =
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS + DETACHED_DAEMON_READY_TIMEOUT_BUFFER_MS;
+const DETACHED_DAEMON_READY_POLL_MS = 250;
+const DETACHED_DAEMON_TIMEOUT_STOP_MS = 5_000;
+const DETACHED_DAEMON_TIMEOUT_STOP_POLL_MS = 100;
+const DETACHED_DAEMON_TOKEN_FRESHNESS_SKEW_MS = 1_000;
 
 interface CmdStartOptions {
   childCommandArgs?: string[];
+  detachedReadyPollMs?: number;
+  detachedReadyTimeoutMs?: number;
 }
 
 type StopDaemonOutcome =
@@ -85,15 +103,189 @@ type StopDaemonOutcome =
   | { status: "stopped"; messages: string[] }
   | { status: "failed"; messages: string[] };
 
+async function waitForDetachedDaemonReady(params: {
+  baseDir: string;
+  eventServerPort: number;
+  expectedWatchdogPid: number;
+  pollMs?: number;
+  startedAtMs: number;
+  timeoutMs?: number;
+}): Promise<
+  | { ready: true; port: number }
+  | { ready: false; port: number; detail: string }
+> {
+  const {
+    baseDir,
+    eventServerPort,
+    expectedWatchdogPid,
+    pollMs = DETACHED_DAEMON_READY_POLL_MS,
+    startedAtMs,
+    timeoutMs = DETACHED_DAEMON_READY_TIMEOUT_MS,
+  } = params;
+  const deadline = Date.now() + timeoutMs;
+  let lastPort = 0;
+  let lastDetail = "daemon health endpoint was not checked";
+
+  while (Date.now() < deadline) {
+    const ownership = await readDetachedDaemonOwnership(baseDir, expectedWatchdogPid);
+    if (!ownership) {
+      lastDetail = `daemon pid file is not owned by spawned watchdog PID ${expectedWatchdogPid}`;
+    } else {
+      const token = readFreshDetachedDaemonToken({
+        baseDir,
+        eventServerPort,
+        ownership,
+        startedAtMs,
+      });
+      const directProbePort = token?.port ?? null;
+      if (directProbePort === null) {
+        lastDetail = "fresh daemon token for the spawned runtime was not available";
+      } else {
+        lastPort = directProbePort;
+      }
+      if (directProbePort !== null) {
+        const probe = await probeDaemonHealth({
+          host: "127.0.0.1",
+          port: directProbePort,
+          timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline, pollMs),
+        });
+        if (probe.ok) {
+          return { ready: true, port: directProbePort };
+        }
+        lastDetail = probe.error
+          ? `no healthy daemon response on port ${directProbePort}: ${probe.error}`
+          : `no healthy daemon response on port ${directProbePort}`;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  return { ready: false, port: lastPort, detail: lastDetail };
+}
+
+function detachedDaemonReadyProbeTimeoutMs(deadline: number, pollMs = DETACHED_DAEMON_READY_POLL_MS): number {
+  return Math.max(1, Math.min(pollMs, deadline - Date.now()));
+}
+
+async function readDetachedDaemonOwnership(baseDir: string, expectedWatchdogPid: number): Promise<PIDInfo | null> {
+  const info = await new PIDManager(baseDir).readPID();
+  if (!info) return null;
+  if (info.owner_pid === expectedWatchdogPid || info.watchdog_pid === expectedWatchdogPid) {
+    return info;
+  }
+  return null;
+}
+
+function readFreshDetachedDaemonToken(params: {
+  baseDir: string;
+  eventServerPort: number;
+  ownership: PIDInfo;
+  startedAtMs: number;
+}): DaemonAuthToken | null {
+  const token = readDaemonAuthTokenMetadata(params.baseDir);
+  if (!token) return null;
+  if (!isFreshDetachedDaemonToken(token, params.startedAtMs)) return null;
+  const runtimePid = params.ownership.runtime_pid ?? params.ownership.pid;
+  if (token.pid !== runtimePid) return null;
+  if (!isDetachedDaemonProbePort(token.port)) return null;
+  if (params.eventServerPort > 0 && token.port !== params.eventServerPort) return null;
+  return token;
+}
+
+function isFreshDetachedDaemonToken(token: DaemonAuthToken, startedAtMs: number): boolean {
+  if (!token.created_at) return false;
+  const createdAtMs = Date.parse(token.created_at);
+  return Number.isFinite(createdAtMs)
+    && createdAtMs >= startedAtMs - DETACHED_DAEMON_TOKEN_FRESHNESS_SKEW_MS;
+}
+
+function isDetachedDaemonProbePort(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
+}
+
+async function stopSpawnedDetachedDaemonAfterReadinessFailure(params: {
+  pidManager: PIDManager;
+  watchdogPid: number;
+}): Promise<string[]> {
+  const messages: string[] = [];
+  try {
+    const stopResult = await params.pidManager.stopRuntime({
+      timeoutMs: DETACHED_DAEMON_TIMEOUT_STOP_MS,
+      pollIntervalMs: DETACHED_DAEMON_TIMEOUT_STOP_POLL_MS,
+    });
+    if (stopResult.sentSignalsTo.length > 0) {
+      if (stopResult.stopped) {
+        messages.push("Stopped spawned daemon after readiness timeout.");
+      } else {
+        messages.push(`Signaled spawned daemon after readiness timeout, but PIDs are still alive: ${stopResult.alivePids.join(", ")}`);
+      }
+      return messages;
+    }
+  } catch (err) {
+    messages.push(`Could not stop spawned daemon through the PID file: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (signalDetachedProcessGroup(params.watchdogPid, "SIGTERM")) {
+    messages.push("Sent SIGTERM to the spawned detached daemon process group after readiness timeout.");
+  } else {
+    messages.push(`Could not confirm shutdown for spawned daemon PID ${params.watchdogPid}; inspect with \`pulseed daemon status\` or \`pulseed logs\`.`);
+  }
+  return messages;
+}
+
+function signalDetachedProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch {
+    try {
+      process.kill(pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function ensureEventServerPortAvailable(baseDir: string, config: DaemonConfig): Promise<void> {
+  const port = config.event_server_port;
+  if (port <= 0) return;
+
+  const probe = await probeDaemonHealth({
+    host: "127.0.0.1",
+    port,
+    timeoutMs: DETACHED_DAEMON_READY_POLL_MS,
+  });
+  if (!probe.ok) return;
+
+  getCliLogger().error(
+    `Daemon event server port ${port} already has a PulSeed health endpoint on 127.0.0.1. ` +
+    `Set event_server_port to 0 in ${path.join(baseDir, "daemon.json")} for an OS-assigned port, ` +
+    "choose a free port, or stop the process using that port."
+  );
+  process.exit(1);
+}
+
 function resolveStatusArtifactExpectation(params: {
   activeGoalIds: string[];
   activeWorkerCount: number;
+  activeWorkerStartedAt?: number;
   daemonStatus: DaemonState["status"];
   liveRuntimeStopped: boolean;
   workerSnapshotAvailable: boolean;
 }): RuntimeArtifactExpectation {
   if (params.liveRuntimeStopped) {
     return { state: "unknown", reason: "historical_runtime_snapshot" };
+  }
+  if (
+    params.activeWorkerStartedAt !== undefined &&
+    Date.now() - params.activeWorkerStartedAt < RECENT_ARTIFACT_EXPECTATION_GRACE_MS
+  ) {
+    return {
+      state: "recently_expected",
+      reason: "recent_goal_or_worker",
+      stale_after_ms: RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
+    };
   }
   if (params.activeGoalIds.length > 0) {
     return { state: "expected", reason: "active_goal" };
@@ -137,7 +329,7 @@ export async function cmdStart(
   args: string[],
   options: CmdStartOptions = {},
 ): Promise<void> {
-  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string };
+  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; "ready-timeout-ms"?: string; workspace?: string };
   try {
     ({ values } = parseArgs({
       args,
@@ -150,10 +342,11 @@ export async function cmdStart(
         "iterations-per-cycle": { type: "string" },
         resident: { type: "boolean" },
         "max-concurrent-goals": { type: "string" },
+        "ready-timeout-ms": { type: "string" },
         workspace: { type: "string" },
       },
       strict: false,
-    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string } });
+    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; "ready-timeout-ms"?: string; workspace?: string } });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse start command arguments", err));
     process.exit(1);
@@ -209,6 +402,9 @@ export async function cmdStart(
     daemonConfig = daemonConfig ?? {};
     daemonConfig.max_concurrent_goals = parsed;
   }
+  const configuredReadyTimeoutMs = values["ready-timeout-ms"] !== undefined
+    ? readDaemonPositiveInteger(values["ready-timeout-ms"], "--ready-timeout-ms")
+    : undefined;
   if (values.workspace) {
     daemonConfig = daemonConfig ?? {};
     daemonConfig.workspace_path = path.resolve(values.workspace);
@@ -227,13 +423,22 @@ export async function cmdStart(
     process.exit(1);
   }
 
-  // --detach: spawn a detached process and exit immediately.
-  // The detached process becomes the watchdog parent.
+  if (!isWatchdogChild && await pidManager.isRunning()) {
+    const info = await pidManager.readPID();
+    logger.error(`Daemon already running (PID: ${info?.pid})`);
+    process.exit(1);
+  }
+
+  await ensureEventServerPortAvailable(baseDir, resolvedDaemonConfig);
+
+  // --detach: spawn a background watchdog and only report success after the
+  // daemon command surface is actually ready for follow-up commands.
   if (values.detach) {
     const scriptPath = process.argv[1]!;
     const childArgs = (options.childCommandArgs ?? process.argv.slice(2))
       .filter((arg) => arg !== "--detach" && arg !== "-d");
 
+    const startedAtMs = Date.now();
     const child = spawn(process.execPath, [scriptPath, ...childArgs], {
       detached: true,
       stdio: "ignore",
@@ -247,14 +452,32 @@ export async function cmdStart(
       console.error("Failed to start daemon: no PID assigned");
       process.exit(1);
     }
-    console.log(`Daemon started in background (PID: ${child.pid})`);
+    const readinessTimeoutMs =
+      options.detachedReadyTimeoutMs ?? configuredReadyTimeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS;
+    const readiness = await waitForDetachedDaemonReady({
+      baseDir,
+      eventServerPort: resolvedDaemonConfig.event_server_port,
+      expectedWatchdogPid: child.pid,
+      startedAtMs,
+      timeoutMs: readinessTimeoutMs,
+      ...(options.detachedReadyPollMs !== undefined ? { pollMs: options.detachedReadyPollMs } : {}),
+    });
+    if (!readiness.ready) {
+      console.error(
+        `Daemon process started in background (PID: ${child.pid}), but the command surface was not ready within ${readinessTimeoutMs}ms: ${readiness.detail}.`
+      );
+      const stopMessages = await stopSpawnedDetachedDaemonAfterReadinessFailure({
+        pidManager,
+        watchdogPid: child.pid,
+      });
+      for (const message of stopMessages) {
+        console.error(message);
+      }
+      console.error("Run `pulseed daemon status` or `pulseed logs` to inspect startup.");
+      process.exit(1);
+    }
+    console.log(`Daemon started in background (PID: ${child.pid}, port: ${readiness.port})`);
     process.exit(0);
-  }
-
-  if (!isWatchdogChild && await pidManager.isRunning()) {
-    const info = await pidManager.readPID();
-    logger.error(`Daemon already running (PID: ${info?.pid})`);
-    process.exit(1);
   }
 
   if (shouldUseWatchdog) {
@@ -524,7 +747,7 @@ export async function cmdStart(
   await daemon.start(goalIds);
 }
 
-export async function cmdDaemonStatus(_args: string[]): Promise<void> {
+export async function cmdDaemonStatus(_args: string[]): Promise<number> {
   const baseDir = getPulseedDirPath();
   const schemaDriftMessage = formatControlDbSchemaDriftMessage(baseDir);
   if (schemaDriftMessage) {
@@ -534,7 +757,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
       "Status:          schema drift",
       schemaDriftMessage,
     ].join("\n"));
-    return;
+    return 1;
   }
   const pidManager = new PIDManager(baseDir);
   const pidStatus = await pidManager.inspect();
@@ -548,34 +771,35 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
     loadedState = await new DaemonStateStore(baseDir).load();
   } catch (error) {
     console.error(`Invalid daemon state: ${error instanceof Error ? error.message : String(error)}`);
-    return;
+    return 1;
   }
   if (loadedState === null) {
     if (!runtimeAlive && !watchdogAlive) {
       console.log("No daemon state found");
-      return;
+      return 0;
     }
     if (!runtimeAlive && watchdogAlive) {
       console.log(
         `Daemon watchdog is running, but runtime child is restarting (PID: ${runtimePid ?? "unknown"})`
       );
-      return;
+      return 0;
     }
     console.log("Daemon process is running, but daemon state is missing");
-    return;
+    return 1;
   }
   const parsed = DaemonStateSchema.safeParse(loadedState);
   if (!parsed.success) {
     console.error(`Invalid daemon state: ${parsed.error.message}`);
-    return;
+    return 1;
   }
   const data: DaemonState = parsed.data;
 
   const resolvedRuntimePid = runtimePid ?? data.pid;
   const resolvedRuntimeAlive = isPidAlive(pidStatus, resolvedRuntimePid);
 
-  // Load daemon config for config section display
-  const cfg = await loadDaemonConfig(baseDir);
+  // Prefer the live process config captured at daemon startup. File config can
+  // miss one-shot CLI overrides such as --iterations-per-cycle or --config.
+  const cfg = data.effective_config ?? await loadDaemonConfig(baseDir);
   const runtimeRoot = data.runtime_root ?? resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
   const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot();
   const runtimeHealth = reconcileRuntimeHealthForDisplay(storedRuntimeHealth, {
@@ -651,9 +875,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
 
   const snapshotWorkers = (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null);
   const activeWorkers = resolvedRuntimeAlive ? snapshotWorkers : [];
+  const activeWorkerStartedAt = activeWorkers
+    .map((worker) => worker.startedAt)
+    .filter((startedAt): startedAt is number => typeof startedAt === "number" && Number.isFinite(startedAt))
+    .sort((a, b) => a - b)[0];
   const artifactExpectation = resolveStatusArtifactExpectation({
     activeGoalIds: data.active_goals,
     activeWorkerCount: activeWorkers.length,
+    ...(activeWorkerStartedAt !== undefined ? { activeWorkerStartedAt } : {}),
     daemonStatus: data.status,
     liveRuntimeStopped,
     workerSnapshotAvailable: supervisorState !== null,
@@ -876,6 +1105,7 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   lines.push(`Last error:      ${data.last_error ?? "none"}`);
 
   console.log(lines.join("\n"));
+  return 0;
 }
 
 async function stopDaemonRuntimeForCli(): Promise<StopDaemonOutcome> {
@@ -898,11 +1128,12 @@ async function stopDaemonRuntimeForCli(): Promise<StopDaemonOutcome> {
   return { status: "stopped", messages };
 }
 
-export async function cmdStop(_args: string[]): Promise<void> {
+export async function cmdStop(_args: string[]): Promise<number> {
   const outcome = await stopDaemonRuntimeForCli();
   for (const message of outcome.messages) {
     console.log(message);
   }
+  return outcome.status === "failed" ? 1 : 0;
 }
 
 export async function cmdRestart(
@@ -939,18 +1170,18 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   const probe = await probeDaemonHealth({ host: "127.0.0.1", port });
 
   if (probe.ok) {
-    const health = probe.health ?? {};
-    const latencyMs = probe.latency_ms;
-    const status = typeof health.status === "string" ? health.status : "ok";
-    const uptime =
-      typeof health.uptime === "number" && Number.isFinite(health.uptime)
-        ? `, uptime ${health.uptime.toFixed(1)}s`
-        : "";
-    console.log(`Daemon pong: ${status} (${latencyMs}ms, port ${port}${uptime})`);
+    console.log(formatDaemonPong(probe));
     return 0;
   }
 
   const daemonInfo = await isDaemonRunning(baseDir);
+  if (daemonInfo.running && daemonInfo.port !== port) {
+    const resolvedProbe = await probeDaemonHealth({ host: "127.0.0.1", port: daemonInfo.port });
+    if (resolvedProbe.ok) {
+      console.log(formatDaemonPong(resolvedProbe));
+      return 0;
+    }
+  }
   const stateRaw = await new DaemonStateStore(baseDir).load() as Record<string, unknown> | null;
   const stateDetail =
     stateRaw && typeof stateRaw.status === "string"
@@ -961,6 +1192,16 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   const message = probe.error ?? "unknown error";
   console.log(`Daemon ping failed: no response from EventServer on port ${port}${stateDetail} (${message})`);
   return 1;
+}
+
+function formatDaemonPong(probe: Awaited<ReturnType<typeof probeDaemonHealth>>): string {
+  const health = probe.health ?? {};
+  const status = typeof health.status === "string" ? health.status : "ok";
+  const uptime =
+    typeof health.uptime === "number" && Number.isFinite(health.uptime)
+      ? `, uptime ${health.uptime.toFixed(1)}s`
+      : "";
+  return `Daemon pong: ${status} (${probe.latency_ms}ms, port ${probe.port}${uptime})`;
 }
 
 export async function cmdCron(args: string[]): Promise<number> {

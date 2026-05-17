@@ -103,8 +103,10 @@ Usage:
   pulseed plugin update <name>         Update an installed npm-backed plugin
   pulseed plugin search <keyword>      Search @pulseed-plugins packages
   pulseed plugin remove <name>         Remove an installed plugin
-  pulseed logs                          View daemon logs (last 50 lines)
-  pulseed logs --follow                Tail daemon logs in real-time
+  pulseed logs                         View daemon logs (last 50 lines)
+  pulseed logs --lines 100             View the last N daemon log lines
+  pulseed daemon logs --tail 100       Alias for daemon log tail inspection
+  pulseed logs --follow                Tail daemon logs in real time
   pulseed logs --level ERROR           Filter logs by level (ERROR > WARN > INFO > DEBUG)
   pulseed doctor                       Run health checks on PulSeed installation
   pulseed install --goal <id>          Install as macOS launchd service (auto-start on boot)
@@ -130,6 +132,10 @@ Options (pulseed run):
 Options (pulseed start):
   --goal <id>                         Goal ID to run (repeatable, required)
   --detach, -d                        Run daemon in background (detached process)
+  --iterations-per-cycle <n>          Bounded worker iteration cap for this start
+  --max-concurrent-goals <n>          Max concurrent daemon goal workers
+  --resident                          Treat --iterations-per-cycle as telemetry, not a lifecycle cap
+  --config <path>                     Use a daemon config file for this start
 
 Options (pulseed improve):
   --auto                              Full auto mode (select best suggestion, run loop)
@@ -143,6 +149,7 @@ Options (pulseed suggest):
 Options (pulseed goal add):
   --title <title>                     Goal title (raw mode)
   --dim <name:type:value>             Dimension spec, repeatable (raw mode, e.g. "tsc_error_count:min:0")
+  --json                              Print machine-readable result for raw --dim mode
   --no-refine                         Skip GoalRefiner and use the negotiation path directly
   --negotiate                         Alias: same as default (refine mode)
   --deadline <ISO-date>               Optional deadline (e.g. 2026-06-01)

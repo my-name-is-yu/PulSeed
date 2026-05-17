@@ -374,8 +374,7 @@ export async function dispatchCommand(
     }
 
     if (daemonSubcommand === "stop") {
-      await cmdStop(argv.slice(2));
-      return 0;
+      return await cmdStop(argv.slice(2));
     }
 
     if (daemonSubcommand === "restart") {
@@ -383,12 +382,15 @@ export async function dispatchCommand(
     }
 
     if (daemonSubcommand === "status") {
-      await cmdDaemonStatus(argv.slice(2));
-      return 0;
+      return await cmdDaemonStatus(argv.slice(2));
     }
 
     if (daemonSubcommand === "ping") {
       return await cmdDaemonPing(argv.slice(2));
+    }
+
+    if (daemonSubcommand === "logs") {
+      return await cmdLogs(argv.slice(2));
     }
 
     if (daemonSubcommand === "cron") {
@@ -396,13 +398,12 @@ export async function dispatchCommand(
     }
 
     logger.error(`Unknown daemon subcommand: "${daemonSubcommand ?? ""}"`);
-    logger.error("Available: daemon start, daemon stop, daemon restart, daemon status, daemon ping, daemon cron");
+    logger.error("Available: daemon start, daemon stop, daemon restart, daemon status, daemon ping, daemon logs, daemon cron");
     return 1;
   }
 
   if (subcommand === "stop") {
-    await cmdStop(argv.slice(1));
-    return 0;
+    return await cmdStop(argv.slice(1));
   }
 
   if (subcommand === "cron") {

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import http from "node:http";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -546,6 +547,48 @@ describe("isDaemonRunning", () => {
     expect(probedPorts).toEqual([45678]);
   });
 
+  it("uses the provided OS-assigned event-server config when daemon.json is not the startup source", async () => {
+    await saveDaemonStateFixture(tmpDir);
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "dynamic-token", port: 45678 }),
+      "utf-8"
+    );
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir, { eventServerPort: 0 })).resolves.toEqual({
+      running: true,
+      port: 45678,
+      authToken: "dynamic-token",
+    });
+    expect(probedPorts).toEqual([45678]);
+  });
+
+  it("falls back to the token file port when no daemon config file is present", async () => {
+    await saveDaemonStateFixture(tmpDir);
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "runtime-token", port: 45678 }),
+      "utf-8"
+    );
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: 45678,
+      authToken: "runtime-token",
+    });
+    expect(probedPorts).toEqual([45678]);
+  });
+
   it("does not probe port 0 when an OS-assigned daemon config has no resolved token port", async () => {
     await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(
@@ -652,5 +695,33 @@ describe("probeDaemonHealth", () => {
       port: 41700,
       error: "connect ECONNREFUSED",
     });
+  });
+
+  it("returns a timeout error when /health accepts but does not respond", async () => {
+    vi.restoreAllMocks();
+    const server = http.createServer((_req, _res) => {
+      // Leave the response open to exercise the client-side request timeout.
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    expect(address).toMatchObject({ port: expect.any(Number) });
+
+    try {
+      await expect(probeDaemonHealth({
+        host: "127.0.0.1",
+        port: typeof address === "object" && address !== null ? address.port : 0,
+        timeoutMs: 20,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: "Request timed out after 20ms",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 });

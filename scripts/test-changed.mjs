@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   isIntegrationPath,
@@ -9,6 +11,14 @@ import {
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
+const spawnedPulseedHome = process.env.PULSEED_TEST_HOME
+  ?? fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-test-changed-home-"));
+
+if (!process.env.PULSEED_TEST_HOME) {
+  process.on("exit", () => {
+    fs.rmSync(spawnedPulseedHome, { recursive: true, force: true });
+  });
+}
 
 if (args.has("--help") || args.has("-h")) {
   console.log(`Usage: node scripts/test-changed.mjs [--dry-run]
@@ -30,6 +40,10 @@ function run(cmd, args) {
   }
   const result = spawnSync(cmd, args, {
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PULSEED_HOME: spawnedPulseedHome,
+    },
     stdio: "inherit",
     shell: false,
   });

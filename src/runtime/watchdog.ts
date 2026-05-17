@@ -54,7 +54,7 @@ interface ChildExitResult {
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
 const DEFAULT_STALE_HEARTBEAT_RESTART_GRACE_MS = 5 * 60_000;
-const DEFAULT_STARTUP_GRACE_MS = 20_000;
+export const DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS = 20_000;
 const DEFAULT_RESTART_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_RESTART_BACKOFF_MS = 30_000;
 const DEFAULT_CHILD_SHUTDOWN_GRACE_MS = 5_000;
@@ -103,7 +103,7 @@ export class RuntimeWatchdog {
       0,
       options.staleHeartbeatRestartGraceMs ?? DEFAULT_STALE_HEARTBEAT_RESTART_GRACE_MS
     );
-    this.startupGraceMs = options.startupGraceMs ?? DEFAULT_STARTUP_GRACE_MS;
+    this.startupGraceMs = options.startupGraceMs ?? DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS;
     this.restartBackoffMs = options.restartBackoffMs ?? DEFAULT_RESTART_BACKOFF_MS;
     this.maxRestartBackoffMs = options.maxRestartBackoffMs ?? DEFAULT_MAX_RESTART_BACKOFF_MS;
     this.childShutdownGraceMs =

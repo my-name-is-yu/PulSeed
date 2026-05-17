@@ -22,6 +22,12 @@ const {
   pidIsRunningMock,
   pidReadPIDMock,
   pidStopRuntimeMock,
+  spawnMock,
+  spawnOnMock,
+  spawnUnrefMock,
+  isDaemonRunningMock,
+  probeDaemonHealthMock,
+  readDaemonAuthTokenMetadataMock,
   cliLoggerMock,
 } = vi.hoisted(() => ({
   buildDepsMock: vi.fn(),
@@ -51,6 +57,17 @@ const {
     stopped: false,
     alivePids: [],
   }),
+  spawnMock: vi.fn(),
+  spawnOnMock: vi.fn(),
+  spawnUnrefMock: vi.fn(),
+  isDaemonRunningMock: vi.fn().mockResolvedValue({ running: true, port: 41700 }),
+  probeDaemonHealthMock: vi.fn().mockResolvedValue({
+    ok: false,
+    port: 41700,
+    latency_ms: 0,
+    error: "connect ECONNREFUSED 127.0.0.1:41700",
+  }),
+  readDaemonAuthTokenMetadataMock: vi.fn().mockReturnValue(null),
   cliLoggerMock: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -58,13 +75,27 @@ const {
   },
 }));
 
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    spawn: spawnMock,
+  };
+});
+
 vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
+  const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
     homedir: vi.fn(() => "/tmp/pulseed-daemon-start-test-home"),
   };
 });
+
+vi.mock("../../../runtime/daemon/client.js", () => ({
+  isDaemonRunning: isDaemonRunningMock,
+  probeDaemonHealth: probeDaemonHealthMock,
+  readDaemonAuthTokenMetadata: readDaemonAuthTokenMetadataMock,
+}));
 
 vi.mock("../setup.js", () => ({
   buildDeps: buildDepsMock,
@@ -80,6 +111,7 @@ vi.mock("../../../runtime/daemon/runner.js", () => ({
 }));
 
 vi.mock("../../../runtime/watchdog.js", () => ({
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS: 20_000,
   RuntimeWatchdog: vi.fn().mockImplementation(function (args: unknown) {
     watchdogArgs.push(args);
     return {
@@ -209,6 +241,25 @@ describe("cmdStart", () => {
       stopped: false,
       alivePids: [],
     });
+    spawnOnMock.mockClear();
+    spawnUnrefMock.mockClear();
+    spawnMock.mockReset();
+    spawnMock.mockReturnValue({
+      pid: 12345,
+      on: spawnOnMock,
+      unref: spawnUnrefMock,
+    });
+    isDaemonRunningMock.mockReset();
+    isDaemonRunningMock.mockResolvedValue({ running: true, port: 41700 });
+    probeDaemonHealthMock.mockReset();
+    probeDaemonHealthMock.mockResolvedValue({
+      ok: false,
+      port: 41700,
+      latency_ms: 0,
+      error: "connect ECONNREFUSED 127.0.0.1:41700",
+    });
+    readDaemonAuthTokenMetadataMock.mockReset();
+    readDaemonAuthTokenMetadataMock.mockReturnValue(null);
     cliLoggerMock.info.mockClear();
     cliLoggerMock.warn.mockClear();
     cliLoggerMock.error.mockClear();
@@ -452,6 +503,7 @@ describe("cmdStart", () => {
     ["--check-interval-ms", "10abc"],
     ["--iterations-per-cycle", "1.5"],
     ["--max-concurrent-goals", "0"],
+    ["--ready-timeout-ms", "0"],
     ["--check-interval-ms", undefined],
   ])("rejects invalid daemon integer flag %s=%s", async (flag, value) => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
@@ -633,6 +685,364 @@ describe("cmdStart", () => {
     expect(watchdogStartMock).toHaveBeenCalledOnce();
     expect(daemonStartMock).not.toHaveBeenCalled();
   });
+
+  it("waits for detached daemon readiness before reporting startup success", async () => {
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock.mockReturnValue({
+      token: "runtime-token",
+      host: "127.0.0.1",
+      port: 41700,
+      pid: 23456,
+      created_at: new Date(Date.now() + 1_000).toISOString(),
+    });
+    probeDaemonHealthMock
+      .mockResolvedValueOnce({
+        ok: false,
+        port: 41700,
+        latency_ms: 1,
+        error: "connect ECONNREFUSED 127.0.0.1:41700",
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        port: 41700,
+        latency_ms: 1,
+        error: "connect ECONNREFUSED 127.0.0.1:41700",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        port: 41700,
+        latency_ms: 1,
+        health: { status: "ok" },
+      });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        process.execPath,
+        [expect.any(String), "daemon", "start"],
+        expect.objectContaining({
+          detached: true,
+          stdio: "ignore",
+        })
+      );
+      expect(spawnUnrefMock).toHaveBeenCalledOnce();
+      expect(pidReadPIDMock).toHaveBeenCalled();
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 41700,
+        timeoutMs: expect.any(Number),
+      });
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 41700)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("stops the spawned detached daemon before failing a readiness timeout", async () => {
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    pidStopRuntimeMock.mockResolvedValue({
+      info: {
+        pid: 23456,
+        owner_pid: 12345,
+        watchdog_pid: 12345,
+        runtime_pid: 23456,
+        started_at: new Date().toISOString(),
+      },
+      runtimePid: 23456,
+      ownerPid: 12345,
+      sentSignalsTo: [12345, 23456],
+      forced: false,
+      stopped: true,
+      alivePids: [],
+    });
+    readDaemonAuthTokenMetadataMock.mockReturnValue(null);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach", "--ready-timeout-ms", "1"],
+        {
+          childCommandArgs: ["daemon", "start", "--detach", "--ready-timeout-ms", "1"],
+          detachedReadyPollMs: 1,
+        },
+      )).rejects.toThrow("process.exit:1");
+
+      expect(spawnMock).toHaveBeenCalledOnce();
+      expect(spawnMock).toHaveBeenCalledWith(
+        process.execPath,
+        [expect.any(String), "daemon", "start", "--ready-timeout-ms", "1"],
+        expect.objectContaining({
+          detached: true,
+          stdio: "ignore",
+        })
+      );
+      expect(pidStopRuntimeMock).toHaveBeenCalledWith({
+        timeoutMs: 5_000,
+        pollIntervalMs: 100,
+      });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(
+        "but the command surface was not ready within 1ms"
+      ));
+      expect(errorSpy).toHaveBeenCalledWith("Stopped spawned daemon after readiness timeout.");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("fails before spawning when a configured event server port already hosts PulSeed", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 43123 }),
+      "utf-8"
+    );
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 43123,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:1");
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(cliLoggerMock.error).toHaveBeenCalledWith(expect.stringContaining(
+        "Daemon event server port 43123 already has a PulSeed health endpoint"
+      ));
+      expect(cliLoggerMock.error).toHaveBeenCalledWith(expect.stringContaining("event_server_port to 0"));
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("probes the daemon-token port while detached dynamic-port startup is still writing state", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock.mockReturnValue({
+      token: "runtime-token",
+      host: "127.0.0.1",
+      port: 45678,
+      pid: 23456,
+      created_at: new Date(Date.now() + 1_000).toISOString(),
+    });
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 45678,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(readDaemonAuthTokenMetadataMock).toHaveBeenCalledWith("/tmp/pulseed-daemon-start-base");
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45678,
+        timeoutMs: expect.any(Number),
+      });
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45678)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("does not probe the default port for detached dynamic-port startup before the token file exists", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({
+        token: "runtime-token",
+        host: "127.0.0.1",
+        port: 45678,
+        pid: 23456,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      });
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 45678,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(probeDaemonHealthMock).toHaveBeenCalledOnce();
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45678,
+        timeoutMs: expect.any(Number),
+      });
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45678)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("ignores daemon-token ports that do not belong to the spawned runtime", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 0 }),
+      "utf-8"
+    );
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    readDaemonAuthTokenMetadataMock
+      .mockReturnValueOnce({
+        token: "stale-token",
+        host: "127.0.0.1",
+        port: 45678,
+        pid: 99999,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      .mockReturnValueOnce({
+        token: "runtime-token",
+        host: "127.0.0.1",
+        port: 45679,
+        pid: 23456,
+        created_at: new Date(Date.now() + 1_000).toISOString(),
+      });
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 45679,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:0");
+
+      expect(probeDaemonHealthMock).toHaveBeenCalledOnce();
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45679,
+        timeoutMs: expect.any(Number),
+      });
+      expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45679)");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("does not spawn a detached daemon over an existing runtime", async () => {
+    pidIsRunningMock.mockResolvedValue(true);
+    pidReadPIDMock.mockResolvedValue({ pid: 777 });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:1");
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(isDaemonRunningMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("cmdRestart", () => {
@@ -660,6 +1070,13 @@ describe("cmdRestart", () => {
     pidReadPIDMock.mockReset();
     pidReadPIDMock.mockResolvedValue(null);
     pidStopRuntimeMock.mockReset();
+    probeDaemonHealthMock.mockReset();
+    probeDaemonHealthMock.mockResolvedValue({
+      ok: false,
+      port: 41700,
+      latency_ms: 0,
+      error: "connect ECONNREFUSED 127.0.0.1:41700",
+    });
     delete process.env.PULSEED_WATCHDOG_CHILD;
     fs.rmSync("/tmp/pulseed-daemon-start-base", { recursive: true, force: true });
   });
@@ -735,6 +1152,37 @@ describe("cmdRestart", () => {
       const output = consoleCapture.read();
       expect(output).toContain("No running daemon found");
       expect(output).toContain("Starting daemon...");
+    } finally {
+      consoleCapture.spy.mockRestore();
+    }
+  });
+
+  it("propagates daemon stop failures through the CLI exit code", async () => {
+    pidStopRuntimeMock.mockResolvedValue({
+      info: { pid: 123, started_at: new Date("2026-05-10T00:00:00.000Z").toISOString() },
+      runtimePid: 456,
+      ownerPid: 123,
+      sentSignalsTo: [123, 456],
+      forced: false,
+      stopped: false,
+      alivePids: [123, 456],
+    });
+    const consoleCapture = captureConsoleLog();
+
+    try {
+      const code = await dispatchCommand(
+        ["daemon", "stop"],
+        false,
+        stateManager as never,
+        characterConfigManager as never,
+        { value: null },
+      );
+
+      expect(code).toBe(1);
+      expect(pidStopRuntimeMock).toHaveBeenCalledOnce();
+      const output = consoleCapture.read();
+      expect(output).toContain("Stopping daemon (PID: 456)...");
+      expect(output).toContain("Daemon still running (PIDs: 123, 456)");
     } finally {
       consoleCapture.spy.mockRestore();
     }

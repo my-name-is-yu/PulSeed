@@ -1,7 +1,7 @@
 // ─── pulseed logs command ───
 //
 // Shows daemon log lines from ~/.pulseed/logs/pulseed.log
-// Supports: --lines N, --level <level>, --follow/-f
+// Supports: --lines N, --tail N, --level <level>, --follow/-f
 
 import { parseArgs } from "node:util";
 import * as fs from "node:fs";
@@ -158,17 +158,18 @@ async function followLog(filePath: string, minLevel: LogLevel | null): Promise<v
 }
 
 export async function cmdLogs(args: string[]): Promise<number> {
-  let values: { follow?: boolean; lines?: string; level?: string };
+  let values: { follow?: boolean; lines?: string; tail?: string; level?: string };
   try {
     ({ values } = parseArgs({
       args,
       options: {
         follow: { type: "boolean", short: "f" },
         lines: { type: "string", short: "n", default: "50" },
+        tail: { type: "string" },
         level: { type: "string" },
       },
       strict: false,
-    }) as { values: { follow?: boolean; lines?: string; level?: string } });
+    }) as { values: { follow?: boolean; lines?: string; tail?: string; level?: string } });
   } catch (err) {
     process.stderr.write(`${formatOperationError("parse logs command arguments", err)}\n`);
     return 1;
@@ -178,7 +179,7 @@ export async function cmdLogs(args: string[]): Promise<number> {
 
   let n: number;
   try {
-    n = parseLogLineCount(values.lines ?? "50");
+    n = parseLogLineCount(values.tail ?? values.lines ?? "50", values.tail === undefined ? "--lines" : "--tail");
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;

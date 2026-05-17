@@ -3,10 +3,12 @@
 // Routes to either non-interactive (flag-based) mode or the @clack wizard.
 
 import { parseArgs } from "node:util";
+import * as path from "node:path";
 import {
   saveProviderConfig,
   validateProviderConfig,
 } from "../../../base/llm/provider-config.js";
+import { getPulseedDirPath } from "../../../base/utils/paths.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import {
   PROVIDERS,
@@ -162,7 +164,8 @@ async function runNonInteractive(argv: string[]): Promise<number> {
   }
 
   await saveProviderConfig(config);
-  console.log("Setup complete! Configuration saved to ~/.pulseed/provider.json");
+  const configPath = path.join(getPulseedDirPath(), "provider.json").replace(process.env["HOME"] ?? "", "~");
+  console.log(`Setup complete! Configuration saved to ${configPath}`);
   console.log(`  Provider: ${config.provider}`);
   console.log(`  Model:    ${config.model}`);
   if (config.reasoning_effort) console.log(`  Reasoning:${config.reasoning_effort}`);

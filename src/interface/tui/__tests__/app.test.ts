@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Writable } from "node:stream";
-import { render } from "ink";
+import { render, useInput } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -11,6 +11,7 @@ import type { TuiChatSurface } from "../chat-surface.js";
 import { ChatRunner } from "../../chat/chat-runner.js";
 import type { AgentResult, IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { DurableLoop } from "../../../orchestrator/loop/durable-loop.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { TelegramSetupStatus } from "../../chat/gateway-setup-status.js";
@@ -36,6 +37,7 @@ const testState = vi.hoisted(() => ({
   runtimeSessionSnapshotCalls: 0,
   summarizedRunIds: [] as string[],
   runtimeEvidenceSummaries: {} as Record<string, unknown>,
+  exitApp: vi.fn(),
 }));
 
 vi.mock("ink", async () => {
@@ -43,6 +45,7 @@ vi.mock("ink", async () => {
   return {
     ...actual,
     useInput: vi.fn(),
+    useApp: () => ({ exit: testState.exitApp }),
     useStdout: () => ({ stdout: { columns: 80, rows: 24 } }),
   };
 });
@@ -401,6 +404,13 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function latestUseInputHandler(): (input: string, key: { ctrl?: boolean }) => void {
+  const calls = vi.mocked(useInput).mock.calls;
+  const handler = calls[calls.length - 1]?.[0];
+  expect(handler).toBeTypeOf("function");
+  return handler as (input: string, key: { ctrl?: boolean }) => void;
+}
+
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((innerResolve) => {
@@ -454,6 +464,8 @@ describe("TUI natural empty states", () => {
     testState.runtimeSessionSnapshotCalls = 0;
     testState.summarizedRunIds = [];
     testState.runtimeEvidenceSummaries = {};
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
   });
 
   afterEach(() => {
@@ -483,6 +495,144 @@ describe("TUI natural empty states", () => {
     expect(text).not.toContain("available commands");
 
     screen.unmount();
+  });
+});
+
+describe("TUI quit handling", () => {
+  beforeEach(() => {
+    testState.lastChatProps = null;
+    testState.lastChatMessages = [];
+    testState.lastDashboardProps = null;
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses Ink's exit path for Ctrl-C twice so terminal cleanup can run", async () => {
+    const coreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const processExitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`unexpected process.exit(${code ?? ""})`);
+    }) as typeof process.exit);
+
+    const screen = render(React.createElement(App, {
+      coreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    const inputHandler = latestUseInputHandler();
+    act(() => {
+      inputHandler("c", { ctrl: true });
+      inputHandler("", {});
+      inputHandler("c", { ctrl: true });
+    });
+
+    expect(coreLoop.stop).toHaveBeenCalledOnce();
+    expect(testState.exitApp).toHaveBeenCalledOnce();
+    expect(processExitSpy).not.toHaveBeenCalled();
+
+    screen.unmount();
+  });
+
+  it("clears the Ctrl-C exit confirmation when ordinary input arrives", async () => {
+    const coreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+
+    const screen = render(React.createElement(App, {
+      coreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    const inputHandler = latestUseInputHandler();
+    act(() => {
+      inputHandler("c", { ctrl: true });
+      inputHandler("x", {});
+      inputHandler("c", { ctrl: true });
+    });
+
+    expect(coreLoop.stop).not.toHaveBeenCalled();
+    expect(testState.exitApp).not.toHaveBeenCalled();
+
+    act(() => {
+      inputHandler("x", {});
+    });
+    screen.unmount();
+  });
+
+  it("clears the shared Ctrl-C confirmation when the app unmounts", async () => {
+    const firstCoreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const firstScreen = render(React.createElement(App, {
+      coreLoop: firstCoreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    act(() => {
+      latestUseInputHandler()("c", { ctrl: true });
+    });
+
+    firstScreen.unmount();
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
+
+    const secondCoreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const secondScreen = render(React.createElement(App, {
+      coreLoop: secondCoreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    act(() => {
+      latestUseInputHandler()("c", { ctrl: true });
+    });
+
+    expect(secondCoreLoop.stop).not.toHaveBeenCalled();
+    expect(testState.exitApp).not.toHaveBeenCalled();
+
+    secondScreen.unmount();
   });
 });
 
@@ -1833,6 +1983,45 @@ describe("daemon-mode chat routing", () => {
     screen.unmount();
   });
 
+  it("reports daemon-mode /start failures instead of showing a successful start", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const goals = [
+      { id: "goal-alpha", title: "Improve alpha routing", status: "active" },
+    ];
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => (goals.find((goal) => goal.id === id) ?? null) as never);
+    vi.mocked(daemonClient.startGoal).mockRejectedValueOnce(new Error("daemon offline"));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/start 1");
+    await flush();
+
+    expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Start failed for Improve alpha routing: daemon offline"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Starting goal: Improve alpha routing"))).toBe(false);
+
+    screen.unmount();
+  });
+
   it("records daemon-mode /stop admission before calling stopGoal", async () => {
     const daemonClient = createDaemonClientMock();
     const stateManager = createStateManagerMock();
@@ -1894,6 +2083,81 @@ describe("daemon-mode chat routing", () => {
         target_effect: "mutate_runtime_control",
       })],
     });
+
+    screen.unmount();
+  });
+
+  it("reports daemon-mode /stop failures instead of showing a successful stop signal", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    vi.mocked(daemonClient.stopGoal).mockRejectedValueOnce(new Error("daemon offline"));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    await act(async () => {
+      daemonClient.handlers.get("loop_update")?.({
+        goalId: "goal-alpha",
+        running: true,
+        iteration: 1,
+        status: "running",
+        trustScore: 0,
+      });
+    });
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("/stop");
+    await flush();
+
+    expect(daemonClient.stopGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop failed: daemon offline"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop signal sent to daemon."))).toBe(false);
+
+    screen.unmount();
+  });
+
+  it("reports daemon-mode /stop without an active goal as a failed stop", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    await testState.lastChatProps!.onSubmit("/stop");
+    await flush();
+
+    expect(daemonClient.stopGoal).not.toHaveBeenCalled();
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop failed: no active daemon goal"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Stop signal sent to daemon."))).toBe(false);
 
     screen.unmount();
   });

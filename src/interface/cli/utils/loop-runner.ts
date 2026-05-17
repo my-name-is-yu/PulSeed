@@ -13,9 +13,9 @@ export function buildAutoApprovalFn(): (task: Task) => Promise<boolean> {
   };
 }
 
-export function buildLoopLogger(): Logger {
+export function buildLoopLogger(baseDir?: string): Logger {
   return new Logger({
-    dir: getLogsDir(),
+    dir: getLogsDir(baseDir),
     level: "debug",
     consoleOutput: false,
   });

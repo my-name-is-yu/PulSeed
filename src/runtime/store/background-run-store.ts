@@ -97,6 +97,15 @@ export interface BackgroundRunStartedInput {
   source_refs?: RuntimeSessionRef[];
 }
 
+export interface BackgroundRunQueuedInput {
+  updated_at?: string | null;
+  process_session_id?: string | null;
+  child_session_id?: string | null;
+  summary?: string | null;
+  error?: string | null;
+  source_refs?: RuntimeSessionRef[];
+}
+
 export interface BackgroundRunTerminalInput {
   status: BackgroundRunTerminalStatus | keyof typeof TERMINAL_STATUS_ALIASES;
   completed_at?: string | null;
@@ -199,6 +208,21 @@ export class BackgroundRunLedger {
       updated_at: updatedAt,
       process_session_id: input.process_session_id ?? run.process_session_id,
       child_session_id: input.child_session_id ?? run.child_session_id,
+      source_refs: input.source_refs ?? run.source_refs,
+    }));
+  }
+
+  async queued(runId: string, input: BackgroundRunQueuedInput = {}): Promise<BackgroundRun> {
+    const updatedAt = input.updated_at ?? new Date().toISOString();
+    return this.update(runId, (run) => ({
+      ...run,
+      status: "queued",
+      updated_at: updatedAt,
+      completed_at: null,
+      process_session_id: input.process_session_id === undefined ? run.process_session_id : input.process_session_id,
+      child_session_id: input.child_session_id === undefined ? run.child_session_id : input.child_session_id,
+      summary: input.summary === undefined ? run.summary : input.summary,
+      error: input.error === undefined ? run.error : input.error,
       source_refs: input.source_refs ?? run.source_refs,
     }));
   }

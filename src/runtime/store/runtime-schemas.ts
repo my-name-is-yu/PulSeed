@@ -199,6 +199,7 @@ export const RuntimeArtifactExpectationSchema = z.discriminatedUnion("state", [
   }),
 ]);
 export type RuntimeArtifactExpectation = z.infer<typeof RuntimeArtifactExpectationSchema>;
+export const RECENT_ARTIFACT_EXPECTATION_GRACE_MS = 5 * 60_000;
 
 export const RuntimeLongRunHealthSummarySchema = z.enum([
   "alive_and_progressing",
@@ -523,6 +524,10 @@ export function classifyLongRunHealth(
 
   if (artifactNotFresh && signals.artifact_expectation?.state === "unknown") {
     return "unknown";
+  }
+
+  if (artifactNotFresh && signals.artifact_expectation?.state === "recently_expected") {
+    return "alive_and_progressing";
   }
 
   if (

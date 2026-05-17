@@ -774,6 +774,10 @@ export class DaemonRunner {
       saveDaemonState: () => this.saveDaemonState(),
       eventServer: this.eventServer,
       state: this.state,
+      runPolicy: this.config.run_policy.mode,
+      maxIterations: this.config.run_policy.mode === "resident"
+        ? null
+        : this.config.run_policy.max_iterations ?? this.config.iterations_per_cycle,
       runRuntimeStoreMaintenance: () => this.runRuntimeStoreMaintenance(),
     });
   }

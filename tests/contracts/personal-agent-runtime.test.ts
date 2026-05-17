@@ -914,6 +914,8 @@ describe("durable personal-agent runtime production paths", () => {
         processScheduleEntries: vi.fn().mockResolvedValue(undefined),
         proactiveTick: vi.fn().mockResolvedValue(undefined),
         saveDaemonState: vi.fn().mockResolvedValue(undefined),
+        runPolicy: "bounded",
+        maxIterations: 3,
         state: {
           loop_count: 5,
           active_goals: ["goal-personal-agent"],
@@ -948,6 +950,13 @@ describe("durable personal-agent runtime production paths", () => {
             task_created: false,
           }),
         ],
+      }),
+    ]));
+    expect(traces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        situation_frame: expect.objectContaining({
+          replay_key: expect.stringContaining(":bounded:3"),
+        }),
       }),
     ]));
     expect(traces.every((trace) =>

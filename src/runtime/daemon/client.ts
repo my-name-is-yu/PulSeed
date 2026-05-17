@@ -21,6 +21,7 @@ export interface DaemonClientConfig {
   port: number;
   reconnectInterval?: number; // ms, default 3000
   maxReconnectAttempts?: number; // default 10
+  requestTimeoutMs?: number;
   authToken?: string | null;
   baseDir?: string;
 }
@@ -56,6 +57,11 @@ export interface DaemonHealthProbeResult {
   latency_ms: number;
   health?: DaemonHealth;
   error?: string;
+}
+
+export interface DaemonRunningProbeOptions {
+  eventServerPort?: number | null;
+  timeoutMs?: number;
 }
 
 export interface DaemonScheduleRunNowResponse {
@@ -144,11 +150,24 @@ export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): st
   return null;
 }
 
+export function readDaemonAuthTokenMetadata(baseDir?: string): DaemonAuthToken | null {
+  const tokenFile = readDaemonAuthTokenFile(baseDir);
+  return tokenFile.status === "found" ? tokenFile.token : null;
+}
+
+export function readDaemonAuthTokenPort(baseDir?: string): number | null {
+  const token = readDaemonAuthTokenMetadata(baseDir);
+  return token !== null && isDaemonProbePort(token.port)
+    ? token.port
+    : null;
+}
+
 interface ResolvedDaemonClientConfig {
   host: string;
   port: number;
   reconnectInterval: number;
   maxReconnectAttempts: number;
+  requestTimeoutMs: number | null;
   authToken: string | null;
 }
 
@@ -170,6 +189,7 @@ export class DaemonClient {
       port: config.port,
       reconnectInterval: config.reconnectInterval ?? 3000,
       maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
+      requestTimeoutMs: config.requestTimeoutMs ?? null,
       authToken: config.authToken ?? readDaemonAuthToken(config.baseDir, config.port),
     };
   }
@@ -438,6 +458,7 @@ export class DaemonClient {
           });
         }
       );
+      this.applyRequestTimeout(req);
       req.on("error", reject);
     });
   }
@@ -489,9 +510,17 @@ export class DaemonClient {
           });
         }
       );
+      this.applyRequestTimeout(req);
       req.on("error", reject);
       req.write(body);
       req.end();
+    });
+  }
+
+  private applyRequestTimeout(req: http.ClientRequest): void {
+    if (this.config.requestTimeoutMs === null) return;
+    req.setTimeout(this.config.requestTimeoutMs, () => {
+      req.destroy(new Error(`Request timed out after ${this.config.requestTimeoutMs}ms`));
     });
   }
 
@@ -502,11 +531,14 @@ export class DaemonClient {
 
 // ─── Convenience: detect running daemon ───
 
-export async function probeDaemonHealth(config: Pick<DaemonClientConfig, "host" | "port">): Promise<DaemonHealthProbeResult> {
+export async function probeDaemonHealth(
+  config: Pick<DaemonClientConfig, "host" | "port"> & { timeoutMs?: number }
+): Promise<DaemonHealthProbeResult> {
   const startedAt = Date.now();
   const client = new DaemonClient({
     host: config.host,
     port: config.port,
+    requestTimeoutMs: config.timeoutMs,
   });
 
   try {
@@ -527,7 +559,10 @@ export async function probeDaemonHealth(config: Pick<DaemonClientConfig, "host" 
   }
 }
 
-export async function isDaemonRunning(baseDir: string): Promise<{ running: boolean; port: number; authToken?: string | null }> {
+export async function isDaemonRunning(
+  baseDir: string,
+  options: DaemonRunningProbeOptions = {},
+): Promise<{ running: boolean; port: number; authToken?: string | null }> {
   // DEFAULT_PORT imported from port-utils
 
   try {
@@ -549,21 +584,28 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
 
     // Try to read daemon config for port
     let port: number | null = DEFAULT_PORT;
-    try {
-      const configPath = path.join(baseDir, "daemon.json");
-      const config = DaemonConfigSchema.safeParse(await readDaemonConfigJsonFile(configPath));
-      if (config.success) {
-        if (config.data.event_server_port === 0) {
-          const tokenFile = readDaemonAuthTokenFile(baseDir);
-          port = tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
-            ? tokenFile.token.port
-            : null;
-        } else {
-          port = config.data.event_server_port;
-        }
+    if (options.eventServerPort !== undefined && options.eventServerPort !== null) {
+      if (options.eventServerPort === 0) {
+        port = readDaemonAuthTokenPort(baseDir);
+      } else if (isDaemonProbePort(options.eventServerPort)) {
+        port = options.eventServerPort;
       }
-    } catch {
-      // Use default port
+    } else {
+      try {
+        const configPath = path.join(baseDir, "daemon.json");
+        const config = DaemonConfigSchema.safeParse(await readDaemonConfigJsonFile(configPath));
+        if (config.success) {
+          if (config.data.event_server_port === 0) {
+            port = readDaemonAuthTokenPort(baseDir);
+          } else {
+            port = config.data.event_server_port;
+          }
+        } else {
+          port = readDaemonAuthTokenPort(baseDir) ?? DEFAULT_PORT;
+        }
+      } catch {
+        port = readDaemonAuthTokenPort(baseDir) ?? DEFAULT_PORT;
+      }
     }
 
     if (port === null) {
@@ -573,7 +615,7 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
     const authToken = readDaemonAuthToken(baseDir, port);
 
     // Verify EventServer is actually responding
-    const probe = await probeDaemonHealth({ host: "127.0.0.1", port });
+    const probe = await probeDaemonHealth({ host: "127.0.0.1", port, timeoutMs: options.timeoutMs });
     return authToken
       ? { running: probe.ok, port, authToken }
       : { running: probe.ok, port };

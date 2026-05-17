@@ -9,10 +9,10 @@
 // - Daemon mode: daemonClient is provided, coreLoop is absent. Events come via SSE.
 // - Standalone mode: coreLoop is provided, runs in-process.
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
 import { buildWorkDashboardRows, Dashboard } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
@@ -76,9 +76,24 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
 import { defaultExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { recordExplicitCommandDecision, stableId } from "../../runtime/personal-agent/index.js";
+import { logTuiDebug } from "./debug-log.js";
 
 const MAX_MESSAGES = 200;
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
+
+type LoopCommandResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+function formatLoopCommandError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return "start request failed";
+}
 
 export interface ApprovalRequest {
   task: Task;
@@ -120,6 +135,47 @@ const INITIAL_CHAT_MESSAGE = [
   'Examples: "organize this project and tell me what to do next" or "keep working on the README until it is ready."',
   "Type /help when you want command details.",
 ].join("\n");
+
+const CTRL_C_CONFIRM_WINDOW_MS = 5_000;
+let sharedCtrlCPendingUntil = 0;
+
+type AppInputKey = {
+  ctrl?: boolean;
+  meta?: boolean;
+  return?: boolean;
+  tab?: boolean;
+  escape?: boolean;
+  backspace?: boolean;
+  delete?: boolean;
+  upArrow?: boolean;
+  downArrow?: boolean;
+  leftArrow?: boolean;
+  rightArrow?: boolean;
+  pageDown?: boolean;
+  pageUp?: boolean;
+  home?: boolean;
+  end?: boolean;
+};
+
+function shouldCancelPendingCtrlC(input: string, key: AppInputKey): boolean {
+  if (key.ctrl || key.meta) return false;
+  if (input.length > 0) return true;
+  return Boolean(
+    key.return
+      || key.tab
+      || key.escape
+      || key.backspace
+      || key.delete
+      || key.upArrow
+      || key.downArrow
+      || key.leftArrow
+      || key.rightArrow
+      || key.pageDown
+      || key.pageUp
+      || key.home
+      || key.end
+  );
+}
 
 export function isChatRunnerOwnedSlashCommand(input: string): boolean {
   const parsed = parseExactSlashCommandToken(input);
@@ -227,6 +283,7 @@ export function App({
   providerName,
   noFlicker,
 }: AppProps) {
+  const { exit } = useApp();
   const isDaemonMode = daemonClient !== undefined && coreLoop === undefined;
 
   // ── Terminal dimensions ──
@@ -256,42 +313,74 @@ export function App({
 
   const loopState = isDaemonMode ? daemonLoopState : (standaloneHook?.loopState ?? IDLE_LOOP_STATE);
   const startLoop = isDaemonMode
-    ? (goalId: string) => {
+    ? async (goalId: string): Promise<LoopCommandResult> => {
         const replayKey = ["tui_start_goal", "daemon_app", goalId].join(":");
-        recordExplicitCommandDecision({
-          baseDir: stateManager.getBaseDir(),
-          surface: "tui",
-          command: "/start",
-          sourceId: `tui /start:daemon_app:${goalId}`,
-          sourceEpoch: goalId,
-          replayKey,
-          target: {
-            kind: "run",
-            ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
-            effect: "create_run",
-            summary: `Start goal ${goalId} from TUI daemon mode.`,
-          },
-          decisionReason: "Explicit TUI /start was allowed to start daemon-backed durable goal work.",
-          capabilityRefs: [{ kind: "capability", ref: "daemon_goal_start" }],
-          currentRefs: [{ kind: "goal", ref: goalId }],
-          auditRefs: [{ kind: "goal", ref: goalId }],
-        })
-          .then(() => daemonClient!.startGoal(goalId))
-          .catch(() => {});
+        try {
+          await recordExplicitCommandDecision({
+            baseDir: stateManager.getBaseDir(),
+            surface: "tui",
+            command: "/start",
+            sourceId: `tui /start:daemon_app:${goalId}`,
+            sourceEpoch: goalId,
+            replayKey,
+            target: {
+              kind: "run",
+              ref: { kind: "run", ref: `run:tui:${stableId(replayKey)}` },
+              effect: "create_run",
+              summary: `Start goal ${goalId} from TUI daemon mode.`,
+            },
+            decisionReason: "Explicit TUI /start was allowed to start daemon-backed durable goal work.",
+            capabilityRefs: [{ kind: "capability", ref: "daemon_goal_start" }],
+            currentRefs: [{ kind: "goal", ref: goalId }],
+            auditRefs: [{ kind: "goal", ref: goalId }],
+          });
+        } catch {
+          // The audit trace must not prevent an explicit operator start command.
+        }
+        try {
+          await daemonClient!.startGoal(goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
+        }
       }
-    : (standaloneHook?.start ?? (() => {}));
+    : async (goalId: string): Promise<LoopCommandResult> => {
+        try {
+          standaloneHook?.start(goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
+        }
+      };
   const stopLoop = isDaemonMode
-    ? async () => {
-        if (daemonLoopState.goalId) {
+    ? async (): Promise<LoopCommandResult> => {
+        if (!daemonLoopState.goalId) {
+          return { ok: false, error: "no active daemon goal" };
+        }
+        try {
           await recordTuiStopDecision({
             baseDir: stateManager.getBaseDir(),
             goalId: daemonLoopState.goalId,
             mode: "daemon_app",
           });
-          await daemonClient!.stopGoal(daemonLoopState.goalId).catch(() => {});
+        } catch {
+          // The audit trace must not prevent an explicit operator stop command.
+        }
+        try {
+          await daemonClient!.stopGoal(daemonLoopState.goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
         }
       }
-    : (standaloneHook?.stop ?? (async () => {}));
+    : async (): Promise<LoopCommandResult> => {
+        try {
+          await (standaloneHook?.stop ?? (async () => {}))();
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatLoopCommandError(error) };
+        }
+      };
 
   // ── Daemon SSE event listeners ──
   useEffect(() => {
@@ -389,6 +478,31 @@ export function App({
 
   // Ctrl-C double-press exit state
   const [ctrlCPending, setCtrlCPending] = useState(false);
+  const ctrlCTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCtrlCExitTimer = useCallback(() => {
+    if (ctrlCTimerRef.current === null) return;
+    clearTimeout(ctrlCTimerRef.current);
+    ctrlCTimerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearCtrlCExitTimer();
+      sharedCtrlCPendingUntil = 0;
+    };
+  }, [clearCtrlCExitTimer]);
+
+  const requestTuiExit = useCallback(() => {
+    clearCtrlCExitTimer();
+    sharedCtrlCPendingUntil = 0;
+    if (isDaemonMode && daemonClient) {
+      daemonClient.disconnect();
+    } else if (coreLoop) {
+      coreLoop.stop();
+    }
+    exit();
+  }, [clearCtrlCExitTimer, coreLoop, daemonClient, exit, isDaemonMode]);
 
   // Expose setApprovalRequest to entry.ts via callback prop (standalone mode)
   const showApprovalRequest = useCallback((req: ApprovalRequest) => {
@@ -524,23 +638,33 @@ export function App({
 
   // Handle Ctrl-C via useInput (raw mode — SIGINT does not fire when Ink holds the terminal)
   useInput((input, key) => {
+    const now = Date.now();
     if (input === "c" && key.ctrl) {
-      if (ctrlCPending) {
-        // Second Ctrl-C — disconnect and exit
-        if (isDaemonMode && daemonClient) {
-          daemonClient.disconnect();
-        } else if (coreLoop) {
-          coreLoop.stop();
-        }
-        process.exit(0);
+      logTuiDebug("app", "ctrl-c-input", {
+        pendingUntil: sharedCtrlCPendingUntil,
+        now,
+        willExit: sharedCtrlCPendingUntil > now,
+      });
+      if (sharedCtrlCPendingUntil > now) {
+        requestTuiExit();
+        return;
       }
+      sharedCtrlCPendingUntil = now + CTRL_C_CONFIRM_WINDOW_MS;
       setCtrlCPending(true);
-      setTimeout(() => setCtrlCPending(false), 3000);
+      clearCtrlCExitTimer();
+      ctrlCTimerRef.current = setTimeout(() => {
+        if (Date.now() >= sharedCtrlCPendingUntil) {
+          sharedCtrlCPendingUntil = 0;
+        }
+        setCtrlCPending(false);
+        ctrlCTimerRef.current = null;
+      }, CTRL_C_CONFIRM_WINDOW_MS);
       return;
     }
 
-    // Any other input cancels the pending Ctrl-C
-    if (ctrlCPending) {
+    if (sharedCtrlCPendingUntil > now && shouldCancelPendingCtrlC(input, key)) {
+      clearCtrlCExitTimer();
+      sharedCtrlCPendingUntil = 0;
       setCtrlCPending(false);
     }
 
@@ -742,10 +866,28 @@ export function App({
           }
 
           if (result.startLoop) {
-            startLoop(result.startLoop.goalId);
+            const startResult = await startLoop(result.startLoop.goalId);
+            if (!startResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(),
+                role: "pulseed" as const,
+                text: `Start failed: ${startResult.error}`,
+                timestamp: new Date(),
+                messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           }
           if (result.stopLoop) {
-            await stopLoop();
+            const stopResult = await stopLoop();
+            if (!stopResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(),
+                role: "pulseed" as const,
+                text: `Stop failed: ${stopResult.error}`,
+                timestamp: new Date(),
+                messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           }
         } else if (action.kind === "daemon_slash") {
           // Daemon mode: handle basic slash commands locally
@@ -761,11 +903,19 @@ export function App({
             const runnableGoals = await listRunnableStartGoals(stateManager);
             const goal = goalArg ? selectRunnableStartGoal(runnableGoals, goalArg) : undefined;
             if (goal) {
-              startLoop(goal.id);
-              setMessages((prev) => [...prev, {
-                id: randomUUID(), role: "pulseed" as const,
-                text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
-              }].slice(-MAX_MESSAGES));
+              const startResult = await startLoop(goal.id);
+              if (startResult.ok) {
+                setMessages((prev) => [...prev, {
+                  id: randomUUID(), role: "pulseed" as const,
+                  text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
+                }].slice(-MAX_MESSAGES));
+              } else {
+                setMessages((prev) => [...prev, {
+                  id: randomUUID(), role: "pulseed" as const,
+                  text: `Start failed for ${goal.title}: ${startResult.error}`,
+                  timestamp: new Date(), messageType: "error" as const,
+                }].slice(-MAX_MESSAGES));
+              }
             } else {
               setMessages((prev) => [...prev, {
                 id: randomUUID(), role: "pulseed" as const,
@@ -774,11 +924,19 @@ export function App({
               }].slice(-MAX_MESSAGES));
             }
           } else if (trimmed === "/stop") {
-            await stopLoop();
-            setMessages((prev) => [...prev, {
-              id: randomUUID(), role: "pulseed" as const,
-              text: "Stop signal sent to daemon.", timestamp: new Date(), messageType: "info" as const,
-            }].slice(-MAX_MESSAGES));
+            const stopResult = await stopLoop();
+            if (stopResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(), role: "pulseed" as const,
+                text: "Stop signal sent to daemon.", timestamp: new Date(), messageType: "info" as const,
+              }].slice(-MAX_MESSAGES));
+            } else {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(), role: "pulseed" as const,
+                text: `Stop failed: ${stopResult.error}`,
+                timestamp: new Date(), messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           } else {
             setMessages((prev) => [...prev, {
               id: randomUUID(), role: "pulseed" as const,

@@ -173,8 +173,9 @@ describe("cmdDaemonStatus", () => {
   });
 
   it("prints 'No daemon state found' when state file does not exist", async () => {
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
+    expect(code).toBe(0);
     expect(consoleSpy).toHaveBeenCalledWith("No daemon state found");
   });
 
@@ -188,9 +189,10 @@ describe("cmdDaemonStatus", () => {
       database.close();
     }
 
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
     const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(code).toBe(1);
     expect(output).toContain("Status:          schema drift");
     expect(output).toContain(`Database schema version ${CONTROL_DB_SCHEMA_VERSION + 1} is newer`);
     expect(output).toContain(`supports (${CONTROL_DB_SCHEMA_VERSION})`);
@@ -260,6 +262,31 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("0/3 retries used");
   });
 
+  it("reports the daemon startup effective config when CLI overrides were used", async () => {
+    const state = runningDaemonState({
+      effective_config: {
+        iterations_per_cycle: 1,
+        run_policy: { mode: "bounded", max_iterations: 1 },
+        check_interval_ms: 60_000,
+        max_concurrent_goals: 2,
+      },
+    });
+    await saveDaemonStateFixture(tmpDir, state);
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    try {
+      await cmdDaemonStatus([]);
+    } finally {
+      inspectSpy.mockRestore();
+    }
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Interval:      1m");
+    expect(output).toContain("Run policy:    bounded (1 iterations max)");
+    expect(output).toContain("Worker cycle:  1 iterations max");
+    expect(output).toContain("Concurrency:   2 goals");
+  });
+
   it("shows persisted wait status details", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T12:00:00.000Z"));
@@ -326,8 +353,9 @@ describe("cmdDaemonStatus", () => {
     };
     await insertRawDaemonStateFixture(tmpDir, state);
 
-    await cmdDaemonStatus([]);
+    const code = await cmdDaemonStatus([]);
 
+    expect(code).toBe(1);
     expect(errorSpy.mock.calls[0]?.[0]).toContain("Invalid daemon state");
     expect(consoleSpy).not.toHaveBeenCalled();
   });
@@ -557,6 +585,66 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("Summary:        alive but artifact-stalled");
     expect(output).toContain("Artifact fresh: missing; evidence=");
     expect(output).toContain("Artifact stream: expected (active_goal)");
+  });
+
+  it("shows newly active workers as artifact stream warming up", async () => {
+    const now = Date.now();
+    await saveRuntimeHealthFixture(
+      tmpDir,
+      {
+        status: "degraded",
+        leader: true,
+        checked_at: now,
+        kpi: {
+          process_alive: { status: "ok", checked_at: now, last_ok_at: now },
+          command_acceptance: { status: "ok", checked_at: now, last_ok_at: now },
+          task_execution: { status: "ok", checked_at: now, last_ok_at: now },
+          degraded_at: now,
+        },
+        long_running: staleArtifactLongRunHealth(now, {
+          signals: {
+            ...staleArtifactLongRunHealth(now).signals,
+            child_activity: { status: "active", checked_at: now, observed_at: now, active_count: 1 },
+          },
+        }),
+        details: { pid: process.pid },
+      },
+      {
+        checked_at: now,
+        components: {
+          gateway: "ok",
+          queue: "ok",
+          leases: "ok",
+          approval: "ok",
+          outbox: "ok",
+          supervisor: "ok",
+        },
+      }
+    );
+    await saveDaemonStateFixture(tmpDir, runningDaemonState({
+      active_goals: ["goal-fresh"],
+      status: "running",
+    }));
+    await saveSupervisorStateFixture(tmpDir, {
+      workers: [{
+        workerId: "worker-fresh",
+        goalId: "goal-fresh",
+        startedAt: now - 1_000,
+        iterations: 0,
+      }],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: now,
+    });
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    await cmdDaemonStatus([]);
+    inspectSpy.mockRestore();
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Summary:        artifact stream warming up");
+    expect(output).toContain("Artifact stream: recently expected (recent_goal_or_worker, stale after 300000ms)");
+    expect(output).not.toContain("Summary:        alive but artifact-stalled");
   });
 
   it("does not throw on out-of-range persisted runtime health timestamps", async () => {

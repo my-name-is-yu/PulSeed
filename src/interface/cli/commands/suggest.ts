@@ -320,7 +320,7 @@ export async function cmdImprove(
   // Run the loop if --auto or --yes
   if (values.auto || values.yes) {
     console.log(`[PulSeed Improve] Starting improvement loop for goal ${goal.id}...`);
-    const loopLogger = buildLoopLogger();
+    const loopLogger = buildLoopLogger(stateManager.getBaseDir());
     const loopDeps = await buildDeps(
       stateManager,
       characterConfigManager,

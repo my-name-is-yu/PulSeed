@@ -690,8 +690,7 @@ function createRunAdapterToolExecutor(input: {
 }
 
 function stateManagerBaseDir(stateManager: StateManager): string {
-  const candidate = (stateManager as StateManager & { getBaseDir?: () => string }).getBaseDir?.();
-  return candidate ?? process.cwd();
+  return stateManager.getBaseDir();
 }
 
 function deterministicPipelineId(taskId: string, pipeline: TaskPipelineExt): string {

@@ -39,8 +39,10 @@ import {
   checkApiKey,
   checkEmbeddingAuth,
   checkStateDirectoryPermissions,
+  repairStateDirectoryPermissions,
   checkControlDatabase,
   checkProviderConfigPermissions,
+  repairProviderConfigPermissions,
   checkPluginPermissionWarnings,
   checkGoals,
   checkLogDirectory,
@@ -463,6 +465,17 @@ describe("checkStateDirectoryPermissions", () => {
     const result = checkStateDirectoryPermissions(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("recommended 0700");
+    expect(result.detail).toContain("pulseed doctor --repair");
+  });
+
+  it("repairs group/world accessible state directory permissions", () => {
+    fs.chmodSync(tmpDir, 0o755);
+
+    const result = repairStateDirectoryPermissions(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("set to 0700");
+    expect(fs.statSync(tmpDir).mode & 0o777).toBe(0o700);
   });
 });
 
@@ -504,6 +517,7 @@ describe("checkProviderConfigPermissions", () => {
     const result = checkProviderConfigPermissions(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("recommended 0600");
+    expect(result.detail).toContain("pulseed doctor --repair");
   });
 
   it("warns before parsing oversized provider.json", () => {
@@ -519,6 +533,28 @@ describe("checkProviderConfigPermissions", () => {
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("exceeds 1048576 bytes");
     expect(result.detail).not.toContain("recommended 0600");
+  });
+
+  it("repairs provider.json permissions when it stores an api_key", () => {
+    fs.writeFileSync(providerPath, JSON.stringify({ api_key: "sk-test" }));
+    fs.chmodSync(providerPath, 0o644);
+
+    const result = repairProviderConfigPermissions(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("set to 0600");
+    expect(fs.statSync(providerPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("does not tighten provider.json when no api_key is stored", () => {
+    fs.writeFileSync(providerPath, JSON.stringify({ model: "gpt-4" }));
+    fs.chmodSync(providerPath, 0o644);
+
+    const result = repairProviderConfigPermissions(tmpDir);
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("no api_key");
+    expect(fs.statSync(providerPath).mode & 0o777).toBe(0o644);
   });
 });
 

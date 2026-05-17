@@ -41,7 +41,15 @@ function normalizeDeadlineOption(deadline: string | undefined): string | null {
 
 export async function cmdGoalAddRaw(
   stateManager: StateManager,
-  opts: { title?: string; description?: string; rawDimensions: string[]; parent_id?: string; constraints?: string[]; deadline?: string }
+  opts: {
+    title?: string;
+    description?: string;
+    rawDimensions: string[];
+    parent_id?: string;
+    constraints?: string[];
+    deadline?: string;
+    json?: boolean;
+  }
 ): Promise<number> {
   const title = opts.title || opts.description;
   if (!title) {
@@ -182,6 +190,23 @@ export async function cmdGoalAddRaw(
 
   await autoRegisterFileExistenceDataSources(stateManager, dimensions, opts.description || title, goalId, opts.constraints);
   await autoRegisterShellDataSources(stateManager, dimensions, goalId, opts.constraints);
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      schema_version: "goal-add-result-v1",
+      goal_id: goalId,
+      title,
+      status: goal.status,
+      dimensions: dimensions.map((dimension) => ({
+        name: dimension.name,
+        label: dimension.label,
+        threshold: dimension.threshold,
+      })),
+      goal,
+      run_command: `pulseed run --goal ${goalId}`,
+    }, null, 2));
+    return 0;
+  }
 
   console.log(`Goal registered successfully!`);
   console.log(`Goal ID:    ${goalId}`);

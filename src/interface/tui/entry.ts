@@ -90,7 +90,7 @@ async function startTUIStandaloneMode(): Promise<void> {
       ...breadcrumb,
     });
 
-    const { waitUntilExit } = render(
+    const app = render(
       React.createElement(
         AlternateScreen,
         { enabled: noFlicker, stream: terminalStream },
@@ -109,7 +109,7 @@ async function startTUIStandaloneMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    await waitUntilExit();
+    await app.waitUntilExit();
   } finally {
     cleanup();
   }
@@ -204,7 +204,7 @@ async function startTUIDaemonMode(): Promise<void> {
       controlStream: terminalStream,
     });
 
-    const { waitUntilExit } = render(
+    const app = render(
       React.createElement(
         AlternateScreen,
         { enabled: noFlicker, stream: terminalStream },
@@ -223,7 +223,7 @@ async function startTUIDaemonMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    await waitUntilExit();
+    await app.waitUntilExit();
   } finally {
     cleanup();
   }
