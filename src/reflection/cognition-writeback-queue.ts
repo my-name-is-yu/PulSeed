@@ -121,6 +121,7 @@ export type CognitionWritebackQueueDecision =
 export interface CognitionWritebackQueueStore {
   enqueue(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry>;
   update(entry: CognitionWritebackQueueEntry): Promise<CognitionWritebackQueueEntry>;
+  remove(queueEntryId: string): Promise<void>;
   list(): Promise<CognitionWritebackQueueEntry[]>;
 }
 
@@ -208,6 +209,15 @@ export class FileCognitionWritebackQueueStore implements CognitionWritebackQueue
       const next = [...entries.filter((existing) => existing.queue_entry_id !== parsed.queue_entry_id), parsed];
       await this.write(next);
       return parsed;
+    });
+  }
+
+  async remove(queueEntryId: string): Promise<void> {
+    return withJsonFileMutationLock(this.path(), async () => {
+      const entries = await this.list();
+      const next = entries.filter((existing) => existing.queue_entry_id !== queueEntryId);
+      if (next.length === entries.length) return;
+      await this.write(next);
     });
   }
 

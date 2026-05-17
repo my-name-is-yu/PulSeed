@@ -1478,6 +1478,14 @@ describe("CoreLoop agentic phase hooks", () => {
         return entry;
       }),
       update: vi.fn(async (entry) => entry),
+      remove: vi.fn(async (queueEntryId) => {
+        const index = ownerReviewEntries.findIndex((entry) =>
+          typeof entry === "object"
+          && entry !== null
+          && (entry as { queue_entry_id?: unknown }).queue_entry_id === queueEntryId
+        );
+        if (index >= 0) ownerReviewEntries.splice(index, 1);
+      }),
       list: vi.fn(async () => ownerReviewEntries as never),
     };
     let evidenceSeq = 0;

@@ -90,12 +90,23 @@ export async function enqueueExperienceLearningProjectionForOwnerReview(input: {
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
   });
-  const append = await input.learningStore.appendLifecycleEvent(projectionEnqueuedPayload({
-    artifact: input.artifact,
-    proposal,
-    correctionLineageRefs,
-  }));
+  const queueEntryAlreadyPresent = (await input.queueStore.list()).some((entry) =>
+    entry.queue_entry_id === queueEntry.queue_entry_id
+  );
   const enqueuedQueueEntry = await input.queueStore.enqueue(queueEntry);
+  let append: Awaited<ReturnType<ExperienceLearningStateStore["appendLifecycleEvent"]>>;
+  try {
+    append = await input.learningStore.appendLifecycleEvent(projectionEnqueuedPayload({
+      artifact: input.artifact,
+      proposal,
+      correctionLineageRefs,
+    }));
+  } catch (error) {
+    if (!queueEntryAlreadyPresent) {
+      await input.queueStore.remove(enqueuedQueueEntry.queue_entry_id);
+    }
+    throw error;
+  }
   return {
     status: "enqueued",
     proposal,

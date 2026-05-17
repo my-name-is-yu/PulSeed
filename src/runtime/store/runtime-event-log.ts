@@ -2013,7 +2013,7 @@ function upsertExperienceLearningRuntimeGraph(sqlite: SqliteDatabase, event: Run
     case "candidate_transition_recorded":
       link(
         transitionEdgeKind(payload.reason_code),
-        { kind: payload.target_kind, ref: payload.target_id },
+        experienceLearningCandidateTransitionTargetRef(payload),
         `target:${payload.target_kind}:${payload.target_id}`,
       );
       break;
@@ -2458,7 +2458,7 @@ function experienceLearningTargetRefs(payload: ExperienceLearningRuntimeEventPay
       ];
     case "candidate_transition_recorded":
       return [
-        { kind: payload.target_kind, ref: payload.target_id },
+        experienceLearningCandidateTransitionTargetRef(payload),
         ...evidenceRefs,
       ];
     case "experiment_plan_registered":
@@ -2806,6 +2806,32 @@ function nodeKindForRef(ref: RuntimeGraphRef): RuntimeGraphNode["node_kind"] {
       return "learning_projection_proposal";
     default:
       return "artifact";
+  }
+}
+
+function experienceLearningCandidateTransitionTargetRef(
+  payload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }>,
+): RuntimeGraphRef {
+  return {
+    kind: normalizeExperienceLearningCandidateTransitionTargetKind(payload.target_kind),
+    ref: payload.target_id,
+  };
+}
+
+function normalizeExperienceLearningCandidateTransitionTargetKind(
+  kind: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }>["target_kind"],
+): RuntimeGraphRef["kind"] {
+  switch (kind) {
+    case "frame":
+      return "experience_frame";
+    case "hypothesis":
+      return "learning_hypothesis";
+    case "generalization_candidate":
+      return "generalization_candidate";
+    case "artifact":
+      return "learning_artifact";
+    case "prior":
+      return "learning_prior";
   }
 }
 

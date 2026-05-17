@@ -89,20 +89,23 @@ describe("experience learning owner-review writeback", () => {
     }
   });
 
-  it("records projection events before enqueueing owner-review items", async () => {
+  it("rolls back owner-review queue entries when projection event persistence fails", async () => {
     const artifact = makeArtifact();
     const appendLifecycleEvent = vi.fn().mockRejectedValue(new Error("projection write failed"));
-    const enqueue = vi.fn().mockResolvedValue(createExperienceLearningWritebackQueueEntry({
+    const queueEntry = createExperienceLearningWritebackQueueEntry({
       artifact,
       createdAt: "2026-05-17T00:01:00.000Z",
-    }));
+    });
+    const enqueue = vi.fn().mockResolvedValue(queueEntry);
+    const remove = vi.fn().mockResolvedValue(undefined);
 
     await expect(enqueueExperienceLearningProjectionForOwnerReview({
       artifact,
       createdAt: "2026-05-17T00:01:00.000Z",
       queueStore: {
         enqueue,
-        update: vi.fn(),
+        update: vi.fn(async (entry) => entry),
+        remove,
         list: vi.fn().mockResolvedValue([]),
       },
       learningStore: {
@@ -110,11 +113,38 @@ describe("experience learning owner-review writeback", () => {
       },
     })).rejects.toThrow("projection write failed");
 
+    expect(enqueue).toHaveBeenCalledWith(queueEntry);
     expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "projection_enqueued",
       owner_review_queue_ref: `queue:experience-learning:${artifact.id}`,
     }));
-    expect(enqueue).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith(queueEntry.queue_entry_id);
+  });
+
+  it("does not remove a pre-existing idempotent queue entry when projection retry fails", async () => {
+    const artifact = makeArtifact();
+    const appendLifecycleEvent = vi.fn().mockRejectedValue(new Error("projection retry failed"));
+    const queueEntry = createExperienceLearningWritebackQueueEntry({
+      artifact,
+      createdAt: "2026-05-17T00:01:00.000Z",
+    });
+    const remove = vi.fn().mockResolvedValue(undefined);
+
+    await expect(enqueueExperienceLearningProjectionForOwnerReview({
+      artifact,
+      createdAt: "2026-05-17T00:01:00.000Z",
+      queueStore: {
+        enqueue: vi.fn().mockResolvedValue(queueEntry),
+        update: vi.fn(async (entry) => entry),
+        remove,
+        list: vi.fn().mockResolvedValue([queueEntry]),
+      },
+      learningStore: {
+        appendLifecycleEvent,
+      },
+    })).rejects.toThrow("projection retry failed");
+
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("does not enqueue tentative artifacts for owner review", async () => {
@@ -136,6 +166,9 @@ describe("experience learning owner-review writeback", () => {
         },
         update: async () => {
           throw new Error("tentative artifact must not update queue");
+        },
+        remove: async () => {
+          throw new Error("tentative artifact must not remove queue entries");
         },
         list: async () => [],
       },

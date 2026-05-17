@@ -189,6 +189,40 @@ describe("ExperienceLearningStateStore", () => {
     }
   });
 
+  it("normalizes candidate transition target kinds into RuntimeGraph node kinds", async () => {
+    const cases = [
+      { targetKind: "frame", targetId: "frame-target-1", expectedKind: "experience_frame" },
+      { targetKind: "hypothesis", targetId: "hypothesis-target-1", expectedKind: "learning_hypothesis" },
+      { targetKind: "artifact", targetId: "artifact-target-1", expectedKind: "learning_artifact" },
+      { targetKind: "prior", targetId: "prior-target-1", expectedKind: "learning_prior" },
+    ] as const;
+    const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: tmpDir });
+    try {
+      for (const testCase of cases) {
+        const append = await store.appendLifecycleEvent(makeCandidateTransitionPayload({
+          transitionId: `transition-${testCase.targetKind}`,
+          targetKind: testCase.targetKind,
+          targetId: testCase.targetId,
+        }));
+        const explanation = await eventLog.explainTrace(append.runtimeEvent.event.trace_id);
+        expect(explanation.runtime_graph.nodes).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            node_kind: testCase.expectedKind,
+            ref: { kind: testCase.expectedKind, ref: testCase.targetId },
+          }),
+        ]));
+        expect(explanation.runtime_graph.nodes).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            node_kind: "artifact",
+            ref: { kind: testCase.targetKind, ref: testCase.targetId },
+          }),
+        ]));
+      }
+    } finally {
+      await eventLog.close();
+    }
+  });
+
   it("rejects legacy consumed-prior event names and broad payloads", () => {
     expect(() =>
       ExperienceLearningRuntimeEventPayloadSchema.parse({
@@ -828,5 +862,66 @@ function makeTrialReuseBudgetPayload(input: {
     transition,
     readiness_gate: readinessGate,
     trial_reuse_budget_consumption: consumption,
+  };
+}
+
+function makeCandidateTransitionPayload(input: {
+  transitionId: string;
+  targetKind: CandidateTransition["targetKind"];
+  targetId: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }> {
+  const trust = defaultRuntimeEvidenceTrust({
+    targetRef: {
+      kind: "candidate_transition",
+      id: input.transitionId,
+      scope: { goal_id: "goal-learning", run_id: "run-learning" },
+    },
+    provenanceRefs: ["evidence-transition"],
+  });
+  const transition: CandidateTransition = {
+    id: input.transitionId,
+    goalId: "goal-learning",
+    runId: "run-learning",
+    loopIndex: 1,
+    targetKind: input.targetKind,
+    targetId: input.targetId,
+    fromStatus: "candidate",
+    toStatus: "strengthened",
+    reasonCode: "independent_support",
+    diagnosticLabel: "test candidate transition target kind",
+    microProbeRecordIds: [],
+    evidenceRefs: ["evidence-transition"],
+    eventRefs: [],
+    runtimeGraphRefs: [],
+  };
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    event_kind: "candidate_transition_recorded",
+    idempotency_key: `experience-learning:test:candidate-transition:${input.transitionId}`,
+    goal_id: "goal-learning",
+    run_id: "run-learning",
+    loop_index: 1,
+    source_refs: {
+      evidence_refs: ["evidence-transition"],
+      event_refs: [],
+      runtime_graph_refs: [],
+    },
+    trust,
+    correction_state: trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: [
+        { kind: "candidate_transition", ref: input.transitionId },
+        { kind: input.targetKind, ref: input.targetId },
+      ],
+      edge_refs: [],
+    },
+    transition_id: input.transitionId,
+    target_kind: input.targetKind,
+    target_id: input.targetId,
+    from_status: "candidate",
+    to_status: "strengthened",
+    reason_code: "independent_support",
+    transition,
   };
 }
