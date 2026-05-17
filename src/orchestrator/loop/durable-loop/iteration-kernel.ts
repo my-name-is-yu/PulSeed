@@ -1030,9 +1030,18 @@ export class CoreIterationKernel {
       mergedTaskGenerationHints,
       abortSignal,
     );
-    if (!taskCycleOk) return await finalizeExperienceLearning();
-
     const completedTaskResult = result.taskResult;
+    if (!taskCycleOk) {
+      if (completedTaskResult && taskLearningProjection) {
+        await markLearningProjectionApplied(taskLearningProjection, [
+          `task:${completedTaskResult.task.id}`,
+        ]);
+      } else {
+        await markLearningProjectionSuppressed(taskLearningProjection, ["consumer_execution_failed"]);
+      }
+      return await finalizeExperienceLearning();
+    }
+
     if (completedTaskResult && taskLearningProjection) {
       await markLearningProjectionApplied(taskLearningProjection, [
         `task:${completedTaskResult.task.id}`,

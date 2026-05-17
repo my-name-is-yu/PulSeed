@@ -518,6 +518,56 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("suppresses task-generation priors when task cycle fails before producing a task", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("task generation failed"));
+    const taskProjection = {
+      phase: "task_generation",
+      projectionKind: "task_generation_bias",
+      consumptionRecordId: "consumption-task-failed",
+      preferredTargetDimension: "dim-prior",
+      taskBiasRefs: ["evidence-1"],
+      avoidTaskPatternRefs: [],
+      requiredExperimentPlanIds: [],
+      generalizationBodies: [],
+      suppressedSuggestionIds: [],
+    } as const;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-task-failed" },
+        record: { id: taskProjection.consumptionRecordId, stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: taskProjection,
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-prior", label: "Prior Dimension", current_value: 0 }),
+    ] }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.error).toContain("Task cycle failed: task generation failed");
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
+      consumptionId: "consumption-task-failed",
+      generatedDecisionRefs: expect.anything(),
+    });
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-task-failed",
+      reasonCodes: ["consumer_execution_failed"],
+    });
+  });
+
   it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
