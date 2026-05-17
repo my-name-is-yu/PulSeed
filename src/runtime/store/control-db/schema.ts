@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 43;
+export const CONTROL_DB_SCHEMA_VERSION = 44;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2626,6 +2626,24 @@ CREATE INDEX IF NOT EXISTS runtime_events_occurred_sequence_idx
   ON runtime_events(occurred_at, event_sequence);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_EVENT_SEQUENCE_COUNTER_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_event_sequence_counter (
+  scope TEXT PRIMARY KEY CHECK (scope = 'runtime_events'),
+  next_sequence INTEGER NOT NULL CHECK (next_sequence > 0)
+);
+
+INSERT INTO runtime_event_sequence_counter (scope, next_sequence)
+SELECT 'runtime_events', COALESCE(MAX(event_sequence), 0) + 1
+FROM runtime_events
+WHERE true
+ON CONFLICT(scope) DO UPDATE SET
+  next_sequence = CASE
+    WHEN excluded.next_sequence > runtime_event_sequence_counter.next_sequence
+      THEN excluded.next_sequence
+    ELSE runtime_event_sequence_counter.next_sequence
+  END;
+`.trim();
+
 export const CONTROL_DB_RUNTIME_EVENT_LOG_IDEMPOTENCY_SCHEMA_SQL = `
 DELETE FROM runtime_events
 WHERE rowid NOT IN (
@@ -3078,5 +3096,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     43,
     "runtime-event-stable-sequence",
     CONTROL_DB_RUNTIME_EVENT_SEQUENCE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    44,
+    "runtime-event-sequence-counter",
+    CONTROL_DB_RUNTIME_EVENT_SEQUENCE_COUNTER_SCHEMA_SQL
   ),
 ];

@@ -1036,19 +1036,33 @@ function isConfigAllowed(line) {
 function scanEventSourcedProjectionWriteBypasses(normalizedPath, text) {
   if (EVENT_SOURCED_PROJECTION_SKIP_PATH.test(normalizedPath)) return [];
   if (EVENT_SOURCED_PROJECTION_SCHEMA_PATH.test(normalizedPath)) return [];
-  if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(text)) return [];
+  const matches = eventSourcedProjectionWriteMatches(text);
+  if (matches.length === 0) return [];
   if (hasEventSourcedProjectionEventAppendCall(normalizedPath, text)) return [];
-  return text.split(/\r?\n/).flatMap((line, index) => {
-    if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(line)) return [];
-    return [{
-      filePath: normalizedPath,
-      line: index + 1,
-      rule: "event-sourced-projection-write",
-      owner: "RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes",
-      text: line.trim(),
-      allowlistReason: "production projection/current-state writes to event-sourced tables must use the runtime event-log pattern in the same module",
-    }];
-  });
+  return matches.map((match) => ({
+    filePath: normalizedPath,
+    line: match.line,
+    rule: "event-sourced-projection-write",
+    owner: "RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes",
+    text: match.text,
+    allowlistReason: "production projection/current-state writes to event-sourced tables must use the runtime event-log pattern in the same module",
+  }));
+}
+
+function eventSourcedProjectionWriteMatches(text) {
+  const pattern = new RegExp(EVENT_SOURCED_PROJECTION_WRITE_PATTERN.source, "gi");
+  return [...text.matchAll(pattern)].map((match) => ({
+    line: lineNumberAt(text, match.index ?? 0),
+    text: match[0].replace(/\s+/g, " ").trim(),
+  }));
+}
+
+function lineNumberAt(text, index) {
+  let line = 1;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (text.charCodeAt(cursor) === 10) line += 1;
+  }
+  return line;
 }
 
 function hasEventSourcedProjectionEventAppendCall(normalizedPath, text) {

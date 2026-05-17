@@ -168,3 +168,18 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `3d23a7e7` found:
+  - P1: `event_sequence` allocation used `MAX(event_sequence) + 1`, allowing daemon/CLI connections to race and one append to fail without a dedupe match.
+  - P2: the event-sourced projection write guard detected multiline SQL in the whole file but only reported single-line matches, letting split `INSERT`/`INTO` writes pass.
+- Follow-up fixes add `runtime_event_sequence_counter` migration 44 and allocate sequences by advancing the shared counter before reading the allocated value; allocation also catches up under the write lock if existing rows are already ahead of the counter. The guard now reports regex matches by source span, so multiline SQL writes are emitted with a line number. Focused verification passed:
+  - `node -v` (`v24.15.0`)
+  - `npm run test:unit -- --run src/runtime/store/control-db/__tests__/control-db.test.ts`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:unit -- --run src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run typecheck`
+  - `npm run test:contracts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run check:docs`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`

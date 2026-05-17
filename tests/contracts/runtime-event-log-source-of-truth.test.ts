@@ -846,6 +846,67 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
+  it("allocates runtime event sequences from a shared write-locked counter", async () => {
+    const root = fixtureRoot();
+    const runtimeRoot = path.join(root, "runtime");
+    const firstEventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+    const secondEventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+    try {
+      const firstOperation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:sequence-counter-first",
+        kind: "inspect_run",
+        state: "pending",
+        requested_at: NOW,
+        updated_at: NOW,
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "First sequence counter operation.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          session_id: "session:sequence-counter-first",
+        },
+      });
+      const secondOperation = RuntimeControlOperationSchema.parse({
+        ...firstOperation,
+        operation_id: "runtime-operation:sequence-counter-second",
+        reason: "Second sequence counter operation.",
+        target: {
+          session_id: "session:sequence-counter-second",
+        },
+      });
+
+      await firstEventLog.appendRuntimeControlOperation({ operation: firstOperation });
+      await secondEventLog.appendRuntimeControlOperation({ operation: secondOperation });
+
+      const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir: root });
+      try {
+        const rows = db.read((sqlite) => sqlite.prepare(`
+          SELECT event_sequence, event_id
+          FROM runtime_events
+          ORDER BY event_sequence ASC
+        `).all() as Array<{ event_sequence: number; event_id: string }>);
+        const counter = db.read((sqlite) => sqlite.prepare(`
+          SELECT next_sequence
+          FROM runtime_event_sequence_counter
+          WHERE scope = 'runtime_events'
+        `).get() as { next_sequence: number });
+
+        expect(rows.map((row) => row.event_sequence)).toEqual([1, 2]);
+        expect(new Set(rows.map((row) => row.event_id)).size).toBe(2);
+        expect(counter.next_sequence).toBe(3);
+      } finally {
+        db.close();
+      }
+    } finally {
+      await firstEventLog.close();
+      await secondEventLog.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("prunes high-volume task projections without expression-depth-limited predicates", async () => {
     const root = fixtureRoot();
     try {

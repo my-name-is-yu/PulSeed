@@ -948,9 +948,50 @@ function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope)
 }
 
 function nextRuntimeEventSequence(sqlite: SqliteDatabase): number {
-  const row = sqlite.prepare("SELECT COALESCE(MAX(event_sequence), 0) + 1 AS next_sequence FROM runtime_events")
-    .get() as { next_sequence: number } | undefined;
-  return row?.next_sequence ?? 1;
+  const result = sqlite.prepare(`
+    UPDATE runtime_event_sequence_counter
+    SET next_sequence = next_sequence + 1
+    WHERE scope = 'runtime_events'
+  `).run();
+  if (result.changes === 0) {
+    initializeRuntimeEventSequenceCounter(sqlite);
+    sqlite.prepare(`
+      UPDATE runtime_event_sequence_counter
+      SET next_sequence = next_sequence + 1
+      WHERE scope = 'runtime_events'
+    `).run();
+  }
+  const row = sqlite.prepare(`
+    SELECT next_sequence - 1 AS event_sequence
+    FROM runtime_event_sequence_counter
+    WHERE scope = 'runtime_events'
+  `).get() as { event_sequence: number } | undefined;
+  if (!row || !Number.isSafeInteger(row.event_sequence) || row.event_sequence <= 0) {
+    throw new Error("runtime event sequence allocation failed");
+  }
+  const maxRow = sqlite.prepare(`
+    SELECT COALESCE(MAX(event_sequence), 0) AS max_event_sequence
+    FROM runtime_events
+  `).get() as { max_event_sequence: number } | undefined;
+  const maxEventSequence = maxRow?.max_event_sequence ?? 0;
+  if (row.event_sequence <= maxEventSequence) {
+    const recoveredSequence = maxEventSequence + 1;
+    sqlite.prepare(`
+      UPDATE runtime_event_sequence_counter
+      SET next_sequence = ?
+      WHERE scope = 'runtime_events'
+    `).run(recoveredSequence + 1);
+    return recoveredSequence;
+  }
+  return row.event_sequence;
+}
+
+function initializeRuntimeEventSequenceCounter(sqlite: SqliteDatabase): void {
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO runtime_event_sequence_counter (scope, next_sequence)
+    SELECT 'runtime_events', COALESCE(MAX(event_sequence), 0) + 1
+    FROM runtime_events
+  `).run();
 }
 
 function readRuntimeEventById(sqlite: SqliteDatabase, eventId: string): RuntimeEventEnvelope | null {

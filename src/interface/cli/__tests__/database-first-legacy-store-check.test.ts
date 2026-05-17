@@ -542,6 +542,24 @@ describe("database-first legacy store check", () => {
     expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
   });
 
+  it("detects multiline event-sourced projection writes without append evidence", () => {
+    writeFile(tmpDir, "src/runtime/bad-multiline-projection-writer.ts", `
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }) {
+        sqlite.prepare(\`
+          INSERT
+          INTO runtime_operations (operation_id)
+          VALUES (?)
+        \`).run("operation:multiline-bypass");
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/bad-multiline-projection-writer.ts");
+    expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
+  });
+
   it("allows event-sourced projection writes only with a concrete append API in the same module", () => {
     writeFile(tmpDir, "src/runtime/good-projection-writer.ts", `
       import { appendRuntimeEventEnvelopeInTransaction } from "../store/runtime-event-log";

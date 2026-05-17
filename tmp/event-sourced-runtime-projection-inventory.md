@@ -54,9 +54,12 @@ current-state rows:
 
 The apply path is deterministic over the full `runtime_events` set and
 RuntimeGraph evidence, preserving event append order with a persisted
-`event_sequence` when multiple source events have the same timestamp. It does
-not read current-state projection tables as hidden truth. Trace-scoped rebuild
-remains an operator/debug inspection path only;
+`event_sequence` when multiple source events have the same timestamp.
+`event_sequence` is allocated from the `runtime_event_sequence_counter`
+write-locked counter, and allocation catches up to the current maximum event
+sequence if a repaired/imported row has advanced the log. It does not read
+current-state projection tables as hidden truth. Trace-scoped rebuild remains
+an operator/debug inspection path only;
 applying current-state rows from a single trace is rejected because traces are
 action-scoped and do not contain full entity history.
 
@@ -109,7 +112,9 @@ not current-state row apply targets:
 - The database-first guard now requires a concrete event append API in the same
   production module before event-sourced projection writes are accepted. The
   guard parses real call expressions, so an import/reference, comment, or
-  string containing an append API name no longer bypasses the guard.
+  string containing an append API name no longer bypasses the guard. It also
+  reports multiline SQL writes such as `INSERT`/`INTO runtime_operations`
+  split across separate lines.
 - `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
   does not duplicate outbox notifications, schedule runs, denied tool calls,
   peer deliveries, memory correction effects, or commitment operations while
