@@ -260,6 +260,31 @@ describe("cmdDaemonStatus", () => {
     expect(output).toContain("0/3 retries used");
   });
 
+  it("reports the daemon startup effective config when CLI overrides were used", async () => {
+    const state = runningDaemonState({
+      effective_config: {
+        iterations_per_cycle: 1,
+        run_policy: { mode: "bounded", max_iterations: 1 },
+        check_interval_ms: 60_000,
+        max_concurrent_goals: 2,
+      },
+    });
+    await saveDaemonStateFixture(tmpDir, state);
+    const inspectSpy = mockPidInspectRunning(process.pid);
+
+    try {
+      await cmdDaemonStatus([]);
+    } finally {
+      inspectSpy.mockRestore();
+    }
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Interval:      1m");
+    expect(output).toContain("Run policy:    bounded (1 iterations max)");
+    expect(output).toContain("Worker cycle:  1 iterations max");
+    expect(output).toContain("Concurrency:   2 goals");
+  });
+
   it("shows persisted wait status details", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T12:00:00.000Z"));

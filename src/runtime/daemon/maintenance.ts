@@ -495,6 +495,8 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
   saveDaemonState: () => Promise<void>;
   eventServer?: { broadcast?(event: string, payload: Record<string, unknown>): void | Promise<void> };
   state: DaemonState;
+  runPolicy?: DaemonConfig["run_policy"]["mode"];
+  maxIterations?: number | null;
 }): Promise<void> {
   const snapshot = await collectGoalCycleScheduleSnapshot(
     params.driveSystem,
@@ -518,6 +520,7 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
       sourceEpoch,
     ].join(":");
     const refs = supervisorMaintenanceAdmissionRefs(goalId, triggerKind, snapshotEntry, params.state.loop_count);
+    const runPolicy = params.runPolicy ?? "resident";
     await recordGoalRunAdmissionDecision({
       personalAgentRuntime: params.personalAgentRuntime,
       baseDir: params.baseDir,
@@ -527,8 +530,8 @@ export async function runSupervisorMaintenanceCycleForDaemon(params: {
       sourceId,
       sourceEpoch,
       highWatermark: sourceEpoch,
-      runPolicy: "resident",
-      maxIterations: null,
+      runPolicy,
+      maxIterations: runPolicy === "resident" ? null : params.maxIterations ?? null,
       decisionReason: `Supervisor maintenance admitted goal ${goalId} for durable queued execution from ${triggerKind}.`,
       currentRefs: refs,
       auditRefs: refs,

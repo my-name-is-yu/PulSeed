@@ -687,8 +687,9 @@ export async function cmdDaemonStatus(_args: string[]): Promise<void> {
   const resolvedRuntimePid = runtimePid ?? data.pid;
   const resolvedRuntimeAlive = isPidAlive(pidStatus, resolvedRuntimePid);
 
-  // Load daemon config for config section display
-  const cfg = await loadDaemonConfig(baseDir);
+  // Prefer the live process config captured at daemon startup. File config can
+  // miss one-shot CLI overrides such as --iterations-per-cycle or --config.
+  const cfg = data.effective_config ?? await loadDaemonConfig(baseDir);
   const runtimeRoot = data.runtime_root ?? resolveDaemonRuntimeRoot(baseDir, cfg.runtime_root);
   const storedRuntimeHealth = await new RuntimeHealthStore(runtimeRoot, { controlBaseDir: baseDir }).loadSnapshot();
   const runtimeHealth = reconcileRuntimeHealthForDisplay(storedRuntimeHealth, {

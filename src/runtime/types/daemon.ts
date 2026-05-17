@@ -148,6 +148,7 @@ export const DaemonStateSchema = z.object({
   active_goals: z.array(z.string()),
   status: z.enum(["idle", "running", "stopping", "stopped", "crashed"]),
   runtime_root: z.string().optional(),
+  effective_config: DaemonConfigObjectSchema.optional(),
   crash_count: DaemonNonnegativeSafeIntSchema.default(0),
   last_error: z.string().nullable().default(null),
   interrupted_goals: z.array(z.string()).optional(),
