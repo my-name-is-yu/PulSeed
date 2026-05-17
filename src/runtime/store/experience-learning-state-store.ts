@@ -440,6 +440,21 @@ export class ExperienceLearningStateStore {
     return this.listJsonRows("experience_learning_prior_consumption_events", "consumption_json", LearningPriorConsumptionRecordSchema, "prior_id = ?", [priorId]);
   }
 
+  async listProjectionProposals(sourceArtifactId?: string): Promise<ExperienceLearningProjectionProposal[]> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT proposal_json
+        FROM experience_learning_projection_proposals
+        ORDER BY created_at ASC, proposal_id ASC
+      `).all() as Array<{ proposal_json: string }>;
+      const proposals = rows.map((row) => ExperienceLearningProjectionProposalSchema.parse(JSON.parse(row.proposal_json) as unknown));
+      return sourceArtifactId
+        ? proposals.filter((proposal) => proposal.sourceArtifactIds.includes(sourceArtifactId))
+        : proposals;
+    });
+  }
+
   async recordMetricBaselineObservation(input: ExperienceLearningMetricBaselineObservation): Promise<ExperienceLearningMetricBaselineObservation> {
     const observation = ExperienceLearningMetricBaselineObservationSchema.parse(input);
     const db = await this.database();

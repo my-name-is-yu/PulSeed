@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   LearningArtifactSchema,
   defaultRuntimeEvidenceTrust,
   redactedLearningLabel,
   type LearningArtifact,
 } from "../../runtime/learning/index.js";
+import { ExperienceLearningStateStore } from "../../runtime/store/experience-learning-state-store.js";
+import { FileCognitionWritebackQueueStore } from "../cognition-writeback-queue.js";
 import {
   createExperienceLearningWritebackProposal,
   createExperienceLearningWritebackQueueEntry,
+  enqueueExperienceLearningProjectionForOwnerReview,
 } from "../experience-learning-writeback.js";
 
 describe("experience learning owner-review writeback", () => {
@@ -44,6 +50,75 @@ describe("experience learning owner-review writeback", () => {
       runtime_authority: false,
       state: "queued",
     }));
+  });
+
+  it("enqueues promoted artifacts through owner review and records a projection event", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "pulseed-experience-learning-writeback-"));
+    const learningStore = new ExperienceLearningStateStore(join(tempDir, "runtime"), { controlBaseDir: tempDir });
+    const queueStore = new FileCognitionWritebackQueueStore(tempDir);
+    try {
+      const artifact = makeArtifact();
+      const result = await enqueueExperienceLearningProjectionForOwnerReview({
+        artifact,
+        learningStore,
+        queueStore,
+        createdAt: "2026-05-17T00:01:00.000Z",
+      });
+
+      expect(result.status).toBe("enqueued");
+      if (result.status !== "enqueued") throw new Error("expected promoted artifact to enqueue");
+      expect(result.queueEntry).toEqual(expect.objectContaining({
+        queue_entry_id: `queue:experience-learning:${artifact.id}`,
+        owner_write_performed: false,
+        runtime_authority: false,
+        state: "queued",
+      }));
+      await expect(queueStore.list()).resolves.toEqual([result.queueEntry]);
+      await expect(learningStore.listProjectionProposals(artifact.id)).resolves.toEqual([
+        expect.objectContaining({
+          id: result.proposal.id,
+          sourceArtifactIds: [artifact.id],
+          ownerReviewQueueRef: result.queueEntry.queue_entry_id,
+          status: "queued",
+          correctionLineageRefs: [],
+        }),
+      ]);
+    } finally {
+      await learningStore.close();
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it("does not enqueue tentative artifacts for owner review", async () => {
+    const tentativeArtifact = LearningArtifactSchema.parse({
+      ...makeArtifact(),
+      id: "artifact-learning-tentative",
+      status: "tentative",
+      guardrails: {
+        ...makeArtifact().guardrails,
+        requiresFreshEvidenceBeforePromotion: true,
+      },
+    });
+    const result = await enqueueExperienceLearningProjectionForOwnerReview({
+      artifact: tentativeArtifact,
+      createdAt: "2026-05-17T00:01:00.000Z",
+      queueStore: {
+        enqueue: async () => {
+          throw new Error("tentative artifact must not enqueue");
+        },
+        update: async () => {
+          throw new Error("tentative artifact must not update queue");
+        },
+        list: async () => [],
+      },
+      learningStore: {
+        appendLifecycleEvent: async () => {
+          throw new Error("tentative artifact must not append projection event");
+        },
+      },
+    });
+
+    expect(result).toEqual({ status: "skipped", reasonCode: "artifact_not_promoted" });
   });
 });
 
