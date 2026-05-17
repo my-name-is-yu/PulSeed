@@ -26,75 +26,6 @@ import {
   waitForDaemon,
 } from "./entry-daemon.js";
 
-type CtrlCInputStream = {
-  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
-  off(event: "data", listener: (chunk: Buffer | string) => void): unknown;
-};
-
-const CTRL_C_EXIT_WINDOW_MS = 5_000;
-
-function getInputBytes(chunk: Buffer | string): Buffer {
-  return Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-}
-
-export function attachDoubleCtrlCExit(
-  input: CtrlCInputStream,
-  onExit: () => void,
-  windowMs = CTRL_C_EXIT_WINDOW_MS,
-): () => void {
-  let pending = false;
-  let exiting = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearTimer = () => {
-    if (timer === null) return;
-    clearTimeout(timer);
-    timer = null;
-  };
-
-  const resetPending = () => {
-    clearTimer();
-    pending = false;
-  };
-
-  const armPending = () => {
-    pending = true;
-    clearTimer();
-    timer = setTimeout(() => {
-      pending = false;
-      timer = null;
-    }, windowMs);
-  };
-
-  const handleCtrlC = () => {
-    if (exiting) return;
-    if (pending) {
-      exiting = true;
-      resetPending();
-      onExit();
-      return;
-    }
-    armPending();
-  };
-
-  const onData = (chunk: Buffer | string) => {
-    for (const byte of getInputBytes(chunk)) {
-      if (byte === 0x03) {
-        handleCtrlC();
-        continue;
-      }
-      resetPending();
-    }
-  };
-
-  input.on("data", onData);
-
-  return () => {
-    resetPending();
-    input.off("data", onData);
-  };
-}
-
 // ─── Standalone mode ───
 
 async function startTUIStandaloneMode(): Promise<void> {
@@ -178,15 +109,7 @@ async function startTUIStandaloneMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    const detachCtrlCExit = attachDoubleCtrlCExit(process.stdin, () => {
-      coreLoop.stop();
-      app.unmount();
-    });
-    try {
-      await app.waitUntilExit();
-    } finally {
-      detachCtrlCExit();
-    }
+    await app.waitUntilExit();
   } finally {
     cleanup();
   }
@@ -300,15 +223,7 @@ async function startTUIDaemonMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    const detachCtrlCExit = attachDoubleCtrlCExit(process.stdin, () => {
-      daemonClient.disconnect();
-      app.unmount();
-    });
-    try {
-      await app.waitUntilExit();
-    } finally {
-      detachCtrlCExit();
-    }
+    await app.waitUntilExit();
   } finally {
     cleanup();
   }

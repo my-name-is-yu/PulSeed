@@ -546,6 +546,41 @@ describe("TUI quit handling", () => {
 
     screen.unmount();
   });
+
+  it("clears the Ctrl-C exit confirmation when ordinary input arrives", async () => {
+    const coreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+
+    const screen = render(React.createElement(App, {
+      coreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    const inputHandler = latestUseInputHandler();
+    act(() => {
+      inputHandler("c", { ctrl: true });
+      inputHandler("x", {});
+      inputHandler("c", { ctrl: true });
+    });
+
+    expect(coreLoop.stop).not.toHaveBeenCalled();
+    expect(testState.exitApp).not.toHaveBeenCalled();
+
+    act(() => {
+      inputHandler("x", {});
+    });
+    screen.unmount();
+  });
 });
 
 describe("TUI shell execution", () => {
