@@ -274,6 +274,7 @@ describe("ARC-AGI-3 tools", () => {
         adapter: "openai_codex_cli" as const,
       }),
     });
+    expect(clients).toHaveLength(0);
     const findTool = (name: string) => {
       const tool = tools.find((candidate) => candidate.metadata.name === name);
       if (!tool) throw new Error(`missing tool ${name}`);
@@ -300,6 +301,10 @@ describe("ARC-AGI-3 tools", () => {
       "action",
       "closeScorecard",
     ]);
+  });
+
+  it("does not require ARC API credentials while merely registering ARC tools", () => {
+    expect(() => createArcAgi3Tools()).not.toThrow();
   });
 });
 

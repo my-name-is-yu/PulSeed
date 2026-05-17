@@ -440,10 +440,13 @@ export class ArcAgi3PolicyTool extends ArcAgi3ToolBase<ArcAgi3PolicyInput> {
 }
 
 export function createArcAgi3Tools(deps?: ArcAgi3ToolDeps): ITool[] {
-  const sharedClient = deps?.client ?? deps?.clientFactory?.() ?? new ArcAgi3HttpClient();
+  const sharedClientFactory = makeSharedArcAgi3ClientFactory(deps);
+  const restDeps: ArcAgi3ToolDeps = { ...(deps ?? {}) };
+  delete restDeps.client;
+  delete restDeps.clientFactory;
   const sharedDeps: ArcAgi3ToolDeps = {
-    ...(deps ?? {}),
-    client: sharedClient,
+    ...restDeps,
+    clientFactory: sharedClientFactory,
   };
   return [
     new ArcAgi3ListGamesTool(sharedDeps),
@@ -454,6 +457,14 @@ export function createArcAgi3Tools(deps?: ArcAgi3ToolDeps): ITool[] {
     new ArcAgi3ScorecardTool(sharedDeps),
     new ArcAgi3PolicyTool(sharedDeps),
   ];
+}
+
+function makeSharedArcAgi3ClientFactory(deps?: ArcAgi3ToolDeps): () => ArcAgi3RestClient {
+  let sharedClient = deps?.client;
+  return () => {
+    sharedClient ??= deps?.clientFactory?.() ?? new ArcAgi3HttpClient();
+    return sharedClient;
+  };
 }
 
 function unique(values: string[]): string[] {
