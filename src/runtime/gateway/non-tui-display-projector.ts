@@ -423,6 +423,7 @@ export function createNonTuiDisplayProjector(
     transport: options.transport,
     display: options.display ?? resolveGatewayChannelDisplayContract(undefined),
     channelType: options.channelType,
+    capabilityDecisionRecorder: options.capabilityDecisionRecorder,
   });
 }
 

@@ -6,6 +6,7 @@ import {
   blockedDirectAdapterExecutionResult,
   type AgentTask,
   type AgentResult,
+  type AdapterCapabilityPlaneAdmission,
   type IAdapter,
 } from "../adapter-layer.js";
 import type { Task } from "../../../base/types/task.js";
@@ -31,6 +32,7 @@ export interface TaskExecutorDeps {
 
 interface ExecuteTaskOptions {
   diffBaseline?: ExecutionDiffBaseline;
+  capabilityPlaneAdmission?: AdapterCapabilityPlaneAdmission;
 }
 
 // ─── durationToMs ───
@@ -127,6 +129,9 @@ export async function executeTask(
     prompt,
     timeout_ms: timeoutMs,
     adapter_type: adapter.adapterType,
+    ...(options?.capabilityPlaneAdmission !== undefined
+      ? { capability_plane_admission: options.capabilityPlaneAdmission }
+      : {}),
     ...(allowedTools !== undefined ? { allowed_tools: allowedTools } : {}),
     ...(workspaceCwd !== undefined ? { cwd: workspaceCwd } : {}),
   };

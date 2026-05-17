@@ -159,6 +159,27 @@ describe("capability plane product gauntlet", () => {
       expect(taskResult.stopped_reason).toBe("policy_blocked");
       expect(adapterExecute).not.toHaveBeenCalled();
 
+      const selfAssertedExecute = vi.fn().mockResolvedValue({
+        success: true,
+        output: "self asserted boundary should not execute",
+        error: null,
+        exit_code: 0,
+        elapsed_ms: 1,
+        stopped_reason: "completed",
+      } satisfies AgentResult);
+      const selfAssertedAdapter = {
+        adapterType: "self-asserted-direct-test",
+        capabilityPlaneBoundary: "run_adapter_tool",
+        execute: selfAssertedExecute,
+      } as unknown as IAdapter;
+      const selfAssertedTaskResult = await executeTask(
+        makeTaskExecutorDeps(context.rootDir),
+        makeTask({ id: "task-self-asserted" }),
+        selfAssertedAdapter,
+      );
+      expect(selfAssertedTaskResult.stopped_reason).toBe("policy_blocked");
+      expect(selfAssertedExecute).not.toHaveBeenCalled();
+
       const channelDescriptor = descriptorFromGatewayChannelAction({
         channelType: "webhook",
         reportType: "goal_completion",

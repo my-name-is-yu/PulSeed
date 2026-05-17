@@ -11,7 +11,11 @@ import {
   createGatewayDisplayPolicy,
   resolveGatewayChannelDisplayContract,
 } from "../channel-display-policy.js";
-import { NonTuiDisplayProjector, type NonTuiDisplayTransport } from "../non-tui-display-projector.js";
+import {
+  NonTuiDisplayProjector,
+  createNonTuiDisplayProjector,
+  type NonTuiDisplayTransport,
+} from "../non-tui-display-projector.js";
 import type { GatewayChannelCapabilityAdmissionRecord } from "../gateway-channel-capability-admission.js";
 
 const base = {
@@ -118,6 +122,27 @@ describe("non-TUI display projector", () => {
       admission: expect.objectContaining({
         status: "allowed",
         capability_fingerprint: expect.any(String),
+      }),
+    }));
+  });
+
+  it("forwards capability decision recorder through the factory", async () => {
+    const transport = createTransport();
+    const recorder = vi.fn(async (_record: GatewayChannelCapabilityAdmissionRecord) => {});
+    const projector = createNonTuiDisplayProjector({
+      display: resolveGatewayChannelDisplayContract(TELEGRAM_GATEWAY_DISPLAY_CONTRACT),
+      transport,
+      channelType: "telegram",
+      capabilityDecisionRecorder: recorder,
+    });
+
+    await projector.handle({ ...base, type: "assistant_final", text: "factory hello", persisted: true });
+
+    expect(recorder).toHaveBeenCalledWith(expect.objectContaining({
+      channelType: "telegram",
+      reportType: "final_send",
+      admission: expect.objectContaining({
+        status: "allowed",
       }),
     }));
   });

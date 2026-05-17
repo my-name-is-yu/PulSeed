@@ -36,6 +36,13 @@ export interface AdapterCapabilityPlaneAdmission {
   admission_id: string;
 }
 
+const ADAPTER_CAPABILITY_PLANE_ADMISSION_BOUNDARIES = new Set<AdapterCapabilityPlaneAdmission["boundary"]>([
+  "run_adapter_tool",
+  "provider_adapter",
+  "descriptor_internal",
+  "test",
+]);
+
 export interface AgentLoopExecutionInfo {
   traceId: string;
   sessionId: string;
@@ -124,8 +131,21 @@ export interface IAdapter {
 }
 
 export function adapterExecutionHasCapabilityPlaneAdmission(task: AgentTask, adapter: IAdapter): boolean {
-  if (adapter.capabilityPlaneBoundary !== undefined) return true;
-  return task.capability_plane_admission?.schema_version === "adapter-capability-plane-admission/v1";
+  const admission = task.capability_plane_admission;
+  if (!isAdapterCapabilityPlaneAdmission(admission)) return false;
+  if (adapter.capabilityPlaneBoundary === undefined) return false;
+  return admission.boundary === adapter.capabilityPlaneBoundary;
+}
+
+export function isAdapterCapabilityPlaneAdmission(
+  admission: AgentTask["capability_plane_admission"]
+): admission is AdapterCapabilityPlaneAdmission {
+  return admission?.schema_version === "adapter-capability-plane-admission/v1"
+    && ADAPTER_CAPABILITY_PLANE_ADMISSION_BOUNDARIES.has(admission.boundary)
+    && typeof admission.descriptor_id === "string"
+    && admission.descriptor_id.trim().length > 0
+    && typeof admission.admission_id === "string"
+    && admission.admission_id.trim().length > 0;
 }
 
 export function blockedDirectAdapterExecutionResult(adapterType: string): AgentResult {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentResult, IAdapter } from "../adapter-layer.js";
+import type { AdapterCapabilityPlaneAdmission, AgentResult, IAdapter } from "../adapter-layer.js";
 import { executeTask, type TaskExecutorDeps } from "../task/task-executor.js";
 import type { Task } from "../../../base/types/task.js";
 import type { SessionManager } from "../session-manager.js";
@@ -79,6 +79,13 @@ function makeChangedPathsExecFileSync(paths: string[]): TaskExecutorDeps["execFi
   }) as TaskExecutorDeps["execFileSyncFn"];
 }
 
+const TEST_CAPABILITY_PLANE_ADMISSION: AdapterCapabilityPlaneAdmission = {
+  schema_version: "adapter-capability-plane-admission/v1",
+  boundary: "test",
+  descriptor_id: "capability:test:task-executor",
+  admission_id: "capability-admission:test:task-executor",
+};
+
 describe("executeTask protected paths", () => {
   let stateManager: TaskExecutorDeps["stateManager"];
   let sessionManager: SessionManager;
@@ -135,6 +142,9 @@ describe("executeTask protected paths", () => {
       },
       makeTask(),
       adapter,
+      undefined,
+      undefined,
+      { capabilityPlaneAdmission: TEST_CAPABILITY_PLANE_ADMISSION },
     );
 
     expect(result.success).toBe(false);
@@ -170,6 +180,9 @@ describe("executeTask protected paths", () => {
       },
       makeTask({ constraints: [`workspace_path:${taskWorkspace}`] }),
       adapter,
+      undefined,
+      undefined,
+      { capabilityPlaneAdmission: TEST_CAPABILITY_PLANE_ADMISSION },
     );
 
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ cwd: taskWorkspace }));
