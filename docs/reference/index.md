@@ -14,6 +14,7 @@ Current reference pages:
 - [Schedules](schedules.md)
 - [Plugins](plugins.md)
 - [Memory](memory.md)
+- [Surface Projection Protocol](surface-projection-protocol.md)
 - [Package Scripts](package-scripts.md)
 - [Status](../operate/status.md)
 - [Module Map](../architecture/module-map.md)
