@@ -139,6 +139,62 @@ describe("ApprovalBroker", () => {
     );
   });
 
+  it("rotates surface approval bindings when caller-supplied approval ids are reused", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broadcast = vi.fn();
+    let now = Date.parse("2026-05-17T00:00:00.000Z");
+    const broker = new ApprovalBroker({
+      store,
+      broadcast,
+      createId: () => "approval-reused",
+      now: () => now,
+    });
+
+    const firstRequest = broker.requestApproval("goal-1", {
+      id: "task-1",
+      description: "Approve first deployment",
+      action: "deploy",
+    });
+
+    await waitForBroadcast(broadcast, "approval_required", "approval-reused");
+    const staleApproveBindingId = surfaceApprovalBindingId(broker, "approval-reused", true);
+
+    await expect(broker.resolveApproval("approval-reused", true, "tui", {
+      surfaceActionBindingId: staleApproveBindingId,
+    })).resolves.toBe(true);
+    await expect(firstRequest).resolves.toBe(true);
+
+    now += 1000;
+    const secondRequest = broker.requestApproval("goal-1", {
+      id: "task-2",
+      description: "Approve second deployment",
+      action: "deploy",
+    });
+
+    await vi.waitFor(() => {
+      expect(broadcast.mock.calls.filter(([type, payload]) =>
+        type === "approval_required" &&
+        typeof payload === "object" &&
+        payload !== null &&
+        "requestId" in payload &&
+        payload.requestId === "approval-reused"
+      )).toHaveLength(2);
+    });
+    const currentApproveBindingId = surfaceApprovalBindingId(broker, "approval-reused", true);
+    expect(currentApproveBindingId).not.toBe(staleApproveBindingId);
+
+    await expect(broker.resolveApproval("approval-reused", true, "tui", {
+      surfaceActionBindingId: staleApproveBindingId,
+    })).resolves.toBe(false);
+    expect(surfaceApprovalBindingId(broker, "approval-reused", true)).toBe(currentApproveBindingId);
+
+    await expect(broker.resolveApproval("approval-reused", true, "tui", {
+      surfaceActionBindingId: currentApproveBindingId,
+    })).resolves.toBe(true);
+    await expect(secondRequest).resolves.toBe(true);
+  });
+
   it("rejects non-conversational approval responses without the matching surface binding", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);

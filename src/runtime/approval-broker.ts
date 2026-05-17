@@ -579,15 +579,16 @@ function projectApprovalSurface(record: ApprovalRecord): SurfaceProjection {
   const permission = getPendingPermissionTask(record);
   const createdAt = safeEpochDateTime(record.created_at) ?? new Date(0).toISOString();
   const expiresAt = safeEpochDateTime(record.expires_at);
+  const issuanceReplayKey = approvalIssuanceReplayKey(record);
   const surfaceInstanceRef = approvalSurfaceInstanceRef(record);
-  const projectionId = `surface:approval:${record.approval_id}`;
+  const projectionId = `surface:${issuanceReplayKey}`;
   const sourceEventRefs = [
     normalSourceEventRef({
       kind: "approval_request",
       ref: record.approval_id,
       event_type: "approval_required",
       occurred_at: createdAt,
-      replay_key: `approval:${record.approval_id}`,
+      replay_key: issuanceReplayKey,
     }),
   ];
   const runtimeGraphRefs = [
@@ -639,7 +640,7 @@ function projectApprovalSurface(record: ApprovalRecord): SurfaceProjection {
     purpose: "Project an approval request into the current user-visible surface.",
     redaction_class: "normal_safe",
     projected_at: createdAt,
-    replay_key: `approval:${record.approval_id}`,
+    replay_key: issuanceReplayKey,
     source_event_refs: sourceEventRefs,
     runtime_graph_refs: runtimeGraphRefs,
     approval_prompt: {
@@ -649,14 +650,14 @@ function projectApprovalSurface(record: ApprovalRecord): SurfaceProjection {
     },
     actions: [
       {
-        action_id: `approval:${record.approval_id}:approve`,
+        action_id: `${issuanceReplayKey}:approve`,
         kind: "approve",
         label: "Approve",
         style: "primary",
         binding_id: approveBinding.binding_id,
       },
       {
-        action_id: `approval:${record.approval_id}:reject`,
+        action_id: `${issuanceReplayKey}:reject`,
         kind: "reject",
         label: "Reject",
         style: "danger",
@@ -694,8 +695,7 @@ function createApprovalActionBinding(input: {
     source_event_refs: input.sourceEventRefs,
     runtime_graph_refs: input.runtimeGraphRefs,
     replay_key: [
-      "approval",
-      input.record.approval_id,
+      approvalIssuanceReplayKey(input.record),
       input.actionKind,
       origin?.channel ?? "event",
       origin?.conversation_id ?? "",
@@ -754,8 +754,9 @@ function validateApprovalResolutionBinding(
 
 function approvalSurfaceInstanceRef(record: ApprovalRecord): string {
   const origin = record.origin;
+  const issuanceValue = safeEpochDateTime(record.created_at) ?? String(record.created_at);
   if (!origin) {
-    return `approval:event:${record.approval_id}`;
+    return `approval:event:${encodeSurfacePart(record.approval_id)}:issued:${encodeSurfacePart(issuanceValue)}`;
   }
   return [
     "approval",
@@ -764,7 +765,14 @@ function approvalSurfaceInstanceRef(record: ApprovalRecord): string {
     origin.user_id ?? "anonymous",
     origin.session_id ?? "sessionless",
     origin.turn_id ?? "turnless",
+    "issued",
+    issuanceValue,
   ].map(encodeSurfacePart).join(":");
+}
+
+function approvalIssuanceReplayKey(record: ApprovalRecord): string {
+  const createdAt = safeEpochDateTime(record.created_at) ?? String(record.created_at);
+  return `approval:${record.approval_id}:issued:${createdAt}`;
 }
 
 function safeEpochDateTime(value: number): string | null {

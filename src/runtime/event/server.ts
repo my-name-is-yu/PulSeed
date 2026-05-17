@@ -449,15 +449,16 @@ function projectEventServerApprovalSurface(input: {
   createdAt: string;
   expiresAt: string;
 }): { projection: SurfaceProjection; surfaceInstanceRef: string } {
-  const surfaceInstanceRef = `approval:event:${input.requestId}`;
-  const projectionId = `surface:approval:${input.requestId}`;
+  const issuanceReplayKey = eventServerApprovalIssuanceReplayKey(input.requestId, input.createdAt);
+  const surfaceInstanceRef = `approval:event:${input.requestId}:issued:${input.createdAt}`;
+  const projectionId = `surface:${issuanceReplayKey}`;
   const sourceEventRefs = [
     normalSourceEventRef({
       kind: "approval_request",
       ref: input.requestId,
       event_type: "approval_required",
       occurred_at: input.createdAt,
-      replay_key: `approval:${input.requestId}`,
+      replay_key: issuanceReplayKey,
     }),
   ];
   const runtimeGraphRefs = [
@@ -501,7 +502,7 @@ function projectEventServerApprovalSurface(input: {
       purpose: "Project an event-server approval request into the current user-visible surface.",
       redaction_class: "normal_safe",
       projected_at: input.createdAt,
-      replay_key: `approval:${input.requestId}`,
+      replay_key: issuanceReplayKey,
       source_event_refs: sourceEventRefs,
       runtime_graph_refs: runtimeGraphRefs,
       approval_prompt: {
@@ -515,14 +516,14 @@ function projectEventServerApprovalSurface(input: {
       },
       actions: [
         {
-          action_id: `approval:${input.requestId}:approve`,
+          action_id: `${issuanceReplayKey}:approve`,
           kind: "approve",
           label: "Approve",
           style: "primary",
           binding_id: approveBinding.binding_id,
         },
         {
-          action_id: `approval:${input.requestId}:reject`,
+          action_id: `${issuanceReplayKey}:reject`,
           kind: "reject",
           label: "Reject",
           style: "danger",
@@ -556,11 +557,15 @@ function createEventServerApprovalBinding(input: {
     source_projection_id: input.projectionId,
     source_event_refs: input.sourceEventRefs,
     runtime_graph_refs: input.runtimeGraphRefs,
-    replay_key: `approval:${input.requestId}:${input.actionKind}:event`,
+    replay_key: `${eventServerApprovalIssuanceReplayKey(input.requestId, input.createdAt)}:${input.actionKind}:event`,
     redaction_class: "normal_safe",
     created_at: input.createdAt,
     expires_at: input.expiresAt,
   });
+}
+
+function eventServerApprovalIssuanceReplayKey(requestId: string, createdAt: string): string {
+  return `approval:${requestId}:issued:${createdAt}`;
 }
 
 function validateEventServerApprovalBinding(
