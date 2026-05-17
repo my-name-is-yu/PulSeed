@@ -236,7 +236,7 @@ describe("ApprovalBroker", () => {
     await broker.start();
 
     expect(broker.getPendingApprovalEvents()).toEqual([
-      {
+      expect.objectContaining({
         requestId: "approval-unsafe-permission-expiry",
         goalId: "goal-unsafe",
         task: {
@@ -251,7 +251,18 @@ describe("ApprovalBroker", () => {
         },
         expiresAt,
         restored: true,
-      },
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-unsafe-permission-expiry",
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+          action_bindings: expect.arrayContaining([
+            expect.objectContaining({ action_kind: "approve" }),
+            expect.objectContaining({ action_kind: "reject" }),
+          ]),
+        }),
+      }),
     ]);
   });
 
@@ -281,13 +292,20 @@ describe("ApprovalBroker", () => {
     await broker.start();
 
     expect(broker.getPendingApprovalEvents()).toEqual([
-      {
+      expect.objectContaining({
         requestId: "approval-unsafe-generic-expiry",
         goalId: "goal-unsafe",
         task: { id: "", description: "", action: "" },
         expiresAt,
         restored: true,
-      },
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-unsafe-generic-expiry",
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+        }),
+      }),
     ]);
   });
 
@@ -370,7 +388,7 @@ describe("ApprovalBroker", () => {
     });
 
     await waitForBroadcast(broadcast, "approval_required", "approval-conversation");
-    expect(delivered).toHaveBeenCalledWith({
+    expect(delivered).toHaveBeenCalledWith(expect.objectContaining({
       record: expect.objectContaining({
         approval_id: "approval-conversation",
         origin,
@@ -384,13 +402,51 @@ describe("ApprovalBroker", () => {
       }),
       origin,
       prompt: expect.stringContaining("Deploy production changes"),
-    });
+      approval_prompt: expect.objectContaining({
+        approval_id: "approval-conversation",
+        approve_binding_id: expect.stringMatching(/^sab:/),
+        reject_binding_id: expect.stringMatching(/^sab:/),
+      }),
+      surface_projection: expect.objectContaining({
+        surface: "approval",
+        view: "normal",
+        normal_view: expect.objectContaining({
+          redaction: expect.objectContaining({
+            raw_trace_ids_visible: false,
+            operator_refs_visible: false,
+          }),
+        }),
+        action_bindings: expect.arrayContaining([
+          expect.objectContaining({
+            action_kind: "approve",
+            surface: "approval",
+            surface_instance_ref: expect.stringContaining("approval:slack:thread-1"),
+            target: expect.objectContaining({
+              conversation_id: "thread-1",
+              session_id: "session-1",
+              message_id: "turn-1",
+            }),
+          }),
+          expect.objectContaining({
+            action_kind: "reject",
+            surface: "approval",
+          }),
+        ]),
+      }),
+    }));
     expect(broadcast).toHaveBeenCalledWith(
       "approval_required",
       expect.objectContaining({
         requestId: "approval-conversation",
         origin,
         prompt: expect.stringContaining("Approval ID: approval-conversation"),
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-conversation",
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+        }),
       })
     );
 

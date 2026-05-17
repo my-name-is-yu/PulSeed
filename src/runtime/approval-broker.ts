@@ -1,4 +1,15 @@
 import type { Logger } from "./logger.js";
+import {
+  createSurfaceActionBinding,
+  createSurfaceProjection,
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  renderSurfaceProjectionText,
+  validateSurfaceActionBinding,
+  type SurfaceActionBinding,
+  type SurfaceApprovalPrompt,
+  type SurfaceProjection,
+} from "./surface-projection-protocol.js";
 import type { ApprovalStore } from "./store/approval-store.js";
 import type { PermissionWaitPlanStore } from "./store/permission-wait-plan-store.js";
 import type { ApprovalOrigin, ApprovalRecord } from "./store/runtime-schemas.js";
@@ -39,6 +50,8 @@ export interface ApprovalRequiredEvent {
   restored?: boolean;
   origin?: ApprovalOrigin;
   prompt?: string;
+  approval_prompt?: SurfaceApprovalPrompt;
+  surface_projection?: SurfaceProjection;
 }
 
 export interface ConversationalApprovalDelivery {
@@ -50,6 +63,8 @@ export interface ConversationalApprovalRequest {
   record: ApprovalRecord;
   origin: ApprovalOrigin;
   prompt: string;
+  approval_prompt: SurfaceApprovalPrompt;
+  surface_projection: SurfaceProjection;
 }
 
 export interface ConversationalApprovalOptions {
@@ -225,6 +240,24 @@ export class ApprovalBroker {
     if (record === null || !approvalOriginMatches(record.origin, origin)) {
       return false;
     }
+    const surfaceProjection = projectApprovalSurface(record);
+    const binding = approvalActionBindingFor(surfaceProjection, approved ? "approve" : "reject");
+    if (!binding) {
+      return false;
+    }
+    const validation = validateSurfaceActionBinding({
+      binding,
+      surface: "approval",
+      surfaceInstanceRef: approvalSurfaceInstanceRef(record),
+      actionKind: approved ? "approve" : "reject",
+      conversationId: origin.conversation_id,
+      sessionId: origin.session_id,
+      messageId: origin.turn_id,
+      now: safeEpochDateTime(this.now()) ?? undefined,
+    });
+    if (validation.status !== "accepted") {
+      return false;
+    }
     const resolved = await this.finalizeApproval(approvalId, {
       state: approved ? "approved" : "denied",
       approved,
@@ -344,10 +377,23 @@ export class ApprovalBroker {
     }
 
     try {
+      const surfaceProjection = projectApprovalSurface(record);
+      const approvalPrompt = surfaceProjection.approval_prompt;
+      if (!approvalPrompt) {
+        await this.finalizeApproval(record.approval_id, {
+          state: "denied",
+          approved: false,
+          reason: "approval_surface_projection_unavailable",
+          responseChannel: record.origin.channel,
+        });
+        return;
+      }
       const delivery = await deliver({
         record,
         origin: record.origin,
-        prompt: renderConversationalApprovalPrompt(record),
+        prompt: renderSurfaceProjectionText(surfaceProjection),
+        approval_prompt: approvalPrompt,
+        surface_projection: surfaceProjection,
       });
       if (!delivery.delivered) {
         await this.finalizeApproval(record.approval_id, {
@@ -428,7 +474,8 @@ export class ApprovalBroker {
   }
 
   private toApprovalRequiredEvent(record: ApprovalRecord, restored: boolean): ApprovalRequiredEvent {
-    const prompt = record.origin ? renderConversationalApprovalPrompt(record) : undefined;
+    const surfaceProjection = projectApprovalSurface(record);
+    const prompt = record.origin ? renderSurfaceProjectionText(surfaceProjection) : undefined;
     return {
       requestId: record.approval_id,
       goalId: record.goal_id,
@@ -437,6 +484,8 @@ export class ApprovalBroker {
       restored,
       ...(record.origin ? { origin: record.origin } : {}),
       ...(prompt ? { prompt } : {}),
+      ...(surfaceProjection.approval_prompt ? { approval_prompt: surfaceProjection.approval_prompt } : {}),
+      surface_projection: surfaceProjection,
     };
   }
 
@@ -509,6 +558,184 @@ function renderConversationalApprovalPrompt(record: ApprovalRecord): string {
   }
   lines.push("Reply in this conversation to approve, reject, or ask for clarification.");
   return lines.join("\n");
+}
+
+function projectApprovalSurface(record: ApprovalRecord): SurfaceProjection {
+  const task = approvalTaskFromRecord(record, {
+    id: record.approval_id,
+    description: "Approval required",
+    action: "unknown",
+  });
+  const permission = getPendingPermissionTask(record);
+  const createdAt = safeEpochDateTime(record.created_at) ?? new Date(0).toISOString();
+  const expiresAt = safeEpochDateTime(record.expires_at);
+  const surfaceInstanceRef = approvalSurfaceInstanceRef(record);
+  const projectionId = `surface:approval:${record.approval_id}`;
+  const sourceEventRefs = [
+    normalSourceEventRef({
+      kind: "approval_request",
+      ref: record.approval_id,
+      event_type: "approval_required",
+      occurred_at: createdAt,
+      replay_key: `approval:${record.approval_id}`,
+    }),
+  ];
+  const runtimeGraphRefs = [
+    normalRuntimeGraphRef({
+      kind: "approval",
+      ref: record.approval_id,
+      role: "target",
+    }),
+    ...(record.goal_id ? [normalRuntimeGraphRef({
+      kind: "goal",
+      ref: record.goal_id,
+      role: "source",
+    })] : []),
+  ];
+  const approvalPrompt = {
+    approval_id: record.approval_id,
+    prompt: renderConversationalApprovalPrompt(record),
+    action: task.action,
+    target_summary: task.description,
+    ...(permission?.risk_class ? { risk_class: permission.risk_class } : {}),
+    ...(expiresAt ? { expires_at: expiresAt } : {}),
+    approve_binding_id: "",
+    reject_binding_id: "",
+  };
+  const approveBinding = createApprovalActionBinding({
+    record,
+    actionKind: "approve",
+    projectionId,
+    surfaceInstanceRef,
+    createdAt,
+    expiresAt,
+    sourceEventRefs,
+    runtimeGraphRefs,
+  });
+  const rejectBinding = createApprovalActionBinding({
+    record,
+    actionKind: "reject",
+    projectionId,
+    surfaceInstanceRef,
+    createdAt,
+    expiresAt,
+    sourceEventRefs,
+    runtimeGraphRefs,
+  });
+  return createSurfaceProjection({
+    projection_id: projectionId,
+    surface: "approval",
+    view: "normal",
+    purpose: "Project an approval request into the current user-visible surface.",
+    redaction_class: "normal_safe",
+    projected_at: createdAt,
+    replay_key: `approval:${record.approval_id}`,
+    source_event_refs: sourceEventRefs,
+    runtime_graph_refs: runtimeGraphRefs,
+    approval_prompt: {
+      ...approvalPrompt,
+      approve_binding_id: approveBinding.binding_id,
+      reject_binding_id: rejectBinding.binding_id,
+    },
+    actions: [
+      {
+        action_id: `approval:${record.approval_id}:approve`,
+        kind: "approve",
+        label: "Approve",
+        style: "primary",
+        binding_id: approveBinding.binding_id,
+      },
+      {
+        action_id: `approval:${record.approval_id}:reject`,
+        kind: "reject",
+        label: "Reject",
+        style: "danger",
+        binding_id: rejectBinding.binding_id,
+      },
+    ],
+    action_bindings: [approveBinding, rejectBinding],
+  });
+}
+
+function createApprovalActionBinding(input: {
+  record: ApprovalRecord;
+  actionKind: "approve" | "reject";
+  projectionId: string;
+  surfaceInstanceRef: string;
+  createdAt: string;
+  expiresAt: string | null;
+  sourceEventRefs: ReturnType<typeof normalSourceEventRef>[];
+  runtimeGraphRefs: ReturnType<typeof normalRuntimeGraphRef>[];
+}): SurfaceActionBinding {
+  const origin = input.record.origin;
+  return createSurfaceActionBinding({
+    action_kind: input.actionKind,
+    surface: "approval",
+    surface_instance_ref: input.surfaceInstanceRef,
+    target: {
+      kind: "approval",
+      ref: input.record.approval_id,
+      surface_instance_ref: input.surfaceInstanceRef,
+      ...(origin?.conversation_id ? { conversation_id: origin.conversation_id } : {}),
+      ...(origin?.session_id ? { session_id: origin.session_id } : {}),
+      ...(origin?.turn_id ? { message_id: origin.turn_id } : {}),
+    },
+    source_projection_id: input.projectionId,
+    source_event_refs: input.sourceEventRefs,
+    runtime_graph_refs: input.runtimeGraphRefs,
+    replay_key: [
+      "approval",
+      input.record.approval_id,
+      input.actionKind,
+      origin?.channel ?? "event",
+      origin?.conversation_id ?? "",
+      origin?.session_id ?? "",
+      origin?.turn_id ?? "",
+    ].join(":"),
+    redaction_class: "normal_safe",
+    created_at: input.createdAt,
+    expires_at: input.expiresAt,
+  });
+}
+
+function approvalActionBindingFor(
+  projection: SurfaceProjection,
+  actionKind: "approve" | "reject",
+): SurfaceActionBinding | null {
+  const action = projection.actions.find((candidate) => candidate.kind === actionKind);
+  const bindingId = action?.binding_id ?? projection.approval_prompt?.[
+    actionKind === "approve" ? "approve_binding_id" : "reject_binding_id"
+  ];
+  if (!bindingId) {
+    return null;
+  }
+  return projection.action_bindings.find((binding) => binding.binding_id === bindingId) ?? null;
+}
+
+function approvalSurfaceInstanceRef(record: ApprovalRecord): string {
+  const origin = record.origin;
+  if (!origin) {
+    return `approval:event:${record.approval_id}`;
+  }
+  return [
+    "approval",
+    origin.channel,
+    origin.conversation_id,
+    origin.user_id ?? "anonymous",
+    origin.session_id ?? "sessionless",
+    origin.turn_id ?? "turnless",
+  ].map(encodeSurfacePart).join(":");
+}
+
+function safeEpochDateTime(value: number): string | null {
+  if (!Number.isFinite(value) || Math.abs(value) > MAX_VALID_DATE_MS) {
+    return null;
+  }
+  return new Date(value).toISOString();
+}
+
+function encodeSurfacePart(value: string): string {
+  return encodeURIComponent(value).replace(/%/g, "_");
 }
 
 function formatEpochMs(value: number): string {
