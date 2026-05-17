@@ -2010,8 +2010,32 @@ describe("GoalTrigger execution (Phase 3)", () => {
     vi.setSystemTime(new Date(firstRunAt));
 
     const order: string[] = [];
+    const traces: Array<{
+      replay_key: string;
+      situation_frame?: {
+        cognition_situation?: {
+          caller_path?: string;
+          current_target_refs?: Array<{ kind: string; ref: string }>;
+        };
+        policy_refs?: Array<{ kind: string; ref: string }>;
+      };
+      intervention_decisions?: Array<{ policy_ref?: { kind: string; ref: string } }>;
+      initiative_events?: Array<{ audit_refs?: Array<{ kind: string; ref: string }> }>;
+    }> = [];
     const personalAgentRuntime = {
-      recordTrace: vi.fn(async (trace: { replay_key: string }) => {
+      recordTrace: vi.fn(async (trace: {
+        replay_key: string;
+        situation_frame?: {
+          cognition_situation?: {
+            caller_path?: string;
+            current_target_refs?: Array<{ kind: string; ref: string }>;
+          };
+          policy_refs?: Array<{ kind: string; ref: string }>;
+        };
+        intervention_decisions?: Array<{ policy_ref?: { kind: string; ref: string } }>;
+        initiative_events?: Array<{ audit_refs?: Array<{ kind: string; ref: string }> }>;
+      }) => {
+        traces.push(trace);
         order.push(`trace:${trace.replay_key}`);
       }),
     };
@@ -2084,6 +2108,25 @@ describe("GoalTrigger execution (Phase 3)", () => {
       signal_context_id: firstSignalContext.signal_context_id,
       assembled_at: secondRunAt,
     });
+    expect(traces).toHaveLength(2);
+    expect(traces[0]).toMatchObject({
+      situation_frame: {
+        cognition_situation: {
+          caller_path: "schedule_wake",
+          current_target_refs: expect.arrayContaining([
+            { kind: "schedule_entry", ref: entry.id },
+            { kind: "goal", ref: "test-goal-id" },
+          ]),
+        },
+        policy_refs: [expect.objectContaining({ kind: "response_plan" })],
+      },
+      intervention_decisions: [expect.objectContaining({
+        policy_ref: expect.objectContaining({ kind: "response_plan" }),
+      })],
+    });
+    expect(traces[0]?.initiative_events?.flatMap((event) => event.audit_refs ?? [])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "cognition_audit" }),
+    ]));
   });
 
   it("fails closed for stale wait-resume attention projections from the production tick path", async () => {

@@ -267,7 +267,21 @@ describe("user memory correction operations", () => {
 
   it("records durable admission before runtime memory correction ledger effects", async () => {
     const order: string[] = [];
-    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function () {
+    const traces: Array<{
+      situation_frame?: {
+        cognition_situation?: {
+          caller_path?: string;
+          stale_target_refs?: Array<{ kind: string; ref: string }>;
+          current_target_refs?: Array<{ kind: string; ref: string }>;
+        };
+        policy_refs?: Array<{ kind: string; ref: string }>;
+        current_refs?: Array<{ kind: string; ref: string }>;
+      };
+      intervention_decisions?: Array<{ policy_ref?: { kind: string; ref: string } }>;
+      initiative_events?: Array<{ event_type: string; audit_refs?: Array<{ kind: string; ref: string }> }>;
+    }> = [];
+    vi.spyOn(PersonalAgentRuntimeStore.prototype, "recordTrace").mockImplementation(async function (_trace) {
+      traces.push(_trace);
       order.push("trace");
       return {} as never;
     });
@@ -287,6 +301,34 @@ describe("user memory correction operations", () => {
     });
 
     expect(order).toEqual(["trace", "append"]);
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({
+      situation_frame: {
+        cognition_situation: {
+          caller_path: "memory_truth_operation",
+          stale_target_refs: [{ kind: "runtime_evidence", ref: "evidence-1" }],
+          current_target_refs: expect.arrayContaining([
+            { kind: "runtime_evidence", ref: "evidence-1" },
+            { kind: "goal", ref: "goal-1" },
+          ]),
+        },
+        policy_refs: [expect.objectContaining({ kind: "response_plan" })],
+        current_refs: expect.arrayContaining([
+          expect.objectContaining({ kind: "cognition_response_plan" }),
+        ]),
+      },
+      intervention_decisions: [expect.objectContaining({
+        policy_ref: expect.objectContaining({ kind: "response_plan" }),
+      })],
+      initiative_events: expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "memory_updated",
+          audit_refs: expect.arrayContaining([
+            expect.objectContaining({ kind: "cognition_audit" }),
+          ]),
+        }),
+      ]),
+    });
   });
 
   it("replays the same runtime memory correction input without duplicate ledger effects", async () => {

@@ -25,7 +25,7 @@
 - [x] Kernel implementation.
 - [x] Production caller migrations.
 - [x] Guardrail.
-- [ ] Tests and docs.
+- [x] Tests and docs.
 - [ ] Local verification.
 - [ ] Sub-agent review.
 - [ ] GitHub Codex review.
