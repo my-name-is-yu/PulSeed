@@ -52,6 +52,7 @@ import {
   type LearningExperimentPlan,
   type LearningHypothesis,
   type LearningPriorConsumptionRecord,
+  type LearningPriorConsumptionReasonCode,
   type LearningPriorPhaseProjection,
   type LearningPriorSnapshot,
   type LearningConsumerPhase,
@@ -565,19 +566,24 @@ export class ExperienceLearningStateStore {
         });
         const existing = findPriorConsumptionByIdempotency(sqlite, resolved.record.idempotencyKey);
         if (existing) {
-          const existingResult = {
-            prior,
-            record: existing,
-            projection: existing.stage === "suppressed" || !resolved.projection
-              ? null
-              : LearningPriorPhaseProjectionSchema.parse(projectionForExistingReservation(resolved.projection, existing)),
-            runtimeEventId: null,
-          };
+          const projection = existing.stage === "suppressed" || !resolved.projection
+            ? null
+            : LearningPriorPhaseProjectionSchema.parse(projectionForExistingReservation(resolved.projection, existing));
           if (existing.stage === "suppressed") {
-            suppressedResult ??= existingResult;
+            suppressedResult ??= {
+              prior,
+              record: existing,
+              projection: null,
+              runtimeEventId: null,
+            };
             continue;
           }
-          return existingResult;
+          return {
+            prior,
+            record: existing,
+            projection,
+            runtimeEventId: null,
+          };
         }
 
         let record = resolved.record;
@@ -607,17 +613,21 @@ export class ExperienceLearningStateStore {
         if (runtimeEvent.disposition === "inserted") {
           applyExperienceLearningPayloadProjection(sqlite, payload, runtimeEvent.event.event_id, runtimeEvent.event.occurred_at);
         }
-        const result = {
+        if (record.stage === "suppressed") {
+          suppressedResult ??= {
+            prior,
+            record,
+            projection: null,
+            runtimeEventId: runtimeEvent.event.event_id,
+          };
+          continue;
+        }
+        return {
           prior,
           record,
           projection,
           runtimeEventId: runtimeEvent.event.event_id,
         };
-        if (record.stage === "suppressed") {
-          suppressedResult ??= result;
-          continue;
-        }
-        return result;
       }
       return suppressedResult;
     });
@@ -650,6 +660,46 @@ export class ExperienceLearningStateStore {
         generatedDecisionRefs: [...input.generatedDecisionRefs],
       });
       const payload = priorAppliedPayload({ prior, consumption });
+      const runtimeEvent = appendRuntimeEventEnvelopeInTransaction(
+        sqlite,
+        runtimeEventFromExperienceLearningPayload(payload),
+      );
+      const appliedProjection = runtimeEvent.disposition === "inserted";
+      if (appliedProjection) {
+        applyExperienceLearningPayloadProjection(sqlite, payload, runtimeEvent.event.event_id, runtimeEvent.event.occurred_at);
+      }
+      return { runtimeEvent, appliedProjection };
+    });
+  }
+
+  async markPriorConsumptionSuppressed(input: {
+    consumptionId: string;
+    reasonCodes: readonly LearningPriorConsumptionReasonCode[];
+    completedAt?: string;
+  }): Promise<ExperienceLearningAppendResult | null> {
+    if (input.reasonCodes.length === 0) {
+      throw new Error("prior suppression requires at least one reason code");
+    }
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      const row = sqlite.prepare(`
+        SELECT c.consumption_json, p.prior_json
+        FROM experience_learning_prior_consumption_events c
+        JOIN experience_learning_prior_snapshots p ON p.prior_id = c.prior_id
+        WHERE c.consumption_id = ?
+      `).get(input.consumptionId) as { consumption_json: string; prior_json: string } | undefined;
+      if (!row) return null;
+      const prior = LearningPriorSnapshotSchema.parse(JSON.parse(row.prior_json) as unknown);
+      const current = LearningPriorConsumptionRecordSchema.parse(JSON.parse(row.consumption_json) as unknown);
+      if (current.stage === "suppressed" || current.stage === "applied") return null;
+      const consumption = LearningPriorConsumptionRecordSchema.parse({
+        ...current,
+        stage: "suppressed",
+        completedAt: input.completedAt ?? new Date().toISOString(),
+        reasonCodes: [...input.reasonCodes],
+        generatedDecisionRefs: [],
+      });
+      const payload = priorSuppressedPayload({ prior, record: consumption });
       const runtimeEvent = appendRuntimeEventEnvelopeInTransaction(
         sqlite,
         runtimeEventFromExperienceLearningPayload(payload),

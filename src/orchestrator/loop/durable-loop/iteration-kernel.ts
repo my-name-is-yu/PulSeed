@@ -296,6 +296,25 @@ export class CoreIterationKernel {
         });
       }
     };
+    const markLearningProjectionSuppressed = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      reasonCodes: readonly ["consumer_execution_failed"],
+    ): Promise<void> => {
+      if (!projection || !this.deps.deps.experienceLearningStore) return;
+      try {
+        await this.deps.deps.experienceLearningStore.markPriorConsumptionSuppressed({
+          consumptionId: projection.consumptionRecordId,
+          reasonCodes,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to suppress unused experience-learning prior", {
+          goalId,
+          loopIndex,
+          consumptionRecordId: projection.consumptionRecordId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
     const corePhaseRuntime = new CorePhaseRuntime({
       phaseRunner: this.deps.deps.corePhaseRunner,
       policyRegistry: this.deps.corePhasePolicyRegistry,
@@ -695,7 +714,7 @@ export class CoreIterationKernel {
           learningPriorConsumptionRef: stallDetectionProjection.consumptionRecordId,
         }
       : baseStallActionHints;
-    await runPhase("stall-detection", () =>
+    const stallDetection = await runPhase("stall-detection", () =>
       detectStallsAndRebalance(
         ctx,
         goalId,
@@ -704,9 +723,13 @@ export class CoreIterationKernel {
         mergedStallActionHints,
       )
     );
-    await markLearningProjectionApplied(stallDetectionProjection, [
-      `stall-detection:${goalId}:${loopIndex}`,
-    ]);
+    if (stallDetection.status === "completed") {
+      await markLearningProjectionApplied(stallDetectionProjection, [
+        `stall-detection:${goalId}:${loopIndex}`,
+      ]);
+    } else {
+      await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_execution_failed"]);
+    }
     const shouldRunStallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result);
     const stallInvestigationResolution = shouldRunStallInvestigation
       ? await resolveLearningProjection(

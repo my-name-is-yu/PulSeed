@@ -331,6 +331,51 @@ describe("ExperienceLearningStateStore", () => {
     expect(unscopedSnapshot.values.find((value) => value.name === "action_savings_after_reuse")?.numerator_value).toBe(1);
   });
 
+  it("suppresses failed consumer reservations without exhausting prior reuse budget", async () => {
+    await store.appendLifecycleEvent(makePriorGeneratedPayload());
+    const failedReservation = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-failed-consumer",
+      consumerDecisionRef: "task-generation:goal-learning:2:failed-consumer",
+      now: "2026-05-17T00:05:00.000Z",
+    });
+    expect(failedReservation?.record.stage).toBe("reserved");
+
+    await store.markPriorConsumptionSuppressed({
+      consumptionId: failedReservation!.record.id,
+      reasonCodes: ["consumer_execution_failed"],
+      completedAt: "2026-05-17T00:06:00.000Z",
+    });
+    await expect(store.listPriorConsumptionRecords("prior-1")).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: failedReservation!.record.id,
+        stage: "suppressed",
+        reasonCodes: ["consumer_execution_failed"],
+      }),
+    ]));
+
+    const retryReservation = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-retry-consumer",
+      consumerDecisionRef: "task-generation:goal-learning:2:retry-consumer",
+      now: "2026-05-17T00:07:00.000Z",
+    });
+
+    expect(retryReservation?.record.stage).toBe("reserved");
+    expect(retryReservation?.record.id).not.toBe(failedReservation?.record.id);
+    expect(retryReservation?.projection).toEqual(expect.objectContaining({
+      preferredTargetDimension: "dim-prior",
+    }));
+  });
+
   it("rolls back RuntimeEventLog append when a trial-reuse budget projection double-reserves", async () => {
     const first = makeTrialReuseBudgetPayload({
       transitionId: "transition-budget-1",

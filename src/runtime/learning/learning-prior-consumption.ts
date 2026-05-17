@@ -49,6 +49,7 @@ export const LearningPriorConsumptionReasonCodeSchema = z.enum([
   "governed_memory_audit_stale",
   "stale_or_expired",
   "max_uses_exhausted",
+  "consumer_execution_failed",
 ]);
 export type LearningPriorConsumptionReasonCode = z.infer<typeof LearningPriorConsumptionReasonCodeSchema>;
 

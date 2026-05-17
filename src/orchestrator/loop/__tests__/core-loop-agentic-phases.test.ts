@@ -743,6 +743,54 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("does not apply stall-detection priors when stall detection fails before producing a decision", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true });
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    vi.spyOn(mocks.stateManager, "loadGapHistory").mockRejectedValue(new Error("gap history unavailable"));
+    const stallDetectionProjection = {
+      phase: "stall_detection",
+      projectionKind: "stall_focus_bias",
+      consumptionRecordId: "consumption-stall-detection",
+      focusEvidenceRefs: ["evidence-stall-detection"],
+      blockedLoopPatternRefs: [],
+      experimentPlanIds: [],
+      generalizationBodies: [],
+      suppressedSuggestionIds: [],
+    } as const;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "stall_detection") return null;
+      return {
+        prior: { id: "prior-stall-detection" },
+        record: { id: stallDetectionProjection.consumptionRecordId, stage: "reserved" },
+        runtimeEventId: "runtime-event:stall-detection",
+        projection: stallDetectionProjection,
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(resolvePriorForPhase).toHaveBeenCalledWith(expect.objectContaining({
+      consumerPhase: "stall_detection",
+    }));
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-detection",
+      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+    });
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-detection",
+      reasonCodes: ["consumer_execution_failed"],
+    });
+  });
+
   it("runs an N+1 trial-reuse learning prior through the public DurableLoop iteration path", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     const experienceStore = new ExperienceLearningStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });

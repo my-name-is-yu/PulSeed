@@ -30,6 +30,11 @@ export interface StallActionHints {
   learningPriorConsumptionRef?: string;
 }
 
+export interface StallDetectionExecutionResult {
+  status: "completed" | "failed";
+  error?: string;
+}
+
 type StrategyStallArgs = [
   goalId: string,
   stallCount: number,
@@ -540,7 +545,7 @@ export async function detectStallsAndRebalance(
   goal: Goal,
   result: LoopIterationResult,
   stallActionHints?: StallActionHints
-): Promise<void> {
+): Promise<StallDetectionExecutionResult> {
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
     const gapHistoryByDimension = indexGapHistoryByDimension(goal, gapHistory);
@@ -675,8 +680,13 @@ export async function detectStallsAndRebalance(
     if (ctx.deps.portfolioManager) {
       await rebalancePortfolio(ctx, goalId, goal, waitActivationContext);
     }
+    return { status: "completed" };
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
+    return {
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
