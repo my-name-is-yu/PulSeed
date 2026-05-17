@@ -598,6 +598,38 @@ describe("CoreLoop agentic phase hooks", () => {
           outcome: "supported",
         }),
       ]);
+      const promotedArtifacts = (await experienceStore.listArtifacts("goal-1"))
+        .filter((artifact) => artifact.status === "promoted");
+      expect(promotedArtifacts).toEqual([
+        expect.objectContaining({
+          status: "promoted",
+          evidence: expect.objectContaining({
+            experimentRecordIds: [experimentRecords[0]!.id],
+          }),
+          guardrails: expect.objectContaining({
+            authorityClass: "planning_hint_only",
+            cannotGrantAuthority: true,
+            requiresFreshEvidenceBeforePromotion: false,
+          }),
+        }),
+      ]);
+      const postExperimentPriors = await experienceStore.listPriorSnapshots("goal-1");
+      expect(postExperimentPriors).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          eligibleFromIteration: 3,
+          sourceArtifactIds: [promotedArtifacts[0]!.id],
+          suggestions: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "strategy_preference",
+              consumerPhase: "task_generation",
+            }),
+            expect.objectContaining({
+              kind: "phase_focus",
+              consumerPhase: "next_iteration_directive",
+            }),
+          ]),
+        }),
+      ]));
     } finally {
       await experienceStore.close();
     }

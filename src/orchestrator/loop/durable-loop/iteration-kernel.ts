@@ -93,16 +93,28 @@ import {
 } from "./iteration-kernel-evidence-helpers.js";
 import { recordExperienceLearningCheckpoint } from "./experience-learning-bridge.js";
 import type {
+  ExperimentRecord,
+  ExperimentValueOutcome,
   ExperienceLearningRuntimeEventPayload,
+  GeneralizationCandidate,
+  LearningArtifact,
+  LearningExperimentPlan,
   LearningPriorPhaseProjection,
+  LearningPriorSnapshot,
   LearningScope,
 } from "../../../runtime/learning/index.js";
 import {
   ExperimentRecordSchema,
   ExperimentValueOutcomeSchema,
+  GeneralizationCandidateSchema,
+  LearningArtifactSchema,
+  LearningPriorSnapshotSchema,
   defaultRuntimeEvidenceTrust,
+  learningPriorSuggestion,
+  redactedLearningLabel,
   stableLearningId,
 } from "../../../runtime/learning/index.js";
+import type { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -936,22 +948,28 @@ export class CoreIterationKernel {
       && iterationEvidence.length > 0
     ) {
       try {
-        await this.deps.deps.experienceLearningStore.appendLifecycleEvent(
-          buildExperimentRecordClosedPayload({
-            goalId,
-            runId: runtimeEvidenceScope.run_id,
-            loopIndex,
-            taskResult: completedTaskResult,
-            planId: taskLearningProjection.requiredExperimentPlanIds[0]!,
-            evidenceRefs: iterationEvidence.map((entry) => entry.id),
-            eventRefs: iterationEvidence.flatMap((entry) =>
-              entry.raw_refs
-                .filter((ref) => ref.kind === "runtime_event")
-                .map((ref) => ref.id)
-                .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
-            ),
-          })
-        );
+        const experimentClosedPayload = buildExperimentRecordClosedPayload({
+          goalId,
+          runId: runtimeEvidenceScope.run_id,
+          loopIndex,
+          taskResult: completedTaskResult,
+          planId: taskLearningProjection.requiredExperimentPlanIds[0]!,
+          evidenceRefs: iterationEvidence.map((entry) => entry.id),
+          eventRefs: iterationEvidence.flatMap((entry) =>
+            entry.raw_refs
+              .filter((ref) => ref.kind === "runtime_event")
+              .map((ref) => ref.id)
+              .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+          ),
+        });
+        await this.deps.deps.experienceLearningStore.appendLifecycleEvent(experimentClosedPayload);
+        const postOutcomePayloads = await buildPostExperimentOutcomePayloads({
+          store: this.deps.deps.experienceLearningStore,
+          experimentClosedPayload,
+        });
+        for (const payload of postOutcomePayloads) {
+          await this.deps.deps.experienceLearningStore.appendLifecycleEvent(payload);
+        }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
           goalId,
@@ -1111,6 +1129,379 @@ function buildExperimentRecordClosedPayload(input: {
     record,
     value_outcome: valueOutcome,
   };
+}
+
+async function buildPostExperimentOutcomePayloads(input: {
+  store: ExperienceLearningStateStore;
+  experimentClosedPayload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }>;
+}): Promise<ExperienceLearningRuntimeEventPayload[]> {
+  const record = input.experimentClosedPayload.record;
+  const valueOutcome = input.experimentClosedPayload.value_outcome;
+  if (!record || !valueOutcome) return [];
+
+  const plans = await input.store.listExperimentPlans(record.goalId);
+  const plan = plans.find((candidate) => candidate.id === record.planId);
+  const candidateId = plan?.generalizationCandidateIds[0];
+  if (!plan || !candidateId) return [];
+
+  const candidates = await input.store.listGeneralizationCandidates(record.goalId);
+  const candidate = candidates.find((item) => item.id === candidateId);
+  if (!candidate || (candidate.status !== "trial_reuse_ready" && candidate.status !== "strengthened")) return [];
+
+  const artifacts = await input.store.listArtifacts(record.goalId);
+  const previousArtifact = artifacts.find((artifact) =>
+    artifact.evidence.generalizationCandidateIds.includes(candidate.id)
+    && (artifact.status === "trial_reuse_ready" || artifact.status === "strengthened" || artifact.status === "tentative")
+  ) ?? null;
+
+  const outcomeEventRefs = input.experimentClosedPayload.source_refs.event_refs;
+  if (record.outcome === "supported" && valueOutcome.transferOutcome === "exact_success") {
+    const promotedCandidate = promoteCandidateFromExperiment(candidate, record);
+    const promotedArtifact = buildPostExperimentArtifact({
+      candidate: promotedCandidate,
+      previousArtifact,
+      record,
+      valueOutcome,
+      status: "promoted",
+    });
+    const promotedPrior = buildPostExperimentPrior({
+      artifact: promotedArtifact,
+      candidate: promotedCandidate,
+      plan,
+      record,
+    });
+    return [
+      generalizationPostOutcomePayload({ candidate: promotedCandidate, fromStatus: candidate.status, eventRefs: outcomeEventRefs, record, reasonCode: "experiment_supported_promotion" }),
+      artifactPostOutcomePayload({ artifact: promotedArtifact, fromStatus: previousArtifact?.status ?? null, eventRefs: outcomeEventRefs, record, reasonCode: "pre_registered_experiment_supported" }),
+      priorPostOutcomePayload({ prior: promotedPrior, eventRefs: outcomeEventRefs, record }),
+    ];
+  }
+
+  if (record.outcome === "falsified" || valueOutcome.transferOutcome === "negative_transfer") {
+    const narrowedCandidate = narrowCandidateFromExperiment(candidate, record);
+    const narrowedArtifact = buildPostExperimentArtifact({
+      candidate: narrowedCandidate,
+      previousArtifact,
+      record,
+      valueOutcome,
+      status: "narrowed",
+    });
+    return [
+      generalizationPostOutcomePayload({ candidate: narrowedCandidate, fromStatus: candidate.status, eventRefs: outcomeEventRefs, record, reasonCode: "negative_transfer_narrowed_scope" }),
+      artifactPostOutcomePayload({ artifact: narrowedArtifact, fromStatus: previousArtifact?.status ?? null, eventRefs: outcomeEventRefs, record, reasonCode: "negative_transfer_narrowed_scope" }),
+    ];
+  }
+
+  return [];
+}
+
+function promoteCandidateFromExperiment(
+  candidate: GeneralizationCandidate,
+  record: ExperimentRecord,
+): GeneralizationCandidate {
+  return GeneralizationCandidateSchema.parse({
+    ...candidate,
+    status: "promoted",
+    supportRefs: uniqueStrings([...candidate.supportRefs, record.id, ...record.outcomeEvidenceRefs]),
+    transferScopes: candidate.transferScopes.map((scope) => ({
+      ...scope,
+      status: scope.status === "blocked" ? "blocked" : "exact",
+      attempts: Math.min(scope.maxTrials, scope.attempts + 1),
+      successRefs: uniqueStrings([...scope.successRefs, record.id]),
+    })),
+    updatedAt: record.executedAt,
+  });
+}
+
+function narrowCandidateFromExperiment(
+  candidate: GeneralizationCandidate,
+  record: ExperimentRecord,
+): GeneralizationCandidate {
+  return GeneralizationCandidateSchema.parse({
+    ...candidate,
+    status: "narrowed",
+    counterexampleRefs: uniqueStrings([...candidate.counterexampleRefs, record.id, ...record.outcomeEvidenceRefs]),
+    transferScopes: candidate.transferScopes.map((scope) => ({
+      ...scope,
+      status: "narrowed",
+      attempts: Math.min(scope.maxTrials, scope.attempts + 1),
+      negativeTransferRefs: uniqueStrings([...scope.negativeTransferRefs, record.id, ...record.negativeTransferRefs]),
+      narrowedAt: record.executedAt,
+    })),
+    updatedAt: record.executedAt,
+  });
+}
+
+function buildPostExperimentArtifact(input: {
+  candidate: GeneralizationCandidate;
+  previousArtifact: LearningArtifact | null;
+  record: ExperimentRecord;
+  valueOutcome: ExperimentValueOutcome;
+  status: "promoted" | "narrowed";
+}): LearningArtifact {
+  const sourceEvidenceRefs = uniqueStrings([
+    ...(input.previousArtifact?.evidence.runtimeEvidenceRefs ?? []),
+    ...input.candidate.supportRefs,
+    ...input.record.outcomeEvidenceRefs,
+  ]);
+  const artifactId = input.previousArtifact?.id ?? stableLearningId("learning-artifact", [input.candidate.id, input.status]);
+  const targetDimension = targetDimensionFromCandidate(input.candidate);
+  return LearningArtifactSchema.parse({
+    id: artifactId,
+    sourceGoalId: input.candidate.goalId,
+    ...(input.candidate.runId ? { sourceRunId: input.candidate.runId } : {}),
+    kind: "generalization_candidate",
+    summary: redactedLearningLabel({
+      label: `${input.status} reusable structure after ${input.valueOutcome.transferOutcome}`,
+      sourceRefs: sourceEvidenceRefs,
+      maxLength: 160,
+    }),
+    scope: input.candidate.scope,
+    evidence: {
+      frameIds: input.previousArtifact?.evidence.frameIds ?? input.candidate.invariantRefs,
+      hypothesisIds: input.previousArtifact?.evidence.hypothesisIds ?? input.candidate.sourceHypothesisIds,
+      generalizationCandidateIds: [input.candidate.id],
+      experimentPlanIds: uniqueStrings([...(input.previousArtifact?.evidence.experimentPlanIds ?? []), input.record.planId]),
+      experimentRecordIds: uniqueStrings([...(input.previousArtifact?.evidence.experimentRecordIds ?? []), input.record.id]),
+      runtimeEvidenceRefs: sourceEvidenceRefs,
+    },
+    confidence: input.status === "promoted" ? 0.74 : 0.42,
+    status: input.status,
+    trust: input.candidate.trust,
+    correctionState: input.candidate.correctionState,
+    policyEffect: input.status === "promoted"
+      ? promotedArtifactSuggestions({
+          artifactId,
+          candidate: input.candidate,
+          targetDimension,
+          sourceEvidenceRefs,
+          expiresAt: new Date(Date.parse(input.record.executedAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        })
+      : [],
+    guardrails: {
+      authorityClass: "planning_hint_only",
+      cannotGrantAuthority: true,
+      requiresFreshEvidenceBeforePromotion: input.status !== "promoted",
+      contradictionRefs: input.status === "narrowed" ? input.record.outcomeEvidenceRefs : [],
+      falsificationPlanRefs: uniqueStrings([...(input.previousArtifact?.guardrails.falsificationPlanRefs ?? []), input.record.planId]),
+    },
+    createdAt: input.previousArtifact?.createdAt ?? input.record.executedAt,
+    updatedAt: input.record.executedAt,
+  });
+}
+
+function promotedArtifactSuggestions(input: {
+  artifactId: string;
+  candidate: GeneralizationCandidate;
+  targetDimension: string;
+  sourceEvidenceRefs: string[];
+  expiresAt: string;
+}): LearningArtifact["policyEffect"] {
+  return [
+    learningPriorSuggestion({
+      id: stableLearningId("learning-prior-suggestion", [input.artifactId, "post-experiment-task-generation"]),
+      kind: "strategy_preference",
+      consumerPhase: "task_generation",
+      targetRef: { kind: "dimension", id: input.targetDimension },
+      rationale: redactedLearningLabel({
+        label: "Apply the promoted experiment-backed learning structure as a bounded task-generation bias",
+        sourceRefs: input.sourceEvidenceRefs,
+        maxLength: 180,
+      }),
+      sourceArtifactIds: [input.artifactId],
+      experimentPlanIds: input.candidate.transferScopes.flatMap((scope) => scope.successRefs),
+      evidenceRefs: input.sourceEvidenceRefs,
+      strength: 0.6,
+      risk: "low",
+      expiresAt: input.expiresAt,
+      maxUses: 1,
+      sourceContext: { kind: "non_user_context", requestedUseClass: "goal_planning" },
+    }),
+    learningPriorSuggestion({
+      id: stableLearningId("learning-prior-suggestion", [input.artifactId, "post-experiment-next-directive"]),
+      kind: "phase_focus",
+      consumerPhase: "next_iteration_directive",
+      targetRef: { kind: "dimension", id: input.targetDimension },
+      rationale: redactedLearningLabel({
+        label: "Focus the next directive on the promoted experiment-backed learning structure",
+        sourceRefs: input.sourceEvidenceRefs,
+        maxLength: 180,
+      }),
+      sourceArtifactIds: [input.artifactId],
+      experimentPlanIds: input.candidate.transferScopes.flatMap((scope) => scope.successRefs),
+      evidenceRefs: input.sourceEvidenceRefs,
+      strength: 0.5,
+      risk: "low",
+      expiresAt: input.expiresAt,
+      maxUses: 1,
+      sourceContext: { kind: "non_user_context", requestedUseClass: "goal_planning" },
+    }),
+  ];
+}
+
+function buildPostExperimentPrior(input: {
+  artifact: LearningArtifact;
+  candidate: GeneralizationCandidate;
+  plan: LearningExperimentPlan;
+  record: ExperimentRecord;
+}): LearningPriorSnapshot {
+  const id = stableLearningId("learning-prior", [input.artifact.id, "post-experiment", input.record.id]);
+  return LearningPriorSnapshotSchema.parse({
+    id,
+    goalId: input.artifact.sourceGoalId,
+    ...(input.artifact.sourceRunId ? { runId: input.artifact.sourceRunId } : {}),
+    generatedAt: input.record.executedAt,
+    sourceLoopIndex: input.record.loopIndex ?? 0,
+    eligibleFromIteration: (input.record.loopIndex ?? 0) + 1,
+    generationEventRef: `runtime-event-projection:experience-learning:${id}`,
+    sourceCandidateTransitionIds: [stableLearningId("candidate-transition", [input.candidate.id, "promoted", input.record.id])],
+    scope: input.candidate.scope,
+    compatibility: {
+      decision: "compatible",
+      reasonCode: "matched_exact_refs",
+      matchedRefs: [`goalId:${input.artifact.sourceGoalId}`],
+      missingRefs: [],
+    },
+    sourceArtifactIds: [input.artifact.id],
+    suggestions: input.artifact.policyEffect.map((suggestion) => ({
+      ...suggestion,
+      experimentPlanIds: uniqueStrings([...suggestion.experimentPlanIds, input.plan.id]),
+    })),
+    staleOrFalsifiedArtifactIds: [],
+    suppressedByCorrectionIds: [],
+    suppressedByQuarantineIds: [],
+    trust: input.artifact.trust,
+    sourceTrustStates: [{ sourceRef: input.artifact.id, trust: input.artifact.trust }],
+    filterDecision: {
+      decision: "activated",
+      reasonCodes: ["eligible"],
+      evaluatedAt: input.record.executedAt,
+    },
+    confidence: 0.68,
+    traceRef: `experience-learning-prior:${id}`,
+  });
+}
+
+function generalizationPostOutcomePayload(input: {
+  candidate: GeneralizationCandidate;
+  fromStatus: GeneralizationCandidate["status"];
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+  reasonCode: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "generalization_transitioned" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:generalization:${input.candidate.id}:${input.candidate.status}:${input.record.id}`,
+      goalId: input.candidate.goalId,
+      runId: input.candidate.runId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.record.outcomeEvidenceRefs,
+      eventRefs: input.eventRefs,
+      trust: input.candidate.trust,
+      graphNodeRefs: [{ kind: "generalization_candidate", ref: input.candidate.id }],
+    }),
+    event_kind: "generalization_transitioned",
+    generalization_id: input.candidate.id,
+    body_kind: input.candidate.body.kind,
+    transfer_scope_refs: input.candidate.transferScopes.map((scope) => scope.scopeRef),
+    from_status: input.fromStatus,
+    to_status: input.candidate.status,
+    reason_code: input.reasonCode,
+    generalization: input.candidate,
+  };
+}
+
+function artifactPostOutcomePayload(input: {
+  artifact: LearningArtifact;
+  fromStatus: LearningArtifact["status"] | null;
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+  reasonCode: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "artifact_transitioned" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:artifact:${input.artifact.id}:${input.artifact.status}:${input.record.id}`,
+      goalId: input.artifact.sourceGoalId,
+      runId: input.artifact.sourceRunId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.artifact.evidence.runtimeEvidenceRefs,
+      eventRefs: input.eventRefs,
+      trust: input.artifact.trust,
+      graphNodeRefs: [{ kind: "learning_artifact", ref: input.artifact.id }],
+    }),
+    event_kind: "artifact_transitioned",
+    artifact_id: input.artifact.id,
+    source_candidate_ids: input.artifact.evidence.generalizationCandidateIds,
+    from_status: input.fromStatus,
+    to_status: input.artifact.status,
+    reason_code: input.reasonCode,
+    artifact: input.artifact,
+  };
+}
+
+function priorPostOutcomePayload(input: {
+  prior: LearningPriorSnapshot;
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_generated" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:prior-generated:${input.prior.id}`,
+      goalId: input.prior.goalId,
+      runId: input.prior.runId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.prior.suggestions.flatMap((suggestion) => suggestion.evidenceRefs),
+      eventRefs: input.eventRefs,
+      trust: input.prior.trust,
+      graphNodeRefs: [{ kind: "learning_prior", ref: input.prior.id }],
+    }),
+    event_kind: "prior_generated",
+    prior_id: input.prior.id,
+    artifact_ids: input.prior.sourceArtifactIds,
+    eligible_from_iteration: input.prior.eligibleFromIteration,
+    prior: input.prior,
+  };
+}
+
+function postExperimentPayloadBase(input: {
+  idempotencyKey: string;
+  goalId: string;
+  runId?: string;
+  loopIndex?: number;
+  evidenceRefs: readonly string[];
+  eventRefs: readonly string[];
+  trust: LearningArtifact["trust"];
+  graphNodeRefs: Array<{ kind: string; ref: string }>;
+}): Omit<ExperienceLearningRuntimeEventPayload, "event_kind"> {
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    idempotency_key: input.idempotencyKey,
+    goal_id: input.goalId,
+    ...(input.runId ? { run_id: input.runId } : {}),
+    ...(typeof input.loopIndex === "number" ? { loop_index: input.loopIndex } : {}),
+    source_refs: {
+      evidence_refs: uniqueStrings([...input.evidenceRefs]),
+      event_refs: uniqueStrings([...input.eventRefs]),
+      runtime_graph_refs: [],
+    },
+    trust: input.trust,
+    correction_state: input.trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: input.graphNodeRefs,
+      edge_refs: [],
+    },
+  } as Omit<ExperienceLearningRuntimeEventPayload, "event_kind">;
+}
+
+function targetDimensionFromCandidate(candidate: GeneralizationCandidate): string {
+  const proposal = candidate.body.reuseProposal;
+  const ref = proposal.strategyBiasRefs[0] ?? proposal.actionBiasRefs[0] ?? candidate.id;
+  return ref.startsWith("dimension:") ? ref.slice("dimension:".length) : ref;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
 }
 
 async function appendPublicResearchEvidence(

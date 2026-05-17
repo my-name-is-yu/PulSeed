@@ -436,6 +436,10 @@ export class ExperienceLearningStateStore {
     return this.listJsonRows("experience_learning_experiment_records", "record_json", ExperimentRecordSchema, "goal_id = ?", [goalId]);
   }
 
+  async listArtifacts(goalId: string): Promise<LearningArtifact[]> {
+    return this.listJsonRows("experience_learning_artifacts", "artifact_json", LearningArtifactSchema, "source_goal_id = ?", [goalId]);
+  }
+
   async listPriorConsumptionRecords(priorId: string): Promise<LearningPriorConsumptionRecord[]> {
     return this.listJsonRows("experience_learning_prior_consumption_events", "consumption_json", LearningPriorConsumptionRecordSchema, "prior_id = ?", [priorId]);
   }
