@@ -21,6 +21,7 @@ export interface DaemonClientConfig {
   port: number;
   reconnectInterval?: number; // ms, default 3000
   maxReconnectAttempts?: number; // default 10
+  requestTimeoutMs?: number;
   authToken?: string | null;
   baseDir?: string;
 }
@@ -60,6 +61,7 @@ export interface DaemonHealthProbeResult {
 
 export interface DaemonRunningProbeOptions {
   eventServerPort?: number | null;
+  timeoutMs?: number;
 }
 
 export interface DaemonScheduleRunNowResponse {
@@ -160,6 +162,7 @@ interface ResolvedDaemonClientConfig {
   port: number;
   reconnectInterval: number;
   maxReconnectAttempts: number;
+  requestTimeoutMs: number | null;
   authToken: string | null;
 }
 
@@ -181,6 +184,7 @@ export class DaemonClient {
       port: config.port,
       reconnectInterval: config.reconnectInterval ?? 3000,
       maxReconnectAttempts: config.maxReconnectAttempts ?? 10,
+      requestTimeoutMs: config.requestTimeoutMs ?? null,
       authToken: config.authToken ?? readDaemonAuthToken(config.baseDir, config.port),
     };
   }
@@ -449,6 +453,7 @@ export class DaemonClient {
           });
         }
       );
+      this.applyRequestTimeout(req);
       req.on("error", reject);
     });
   }
@@ -500,9 +505,17 @@ export class DaemonClient {
           });
         }
       );
+      this.applyRequestTimeout(req);
       req.on("error", reject);
       req.write(body);
       req.end();
+    });
+  }
+
+  private applyRequestTimeout(req: http.ClientRequest): void {
+    if (this.config.requestTimeoutMs === null) return;
+    req.setTimeout(this.config.requestTimeoutMs, () => {
+      req.destroy(new Error(`Request timed out after ${this.config.requestTimeoutMs}ms`));
     });
   }
 
@@ -513,11 +526,14 @@ export class DaemonClient {
 
 // ─── Convenience: detect running daemon ───
 
-export async function probeDaemonHealth(config: Pick<DaemonClientConfig, "host" | "port">): Promise<DaemonHealthProbeResult> {
+export async function probeDaemonHealth(
+  config: Pick<DaemonClientConfig, "host" | "port"> & { timeoutMs?: number }
+): Promise<DaemonHealthProbeResult> {
   const startedAt = Date.now();
   const client = new DaemonClient({
     host: config.host,
     port: config.port,
+    requestTimeoutMs: config.timeoutMs,
   });
 
   try {
@@ -594,7 +610,7 @@ export async function isDaemonRunning(
     const authToken = readDaemonAuthToken(baseDir, port);
 
     // Verify EventServer is actually responding
-    const probe = await probeDaemonHealth({ host: "127.0.0.1", port });
+    const probe = await probeDaemonHealth({ host: "127.0.0.1", port, timeoutMs: options.timeoutMs });
     return authToken
       ? { running: probe.ok, port, authToken }
       : { running: probe.ok, port };

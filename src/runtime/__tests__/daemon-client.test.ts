@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import http from "node:http";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -694,5 +695,33 @@ describe("probeDaemonHealth", () => {
       port: 41700,
       error: "connect ECONNREFUSED",
     });
+  });
+
+  it("returns a timeout error when /health accepts but does not respond", async () => {
+    vi.restoreAllMocks();
+    const server = http.createServer((_req, _res) => {
+      // Leave the response open to exercise the client-side request timeout.
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    expect(address).toMatchObject({ port: expect.any(Number) });
+
+    try {
+      await expect(probeDaemonHealth({
+        host: "127.0.0.1",
+        port: typeof address === "object" && address !== null ? address.port : 0,
+        timeoutMs: 20,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: "Request timed out after 20ms",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 });

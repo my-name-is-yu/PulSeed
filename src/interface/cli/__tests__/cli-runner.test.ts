@@ -528,6 +528,22 @@ describe("unknown subcommand", async () => {
     initSpy.mockRestore();
   });
 
+  it("does not treat trailing help as stateless usage for commands that accept text", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const code = await runCLI("goal", "add", "help");
+
+    const output = consoleSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(code).toBe(1);
+    expect(initSpy).toHaveBeenCalled();
+    expect(output).not.toContain("pulseed daemon ping");
+    consoleSpy.mockRestore();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
   it("preserves setup-specific help before state initialization", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const initSpy = vi.spyOn(StateManager.prototype, "init");

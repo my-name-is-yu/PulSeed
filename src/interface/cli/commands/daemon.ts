@@ -96,7 +96,10 @@ async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: numb
   let lastDetail = "daemon health endpoint was not checked";
 
   while (Date.now() < deadline) {
-    const running = await isDaemonRunning(baseDir, { eventServerPort });
+    const running = await isDaemonRunning(baseDir, {
+      eventServerPort,
+      timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
+    });
     lastPort = running.port;
     if (running.running) {
       return { ready: true, port: running.port };
@@ -104,7 +107,11 @@ async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: numb
     lastDetail = `no healthy daemon response on port ${running.port}`;
     const directProbePort = resolveDetachedDaemonProbePort(baseDir, eventServerPort, running.port);
     if (directProbePort !== null) {
-      const probe = await probeDaemonHealth({ host: "127.0.0.1", port: directProbePort });
+      const probe = await probeDaemonHealth({
+        host: "127.0.0.1",
+        port: directProbePort,
+        timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
+      });
       lastPort = directProbePort;
       if (probe.ok) {
         return { ready: true, port: directProbePort };
@@ -117,6 +124,10 @@ async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: numb
   }
 
   return { ready: false, port: lastPort, detail: lastDetail };
+}
+
+function detachedDaemonReadyProbeTimeoutMs(deadline: number): number {
+  return Math.max(1, Math.min(DETACHED_DAEMON_READY_POLL_MS, deadline - Date.now()));
 }
 
 function resolveDetachedDaemonProbePort(

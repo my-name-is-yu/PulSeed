@@ -269,8 +269,8 @@ function isStatelessUsageHelpRequest(argv: readonly string[]): boolean {
   if (helpOptionIndex >= 0) {
     return isStatelessUsageHelpRoute(args.slice(0, helpOptionIndex));
   }
-  if (args[args.length - 1] === "help") {
-    return isStatelessUsageHelpRoute(args.slice(0, -1));
+  if (args.length === 2 && args[1] === "help") {
+    return isStatelessUsageHelpRoute([args[0]]);
   }
   return false;
 }

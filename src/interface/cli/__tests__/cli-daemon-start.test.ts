@@ -720,9 +720,13 @@ describe("cmdStart", () => {
       expect(isDaemonRunningMock).toHaveBeenNthCalledWith(
         1,
         "/tmp/pulseed-daemon-start-base",
-        { eventServerPort: 41700 },
+        { eventServerPort: 41700, timeoutMs: expect.any(Number) },
       );
-      expect(probeDaemonHealthMock).toHaveBeenCalledWith({ host: "127.0.0.1", port: 41700 });
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 41700,
+        timeoutMs: expect.any(Number),
+      });
       expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 41700)");
     } finally {
       exitSpy.mockRestore();
@@ -760,10 +764,14 @@ describe("cmdStart", () => {
 
       expect(isDaemonRunningMock).toHaveBeenCalledWith(
         "/tmp/pulseed-daemon-start-base",
-        { eventServerPort: 0 },
+        { eventServerPort: 0, timeoutMs: expect.any(Number) },
       );
       expect(readDaemonAuthTokenPortMock).toHaveBeenCalledWith("/tmp/pulseed-daemon-start-base");
-      expect(probeDaemonHealthMock).toHaveBeenCalledWith({ host: "127.0.0.1", port: 45678 });
+      expect(probeDaemonHealthMock).toHaveBeenCalledWith({
+        host: "127.0.0.1",
+        port: 45678,
+        timeoutMs: expect.any(Number),
+      });
       expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 45678)");
     } finally {
       exitSpy.mockRestore();
