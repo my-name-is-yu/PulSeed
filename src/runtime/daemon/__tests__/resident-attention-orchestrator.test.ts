@@ -1,11 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as path from "node:path";
-import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { AttentionStateStore } from "../../store/attention-state-store.js";
 import { RuntimeOperationStore } from "../../store/runtime-operation-store.js";
 import type { RuntimeControlOperation } from "../../store/runtime-operation-schemas.js";
 import { evaluateResidentAttentionAdmission } from "../resident-attention-orchestrator.js";
 import type { DaemonRunnerResidentContext } from "../runner-resident-shared.js";
+
+const tempDirs = new Set<string>();
+
+function makeTrackedTempDir(prefix: string): string {
+  const dir = makeTempDir(prefix);
+  tempDirs.add(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    cleanupTempDir(dir);
+  }
+  tempDirs.clear();
+});
 
 function makeContext(
   baseDir: string,
@@ -94,7 +109,7 @@ function permissionedPeerInitiativeDetails(): Record<string, unknown> {
 
 describe("resident attention orchestrator", () => {
   it("dedupes the same resident candidate across daemon and store restart", async () => {
-    const baseDir = makeTempDir("resident-attention-replay-");
+    const baseDir = makeTrackedTempDir("resident-attention-replay-");
     const input = {
       action: "suggest_goal" as const,
       trigger: "proactive_tick" as const,
@@ -142,7 +157,7 @@ describe("resident attention orchestrator", () => {
   });
 
   it("records a new current resident decision when companion controls change after replay", async () => {
-    const baseDir = makeTempDir("resident-attention-control-replay-");
+    const baseDir = makeTrackedTempDir("resident-attention-control-replay-");
     const input = {
       action: "suggest_goal" as const,
       trigger: "proactive_tick" as const,
@@ -181,7 +196,7 @@ describe("resident attention orchestrator", () => {
   });
 
   it("returns the agenda item produced for the current resident urge when prior concerns exist", async () => {
-    const baseDir = makeTempDir("resident-attention-current-agenda-");
+    const baseDir = makeTrackedTempDir("resident-attention-current-agenda-");
     const first = await evaluateResidentAttentionAdmission(
       makeContext(baseDir, "2026-05-12T00:00:00.000Z", 1),
       {
@@ -230,8 +245,8 @@ describe("resident attention orchestrator", () => {
   });
 
   it("requires surface-derived runtime-control admission before peer initiatives can express to the user", async () => {
-    const heldBaseDir = makeTempDir("resident-attention-peer-no-surface-");
-    const admittedBaseDir = makeTempDir("resident-attention-peer-surface-");
+    const heldBaseDir = makeTrackedTempDir("resident-attention-peer-no-surface-");
+    const admittedBaseDir = makeTrackedTempDir("resident-attention-peer-surface-");
     const held = await evaluateResidentAttentionAdmission(
       makeContext(heldBaseDir, "2026-05-12T00:00:00.000Z", 1),
       {
@@ -278,8 +293,8 @@ describe("resident attention orchestrator", () => {
   });
 
   it("requires surface-derived runtime-control admission before peer initiatives can ask approval", async () => {
-    const heldBaseDir = makeTempDir("resident-attention-peer-approval-no-surface-");
-    const admittedBaseDir = makeTempDir("resident-attention-peer-approval-surface-");
+    const heldBaseDir = makeTrackedTempDir("resident-attention-peer-approval-no-surface-");
+    const admittedBaseDir = makeTrackedTempDir("resident-attention-peer-approval-surface-");
     const held = await evaluateResidentAttentionAdmission(
       makeContext(heldBaseDir, "2026-05-12T00:00:00.000Z", 1),
       {
@@ -314,7 +329,7 @@ describe("resident attention orchestrator", () => {
   });
 
   it("fails closed without fabricating active suspend control when companion controls are unavailable", async () => {
-    const baseDir = makeTempDir("resident-attention-control-unavailable-");
+    const baseDir = makeTrackedTempDir("resident-attention-control-unavailable-");
     const savedCycles: unknown[] = [];
     const result = await evaluateResidentAttentionAdmission(
       {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,6 +9,7 @@ import { StateManager } from "../../../base/state/state-manager.js";
 import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
+import { cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { seedGoalState } from "./goal-state-fixture.js";
 import type { LearnedPattern } from "../../../base/types/learning.js";
 
@@ -70,6 +71,10 @@ describe("M16.6: Incremental Meta-Pattern Update + Transfer Effect Report", () =
       path.join(tmpDir, "vectors.json"),
       embeddingClient
     );
+  });
+
+  afterEach(() => {
+    cleanupTempDir(tmpDir);
   });
 
   // ─── Build KnowledgeTransfer with inline mock learningPipeline ───

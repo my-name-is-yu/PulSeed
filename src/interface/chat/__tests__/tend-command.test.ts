@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,8 +11,24 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { Goal } from "../../../base/types/goal.js";
 import type { ChatMessage } from "../chat-history.js";
 import { BackgroundRunLedger } from "../../../runtime/store/background-run-store.js";
+import { cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Factories ───
+
+const tempDirs = new Set<string>();
+
+function makeTmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    cleanupTempDir(dir);
+  }
+  tempDirs.clear();
+});
 
 function makeMockLLMClient(responseText = "Fix the login bug"): ILLMClient {
   const response: LLMResponse = {
@@ -72,7 +88,7 @@ function makeMockDaemonClient(): DaemonClient {
 function makeMockStateManager(goal: Goal | null = null): StateManager {
   return {
     loadGoal: vi.fn().mockResolvedValue(goal),
-    getBaseDir: vi.fn().mockReturnValue(fs.mkdtempSync(path.join(os.tmpdir(), "tend-state-"))),
+    getBaseDir: vi.fn().mockReturnValue(makeTmpDir("tend-state-")),
   } as unknown as StateManager;
 }
 
@@ -236,7 +252,7 @@ describe("TendCommand", () => {
     });
 
     it("creates a DurableLoop background run with compatible wire tokens and forwarded metadata", async () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tend-bg-"));
+      const tmpDir = makeTmpDir("tend-bg-");
       const runtimeRoot = path.join(tmpDir, "runtime");
       const goal = makeTestGoal();
       const ledger = new BackgroundRunLedger(runtimeRoot);
@@ -306,7 +322,7 @@ describe("TendCommand", () => {
     });
 
     it("writes the background run to configured daemon runtime_root", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "tend-runtime-root-"));
+      const baseDir = makeTmpDir("tend-runtime-root-");
       fs.writeFileSync(path.join(baseDir, "daemon.json"), JSON.stringify({
         runtime_root: "runtime-v2",
       }), "utf-8");
@@ -347,7 +363,7 @@ describe("TendCommand", () => {
     });
 
     it("prefers the running daemon-state runtime_root used by external --config", async () => {
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "tend-daemon-state-root-"));
+      const baseDir = makeTmpDir("tend-daemon-state-root-");
       const daemonRuntimeRoot = path.join(baseDir, "external-runtime");
       fs.writeFileSync(path.join(baseDir, "daemon-state.json"), JSON.stringify({
         pid: process.pid,
