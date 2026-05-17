@@ -45,6 +45,24 @@ describe("ExperienceLearningBridge", () => {
     });
     expect(first.status).toBe("processed");
     expect(await store.listPriorSnapshots(goal.id)).toHaveLength(0);
+    const firstEventLog = new RuntimeEventLogStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+    try {
+      const hypothesisEvents = await firstEventLog.listEvents({ eventType: "experience_learning.hypothesis.transitioned", limit: null });
+      expect(hypothesisEvents.length).toBeGreaterThan(0);
+      for (const event of hypothesisEvents) {
+        expect(event.payload).toEqual(expect.objectContaining({
+          event_kind: "hypothesis_transitioned",
+          source_refs: expect.objectContaining({
+            evidence_refs: ["evidence-1"],
+          }),
+        }));
+        expect((event.payload as { source_refs: { evidence_refs: string[] } }).source_refs.evidence_refs).not.toEqual(
+          expect.arrayContaining([expect.stringContaining("experience-frame:")]),
+        );
+      }
+    } finally {
+      await firstEventLog.close();
+    }
 
     const second = await bridge.processIteration({
       goal,
@@ -194,6 +212,54 @@ describe("ExperienceLearningBridge", () => {
       "dimension:dim-alpha",
       "dimension:dim-beta",
     ]));
+  });
+
+  it("does not aggregate unscoped legacy frames into run-scoped learning", async () => {
+    const bridge = new ExperienceLearningBridge(store);
+    const goal = makeGoal({
+      id: "goal-learning",
+      dimensions: [makeDimension({ name: "dim-learning", label: "Learning Dimension" })],
+    });
+
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      loopIndex: 0,
+      result: makeFailureResult(goal.id, 0),
+      iterationEvidence: [makeEvidence("evidence-legacy", 0)],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 1,
+      result: makeFailureResult(goal.id, 1),
+      iterationEvidence: [makeEvidence("evidence-run", 1)],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+
+    const runHypotheses = (await store.listHypotheses(goal.id)).filter((hypothesis) =>
+      hypothesis.runId === "run-learning"
+    );
+    expect(runHypotheses.length).toBeGreaterThan(0);
+    expect(runHypotheses).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: "candidate",
+        supportEvidenceRefs: [],
+      }),
+    ]));
+    const runCandidates = (await store.listGeneralizationCandidates(goal.id)).filter((candidate) =>
+      candidate.runId === "run-learning"
+    );
+    expect(runCandidates).toEqual([
+      expect.objectContaining({
+        status: "candidate",
+        supportRefs: ["evidence-run"],
+      }),
+    ]);
   });
 });
 

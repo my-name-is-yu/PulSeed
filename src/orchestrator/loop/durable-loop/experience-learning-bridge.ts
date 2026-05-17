@@ -252,7 +252,7 @@ function buildDerivedLifecyclePayloads(
     .filter((candidate) =>
       candidate.goalId === input.goalId
       && candidate.trigger === trigger
-      && (!input.runId || !candidate.runId || candidate.runId === input.runId)
+      && (input.runId ? candidate.runId === input.runId : !candidate.runId)
     )
     .sort((a, b) => (a.loopIndex ?? 0) - (b.loopIndex ?? 0) || a.createdAt.localeCompare(b.createdAt));
   const sourceFrames = tailUniqueById([...scopedFrames, frame], 2);
@@ -889,7 +889,9 @@ function hypothesisPayload(
   reasonCode: string,
   eventRefs: string[],
 ): ExperienceLearningRuntimeEventPayload {
-  const evidenceRefs = hypothesis.supportEvidenceRefs.length > 0 ? hypothesis.supportEvidenceRefs : hypothesis.spawnedFromFrameIds;
+  const evidenceRefs = hypothesis.supportEvidenceRefs.length > 0
+    ? hypothesis.supportEvidenceRefs
+    : hypothesis.trust.provenanceRefs;
   return {
     ...payloadBase(input, {
       idempotencyKey: transitionIdempotencyKey(input, {
