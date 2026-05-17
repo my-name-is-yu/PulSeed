@@ -63,12 +63,16 @@ export type ArcAgi3ListGamesInput = z.infer<typeof ArcAgi3ListGamesInputSchema>;
 export const ArcAgi3StartInputSchema = z.object({
   game_id: z.string().min(1),
   run_id: ArcAgi3RunIdSchema.optional(),
-  model_provider: z.string().min(1).default("openai"),
-  model_id: z.string().min(1).default("gpt-5.5"),
   source_url: z.string().url().optional(),
   tags: z.array(z.string().min(1)).max(16).optional(),
 }).strict();
 export type ArcAgi3StartInput = z.infer<typeof ArcAgi3StartInputSchema>;
+
+export const ArcAgi3ModelIdentitySchema = z.object({
+  model_provider: z.string().min(1),
+  model_id: z.string().min(1),
+}).strict();
+export type ArcAgi3ModelIdentity = z.infer<typeof ArcAgi3ModelIdentitySchema>;
 
 export const ArcAgi3ObserveInputSchema = z.object({
   run_id: ArcAgi3RunIdSchema,

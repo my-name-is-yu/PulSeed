@@ -6,6 +6,7 @@ import type {
   ToolMetadata,
   ToolResult,
 } from "../types.js";
+import { loadProviderConfig } from "../../base/llm/provider-config.js";
 import { ArcAgi3ArtifactStore } from "./artifacts.js";
 import { ArcAgi3HttpClient, type ArcAgi3RestClient } from "./client.js";
 import {
@@ -14,6 +15,7 @@ import {
   ArcAgi3ActInputSchema,
   ArcAgi3FinishInputSchema,
   ArcAgi3ListGamesInputSchema,
+  ArcAgi3ModelIdentitySchema,
   ArcAgi3ObserveInputSchema,
   ArcAgi3PolicyInputSchema,
   ArcAgi3ScorecardInputSchema,
@@ -21,6 +23,7 @@ import {
   type ArcAgi3ActInput,
   type ArcAgi3FinishInput,
   type ArcAgi3ListGamesInput,
+  type ArcAgi3ModelIdentity,
   type ArcAgi3ObserveInput,
   type ArcAgi3PolicyInput,
   type ArcAgi3ScorecardInput,
@@ -31,6 +34,7 @@ export interface ArcAgi3ToolDeps {
   client?: ArcAgi3RestClient;
   artifactStore?: ArcAgi3ArtifactStore;
   pulseedCommit?: string | null;
+  providerConfigLoader?: typeof loadProviderConfig;
 }
 
 abstract class ArcAgi3ToolBase<TInput> implements ITool<TInput> {
@@ -143,14 +147,15 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
     const runId = input.run_id ?? this.artifactStore.newRunId();
     try {
       const client = this.client();
+      const modelIdentity = await resolveArcAgi3ModelIdentity(this.deps, context);
       const scorecard = await client.openScorecard({
         source_url: input.source_url,
         tags: unique(["pulseed", "arc_agi_3", ARC_AGI3_CLAIM_MODE, ...(input.tags ?? [])]),
         opaque: {
           claim_mode: ARC_AGI3_CLAIM_MODE,
           tool_policy_version: ARC_AGI3_TOOL_POLICY_VERSION,
-          model_provider: input.model_provider,
-          model_id: input.model_id,
+          model_provider: modelIdentity.model_provider,
+          model_id: modelIdentity.model_id,
         },
       }, context.abortSignal);
       const snapshot = await client.reset({
@@ -160,6 +165,7 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
       const artifact = await this.artifactStore.create({
         runId,
         startInput: input,
+        modelIdentity,
         cardId: scorecard.card_id,
         snapshot,
         pulseedCommit: this.deps.pulseedCommit ?? process.env["PULSEED_COMMIT"] ?? null,
@@ -167,6 +173,8 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
       return this.ok({
         run_id: runId,
         game_id: input.game_id,
+        model_provider: modelIdentity.model_provider,
+        model_id: modelIdentity.model_id,
         card_id: scorecard.card_id,
         guid: snapshot.guid,
         replay_url: artifact.replay_url,
@@ -442,6 +450,20 @@ export function createArcAgi3Tools(deps?: ArcAgi3ToolDeps): ITool[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+async function resolveArcAgi3ModelIdentity(
+  deps: ArcAgi3ToolDeps,
+  context: ToolCallContext,
+): Promise<ArcAgi3ModelIdentity> {
+  const providerConfig = await (deps.providerConfigLoader ?? loadProviderConfig)({
+    baseDir: context.providerConfigBaseDir,
+    saveMigration: false,
+  });
+  return ArcAgi3ModelIdentitySchema.parse({
+    model_provider: providerConfig.provider,
+    model_id: providerConfig.model,
+  });
 }
 
 function formatError(err: unknown): string {

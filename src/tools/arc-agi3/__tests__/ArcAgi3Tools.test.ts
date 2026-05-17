@@ -11,6 +11,7 @@ import {
   ArcAgi3ActTool,
   ArcAgi3FinishTool,
   ArcAgi3ListGamesTool,
+  ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
   type ArcAgi3Snapshot,
 } from "../index.js";
@@ -25,14 +26,27 @@ const baseSnapshot: ArcAgi3Snapshot = {
   action_input: { id: 0, data: {} },
   available_actions: [1, 2, 3, 4, 6],
 };
+const providerEnvKeys = [
+  "PULSEED_PROVIDER",
+  "PULSEED_LLM_PROVIDER",
+  "PULSEED_ADAPTER",
+  "PULSEED_DEFAULT_ADAPTER",
+  "PULSEED_MODEL",
+  "OPENAI_MODEL",
+  "ANTHROPIC_MODEL",
+  "OLLAMA_MODEL",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+] as const;
 
-function makeContext(): ToolCallContext {
+function makeContext(providerConfigBaseDir?: string): ToolCallContext {
   return {
     cwd: process.cwd(),
     goalId: "goal-arc",
     trustBalance: 100,
     preApproved: true,
     approvalFn: async () => true,
+    ...(providerConfigBaseDir ? { providerConfigBaseDir } : {}),
   };
 }
 
@@ -84,14 +98,30 @@ function makeMockClient(): ArcAgi3RestClient & {
 describe("ARC-AGI-3 tools", () => {
   let tmpDir: string;
   let artifactStore: ArcAgi3ArtifactStore;
+  let previousEnv: Record<typeof providerEnvKeys[number], string | undefined>;
 
   beforeEach(async () => {
+    previousEnv = Object.fromEntries(providerEnvKeys.map((key) => [key, process.env[key]])) as Record<
+      typeof providerEnvKeys[number],
+      string | undefined
+    >;
+    for (const key of providerEnvKeys) {
+      delete process.env[key];
+    }
     tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-arc-agi3-tools-"));
     artifactStore = new ArcAgi3ArtifactStore(path.join(tmpDir, "runs"));
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    for (const key of providerEnvKeys) {
+      const previous = previousEnv[key];
+      if (previous === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous;
+      }
+    }
   });
 
   it("validates the official action interface before execution", () => {
@@ -106,7 +136,16 @@ describe("ARC-AGI-3 tools", () => {
 
   it("runs list/start/act/finish against a mocked ARC client and writes non-verified community artifacts", async () => {
     const client = makeMockClient();
-    const deps = { client, artifactStore, pulseedCommit: "commit-1" };
+    const deps = {
+      client,
+      artifactStore,
+      pulseedCommit: "commit-1",
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli" as const,
+      }),
+    };
     const context = makeContext();
 
     const list = await new ArcAgi3ListGamesTool(deps).call({}, context);
@@ -116,8 +155,6 @@ describe("ARC-AGI-3 tools", () => {
     const start = await new ArcAgi3StartTool(deps).call({
       game_id: "ls20-016295f7601e",
       run_id: "run-1",
-      model_provider: "openai",
-      model_id: "gpt-5.5",
     }, context);
     expect(start.success).toBe(true);
     expect(start.data).toMatchObject({
@@ -125,6 +162,8 @@ describe("ARC-AGI-3 tools", () => {
       card_id: "card-1",
       guid: "guid-1",
       claim_mode: "community_online_scorecard",
+      model_provider: "openai",
+      model_id: "gpt-5.4",
     });
 
     const act = await new ArcAgi3ActTool(deps).call({
@@ -164,11 +203,58 @@ describe("ARC-AGI-3 tools", () => {
       official_scorecard_id: "card-1",
       official_score: 7,
       model_provider: "openai",
-      model_id: "gpt-5.5",
+      model_id: "gpt-5.4",
     });
     expect(artifact.submitted_action_log.map((entry: { action: string }) => entry.action)).toEqual(["RESET", "ACTION6"]);
     expect(fs.readFileSync(path.join(tmpDir, "runs", "run-1", "actions.jsonl"), "utf8").trim().split("\n")).toHaveLength(2);
     expect(fs.existsSync(artifactStore.scorecardPath("run-1"))).toBe(true);
+  });
+
+  it("resolves model identity from host provider config instead of model input", async () => {
+    await fsp.writeFile(path.join(tmpDir, "provider.json"), JSON.stringify({
+      provider: "anthropic",
+      model: "claude-opus-arc",
+      adapter: "claude_api",
+      api_key: "anthropic-secret",
+    }), "utf8");
+    const client = makeMockClient();
+    const deps = { client, artifactStore, pulseedCommit: "commit-1" };
+
+    const parsed = ArcAgi3StartInputSchema.safeParse({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-provider",
+      model_provider: "openai",
+      model_id: "gpt-5.5",
+    });
+    expect(parsed.success).toBe(false);
+
+    const start = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-provider",
+    }, makeContext(tmpDir));
+
+    expect(start.success).toBe(true);
+    expect(start.data).toMatchObject({
+      model_provider: "anthropic",
+      model_id: "claude-opus-arc",
+    });
+    expect(client.calls).toContainEqual({
+      method: "openScorecard",
+      input: expect.objectContaining({
+        opaque: expect.objectContaining({
+          model_provider: "anthropic",
+          model_id: "claude-opus-arc",
+        }),
+      }),
+    });
+
+    const artifactText = fs.readFileSync(artifactStore.runPath("run-provider"), "utf8");
+    expect(artifactText).not.toContain("anthropic-secret");
+    expect(artifactText).not.toContain("gpt-5.5");
+    expect(JSON.parse(artifactText)).toMatchObject({
+      model_provider: "anthropic",
+      model_id: "claude-opus-arc",
+    });
   });
 });
 

@@ -10,6 +10,7 @@ import {
   ArcAgi3ActionLogEntrySchema,
   ArcAgi3RunArtifactSchema,
   type ArcAgi3ActionLogEntry,
+  type ArcAgi3ModelIdentity,
   type ArcAgi3RunArtifact,
   type ArcAgi3Scorecard,
   type ArcAgi3Snapshot,
@@ -38,6 +39,7 @@ export class ArcAgi3ArtifactStore {
   async create(input: {
     runId: string;
     startInput: ArcAgi3StartInput;
+    modelIdentity: ArcAgi3ModelIdentity;
     cardId: string;
     snapshot: ArcAgi3Snapshot;
     pulseedCommit: string | null;
@@ -57,8 +59,8 @@ export class ArcAgi3ArtifactStore {
       run_id: input.runId,
       mode: "online_api",
       game_id: input.startInput.game_id,
-      model_provider: input.startInput.model_provider,
-      model_id: input.startInput.model_id,
+      model_provider: input.modelIdentity.model_provider,
+      model_id: input.modelIdentity.model_id,
       pulseed_commit: input.pulseedCommit,
       tool_policy_version: ARC_AGI3_TOOL_POLICY_VERSION,
       created_at: now,
