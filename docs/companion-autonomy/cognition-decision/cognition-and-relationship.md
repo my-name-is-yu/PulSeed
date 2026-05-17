@@ -2,6 +2,8 @@
 
 > Status: Active design contract for companion cognition, relationship memory,
 > and memory-surface governance. Code and schemas remain the exact truth.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Cognition And Decision](./cognition-decision-map.md).
 

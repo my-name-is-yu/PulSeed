@@ -3,6 +3,8 @@
 > Status: Active operations and documentation-truth contract. This page explains
 > how PulSeed keeps implementation, docs, release checks, and public claims in
 > sync.
+> Doc status: active_design_contract
+> Grounding use: current_truth
 
 Primary map: [Operations Contracts](./operations-contracts-map.md).
 

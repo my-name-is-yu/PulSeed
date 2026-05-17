@@ -2,6 +2,8 @@
 
 > Status: Product vision and design direction. This page is not a
 > current operating capability reference. Use current operating docs for behavior that exists in the current code.
+> Doc status: north_star_direction
+> Grounding use: design_context
 
 Primary map: [Product Framing](./product-framing-map.md).
 

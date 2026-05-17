@@ -3,6 +3,8 @@
 > Status: Implemented control-plane projection contract. The persistence owner
 > remains `CharacterConfigManager`; execution, approval, guardrail, and
 > autonomy owners are unchanged.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Trust Policy](./trust-policy-map.md).
 

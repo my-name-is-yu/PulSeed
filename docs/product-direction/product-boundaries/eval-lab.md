@@ -3,6 +3,8 @@
 > Status: current developer/operator quality infrastructure. This is not a
 > user-facing autonomy feature and should not be described as ordinary user
 > behavior.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 The Long-run Evaluation Lab is PulSeed's local regression discovery runtime for
 companion-quality behavior. It runs deterministic fake-time scenarios without

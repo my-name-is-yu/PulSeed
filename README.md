@@ -16,6 +16,9 @@ Your Personal Agentic Friend
 
 </div>
 
+<!-- doc_status: current_operating -->
+<!-- grounding_use: current_truth -->
+
 PulSeed pairs a local long-running goal runtime with a companion-software
 design direction: remembering what matters, noticing when the situation
 changes, and bringing the right tool, agent, or workflow into the moment when
@@ -101,7 +104,7 @@ pulseed --version
 pulseed setup
 pulseed goal add "Increase test coverage to 90%"
 pulseed run --goal <goal-id>
-pulseed status --goal <goal-id>
+pulseed status [--goal <goal-id>]
 pulseed report --goal <goal-id>
 pulseed daemon start --goal <goal-id>
 pulseed schedule list
@@ -121,6 +124,7 @@ Start with the current operating docs when you want to use PulSeed today:
 
 - [Getting Started](./docs/getting-started/getting-started-map.md)
 - [Operating PulSeed](./docs/operating/operating-map.md)
+- [Friend Core KB](./docs/core-map.md)
 - [System Architecture](./docs/system-architecture/system-architecture-map.md)
 - [Companion Autonomy](./docs/companion-autonomy/companion-autonomy-map.md)
 

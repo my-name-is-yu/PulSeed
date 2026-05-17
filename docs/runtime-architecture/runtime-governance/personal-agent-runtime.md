@@ -2,6 +2,8 @@
 
 > Status: Active runtime design contract. This page describes the durable
 > personal-agent decision trace and RuntimeGraph model used by current code.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Runtime Governance](./runtime-governance-map.md).
 

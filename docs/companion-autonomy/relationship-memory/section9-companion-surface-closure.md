@@ -2,6 +2,8 @@
 
 > Status: Active public design decision. Last checked against implementation:
 > 2026-05-16.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Relationship And Memory Surface](./relationship-memory-map.md).
 

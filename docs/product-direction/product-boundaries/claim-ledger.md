@@ -3,6 +3,8 @@
 > Status: Machine-checkable product boundary document. `npm run check:docs`
 > parses the fenced JSON in this file and validates source text plus evidence
 > references.
+> Doc status: active_design_contract
+> Grounding use: current_truth
 
 This ledger keeps selected high-risk public docs claims tied to implementation
 evidence or explicit boundary language. It does not prove every sentence in the
@@ -11,15 +13,20 @@ behavior, product direction, and unsupported overclaim territory.
 
 ```json
 {
-  "schema_version": "pulseed-product-claim-ledger/v1",
-  "audited_at": "2026-05-15",
+  "schema_version": "pulseed-product-claim-ledger/v2",
+  "audited_at": "2026-05-17",
   "audit_scope": [
     "README.md",
     "docs/getting-started",
     "docs/operating",
     "docs/product-direction",
     "docs/runtime-architecture",
-    "docs/knowledge-memory"
+    "docs/knowledge-memory",
+    "docs/companion-autonomy",
+    "docs/goal-execution",
+    "docs/extensions-tools",
+    "docs/design-contracts",
+    "docs/system-architecture"
   ],
   "claims": [
     {
@@ -35,7 +42,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/orchestrator/loop/durable-loop.ts",
         "src/orchestrator/execution/agent-loop/task-agent-loop-runner.ts",
         "package.json#scripts.test:contracts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "readme-companion-design-direction",
@@ -49,7 +58,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "docs/product-direction/product-framing/positioning.md",
         "docs/product-direction/product-framing/vision.md"
-      ]
+      ],
+      "doc_status": "active_design_contract",
+      "grounding_use": "design_context"
     },
     {
       "id": "readme-turnkey-life-automation-not-current",
@@ -59,7 +70,9 @@ behavior, product direction, and unsupported overclaim territory.
         "path": "README.md",
         "text": "a turnkey personal-life automation product"
       },
-      "claim": "PulSeed does not currently claim turnkey personal-life automation."
+      "claim": "PulSeed does not currently claim turnkey personal-life automation.",
+      "doc_status": "unsupported_boundary",
+      "grounding_use": "negative_boundary"
     },
     {
       "id": "start-pulseed-home-isolation",
@@ -74,7 +87,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/base/utils/paths.ts",
         "scripts/verify-packaged-artifacts.mjs",
         "package.json#scripts.verify:packaged-artifacts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "start-live-cloud-providers-need-credentials",
@@ -89,7 +104,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/base/llm/provider-config.ts",
         "src/base/llm/provider-factory.ts",
         "src/interface/cli/commands/setup/steps-provider.ts"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "start-state-root-db-first-boundary",
@@ -104,7 +121,9 @@ behavior, product direction, and unsupported overclaim territory.
         "scripts/check-database-first-legacy-stores.mjs",
         "package.json#scripts.check:database-first-legacy-stores",
         "docs/operating/runtime-operations/runtime-state.md"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "start-sandbox-not-complete",
@@ -114,7 +133,9 @@ behavior, product direction, and unsupported overclaim territory.
         "path": "docs/getting-started/first-run.md",
         "text": "are not an OS sandbox. Shell commands, local backends, provider tools, and"
       },
-      "claim": "PulSeed does not claim complete operating-system sandboxing for local backends, tools, and plugins."
+      "claim": "PulSeed does not claim complete operating-system sandboxing for local backends, tools, and plugins.",
+      "doc_status": "unsupported_boundary",
+      "grounding_use": "negative_boundary"
     },
     {
       "id": "operate-status-recommended-current-path",
@@ -129,7 +150,9 @@ behavior, product direction, and unsupported overclaim territory.
         "docs/operating/runtime-operations/status.md",
         "src/interface/cli/cli-runner.ts",
         "package.json#scripts.test:smoke"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "operate-status-operator-interfaces",
@@ -144,7 +167,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/interface/cli/cli-command-registry.ts",
         "src/runtime/daemon/runner.ts",
         "src/runtime/gateway/ingress-gateway.ts"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "operate-status-normal-surface-redaction",
@@ -159,7 +184,9 @@ behavior, product direction, and unsupported overclaim territory.
         "tests/contracts/product-completion-gauntlet.test.ts",
         "src/runtime/gateway/non-tui-display-projector.ts",
         "src/interface/current-goal-summary.ts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "operate-runtime-diagnostics-operator",
@@ -173,7 +200,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "src/interface/cli/commands/runtime.ts",
         "src/runtime/session-registry/index.ts"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "operate-runtime-personal-agent-diagnostics",
@@ -188,7 +217,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/interface/cli/commands/runtime.ts",
         "src/runtime/personal-agent/store.ts",
         "tests/contracts/personal-agent-runtime.test.ts"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "operate-runtime-current-gateway-channels",
@@ -202,7 +233,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "src/runtime/gateway/builtin-channel-names.ts",
         "src/runtime/gateway/builtin-channel-integrations.ts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "operate-config-code-defaults",
@@ -216,7 +249,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "src/base/llm/provider-config.ts",
         "src/base/llm/provider-config-models.ts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "operate-config-worktree-not-os-sandbox",
@@ -226,7 +261,9 @@ behavior, product direction, and unsupported overclaim territory.
         "path": "docs/operating/runtime-operations/configuration.md",
         "text": "an OS sandbox. For untrusted goals, use Docker, a containerized PulSeed process,"
       },
-      "claim": "Native AgentLoop worktree isolation is not documented as full OS sandboxing."
+      "claim": "Native AgentLoop worktree isolation is not documented as full OS sandboxing.",
+      "doc_status": "unsupported_boundary",
+      "grounding_use": "negative_boundary"
     },
     {
       "id": "reference-cli-current-command-surface",
@@ -240,7 +277,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "src/interface/cli/cli-command-registry.ts",
         "src/interface/cli/cli-runner.ts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "reference-runtime-state-truth-boundary",
@@ -255,7 +294,9 @@ behavior, product direction, and unsupported overclaim territory.
         "scripts/check-database-first-legacy-stores.mjs",
         "package.json#scripts.check:database-first-legacy-stores",
         "docs/runtime-architecture/state-reliability/database-first-state-ownership.md"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "reference-runtime-state-personal-agent-trace",
@@ -284,7 +325,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/runtime/executor/loop-supervisor.ts",
         "src/interface/mcp-server/tools.ts",
         "tests/contracts/personal-agent-runtime.test.ts"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "product-matrix-scenario-classes",
@@ -299,7 +342,9 @@ behavior, product direction, and unsupported overclaim territory.
         "docs/product-direction/product-boundaries/completion-matrix.md",
         "docs/product-direction/product-boundaries/claim-ledger.md",
         "package.json#scripts.check:docs"
-      ]
+      ],
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth"
     },
     {
       "id": "product-vision-examples-design-only",
@@ -313,7 +358,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "docs/product-direction/product-framing/vision.md",
         "docs/operating/runtime-operations/status.md"
-      ]
+      ],
+      "doc_status": "north_star_direction",
+      "grounding_use": "design_context"
     },
     {
       "id": "product-vision-advice-boundary",
@@ -323,7 +370,9 @@ behavior, product direction, and unsupported overclaim territory.
         "path": "docs/product-direction/product-framing/vision.md",
         "text": "available in the current package. They are not medical, veterinary, financial,"
       },
-      "claim": "Product examples are not advice claims in regulated or high-stakes domains."
+      "claim": "Product examples are not advice claims in regulated or high-stakes domains.",
+      "doc_status": "north_star_direction",
+      "grounding_use": "design_context"
     },
     {
       "id": "product-positioning-implemented-foundation",
@@ -338,7 +387,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/orchestrator/loop/durable-loop.ts",
         "src/runtime/daemon/runner.ts",
         "src/interface/chat/chat-runner.ts"
-      ]
+      ],
+      "doc_status": "north_star_direction",
+      "grounding_use": "design_context"
     },
     {
       "id": "product-positioning-companion-contract-design",
@@ -352,7 +403,9 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "docs/product-direction/product-framing/positioning.md",
         "docs/operating/runtime-operations/status.md"
-      ]
+      ],
+      "doc_status": "north_star_direction",
+      "grounding_use": "design_context"
     },
     {
       "id": "design-db-first-migration-boundary",
@@ -367,7 +420,9 @@ behavior, product direction, and unsupported overclaim territory.
         "src/interface/cli/commands/doctor.ts",
         "scripts/check-database-first-legacy-stores.mjs",
         "package.json#scripts.check:database-first-legacy-stores"
-      ]
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
     },
     {
       "id": "design-soil-runtime-store-boundary",
@@ -381,6 +436,95 @@ behavior, product direction, and unsupported overclaim territory.
       "evidence_refs": [
         "src/platform/soil/index.ts",
         "docs/operating/runtime-operations/runtime-state.md"
+      ],
+      "doc_status": "operator_debug",
+      "grounding_use": "operator_truth"
+    },
+    {
+      "id": "companion-autonomy-quiet-companion-contract",
+      "classification": "design_only_or_future_direction",
+      "doc_status": "active_design_contract",
+      "grounding_use": "design_context",
+      "claim_kind": "boundary_or_direction",
+      "source": {
+        "path": "docs/companion-autonomy/agency-initiative/companion-autonomy-spine.md",
+        "text": "PulSeed should become a quiet autonomous companion, not a notification bot,"
+      },
+      "claim": "Companion autonomy is a first-class product contract centered on continuity with restraint, not a thin notification feature.",
+      "evidence_refs": [
+        "docs/product-direction/product-framing/agentic-friend.md",
+        "src/runtime/types/companion-autonomy.ts",
+        "src/runtime/attention/index.ts",
+        "tests/contracts/product-completion-gauntlet.test.ts"
+      ]
+    },
+    {
+      "id": "goal-execution-friend-runtime-engine",
+      "classification": "current_operating_behavior",
+      "doc_status": "current_operating",
+      "grounding_use": "current_truth",
+      "claim_kind": "current_behavior",
+      "source": {
+        "path": "docs/goal-execution/planning-context/planning-workflow/goal-orchestration.md",
+        "text": "The product balance has changed. Goal orchestration is now the engine the"
+      },
+      "claim": "Goal orchestration remains an implemented long-running runtime engine inside the broader personal-agent friend direction.",
+      "evidence_refs": [
+        "src/orchestrator/loop/durable-loop.ts",
+        "src/orchestrator/execution/agent-loop/task-agent-loop-runner.ts",
+        "package.json#scripts.test:contracts"
+      ]
+    },
+    {
+      "id": "extensions-self-grounding-gateway-contract",
+      "classification": "current_operating_behavior",
+      "doc_status": "active_design_contract",
+      "grounding_use": "current_truth",
+      "claim_kind": "current_behavior",
+      "source": {
+        "path": "docs/extensions-tools/tool-substrate/self-knowledge.md",
+        "text": "The current contract is a grounding gateway:"
+      },
+      "claim": "Self-grounding is implemented through a GroundingGateway that assembles profile-scoped provider sections with source traces.",
+      "evidence_refs": [
+        "src/grounding/gateway.ts",
+        "src/grounding/profiles.ts",
+        "src/interface/chat/grounding.ts",
+        "src/grounding/__tests__/gateway.test.ts"
+      ]
+    },
+    {
+      "id": "design-contracts-doc-truth-release-boundary",
+      "classification": "current_operating_behavior",
+      "doc_status": "active_design_contract",
+      "grounding_use": "current_truth",
+      "claim_kind": "current_behavior",
+      "source": {
+        "path": "docs/design-contracts/verification-doc-truth.md",
+        "text": "PulSeed treats documentation truth as part of product completeness."
+      },
+      "claim": "Documentation truth is enforced by repository checks and is part of the release boundary.",
+      "evidence_refs": [
+        "scripts/check-docs.mjs",
+        "scripts/check-public-contracts.mjs",
+        "docs/product-direction/product-boundaries/claim-ledger.md",
+        "package.json#scripts.check:docs"
+      ]
+    },
+    {
+      "id": "system-architecture-entry-map-contract",
+      "classification": "design_only_or_future_direction",
+      "doc_status": "active_design_contract",
+      "grounding_use": "design_context",
+      "claim_kind": "boundary_or_direction",
+      "source": {
+        "path": "docs/system-architecture/system-architecture-map.md",
+        "text": "This map is the architecture-side entry from the root docs map."
+      },
+      "claim": "System architecture is intentionally a map-level entry into runtime and capability systems, not the public operating starting point.",
+      "evidence_refs": [
+        "docs/system-architecture/runtime-system-map.md",
+        "docs/system-architecture/capability-system-map.md"
       ]
     }
   ]

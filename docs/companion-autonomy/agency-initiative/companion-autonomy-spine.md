@@ -1,10 +1,10 @@
 # Companion Autonomy Spine
 
 > Status: Active design contract. Verify exact behavior against source code and current operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Initiative Core](./initiative-core-map.md).
-
-Status: companion autonomy spine design.
 
 This document defines the shared design spine for PulSeed's living-feeling
 autonomy. It is intentionally not a delivery plan, first-release cut, or task
@@ -12,13 +12,70 @@ decomposition. Its job is to keep the whole concept stable enough that later
 concrete schemas, stores, and runtime changes can attach to one coherent
 behavioral contract.
 
-For the initial contract lane contract-to-module ownership map, merge order, and test-harness
-placement, use the implementation-boundaries child map in this cluster.
+For contract-to-module ownership and test-harness placement, use the
+implementation-boundaries child map in this cluster.
 
-## Purpose
+## North-Star Contract
 
 PulSeed should become a quiet autonomous companion, not a notification bot,
 profile database, job dashboard, or engagement-maximizing companion product.
+
+The product-critical behavior is not "more autonomous action." It is continuity
+with restraint: PulSeed remembers, notices, waits, prepares, acts, speaks, or
+stays silent through a governed loop the user can inspect and correct.
+
+```mermaid
+flowchart TD
+  evidence["Dream, traces, observations, goals"]
+  memory["Governed memory and relationship context"]
+  surface["Scoped Surface projection"]
+  state["Companion state and signal context"]
+  urge["Urge and agenda formation"]
+  attention["Attention metabolism"]
+  control["Runtime control plane"]
+  outcome["Quiet work, preparation, action candidate, expression, or silence"]
+  feedback["Feedback and correction"]
+
+  evidence --> memory
+  memory --> surface
+  surface --> state
+  state --> urge
+  urge --> attention
+  attention --> control
+  control --> outcome
+  outcome --> feedback
+  feedback --> memory
+```
+
+## Current Implementation Posture
+
+Current implementation anchors exist across grounding, profile/surface
+projection, attention, runtime control, capability projection, personal-agent
+trace, and product gauntlet tests. This page is the companion contract over
+those anchors. It does not claim that every companion behavior below is complete
+in the current package.
+
+## Contract Map
+
+```mermaid
+flowchart LR
+  spine["Companion Autonomy Spine"]
+  relation["Relationship Memory"]
+  attentionMap["Attention And Presence"]
+  cognition["Cognition And Decision"]
+  trust["Personality And Trust"]
+  evaluation["Behavior Evaluation"]
+  runtime["Runtime Control"]
+
+  spine --> relation
+  spine --> attentionMap
+  spine --> cognition
+  spine --> trust
+  spine --> evaluation
+  spine --> runtime
+```
+
+## Purpose
 
 The central design question is:
 
@@ -28,19 +85,6 @@ resume, and explain itself while preserving user agency and the right distance?
 ```
 
 The spine answer is:
-
-```text
-Dream / traces / observations / goals
-  -> governed memory and relationship context
-  -> scoped Surface projection
-  -> companion state and signal context
-  -> urge and agenda formation
-  -> attention metabolism
-  -> runtime control plane
-  -> quiet work, preparation, action candidate, expression, or silence
-  -> feedback and correction
-  -> governed memory / policy update
-```
 
 No layer after memory may treat remembered context as direct permission to
 act, speak, resume, notify, or update long-term state. PulSeed becomes more

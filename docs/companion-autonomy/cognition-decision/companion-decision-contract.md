@@ -3,6 +3,8 @@
 > Status: Superseded by the Companion Cognition Layer. This document now
 > records the narrow projection bridge left in `src/runtime/decision/`; the
 > turn/intervention contract lives in `src/runtime/cognition/`.
+> Doc status: historical_context
+> Grounding use: archive_only
 
 Primary map: [Cognition And Decision](./cognition-decision-map.md).
 

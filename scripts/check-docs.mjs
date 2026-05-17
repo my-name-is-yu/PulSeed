@@ -167,7 +167,7 @@ const publicPolishPatterns = [
 ];
 const productCompletionMatrixPath = 'docs/product-direction/product-boundaries/completion-matrix.md';
 const productClaimLedgerPath = 'docs/product-direction/product-boundaries/claim-ledger.md';
-const productClaimLedgerSchemaVersion = 'pulseed-product-claim-ledger/v1';
+const productClaimLedgerSchemaVersion = 'pulseed-product-claim-ledger/v2';
 const productClaimClassifications = new Set([
   'current_operating_behavior',
   'operator_debug_behavior',
@@ -175,12 +175,40 @@ const productClaimClassifications = new Set([
   'migration_debug_export_config_workspace_boundary',
   'unsupported_overclaim',
 ]);
+const productDocStatuses = new Set([
+  'current_operating',
+  'operator_debug',
+  'active_design_contract',
+  'north_star_direction',
+  'historical_context',
+  'unsupported_boundary',
+]);
+const productGroundingUses = new Set([
+  'current_truth',
+  'operator_truth',
+  'design_context',
+  'archive_only',
+  'negative_boundary',
+]);
 const productClaimKinds = new Set([
   'current_behavior',
   'operator_surface',
   'boundary_or_direction',
   'negative_boundary',
 ]);
+const requiredClaimSourceRootEntries = [
+  'README.md',
+  'docs/getting-started',
+  'docs/operating',
+  'docs/product-direction',
+  'docs/runtime-architecture',
+  'docs/knowledge-memory',
+  'docs/companion-autonomy',
+  'docs/goal-execution',
+  'docs/extensions-tools',
+  'docs/design-contracts',
+  'docs/system-architecture',
+];
 const requiredClaimSourceRoots = [
   { label: 'README', matches: (relativePath) => relativePath === 'README.md' },
   { label: 'getting-started docs', matches: (relativePath) => relativePath.startsWith('docs/getting-started/') },
@@ -188,6 +216,11 @@ const requiredClaimSourceRoots = [
   { label: 'product-direction docs', matches: (relativePath) => relativePath.startsWith('docs/product-direction/') },
   { label: 'runtime-architecture docs', matches: (relativePath) => relativePath.startsWith('docs/runtime-architecture/') },
   { label: 'knowledge-memory docs', matches: (relativePath) => relativePath.startsWith('docs/knowledge-memory/') },
+  { label: 'companion-autonomy docs', matches: (relativePath) => relativePath.startsWith('docs/companion-autonomy/') },
+  { label: 'goal-execution docs', matches: (relativePath) => relativePath.startsWith('docs/goal-execution/') },
+  { label: 'extensions-tools docs', matches: (relativePath) => relativePath.startsWith('docs/extensions-tools/') },
+  { label: 'design-contracts docs', matches: (relativePath) => relativePath.startsWith('docs/design-contracts/') },
+  { label: 'system-architecture docs', matches: (relativePath) => relativePath.startsWith('docs/system-architecture/') },
 ];
 
 const markdownFiles = collectMarkdownFiles(repoRoot);
@@ -215,6 +248,20 @@ for (const filePath of markdownFiles) {
   for (const rule of docsWithRequiredStatus) {
     if (rule.matches(relativePath) && !hasStatusBanner(lines)) {
       issues.push(formatIssue(relativePath, 1, `${rule.label} is missing a '> Status:' banner near the top`));
+    }
+  }
+
+  if (requiresDocTruthMetadata(relativePath, content)) {
+    const metadata = extractDocTruthMetadata(content);
+    if (!metadata.docStatus) {
+      issues.push(formatIssue(relativePath, 1, 'claim-bearing docs need machine-readable doc_status metadata'));
+    } else if (!productDocStatuses.has(metadata.docStatus)) {
+      issues.push(formatIssue(relativePath, 1, `invalid doc_status metadata ${metadata.docStatus}`));
+    }
+    if (!metadata.groundingUse) {
+      issues.push(formatIssue(relativePath, 1, 'claim-bearing docs need machine-readable grounding_use metadata'));
+    } else if (!productGroundingUses.has(metadata.groundingUse)) {
+      issues.push(formatIssue(relativePath, 1, `invalid grounding_use metadata ${metadata.groundingUse}`));
     }
   }
 
@@ -311,6 +358,7 @@ for (const filePath of markdownFiles) {
 
 checkProductCompletionMatrix(issues);
 checkProductClaimLedger(issues);
+checkMapShape(issues);
 
 if (issues.length > 0) {
   console.error('docs check failed:');
@@ -445,6 +493,31 @@ function hasStatusBanner(lines) {
   return lines.slice(0, 8).some((line) => line.startsWith('> Status:'));
 }
 
+function extractDocTruthMetadata(content) {
+  const docStatus = content.match(/(?:^|\n)>\s*Doc status:\s*([a-z_]+)/i)?.[1]
+    ?? content.match(/<!--\s*doc_status:\s*([a-z_]+)\s*-->/i)?.[1]
+    ?? null;
+  const groundingUse = content.match(/(?:^|\n)>\s*Grounding use:\s*([a-z_]+)/i)?.[1]
+    ?? content.match(/<!--\s*grounding_use:\s*([a-z_]+)\s*-->/i)?.[1]
+    ?? null;
+  return { docStatus, groundingUse };
+}
+
+function requiresDocTruthMetadata(relativePath) {
+  if (isClusterMap(relativePath)) {
+    return false;
+  }
+  if (relativePath === 'README.md') {
+    return true;
+  }
+  if (!relativePath.endsWith('.md')) {
+    return false;
+  }
+  return requiredClaimSourceRootEntries
+    .filter((entry) => entry !== 'README.md')
+    .some((root) => relativePath.startsWith(`${root}/`));
+}
+
 function toPosixPath(relativePath) {
   return relativePath.split(path.sep).join('/');
 }
@@ -517,6 +590,34 @@ function checkProductCompletionMatrix(issueList) {
   }
 }
 
+function checkMapShape(issueList) {
+  const exemptMaps = new Set(['docs/index.md', 'docs/core-map.md']);
+  const mapFiles = markdownFiles
+    .map((filePath) => toPosixPath(path.relative(repoRoot, filePath)))
+    .filter((relativePath) => isClusterMap(relativePath));
+
+  for (const relativePath of mapFiles) {
+    if (exemptMaps.has(relativePath)) {
+      continue;
+    }
+    const filePath = path.join(repoRoot, relativePath);
+    const content = fs.readFileSync(filePath, 'utf8');
+    const localMarkdownTargets = findMarkdownLinkTargets(stripInlineCode(content))
+      .map((target) => normalizeMarkdownTarget(target))
+      .filter((target) => Boolean(target))
+      .map((target) => toPosixPath(path.relative(repoRoot, path.resolve(path.dirname(filePath), target))));
+
+    const childMaps = localMarkdownTargets.filter((target) => isClusterMap(target));
+    const leaves = localMarkdownTargets.filter((target) => !isClusterMap(target) && target !== 'README.md');
+    if (childMaps.length > 3) {
+      issueList.push(formatIssue(relativePath, 1, `map links ${childMaps.length} child maps; maximum is 3 outside docs/index.md and docs/core-map.md`));
+    }
+    if (leaves.length > 8) {
+      issueList.push(formatIssue(relativePath, 1, `map links ${leaves.length} leaf docs; maximum is 8 outside docs/index.md and docs/core-map.md`));
+    }
+  }
+}
+
 function checkProductClaimLedger(issueList) {
   const ledgerFilePath = path.join(repoRoot, productClaimLedgerPath);
   if (!fileExists(ledgerFilePath)) {
@@ -542,14 +643,7 @@ function checkProductClaimLedger(issueList) {
   if (!Array.isArray(ledger.audit_scope) || ledger.audit_scope.length === 0) {
     issueList.push(formatIssue(productClaimLedgerPath, 1, 'product claim ledger audit_scope must list audited doc roots'));
   }
-  for (const requiredRoot of [
-    'README.md',
-    'docs/getting-started',
-    'docs/operating',
-    'docs/product-direction',
-    'docs/runtime-architecture',
-    'docs/knowledge-memory',
-  ]) {
+  for (const requiredRoot of requiredClaimSourceRootEntries) {
     if (!ledger.audit_scope?.some((entry) => typeof entry === 'string' && (entry === requiredRoot || entry.startsWith(`${requiredRoot}/`)))) {
       issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger audit_scope must include ${requiredRoot}`));
     }
@@ -585,6 +679,12 @@ function checkProductClaimLedger(issueList) {
     if (!productClaimKinds.has(claim.claim_kind)) {
       issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid claim_kind ${String(claim.claim_kind)}`));
     }
+    if (!productDocStatuses.has(claim.doc_status)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid doc_status ${String(claim.doc_status)}`));
+    }
+    if (!productGroundingUses.has(claim.grounding_use)) {
+      issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} has invalid grounding_use ${String(claim.grounding_use)}`));
+    }
     if (typeof claim.claim !== 'string' || claim.claim.trim().length === 0) {
       issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} is missing claim text`));
     }
@@ -601,6 +701,11 @@ function checkProductClaimLedger(issueList) {
         const sourceContent = fs.readFileSync(sourcePath, 'utf8');
         if (!sourceContent.includes(source.text)) {
           issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} source text was not found in ${normalizedSource}`));
+        }
+        const sourceMetadata = extractDocTruthMetadata(sourceContent);
+        const metadataIssue = getClaimSourceMetadataIssue(claim, sourceMetadata);
+        if (metadataIssue) {
+          issueList.push(formatIssue(productClaimLedgerPath, lineHint, `claim ${claim.id ?? index} metadata does not match source ${normalizedSource}: ${metadataIssue}`));
         }
       }
       for (const root of requiredClaimSourceRoots) {
@@ -652,6 +757,39 @@ function checkProductClaimLedger(issueList) {
       issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger must include at least one claim from ${root.label}`));
     }
   }
+}
+
+function getClaimSourceMetadataIssue(claim, sourceMetadata) {
+  if (!sourceMetadata.docStatus && !sourceMetadata.groundingUse) {
+    return null;
+  }
+
+  if (sourceMetadata.docStatus === 'historical_context' && claim.doc_status !== 'historical_context') {
+    return 'historical source claims must use doc_status historical_context';
+  }
+  if (sourceMetadata.groundingUse === 'archive_only' && claim.grounding_use !== 'archive_only') {
+    return 'archive-only source claims must use grounding_use archive_only';
+  }
+
+  if (
+    (claim.grounding_use === 'current_truth' || claim.grounding_use === 'operator_truth') &&
+    sourceMetadata.groundingUse === 'design_context' &&
+    !hasExecutableEvidenceRef(claim.evidence_refs)
+  ) {
+    return 'current/operator grounding from a design-context source needs executable evidence refs';
+  }
+
+  return null;
+}
+
+function hasExecutableEvidenceRef(evidenceRefs) {
+  return Array.isArray(evidenceRefs) && evidenceRefs.some((ref) => {
+    if (typeof ref !== 'string') return false;
+    return ref.startsWith('src/')
+      || ref.startsWith('tests/')
+      || ref.startsWith('scripts/')
+      || ref.startsWith('package.json#scripts.');
+  });
 }
 
 function parseProductClaimLedgerMarkdown(content) {

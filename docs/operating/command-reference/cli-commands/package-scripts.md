@@ -1,6 +1,8 @@
 # Package Scripts
 
 > Status: Current package-scripts reference. This page lists maintained scripts for contributors and release verification.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 This page lists maintained npm scripts that are useful for contributors and
 release verification.
@@ -8,14 +10,18 @@ release verification.
 ## Build And Docs
 
 ```bash
+npm run clean
 npm run build
 npm run build:watch
 npm run check:docs
+npm run check:subpackages
 npm run verify:packaged-artifacts
+npm run pack:dry-run
 ```
 
 `npm run check:docs` scans Markdown files for unresolved merge markers,
-unbalanced triple-backtick fences, and missing local Markdown links.
+unbalanced triple-backtick fences, missing local Markdown links, docs truth
+metadata, claim-ledger shape, and public docs map fanout.
 
 ## Tests
 
@@ -28,22 +34,33 @@ npm run test:contracts
 npm run test:golden-traces
 npm run test:replay
 npm run test:product-gauntlet
+npm run test:slow
 npm run test:all
+npm run test:e2e
 npm run test:changed
 npm run test:watch
 npm run test:watch:integration
 npm run test:runtime-long-run
+npm run test:eval-lab
 ```
 
 Specialized lanes:
 
 ```bash
-npm run check:database-first-legacy-stores
-npm run check:public-contracts
-npm run test:memory-correction-eval
-npm run test:lifelong-agent-eval
 npm run test:dogfood
 npm run test:kaggle-training
+npm run test:memory-correction-eval
+npm run test:lifelong-agent-eval
+npm run test:remote
+npm run test:remote:coverage
+```
+
+Contract and boundary checks:
+
+```bash
+npm run check:database-first-legacy-stores
+npm run check:public-contracts
+npm run check:companion-cognition-boundaries
 ```
 
 `npm run test:product-gauntlet` runs the local Interaction Authority product
@@ -78,7 +95,6 @@ npm run lint:quality
 npm run audit:prod
 npm run verify:release
 npm run release
-npm run pack:dry-run
 ```
 
 Release work has additional process requirements. See the release workflow

@@ -3,6 +3,8 @@
 > Status: Product positioning and direction. This page frames why PulSeed
 > exists; it is not the command or capability reference for current behavior.
 > Use current runtime docs and [Status](../../operating/runtime-operations/status.md) for current behavior.
+> Doc status: north_star_direction
+> Grounding use: design_context
 
 Primary map: [Product Framing](./product-framing-map.md).
 

@@ -1,6 +1,8 @@
 # Attention Metabolism And Initiative
 
 > Status: Active design contract. Verify exact behavior against source code and current operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Attention And Presence](./attention-presence-map.md).
 
@@ -15,15 +17,23 @@ preparation, expression, or silence.
 
 PulSeed should not become proactive by routing events to notifications.
 
-PulSeed becomes proactive by:
+PulSeed becomes proactive through an attention loop:
 
-```text
-noticing what may matter
-  -> forming urge candidates
-  -> maintaining an agent-side agenda
-  -> maturing, holding, or suppressing those impulses
-  -> choosing quiet work, preparation, expression, or silence
-  -> learning conservatively from correction
+```mermaid
+flowchart TD
+  notice["Notice what may matter"]
+  urge["Form urge candidates"]
+  agenda["Maintain agent-side agenda"]
+  mature["Mature, hold, or suppress"]
+  outcome["Quiet work, preparation, expression, or silence"]
+  feedback["Conservative learning from correction"]
+
+  notice --> urge
+  urge --> agenda
+  agenda --> mature
+  mature --> outcome
+  outcome --> feedback
+  feedback --> notice
 ```
 
 The goal is a companion with internal motion and restraint. It should usually
@@ -34,14 +44,22 @@ continuity, timing, permission, and purpose.
 
 Attention sits after Surface and companion state, before runtime outcomes.
 
-```text
-governed memory
-  -> Surface
-  -> companion state and signal context
-  -> urge and agenda formation
-  -> attention metabolism
-  -> runtime control
-  -> quiet work / action candidate / expression / silence
+```mermaid
+flowchart LR
+  memory["Governed memory"]
+  surface["Surface"]
+  state["Companion state and signal context"]
+  urge["Urge and agenda formation"]
+  attention["Attention metabolism"]
+  control["Runtime control"]
+  outcome["Quiet work, action candidate, expression, or silence"]
+
+  memory --> surface
+  surface --> state
+  state --> urge
+  urge --> attention
+  attention --> control
+  control --> outcome
 ```
 
 The boundary rule is:

@@ -1,6 +1,8 @@
 # Memory Reference
 
 > Status: Current memory reference. This page covers auditable memory commands and boundaries, not raw memory internals.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 PulSeed exposes auditable memory operations through `pulseed memory`.
 

@@ -2,6 +2,8 @@
 
 > Status: Active design contract for PulSeed's user-facing and operator-facing
 > surfaces. Exact command lists live in the runtime and reference docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Operator Narration](./operator-narration-map.md).
 

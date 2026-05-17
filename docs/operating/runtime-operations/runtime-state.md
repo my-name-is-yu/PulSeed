@@ -1,6 +1,8 @@
 # Runtime State Reference
 
 > Status: Current runtime-state reference. This page separates typed store ownership from config, export, workspace, and debug files.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 PulSeed stores local state under `~/.pulseed/` by default. Set `PULSEED_HOME` to
 use a different root.

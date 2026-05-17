@@ -2,6 +2,8 @@
 
 > Status: Active design contract for approval, permission, guardrails,
 > backpressure, auth handoff, browser sessions, and notification safety.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Approval Protocol](./approval-protocol-map.md).
 

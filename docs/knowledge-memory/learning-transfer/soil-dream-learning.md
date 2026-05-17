@@ -2,6 +2,8 @@
 
 > Status: Active design contract for PulSeed's memory, retrieval, dream,
 > reflection, correction, and learning surfaces.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Learning And Transfer](./learning-transfer-map.md).
 

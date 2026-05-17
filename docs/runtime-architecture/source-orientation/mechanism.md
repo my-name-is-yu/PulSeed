@@ -1,6 +1,8 @@
 # Mechanism
 
 > Status: Current mechanism overview. This page explains the implemented execution model at a conceptual level.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 This page explains the current PulSeed execution model. For commands, see
 Runtime operations and [CLI Reference](../../operating/command-reference/cli-commands/cli.md).

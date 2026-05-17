@@ -1,6 +1,8 @@
 # Configuration
 
 > Status: Current configuration guide. This page describes supported configuration keys, setup paths, and local-state boundaries.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 This page reflects the current configuration surface.
 

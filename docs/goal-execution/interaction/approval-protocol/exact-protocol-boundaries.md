@@ -1,6 +1,8 @@
 # Exact Protocol Grammar Boundaries
 
 > Status: Active design contract. Verify exact behavior against source code and current operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Approval Protocol](./approval-protocol-map.md).
 

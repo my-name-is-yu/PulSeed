@@ -1,6 +1,8 @@
 # Runtime
 
 > Status: Current operating guide. This page describes runtime surfaces and operator boundaries for the current implementation.
+> Doc status: current_operating
+> Grounding use: current_truth
 
 This page describes the current runtime surfaces. For exact command
 syntax, see [CLI Reference](../command-reference/cli-commands/cli.md).

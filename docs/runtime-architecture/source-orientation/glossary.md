@@ -3,6 +3,8 @@
 > Status: Current public glossary. This page explains PulSeed terminology at the
 > product and architecture boundary; exact runtime behavior remains owned by
 > source code, schemas, tests, and operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Source Orientation](./source-orientation-map.md).
 

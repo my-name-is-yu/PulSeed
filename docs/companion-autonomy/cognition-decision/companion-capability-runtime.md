@@ -1,6 +1,8 @@
 # Companion Capability Runtime
 
 > Status: Active design contract. Verify exact behavior against source code and current operating docs.
+> Doc status: active_design_contract
+> Grounding use: design_context
 
 Primary map: [Cognition And Decision](./cognition-decision-map.md).
 
@@ -44,16 +46,27 @@ What must be prepared, verified, approved, suppressed, or audited first?
 
 The answer is the Companion Capability Runtime:
 
-```text
-Imported and native assets
-  -> Asset Registry
-  -> Capability Graph
-  -> Readiness Evaluator
-  -> Operation Planner
-  -> Autonomy Governor
-  -> Companion Action Projection
-  -> Execution Runtime
-  -> Verification, audit, trust, and procedural-hint feedback
+```mermaid
+flowchart TD
+  assets["Imported and native assets"]
+  registry["Asset Registry"]
+  graph["Capability Graph"]
+  readiness["Readiness Evaluator"]
+  planner["Operation Planner"]
+  governor["Autonomy Governor"]
+  projection["Companion Action Projection"]
+  execution["Execution Runtime"]
+  feedback["Verification, audit, trust, and procedural-hint feedback"]
+
+  assets --> registry
+  registry --> graph
+  graph --> readiness
+  readiness --> planner
+  planner --> governor
+  governor --> projection
+  projection --> execution
+  execution --> feedback
+  feedback --> readiness
 ```
 
 The runtime is not a replacement for existing tools. It is the layer that makes
@@ -80,16 +93,26 @@ It defines the contract that implementation increments must preserve.
 The Companion Capability Runtime sits beside the runtime control plane and below
 attention and expression policy.
 
-```text
-governed memory and Surface
-  -> companion state and attention
-  -> operation intent
-  -> capability readiness
-  -> autonomy governor
-  -> companion action projection
-  -> runtime control admission when execution is selected
-  -> execution, expression, preparation, approval request, alternative, or silence
-  -> audit and feedback
+```mermaid
+flowchart LR
+  surface["Governed memory and Surface"]
+  attention["Companion state and attention"]
+  intent["Operation intent"]
+  readiness["Capability readiness"]
+  governor["Autonomy governor"]
+  projection["Companion action projection"]
+  admission["Runtime-control admission"]
+  outcome["Execution, expression, preparation, approval request, alternative, or silence"]
+  audit["Audit and feedback"]
+
+  surface --> attention
+  attention --> intent
+  intent --> readiness
+  readiness --> governor
+  governor --> projection
+  projection --> admission
+  admission --> outcome
+  outcome --> audit
 ```
 
 Boundary rules:

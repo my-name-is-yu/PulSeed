@@ -3,6 +3,8 @@
 > Status: Current product-design contract grounded in runtime schemas and
 > implementation paths. This page describes intended behavior and current
 > architecture boundaries, not a complete feature checklist.
+> Doc status: north_star_direction
+> Grounding use: design_context
 
 Primary map: [Product Framing](./product-framing-map.md).
 
