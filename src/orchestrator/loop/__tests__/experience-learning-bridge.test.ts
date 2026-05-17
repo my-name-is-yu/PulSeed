@@ -5,6 +5,7 @@ import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { RuntimeEvidenceEntrySchema, type RuntimeEvidenceEntry } from "../../../runtime/store/evidence-ledger.js";
 import { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
+import { RuntimeEventLogStore } from "../../../runtime/store/runtime-event-log.js";
 import { makeEmptyIterationResult } from "../loop-result-types.js";
 import { ExperienceLearningBridge } from "../durable-loop/experience-learning-bridge.js";
 
@@ -119,6 +120,21 @@ describe("ExperienceLearningBridge", () => {
     expect(activeHypothesis?.supportEvidenceRefs).toEqual(["evidence-2", "evidence-3"]);
     const updatedCandidate = (await store.listGeneralizationCandidates(goal.id))[0];
     expect(updatedCandidate?.supportRefs).toEqual(["evidence-2", "evidence-3"]);
+    const eventLog = new RuntimeEventLogStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+    try {
+      const transitionEvents = await eventLog.listEvents({ eventType: "experience_learning.candidate_transition.recorded", limit: null });
+      expect(transitionEvents.map((event) => event.payload)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event_kind: "candidate_transition_recorded",
+          transition: expect.objectContaining({
+            fromStatus: "trial_reuse_ready",
+            toStatus: "trial_reuse_ready",
+          }),
+        }),
+      ]));
+    } finally {
+      await eventLog.close();
+    }
   });
 
   it("keeps same-trigger candidates separate across dimensions", async () => {

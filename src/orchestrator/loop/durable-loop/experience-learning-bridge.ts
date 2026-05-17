@@ -306,6 +306,7 @@ function buildDerivedLifecyclePayloads(
   const existingCandidate = existingCandidates.find((item) => item.id === candidate.id) ?? null;
   const candidateCanReceiveBridgeTransition = !existingCandidate
     || !isPostExperimentCandidateStatus(existingCandidate.status);
+  const transitionFromStatus = existingCandidate?.status ?? "candidate";
   const readSet = probeSourceEvidenceRefs.map((ref) => microProbeReadRef(ref, probeSourceEvidenceRefs));
   const microProbePlan = MicroProbePlanSchema.parse({
     id: stableLearningId("micro-probe-plan", [candidate.id, sourceEvidenceRefs]),
@@ -365,7 +366,7 @@ function buildDerivedLifecyclePayloads(
         loopIndex: input.loopIndex,
         targetKind: "generalization_candidate",
         targetId: candidate.id,
-        fromStatus: "candidate",
+        fromStatus: transitionFromStatus,
         toStatus: hasIndependentSupport ? "trial_reuse_ready" : "candidate",
         reasonCode: hasIndependentSupport ? "trial_reuse_ready" : "deferred_requires_durableloop_experiment",
         diagnosticLabel: hasIndependentSupport
