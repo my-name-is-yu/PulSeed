@@ -110,3 +110,16 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:docs`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `5421761a` found:
+  - P1: runtime operation no-op suppression compared only state/updated_at and could skip event append for same-timestamp content changes.
+  - P2: projection apply ordered same-timestamp runtime events by hash-like `event_id` instead of append order.
+- Follow-up fixes compare full canonical operation JSON before suppressing runtime operation event append, include the operation payload revision in runtime operation event identity/idempotency, and order runtime-event reads by `occurred_at, rowid` so same-timestamp projection reducers preserve append order. Focused verification passed:
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run test:contracts`
+  - `npm run test:unit -- --run src/runtime/control/__tests__/runtime-control-service.test.ts src/runtime/__tests__/runtime-control-result-routing.test.ts src/runtime/store/__tests__/runtime-control-store-migration.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run check:docs`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`

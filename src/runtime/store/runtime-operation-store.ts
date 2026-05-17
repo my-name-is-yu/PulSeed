@@ -249,8 +249,7 @@ function isNoopRuntimeOperationTransition(
   previous: RuntimeControlOperation | null,
 ): boolean {
   return previous !== null
-    && previous.state === operation.state
-    && previous.updated_at === operation.updated_at;
+    && RuntimeOperationJsonCodec.stringify(previous) === RuntimeOperationJsonCodec.stringify(operation);
 }
 
 function insertRuntimeOperationEvent(

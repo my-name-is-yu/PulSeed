@@ -53,10 +53,11 @@ current-state rows:
 - `attention_commitment_candidates`
 
 The apply path is deterministic over the full `runtime_events` set and
-RuntimeGraph evidence. It does not read current-state projection tables as
-hidden truth. Trace-scoped rebuild remains an operator/debug inspection path
-only; applying current-state rows from a single trace is rejected because traces
-are action-scoped and do not contain full entity history.
+RuntimeGraph evidence, preserving append order when multiple source events have
+the same timestamp. It does not read current-state projection tables as hidden
+truth. Trace-scoped rebuild remains an operator/debug inspection path only;
+applying current-state rows from a single trace is rejected because traces are
+action-scoped and do not contain full entity history.
 
 ## Rebuild-Summary-Only Projections
 
@@ -90,6 +91,10 @@ not current-state row apply targets:
   the side-effect outbox queue is not recreated.
 - The same contract test rejects trace-scoped current-state apply and proves
   no projection row is restored from partial trace history.
+- Runtime operation contract coverage now proves same-timestamp content
+  revisions append distinct event-backed revisions, exact no-op retries do not
+  append duplicate operation events, and same-timestamp projection apply chooses
+  the later appended event rather than a lexicographic event ID.
 - `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
   does not duplicate outbox notifications, schedule runs, denied tool calls,
   peer deliveries, memory correction effects, or commitment operations while

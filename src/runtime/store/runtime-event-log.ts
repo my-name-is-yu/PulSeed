@@ -453,7 +453,7 @@ export class RuntimeEventLogStore {
         FROM runtime_events
         WHERE (? IS NULL OR trace_id = ?)
           AND (? IS NULL OR event_type = ?)
-        ORDER BY occurred_at ASC, event_id ASC
+        ORDER BY occurred_at ASC, rowid ASC
         ${hasLimit ? "LIMIT ?" : ""}
       `).all(...params) as Array<{ event_json: string }>;
       return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
@@ -723,13 +723,16 @@ export function runtimeEventFromRuntimeControlOperationTransition(
 ): RuntimeEventEnvelopeInput {
   const operation = RuntimeControlOperationSchema.parse(operationInput);
   const previousOperation = previousOperationInput ? RuntimeControlOperationSchema.parse(previousOperationInput) : null;
-  const eventId = `runtime-event:${stableId([
+  const operationRevision = stableId(stableJson(operation));
+  const transitionIdentity = [
     "runtime-control-operation",
     operation.operation_id,
     previousOperation?.state ?? "created",
     operation.state,
     operation.updated_at,
-  ].join(":"))}`;
+    operationRevision,
+  ].join(":");
+  const eventId = `runtime-event:${stableId(transitionIdentity)}`;
   const operationRef = { kind: "runtime_control_operation", ref: operation.operation_id };
   const targetRefs = uniqueRefs([
     operationRef,
@@ -746,13 +749,7 @@ export function runtimeEventFromRuntimeControlOperationTransition(
     trace_id: `runtime-control:${stableId(operation.operation_id)}`,
     causation_id: previousOperation?.operation_id ?? null,
     correlation_id: operation.operation_id,
-    idempotency_key: [
-      "runtime-control-operation",
-      operation.operation_id,
-      previousOperation?.state ?? "created",
-      operation.state,
-      operation.updated_at,
-    ].join(":"),
+    idempotency_key: transitionIdentity,
     actor: { kind: "operator", ref: "runtime-operation-store" },
     caller_path: "runtime_control",
     surface: "operator_debug",
@@ -957,7 +954,7 @@ function readRuntimeEventByIdempotency(sqlite: SqliteDatabase, event: RuntimeEve
       AND idempotency_key = ?
       AND replay_policy = ?
       AND COALESCE(side_effect_ref, 'pending') = ?
-    ORDER BY occurred_at ASC, event_id ASC
+    ORDER BY occurred_at ASC, rowid ASC
     LIMIT 1
   `).get(
     event.event_type,
@@ -976,7 +973,7 @@ function readProjectionApplySourceEvents(
     SELECT event_json
     FROM runtime_events
     WHERE (? IS NULL OR trace_id = ?)
-    ORDER BY occurred_at ASC, event_id ASC
+    ORDER BY occurred_at ASC, rowid ASC
   `).all(
     options.traceId ?? null,
     options.traceId ?? null,

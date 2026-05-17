@@ -21,8 +21,10 @@ import {
   projectPersonalAgentNormalSurface,
 } from "../../src/runtime/personal-agent/index.js";
 import {
+  type RuntimeEventEnvelope,
   RuntimeEventEnvelopeSchema,
   RuntimeEventLogStore,
+  runtimeEventFromRuntimeControlOperationTransition,
 } from "../../src/runtime/store/runtime-event-log.js";
 import { AttentionStateStore } from "../../src/runtime/store/attention-state-store.js";
 import { GoalTaskStateStore } from "../../src/runtime/store/goal-task-state-store.js";
@@ -702,6 +704,146 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
+  it("records same-timestamp runtime operation content revisions before suppressing true no-ops", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const store = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const operation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:same-timestamp-content",
+        kind: "inspect_run",
+        state: "pending",
+        requested_at: NOW,
+        updated_at: NOW,
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "Initial same-timestamp runtime operation content.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          session_id: "session:same-timestamp-initial",
+        },
+      });
+      const revisedOperation = RuntimeControlOperationSchema.parse({
+        ...operation,
+        reason: "Revised same-timestamp runtime operation content.",
+        target: {
+          session_id: "session:same-timestamp-revised",
+        },
+      });
+      const finalOperation = RuntimeControlOperationSchema.parse({
+        ...operation,
+        reason: "Final same-timestamp runtime operation content.",
+        target: {
+          session_id: "session:same-timestamp-final",
+        },
+      });
+
+      await store.save(operation);
+      await store.save(revisedOperation);
+      await store.save(finalOperation);
+      await store.save(finalOperation);
+
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const events = await eventLog.listEvents({
+        eventType: "runtime_control.operation.recorded",
+        limit: null,
+      });
+      expect(events).toHaveLength(3);
+      expect(events.flatMap((event) =>
+        event.payload.schema_version === "runtime-event-payload/runtime-control-operation/v1"
+          ? [event.payload.operation.reason]
+          : []
+      )).toEqual([
+        "Initial same-timestamp runtime operation content.",
+        "Revised same-timestamp runtime operation content.",
+        "Final same-timestamp runtime operation content.",
+      ]);
+
+      await clearProjectionTables(runtimeRoot, root, ["DELETE FROM runtime_operations"]);
+      await eventLog.applyProjectionRebuild();
+      await expect(store.load(operation.operation_id)).resolves.toMatchObject({
+        operation_id: operation.operation_id,
+        reason: "Final same-timestamp runtime operation content.",
+        target: {
+          session_id: "session:same-timestamp-final",
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies same-timestamp projection source events in append order", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const staleOperation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:append-order-collision",
+        kind: "inspect_run",
+        state: "pending",
+        requested_at: NOW,
+        updated_at: NOW,
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "Stale same-timestamp append-order state.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          session_id: "session:append-order-stale",
+        },
+      });
+      const finalOperation = RuntimeControlOperationSchema.parse({
+        ...staleOperation,
+        state: "verified",
+        completed_at: NOW,
+        reason: "Final same-timestamp append-order state.",
+        target: {
+          session_id: "session:append-order-final",
+        },
+        result: {
+          ok: true,
+          message: "Final append order state should win.",
+        },
+      });
+      const staleEvent = RuntimeEventEnvelopeSchema.parse({
+        ...runtimeEventFromRuntimeControlOperationTransition(staleOperation, null),
+        event_id: "runtime-event:z-stale-lexicographic-after",
+        runtime_graph_node_ref: { kind: "runtime_event", ref: "runtime-event:z-stale-lexicographic-after" },
+        idempotency_key: "append-order-collision:stale",
+      });
+      const finalEvent = RuntimeEventEnvelopeSchema.parse({
+        ...runtimeEventFromRuntimeControlOperationTransition(finalOperation, staleOperation),
+        event_id: "runtime-event:a-final-lexicographic-before",
+        runtime_graph_node_ref: { kind: "runtime_event", ref: "runtime-event:a-final-lexicographic-before" },
+        idempotency_key: "append-order-collision:final",
+      });
+
+      await mutateRuntimeControlDatabase(runtimeRoot, root, (sqlite) => {
+        insertRuntimeEventRowForTest(sqlite, staleEvent);
+        insertRuntimeEventRowForTest(sqlite, finalEvent);
+      });
+
+      await eventLog.applyProjectionRebuild();
+      await expect(operationStore.load(staleOperation.operation_id)).resolves.toMatchObject({
+        operation_id: staleOperation.operation_id,
+        state: "verified",
+        reason: "Final same-timestamp append-order state.",
+        target: {
+          session_id: "session:append-order-final",
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies broader event-backed current-state projections without replaying side effects", async () => {
     const root = fixtureRoot();
     try {
@@ -1169,6 +1311,53 @@ async function mutateRuntimeControlDatabase(
   } finally {
     db.close();
   }
+}
+
+function insertRuntimeEventRowForTest(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_events (
+      event_id,
+      event_type,
+      schema_version,
+      occurred_at,
+      trace_id,
+      causation_id,
+      correlation_id,
+      idempotency_key,
+      caller_path,
+      surface,
+      replay_policy,
+      goal_id,
+      task_id,
+      run_id,
+      session_id,
+      source_ref,
+      authority_decision_ref,
+      side_effect_ref,
+      event_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+  `).run(
+    event.event_id,
+    event.event_type,
+    event.schema_version,
+    event.occurred_at,
+    event.trace_id,
+    event.causation_id,
+    event.correlation_id,
+    event.idempotency_key,
+    event.caller_path,
+    event.surface,
+    event.replay_policy.mode,
+    event.goal_id,
+    event.task_id,
+    event.run_id,
+    event.session_id,
+    `${event.source_ref.kind}:${event.source_ref.ref}`,
+    event.authority_decision_ref ? `${event.authority_decision_ref.kind}:${event.authority_decision_ref.ref}` : null,
+    event.side_effect_ref ? `${event.side_effect_ref.kind}:${event.side_effect_ref.ref}` : null,
+    JSON.stringify(event),
+  );
 }
 
 async function readRuntimeGraphNodeIds(
