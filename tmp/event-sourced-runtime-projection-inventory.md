@@ -53,9 +53,10 @@ current-state rows:
 - `attention_commitment_candidates`
 
 The apply path is deterministic over the full `runtime_events` set and
-RuntimeGraph evidence, preserving append order when multiple source events have
-the same timestamp. It does not read current-state projection tables as hidden
-truth. Trace-scoped rebuild remains an operator/debug inspection path only;
+RuntimeGraph evidence, preserving event append order with a persisted
+`event_sequence` when multiple source events have the same timestamp. It does
+not read current-state projection tables as hidden truth. Trace-scoped rebuild
+remains an operator/debug inspection path only;
 applying current-state rows from a single trace is rejected because traces are
 action-scoped and do not contain full entity history.
 
@@ -97,7 +98,10 @@ not current-state row apply targets:
 - Runtime operation contract coverage now proves same-timestamp content
   revisions append distinct event-backed revisions, exact no-op retries do not
   append duplicate operation events, and same-timestamp projection apply chooses
-  the later appended event rather than a lexicographic event ID.
+  the later event sequence rather than a lexicographic event ID or SQLite rowid.
+- Commitment candidate contract coverage now proves same-timestamp payload
+  revisions append distinct event-backed revisions, while exact no-op retries do
+  not append duplicate commitment events.
 - High-volume task projection coverage now proves current-state apply prunes
   stale task rows with a temp-key table instead of a large OR predicate, so
   rebuild apply does not hit SQLite expression-depth limits around large task

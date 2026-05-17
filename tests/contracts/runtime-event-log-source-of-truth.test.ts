@@ -776,7 +776,7 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
-  it("applies same-timestamp projection source events in append order", async () => {
+  it("applies same-timestamp projection source events in persisted event-sequence order", async () => {
     const root = fixtureRoot();
     try {
       const runtimeRoot = path.join(root, "runtime");
@@ -826,8 +826,10 @@ describe("runtime event log source-of-truth contract", () => {
       });
 
       await mutateRuntimeControlDatabase(runtimeRoot, root, (sqlite) => {
-        insertRuntimeEventRowForTest(sqlite, staleEvent);
-        insertRuntimeEventRowForTest(sqlite, finalEvent);
+        insertRuntimeEventRowForTest(sqlite, staleEvent, 1);
+        insertRuntimeEventRowForTest(sqlite, finalEvent, 2);
+        sqlite.prepare("DELETE FROM runtime_events WHERE event_id = ?").run(staleEvent.event_id);
+        insertRuntimeEventRowForTest(sqlite, staleEvent, 1);
       });
 
       await eventLog.applyProjectionRebuild();
@@ -1396,6 +1398,44 @@ describe("runtime event log source-of-truth contract", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("preserves same-timestamp commitment candidate payload revisions before appending events", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const baseCandidate = {
+        ...commitmentCandidate(),
+        commitment_id: "commitment:same-timestamp-revision",
+        replay_key: "commitment-replay:same-timestamp-revision",
+        updated_at: "2026-05-15T17:00:00.000Z",
+        materialization_state: "watching" as const,
+      };
+      const revisedCandidate = {
+        ...baseCandidate,
+        materialization_state: "active_care" as const,
+        feedback_refs: ["feedback:same-timestamp-revision"],
+      };
+
+      await attentionStore.saveCommitmentCandidates([baseCandidate]);
+      await attentionStore.saveCommitmentCandidates([revisedCandidate]);
+      await attentionStore.saveCommitmentCandidates([revisedCandidate]);
+
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          commitment_id: revisedCandidate.commitment_id,
+          materialization_state: "active_care",
+          feedback_refs: ["feedback:same-timestamp-revision"],
+          updated_at: "2026-05-15T17:00:00.000Z",
+        }),
+      ]);
+      const events = await eventLog.listEvents({ eventType: "attention.commitment.recorded", limit: null });
+      expect(events.filter((event) => event.correlation_id === revisedCandidate.commitment_id)).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fixtureRoot(): string {
@@ -1432,9 +1472,18 @@ async function mutateRuntimeControlDatabase(
   }
 }
 
-function insertRuntimeEventRowForTest(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): void {
+function insertRuntimeEventRowForTest(
+  sqlite: SqliteDatabase,
+  event: RuntimeEventEnvelope,
+  eventSequence?: number,
+): void {
+  const sequence = eventSequence ?? (
+    sqlite.prepare("SELECT COALESCE(MAX(event_sequence), 0) + 1 AS next_sequence FROM runtime_events")
+      .get() as { next_sequence: number }
+  ).next_sequence;
   sqlite.prepare(`
     INSERT INTO runtime_events (
+      event_sequence,
       event_id,
       event_type,
       schema_version,
@@ -1455,8 +1504,9 @@ function insertRuntimeEventRowForTest(sqlite: SqliteDatabase, event: RuntimeEven
       side_effect_ref,
       event_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
   `).run(
+    sequence,
     event.event_id,
     event.event_type,
     event.schema_version,

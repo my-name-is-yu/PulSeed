@@ -312,9 +312,15 @@ export class AttentionStateStore {
           duplicates.push(existing);
           continue;
         }
-        if (existing && compareIsoTimestamps(candidate.updated_at, existing.updated_at) <= 0) {
-          accepted.push(existing);
-          continue;
+        if (existing) {
+          const timestampComparison = compareIsoTimestamps(candidate.updated_at, existing.updated_at);
+          if (
+            timestampComparison < 0
+            || (timestampComparison === 0 && sameCommitmentCandidateRevision(candidate, existing))
+          ) {
+            accepted.push(existing);
+            continue;
+          }
         }
         appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromAttentionCommitment({
           operation: "candidate_saved",
@@ -1331,6 +1337,10 @@ function upsertCommitmentCandidate(sqlite: SqliteDatabase, raw: CommitmentCandid
   );
 }
 
+function sameCommitmentCandidateRevision(left: CommitmentCandidate, right: CommitmentCandidate): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
 function readCommitmentCandidate(sqlite: SqliteDatabase, commitmentId: string): CommitmentCandidate | null {
   const row = sqlite.prepare(`
     SELECT candidate_json
@@ -1377,6 +1387,19 @@ function listCommitmentCandidates(
     ORDER BY updated_at ASC, commitment_id ASC
   `).all(...params) as Array<{ candidate_json: string }>;
   return rows.flatMap((row) => parseStored<CommitmentCandidate>(row.candidate_json, CommitmentCandidateSchema));
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, sortJsonValue(record[key])]));
+  }
+  return value;
 }
 
 function upsertAttentionInput(

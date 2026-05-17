@@ -154,3 +154,17 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
   - `npm run check:docs`
   - `git diff --check`
+- GitHub Codex review on `82cef110` found:
+  - P1: commitment candidate same-timestamp payload changes were suppressed as stale/no-op and did not append `attention.commitment.recorded`.
+  - P2: equal-timestamp projection replay order used SQLite `rowid`, which is not a durable ordering contract.
+- Follow-up fixes compare full commitment candidate payloads for same-timestamp no-op suppression, include the commitment candidate revision in event identity/idempotency, and add `runtime_events.event_sequence` migration 43 as the persisted replay tie-breaker. Focused verification passed:
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:unit -- --run src/runtime/store/control-db/__tests__/control-db.test.ts`
+  - `npm run test:contracts`
+  - `npm run test:unit -- --run src/runtime/store/control-db/__tests__/control-db.test.ts src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run check:docs`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`

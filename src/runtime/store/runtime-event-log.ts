@@ -453,7 +453,7 @@ export class RuntimeEventLogStore {
         FROM runtime_events
         WHERE (? IS NULL OR trace_id = ?)
           AND (? IS NULL OR event_type = ?)
-        ORDER BY occurred_at ASC, rowid ASC
+        ORDER BY occurred_at ASC, event_sequence ASC
         ${hasLimit ? "LIMIT ?" : ""}
       `).all(...params) as Array<{ event_json: string }>;
       return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
@@ -783,12 +783,14 @@ export function runtimeEventFromAttentionCommitment(input: RuntimeAttentionCommi
   const materializationRef = candidate.materialization_id
     ? `commitment-materialization:${candidate.materialization_id}`
     : null;
+  const candidateRevision = stableId(stableJson(candidate));
   const eventId = `runtime-event:${stableId([
     "attention-commitment",
     operation,
     candidate.commitment_id,
     candidate.replay_key,
     candidate.updated_at,
+    candidateRevision,
     input.control ?? "",
     input.feedbackRef ?? "",
   ].join(":"))}`;
@@ -816,6 +818,7 @@ export function runtimeEventFromAttentionCommitment(input: RuntimeAttentionCommi
       candidate.replay_key,
       candidate.materialization_state,
       candidate.updated_at,
+      candidateRevision,
       input.control ?? "",
       input.feedbackRef ?? "",
     ].join(":"),
@@ -894,8 +897,10 @@ function projectionRebuildId(rebuild: RuntimeEventProjectionRebuild): string {
 }
 
 function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): boolean {
+  const eventSequence = nextRuntimeEventSequence(sqlite);
   const result = sqlite.prepare(`
     INSERT OR IGNORE INTO runtime_events (
+      event_sequence,
       event_id,
       event_type,
       schema_version,
@@ -916,8 +921,9 @@ function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope)
       side_effect_ref,
       event_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
   `).run(
+    eventSequence,
     event.event_id,
     event.event_type,
     event.schema_version,
@@ -941,6 +947,12 @@ function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope)
   return result.changes > 0;
 }
 
+function nextRuntimeEventSequence(sqlite: SqliteDatabase): number {
+  const row = sqlite.prepare("SELECT COALESCE(MAX(event_sequence), 0) + 1 AS next_sequence FROM runtime_events")
+    .get() as { next_sequence: number } | undefined;
+  return row?.next_sequence ?? 1;
+}
+
 function readRuntimeEventById(sqlite: SqliteDatabase, eventId: string): RuntimeEventEnvelope | null {
   const row = sqlite.prepare("SELECT event_json FROM runtime_events WHERE event_id = ?").get(eventId) as { event_json: string } | undefined;
   return row ? parseRuntimeEvent(row.event_json)[0] ?? null : null;
@@ -954,7 +966,7 @@ function readRuntimeEventByIdempotency(sqlite: SqliteDatabase, event: RuntimeEve
       AND idempotency_key = ?
       AND replay_policy = ?
       AND COALESCE(side_effect_ref, 'pending') = ?
-    ORDER BY occurred_at ASC, rowid ASC
+    ORDER BY occurred_at ASC, event_sequence ASC
     LIMIT 1
   `).get(
     event.event_type,
@@ -973,7 +985,7 @@ function readProjectionApplySourceEvents(
     SELECT event_json
     FROM runtime_events
     WHERE (? IS NULL OR trace_id = ?)
-    ORDER BY occurred_at ASC, rowid ASC
+    ORDER BY occurred_at ASC, event_sequence ASC
   `).all(
     options.traceId ?? null,
     options.traceId ?? null,
