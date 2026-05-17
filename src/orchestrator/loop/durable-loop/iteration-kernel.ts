@@ -77,6 +77,7 @@ import type { GoalRunActivationContext } from "../../../base/types/goal-activati
 import type {
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
+  RuntimeEvidenceEntry,
   RuntimeEvidenceSummary,
 } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
@@ -90,6 +91,32 @@ import {
   truncateOneLine,
   verificationToOutcome,
 } from "./iteration-kernel-evidence-helpers.js";
+import { recordExperienceLearningCheckpoint } from "./experience-learning-bridge.js";
+import { enqueueExperienceLearningProjectionForOwnerReview } from "../../../reflection/experience-learning-writeback.js";
+import type {
+  ExperimentRecord,
+  ExperimentValueOutcome,
+  ExperienceLearningRuntimeEventPayload,
+  GeneralizationCandidate,
+  LearningArtifact,
+  LearningConsumerPhase,
+  LearningExperimentPlan,
+  LearningPriorPhaseProjection,
+  LearningPriorSnapshot,
+  LearningScope,
+} from "../../../runtime/learning/index.js";
+import {
+  ExperimentRecordSchema,
+  ExperimentValueOutcomeSchema,
+  GeneralizationCandidateSchema,
+  LearningArtifactSchema,
+  LearningPriorSnapshotSchema,
+  defaultRuntimeEvidenceTrust,
+  learningPriorSuggestion,
+  redactedLearningLabel,
+  stableLearningId,
+} from "../../../runtime/learning/index.js";
+import type { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -114,6 +141,16 @@ export interface RunCoreIterationInput {
   loopIndex: number;
   isFirstIteration?: boolean;
   abortSignal?: AbortSignal;
+}
+
+type PhaseLearningProjection<TPhase extends LearningPriorPhaseProjection["phase"]> =
+  LearningPriorPhaseProjection & { phase: TPhase };
+
+function isLearningProjectionPhase<TPhase extends LearningPriorPhaseProjection["phase"]>(
+  projection: LearningPriorPhaseProjection | null | undefined,
+  phase: TPhase,
+): projection is PhaseLearningProjection<TPhase> {
+  return projection?.phase === phase;
 }
 
 export class CoreIterationKernel {
@@ -163,16 +200,21 @@ export class CoreIterationKernel {
         : {}),
       loop_index: loopIndex,
     };
-    const appendRuntimeEvidence = async (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => {
-      if (config.dryRun || !this.deps.deps.evidenceLedger) return;
+    const iterationEvidence: RuntimeEvidenceEntry[] = [];
+    let goalForExperienceLearning: Goal | null = null;
+    const appendRuntimeEvidence = async (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }): Promise<RuntimeEvidenceEntry[]> => {
+      if (config.dryRun || !this.deps.deps.evidenceLedger) return [];
       try {
-        await this.deps.deps.evidenceLedger.append({
+        const appended = await this.deps.deps.evidenceLedger.append({
           ...entry,
           scope: {
             ...runtimeEvidenceScope,
             ...entry.scope,
           },
         });
+        iterationEvidence.push(...appended);
+        result.iterationEvidenceRefs = iterationEvidence.map((evidence) => evidence.id);
+        return appended;
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: failed to append runtime evidence ledger entry", {
           goalId,
@@ -180,6 +222,175 @@ export class CoreIterationKernel {
           kind: entry.kind,
           error: err instanceof Error ? err.message : String(err),
         });
+        return [];
+      }
+    };
+    const finalizeExperienceLearning = async (): Promise<LoopIterationResult> => {
+      await recordExperienceLearningCheckpoint({
+        bridge: this.deps.deps.experienceLearningBridge,
+        goal: goalForExperienceLearning,
+        goalId,
+        ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+        loopIndex,
+        result,
+        iterationEvidence,
+        dryRun: config.dryRun,
+        hasEvidenceLedger: Boolean(this.deps.deps.evidenceLedger),
+        logger: this.deps.logger,
+      });
+      return result;
+    };
+    const consumerScope = (phase: string): LearningScope => ({
+      refs: {
+        goalId,
+        ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+      },
+      semantic: {
+        taskKind: phase,
+        environmentKind: "pulseed_runtime",
+        classifierVersion: "deterministic/learning-prior-consumer/v1",
+        confidence: 1,
+      },
+    });
+    const learningConsumerRef = (phase: string, suffix?: string): string => {
+      const scopedConsumerRef = runtimeEvidenceScope.run_id
+        ? `run:${runtimeEvidenceScope.run_id}`
+        : `goal:${goalId}`;
+      return [
+        phase,
+        scopedConsumerRef,
+        `loop:${loopIndex}`,
+        ...(suffix ? [suffix] : []),
+      ].join(":");
+    };
+    const resolveLearningProjection = async (
+      consumerPhase: LearningConsumerPhase,
+      consumerDecisionRef: string,
+    ) => {
+      if (config.dryRun || !this.deps.deps.experienceLearningStore) return null;
+      try {
+        return await this.deps.deps.experienceLearningStore.resolvePriorForPhase({
+          goalId,
+          ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+          consumerPhase,
+          consumerScope: consumerScope(consumerPhase),
+          loopIndex,
+          consumerAttemptId: learningConsumerRef(consumerPhase),
+          consumerDecisionRef,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to resolve experience-learning prior", {
+          goalId,
+          loopIndex,
+          consumerPhase,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }
+    };
+    const markLearningProjectionApplied = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      generatedDecisionRefs: readonly string[],
+    ): Promise<void> => {
+      if (!projection || !this.deps.deps.experienceLearningStore) return;
+      try {
+        await this.deps.deps.experienceLearningStore.markPriorConsumptionApplied({
+          consumptionId: projection.consumptionRecordId,
+          generatedDecisionRefs,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to mark experience-learning prior applied", {
+          goalId,
+          loopIndex,
+          consumptionRecordId: projection.consumptionRecordId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    const markLearningProjectionSuppressed = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      reasonCodes: readonly ["consumer_execution_failed" | "consumer_no_op"],
+    ): Promise<void> => {
+      if (!projection || !this.deps.deps.experienceLearningStore) return;
+      try {
+        await this.deps.deps.experienceLearningStore.markPriorConsumptionSuppressed({
+          consumptionId: projection.consumptionRecordId,
+          reasonCodes,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to suppress unused experience-learning prior", {
+          goalId,
+          loopIndex,
+          consumptionRecordId: projection.consumptionRecordId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    const markLearningProjectionForCorePhase = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      execution: { status: "skipped" | "completed" | "low_confidence" | "failed"; traceId?: string } | null | undefined,
+      fallbackDecisionRef: string,
+    ): Promise<void> => {
+      if (!projection || !execution) return;
+      if (execution.status === "skipped") {
+        await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+        return;
+      }
+      if (execution.status === "completed") {
+        await markLearningProjectionApplied(projection, [
+          execution.traceId ?? fallbackDecisionRef,
+        ]);
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, [
+        execution.status === "failed" ? "consumer_execution_failed" : "consumer_no_op",
+      ]);
+    };
+    const markTaskLearningProjectionFromResult = async (
+      projection: PhaseLearningProjection<"task_generation"> | null | undefined,
+      taskResult: TaskCycleResult | null | undefined,
+    ): Promise<void> => {
+      if (!projection || !taskResult) return;
+      const application = taskResult.learningPriorApplication;
+      if (
+        application?.consumptionRecordId === projection.consumptionRecordId
+        && application.status === "applied"
+      ) {
+        await markLearningProjectionApplied(
+          projection,
+          application.generatedDecisionRefs.length > 0
+            ? application.generatedDecisionRefs
+            : [`task:${taskResult.task.id}`],
+        );
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+    };
+    const markNextDirectiveLearningProjection = async (
+      projection: PhaseLearningProjection<"next_iteration_directive"> | null | undefined,
+      directive: NextIterationDirective | undefined,
+      fallbackDecisionRef: string,
+    ): Promise<void> => {
+      if (!projection) return;
+      const expectedProjectionRef = `learning-prior-projection:${projection.consumptionRecordId}`;
+      if (directive?.phase_projection_ref === expectedProjectionRef) {
+        await markLearningProjectionApplied(projection, [
+          directive.phase_projection_ref ?? fallbackDecisionRef,
+        ]);
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+    };
+    const runPhaseWithLearningProjection = async <T>(
+      phase: string,
+      projection: LearningPriorPhaseProjection | null | undefined,
+      work: () => Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await runPhase(phase, work);
+      } catch (err) {
+        await markLearningProjectionSuppressed(projection, ["consumer_execution_failed"]);
+        throw err;
       }
     };
     const corePhaseRuntime = new CorePhaseRuntime({
@@ -272,8 +483,9 @@ export class CoreIterationKernel {
     const loadedGoal = await runPhase("load-goal", () =>
       loadGoalWithAggregation(ctx, goalId, result, startTime)
     );
-    if (!loadedGoal) return result;
+    if (!loadedGoal) return await finalizeExperienceLearning();
     let goal = loadedGoal;
+    goalForExperienceLearning = goal;
 
     await runPhase("auto-decompose", () =>
       phaseAutoDecompose(
@@ -300,6 +512,7 @@ export class CoreIterationKernel {
             childrenCount: goal.children_ids.length,
           });
         }
+        goalForExperienceLearning = goal;
       }
     }
 
@@ -337,13 +550,13 @@ export class CoreIterationKernel {
         startTime,
         this.deps.logger
       );
-      if (shouldSkip) return result;
+      if (shouldSkip) return await finalizeExperienceLearning();
     }
 
     const gapResult = await runPhase("gap-analysis", () =>
       calculateGapOrComplete(ctx, goalId, goal, loopIndex, result, startTime)
     );
-    if (!gapResult) return result;
+    if (!gapResult) return await finalizeExperienceLearning();
     const { gapVector, gapAggregate, skipTaskGeneration } = gapResult;
 
     this.deps.logger?.info(
@@ -401,7 +614,7 @@ export class CoreIterationKernel {
       });
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
     const activeWait = await findActiveWaitObservationInput(
@@ -444,7 +657,7 @@ export class CoreIterationKernel {
           : "wait_observe_only";
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
     let driveScores: DriveScore[] = [];
@@ -462,13 +675,22 @@ export class CoreIterationKernel {
           (id, idx, r, g) => generateLoopReport(id, idx, r, g, this.deps.deps.reportingEngine, this.deps.logger)
         )
       );
-      if (!driveResult) return result;
+      if (!driveResult) return await finalizeExperienceLearning();
       driveScores = driveResult.driveScores;
       highDissatisfactionDimensions = driveResult.highDissatisfactionDimensions;
     }
 
+    const knowledgeRefreshResolution = !skipTaskGeneration
+      ? await resolveLearningProjection(
+          "knowledge_refresh",
+          learningConsumerRef("knowledge-refresh"),
+        )
+      : null;
+    const knowledgeRefreshProjection = isLearningProjectionPhase(knowledgeRefreshResolution?.projection, "knowledge_refresh")
+      ? knowledgeRefreshResolution.projection
+      : undefined;
     const knowledgeRefresh = !skipTaskGeneration
-      ? await runPhase("knowledge-refresh", () =>
+      ? await runPhaseWithLearningProjection("knowledge-refresh", knowledgeRefreshProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildKnowledgeRefreshSpec(),
@@ -488,20 +710,36 @@ export class CoreIterationKernel {
                     ...driveScores.map((score) => score.dimension_name),
                   ].filter((value, index, values) => values.indexOf(value) === index),
               gapAggregate,
+              ...(knowledgeRefreshProjection ? { learningProjection: knowledgeRefreshProjection } : {}),
             },
             { goalId, gapAggregate },
           )
         )
       : null;
     if (knowledgeRefresh) rememberPhase(knowledgeRefresh);
+    await markLearningProjectionForCorePhase(
+      knowledgeRefreshProjection,
+      knowledgeRefresh,
+      learningConsumerRef("knowledge-refresh"),
+    );
     if (knowledgeRefresh) await appendPhaseEvidence(appendRuntimeEvidence, knowledgeRefresh, "strategy");
 
-    const replanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
+    const shouldRunReplanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
       skipTaskGeneration: Boolean(skipTaskGeneration),
       taskCycleBlocked: false,
       gapAggregate,
-    })
-      ? await runPhase("replanning-options", () =>
+    });
+    const replanningOptionsResolution = shouldRunReplanningOptions
+      ? await resolveLearningProjection(
+          "replanning_options",
+          learningConsumerRef("replanning-options"),
+        )
+      : null;
+    const replanningOptionsProjection = isLearningProjectionPhase(replanningOptionsResolution?.projection, "replanning_options")
+      ? replanningOptionsResolution.projection
+      : undefined;
+    const replanningOptions = shouldRunReplanningOptions
+      ? await runPhaseWithLearningProjection("replanning-options", replanningOptionsProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildReplanningOptionsSpec(),
@@ -513,37 +751,80 @@ export class CoreIterationKernel {
               goalTitle: goal.title,
               targetDimensions: driveScores.map((score) => score.dimension_name),
               gapAggregate,
+              ...(replanningOptionsProjection ? { learningProjection: replanningOptionsProjection } : {}),
             },
             { goalId, gapAggregate },
           )
         )
       : null;
     if (replanningOptions) rememberPhase(replanningOptions);
+    await markLearningProjectionForCorePhase(
+      replanningOptionsProjection,
+      replanningOptions,
+      learningConsumerRef("replanning-options"),
+    );
     if (replanningOptions) await appendPhaseEvidence(appendRuntimeEvidence, replanningOptions, "strategy");
 
     await runPhase("completion-check", () =>
       checkCompletionAndMilestones(ctx, goalId, goal, result, startTime)
     );
-    if (result.error) return result;
+    if (result.error) return await finalizeExperienceLearning();
 
     const stallActionHints = this.deps.coreDecisionEngine.buildStallActionHints({
       phase: replanningOptions,
     });
-    await runPhase("stall-detection", () =>
+    const stallDetectionResolution = await resolveLearningProjection(
+      "stall_detection",
+      learningConsumerRef("stall-detection"),
+    );
+    const stallDetectionProjection = isLearningProjectionPhase(stallDetectionResolution?.projection, "stall_detection")
+      ? stallDetectionResolution.projection
+      : undefined;
+    const baseStallActionHints = stallActionHints.recommendedAction
+      ? stallActionHints
+      : pendingDirective?.preferredAction
+        ? { recommendedAction: pendingDirective.preferredAction }
+        : undefined;
+    const mergedStallActionHints = stallDetectionProjection
+      ? {
+          ...baseStallActionHints,
+          learningProjection: stallDetectionProjection,
+          learningPriorConsumptionRef: stallDetectionProjection.consumptionRecordId,
+          focusEvidenceRefs: stallDetectionProjection.focusEvidenceRefs,
+          blockedLoopPatternRefs: stallDetectionProjection.blockedLoopPatternRefs,
+          experimentPlanIds: stallDetectionProjection.experimentPlanIds,
+        }
+      : baseStallActionHints;
+    const stallDetection = await runPhaseWithLearningProjection("stall-detection", stallDetectionProjection, () =>
       detectStallsAndRebalance(
         ctx,
         goalId,
         goal,
         result,
-        stallActionHints.recommendedAction
-          ? stallActionHints
-          : pendingDirective?.preferredAction
-            ? { recommendedAction: pendingDirective.preferredAction }
-            : undefined,
+        mergedStallActionHints,
       )
     );
-    const stallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result)
-      ? await runPhase("stall-investigation", () =>
+    if (stallDetectionProjection && result.stallDetected) {
+      await markLearningProjectionApplied(stallDetectionProjection, [
+        learningConsumerRef("stall-detection"),
+      ]);
+    } else if (stallDetectionProjection && stallDetection?.status === "failed" && !stallDetection.decisionProduced) {
+      await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_execution_failed"]);
+    } else if (stallDetectionProjection) {
+      await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_no_op"]);
+    }
+    const shouldRunStallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result);
+    const stallInvestigationResolution = shouldRunStallInvestigation
+      ? await resolveLearningProjection(
+          "stall_investigation",
+          learningConsumerRef("stall-investigation"),
+        )
+      : null;
+    const stallInvestigationProjection = isLearningProjectionPhase(stallInvestigationResolution?.projection, "stall_investigation")
+      ? stallInvestigationResolution.projection
+      : undefined;
+    const stallInvestigation = shouldRunStallInvestigation
+      ? await runPhaseWithLearningProjection("stall-investigation", stallInvestigationProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildStallInvestigationSpec(),
@@ -558,6 +839,7 @@ export class CoreIterationKernel {
               ...(result.stallReport?.dimension_name ? { dimensionName: result.stallReport.dimension_name } : {}),
               ...(result.stallReport?.suggested_cause ? { suggestedCause: result.stallReport.suggested_cause } : {}),
               ...(result.stallReport?.task_id ? { taskId: result.stallReport.task_id } : {}),
+              ...(stallInvestigationProjection ? { learningProjection: stallInvestigationProjection } : {}),
             },
             {
               goalId,
@@ -569,6 +851,11 @@ export class CoreIterationKernel {
         )
       : null;
     if (stallInvestigation) rememberPhase(stallInvestigation);
+    await markLearningProjectionForCorePhase(
+      stallInvestigationProjection,
+      stallInvestigation,
+      learningConsumerRef("stall-investigation"),
+    );
     if (stallInvestigation) await appendPhaseEvidence(appendRuntimeEvidence, stallInvestigation, "failure");
 
     if (result.stallDetected && result.stallReport) {
@@ -672,7 +959,7 @@ export class CoreIterationKernel {
           result.skipped = true;
           result.skipReason = "knowledge_refresh_auto_acquire";
           result.elapsedMs = Date.now() - startTime;
-          return result;
+          return await finalizeExperienceLearning();
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: knowledge_refresh auto acquisition failed (non-fatal)", {
@@ -700,7 +987,7 @@ export class CoreIterationKernel {
           result.skipped = true;
           result.skipReason = "dream_auto_acquire_knowledge";
           result.elapsedMs = Date.now() - startTime;
-          return result;
+          return await finalizeExperienceLearning();
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: autoAcquireKnowledge failed (non-fatal)", {
@@ -711,19 +998,32 @@ export class CoreIterationKernel {
     }
 
     if (skipTaskGeneration) {
+      const learningDirectiveResolution = await resolveLearningProjection(
+        "next_iteration_directive",
+        learningConsumerRef("next-directive", "skip"),
+      );
+      const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
+        ? learningDirectiveResolution.projection
+        : undefined;
       result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
+        learningProjection: learningDirectiveProjection,
         knowledgeRefreshPhase: knowledgeRefresh,
         replanningPhase: replanningOptions,
         goalDimensions: goal.dimensions.map((dimension) => dimension.name),
         fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
       });
+      await markNextDirectiveLearningProjection(
+        learningDirectiveProjection,
+        result.nextIterationDirective,
+        learningConsumerRef("next-directive", "skip"),
+      );
       await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "skip_task_generation");
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
-    if (checkDependencyBlock(ctx, goalId, result)) return result;
+    if (checkDependencyBlock(ctx, goalId, result)) return await finalizeExperienceLearning();
 
     const tookParallelPath = await tryParallelExecution(
       goalId,
@@ -735,7 +1035,7 @@ export class CoreIterationKernel {
       loopIndex,
       this.deps.logger
     );
-    if (tookParallelPath) return result;
+    if (tookParallelPath) return await finalizeExperienceLearning();
 
     const shouldPreferReplanningContext = this.deps.coreDecisionEngine.shouldPreferReplanningContext({
       phase: replanningOptions,
@@ -752,9 +1052,23 @@ export class CoreIterationKernel {
       });
       return undefined;
     });
+    const taskLearningResolution = await resolveLearningProjection(
+      "task_generation",
+      learningConsumerRef("task-generation"),
+    );
+    const taskLearningProjection = taskLearningResolution?.projection?.phase === "task_generation"
+      ? taskLearningResolution.projection
+      : undefined;
     const mergedTaskGenerationHints = {
-      targetDimensionOverride: taskGenerationHints.targetDimensionOverride ?? pendingDirective?.focusDimension,
+      targetDimensionOverride: taskGenerationHints.targetDimensionOverride
+        ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
+      ...(taskLearningProjection
+        ? {
+            learningProjection: taskLearningProjection,
+            learningPriorConsumptionRef: taskLearningProjection.consumptionRecordId,
+          }
+        : {}),
       budgetContext: runtimeBudgetContext,
       executionMode,
       runControlRecommendationContext: dreamRunControlRecommendationContext,
@@ -798,11 +1112,120 @@ export class CoreIterationKernel {
       mergedTaskGenerationHints,
       abortSignal,
     );
-    if (!taskCycleOk) return result;
-
     const completedTaskResult = result.taskResult;
+    const taskExperimentProjection = taskLearningProjection?.requiredExperimentPlanIds.length
+      ? taskLearningProjection
+      : undefined;
+    if (!taskCycleOk) {
+      if (taskExperimentProjection) {
+        await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
+      } else if (completedTaskResult && taskLearningProjection) {
+        await markTaskLearningProjectionFromResult(taskLearningProjection, completedTaskResult);
+      } else {
+        await markLearningProjectionSuppressed(taskLearningProjection, ["consumer_execution_failed"]);
+      }
+      return await finalizeExperienceLearning();
+    }
+
     if (completedTaskResult) {
       await appendTaskCycleEvidence(appendRuntimeEvidence, completedTaskResult);
+    }
+    let closedTaskExperimentPayload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> | null = null;
+    let taskLearningExperimentNoMatch = false;
+    let taskLearningExperimentCloseFailed = false;
+    if (
+      completedTaskResult
+      && taskExperimentProjection
+      && this.deps.deps.experienceLearningStore
+      && iterationEvidence.length > 0
+    ) {
+      try {
+        const experimentPlans = await this.deps.deps.experienceLearningStore.listExperimentPlans(goalId);
+        const experimentPlansById = new Map(experimentPlans.map((plan) => [plan.id, plan]));
+        let matchedExperimentPlanId: string | null = null;
+        let matchedExperimentPlan: LearningExperimentPlan | null = null;
+        for (const experimentPlanId of taskExperimentProjection.requiredExperimentPlanIds) {
+          const experimentPlan = experimentPlansById.get(experimentPlanId) ?? null;
+          if (taskMatchesExperimentPlan({
+            taskResult: completedTaskResult,
+            projection: taskExperimentProjection,
+            plan: experimentPlan,
+            planId: experimentPlanId,
+          })) {
+            matchedExperimentPlanId = experimentPlanId;
+            matchedExperimentPlan = experimentPlan;
+            break;
+          }
+        }
+        if (matchedExperimentPlanId) {
+          const experimentClosedPayload = buildExperimentRecordClosedPayload({
+            goalId,
+            runId: runtimeEvidenceScope.run_id,
+            loopIndex,
+            taskResult: completedTaskResult,
+            planId: matchedExperimentPlanId,
+            plan: matchedExperimentPlan,
+            evidenceRefs: iterationEvidence.map((entry) => entry.id),
+            eventRefs: iterationEvidence.flatMap((entry) =>
+              entry.raw_refs
+                .filter((ref) => ref.kind === "runtime_event")
+                .map((ref) => ref.id)
+                .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+            ),
+          });
+          await this.deps.deps.experienceLearningStore.appendLifecycleEvent(experimentClosedPayload);
+          closedTaskExperimentPayload = experimentClosedPayload;
+          const postOutcomePayloads = await buildPostExperimentOutcomePayloads({
+            store: this.deps.deps.experienceLearningStore,
+            experimentClosedPayload,
+          });
+          for (const payload of postOutcomePayloads) {
+            await this.deps.deps.experienceLearningStore.appendLifecycleEvent(payload);
+            if (
+              payload.event_kind === "artifact_transitioned"
+              && payload.artifact?.status === "promoted"
+              && this.deps.deps.cognitionWritebackQueue
+            ) {
+              await enqueueExperienceLearningProjectionForOwnerReview({
+                artifact: payload.artifact,
+                learningStore: this.deps.deps.experienceLearningStore,
+                queueStore: this.deps.deps.cognitionWritebackQueue,
+                createdAt: payload.artifact.updatedAt,
+              });
+            }
+          }
+        } else {
+          taskLearningExperimentNoMatch = true;
+        }
+      } catch (err) {
+        if (!closedTaskExperimentPayload) {
+          taskLearningExperimentCloseFailed = true;
+        }
+        this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
+          goalId,
+          loopIndex,
+          planIds: taskExperimentProjection.requiredExperimentPlanIds,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else if (completedTaskResult && taskExperimentProjection) {
+      taskLearningExperimentNoMatch = true;
+    }
+    if (completedTaskResult && taskLearningProjection) {
+      if (taskExperimentProjection) {
+        if (closedTaskExperimentPayload) {
+          await markLearningProjectionApplied(taskExperimentProjection, [
+            `task:${completedTaskResult.task.id}`,
+            `learning_experiment_record:${closedTaskExperimentPayload.record_id}`,
+          ]);
+        } else if (taskLearningExperimentNoMatch) {
+          await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_no_op"]);
+        } else if (taskLearningExperimentCloseFailed) {
+          await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
+        }
+      } else {
+        await markTaskLearningProjectionFromResult(taskLearningProjection, completedTaskResult);
+      }
     }
     if (this.deps.coreDecisionEngine.shouldRunVerificationEvidence(result) && completedTaskResult) {
       const verificationPhase = await runPhase("verification-evidence", () =>
@@ -830,23 +1253,535 @@ export class CoreIterationKernel {
       });
     }
 
+    const learningDirectiveResolution = await resolveLearningProjection(
+      "next_iteration_directive",
+      learningConsumerRef("next-directive"),
+    );
+    const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
+      ? learningDirectiveResolution.projection
+      : undefined;
     result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
+      learningProjection: learningDirectiveProjection,
       knowledgeRefreshPhase: knowledgeRefresh,
       replanningPhase: replanningOptions,
       goalDimensions: goal.dimensions.map((dimension) => dimension.name),
       fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
     });
+    await markNextDirectiveLearningProjection(
+      learningDirectiveProjection,
+      result.nextIterationDirective,
+      learningConsumerRef("next-directive"),
+    );
     await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "next_iteration_directive");
 
     await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
 
     result.elapsedMs = Date.now() - startTime;
-    return result;
+    return await finalizeExperienceLearning();
   }
 }
 
+function taskMatchesExperimentPlan(input: {
+  taskResult: TaskCycleResult;
+  projection: LearningPriorPhaseProjection & { phase: "task_generation" };
+  plan: LearningExperimentPlan | null;
+  planId: string;
+}): boolean {
+  if (!canCloseTaskExperimentRecord(input.taskResult)) return false;
+  if (!input.projection.requiredExperimentPlanIds.includes(input.planId)) return false;
+  if (!input.plan || input.plan.plannedConsumerPhase !== "task_generation") return false;
+  if (input.plan.plannedTaskId) {
+    return input.plan.plannedTaskId === input.taskResult.task.id;
+  }
+  const preferredDimension = input.projection.preferredTargetDimension;
+  if (!preferredDimension) return false;
+  return input.taskResult.task.primary_dimension === preferredDimension
+    || input.taskResult.task.target_dimensions.includes(preferredDimension);
+}
+
+function canCloseTaskExperimentRecord(taskResult: TaskCycleResult): boolean {
+  return taskResult.action === "completed" && taskResult.task.id !== "skipped";
+}
+
+function buildExperimentRecordClosedPayload(input: {
+  goalId: string;
+  runId?: string;
+  loopIndex: number;
+  taskResult: TaskCycleResult;
+  planId: string;
+  plan?: LearningExperimentPlan | null;
+  evidenceRefs: readonly string[];
+  eventRefs: readonly string[];
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> {
+  const now = new Date().toISOString();
+  const recordId = stableLearningId("learning-experiment-record", [
+    input.planId,
+    input.taskResult.task.id,
+    input.loopIndex,
+  ]);
+  const valueOutcomeId = stableLearningId("learning-experiment-value-outcome", [recordId]);
+  const outcome = input.taskResult.action === "completed"
+    ? input.taskResult.verificationResult.verdict === "pass"
+      ? "supported"
+      : input.taskResult.verificationResult.verdict === "fail"
+        ? "falsified"
+        : "inconclusive"
+    : "inconclusive";
+  const testedGeneralizationCandidateIds = input.plan?.generalizationCandidateIds ?? [];
+  const eliminatedHypothesisIds = outcome === "falsified" ? input.plan?.hypothesisIds ?? [] : [];
+  const trust = defaultRuntimeEvidenceTrust({
+    targetRef: {
+      kind: "experiment_record",
+      id: recordId,
+      scope: {
+        goal_id: input.goalId,
+        ...(input.runId ? { run_id: input.runId } : {}),
+      },
+    },
+    provenanceRefs: input.evidenceRefs,
+    sourceAuthority: "verified_execution",
+  });
+  const record = ExperimentRecordSchema.parse({
+    id: recordId,
+    planId: input.planId,
+    goalId: input.goalId,
+    ...(input.runId ? { runId: input.runId } : {}),
+    loopIndex: input.loopIndex,
+    taskId: input.taskResult.task.id,
+    actionRefs: [`task:${input.taskResult.task.id}`],
+    executedAt: now,
+    outcome,
+    outcomeEvidenceRefs: [...input.evidenceRefs],
+    outcomeEventRefs: [...input.eventRefs],
+    outcomeRuntimeGraphRefs: [],
+    eliminatedHypothesisIds,
+    testedGeneralizationCandidateIds,
+    narrowedGeneralizationCandidateIds: outcome === "falsified" ? testedGeneralizationCandidateIds : [],
+    negativeTransferRefs: outcome === "falsified" ? [...input.evidenceRefs] : [],
+    followUpFrameIds: [],
+    trust,
+  });
+  const valueOutcome = ExperimentValueOutcomeSchema.parse({
+    id: valueOutcomeId,
+    planId: input.planId,
+    recordId,
+    realizedInformationGain: outcome === "inconclusive" ? 0.2 : 0.7,
+    eliminatedHypothesisIds,
+    eliminatedHypothesisCount: eliminatedHypothesisIds.length,
+    actualCost: "low",
+    actualRisk: "low",
+    actualTimeToSignal: "same_iteration",
+    transferOutcome: outcome === "supported" ? "exact_success" : outcome === "falsified" ? "negative_transfer" : "inconclusive",
+    calibrationError: outcome === "inconclusive" ? 0.3 : 0.1,
+    outcomeEvidenceRefs: [...input.evidenceRefs],
+  });
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    event_kind: "experiment_record_closed",
+    idempotency_key: `experience-learning:experiment-record:${recordId}`,
+    goal_id: input.goalId,
+    ...(input.runId ? { run_id: input.runId } : {}),
+    loop_index: input.loopIndex,
+    source_refs: {
+      evidence_refs: [...input.evidenceRefs],
+      event_refs: [...input.eventRefs],
+      runtime_graph_refs: [],
+    },
+    trust,
+    correction_state: trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: [
+        { kind: "learning_experiment_record", ref: recordId },
+        { kind: "learning_experiment_plan", ref: input.planId },
+      ],
+      edge_refs: [],
+    },
+    record_id: recordId,
+    plan_id: input.planId,
+    outcome,
+    value_outcome_id: valueOutcomeId,
+    record,
+    value_outcome: valueOutcome,
+  };
+}
+
+async function buildPostExperimentOutcomePayloads(input: {
+  store: ExperienceLearningStateStore;
+  experimentClosedPayload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }>;
+}): Promise<ExperienceLearningRuntimeEventPayload[]> {
+  const record = input.experimentClosedPayload.record;
+  const valueOutcome = input.experimentClosedPayload.value_outcome;
+  if (!record || !valueOutcome) return [];
+
+  const plans = await input.store.listExperimentPlans(record.goalId);
+  const plan = plans.find((candidate) => candidate.id === record.planId);
+  const candidateId = plan?.generalizationCandidateIds[0];
+  if (!plan || !candidateId) return [];
+
+  const candidates = await input.store.listGeneralizationCandidates(record.goalId);
+  const candidate = candidates.find((item) => item.id === candidateId);
+  if (!candidate || (candidate.status !== "trial_reuse_ready" && candidate.status !== "strengthened")) return [];
+
+  const artifacts = await input.store.listArtifacts(record.goalId);
+  const previousArtifact = artifacts.find((artifact) =>
+    artifact.evidence.generalizationCandidateIds.includes(candidate.id)
+    && (artifact.status === "trial_reuse_ready" || artifact.status === "strengthened" || artifact.status === "tentative")
+  ) ?? null;
+
+  const outcomeEventRefs = input.experimentClosedPayload.source_refs.event_refs;
+  if (record.outcome === "supported" && valueOutcome.transferOutcome === "exact_success") {
+    const promotedCandidate = promoteCandidateFromExperiment(candidate, record);
+    const promotedArtifact = buildPostExperimentArtifact({
+      candidate: promotedCandidate,
+      previousArtifact,
+      record,
+      valueOutcome,
+      status: "promoted",
+    });
+    const promotedPrior = buildPostExperimentPrior({
+      artifact: promotedArtifact,
+      candidate: promotedCandidate,
+      plan,
+      record,
+    });
+    return [
+      generalizationPostOutcomePayload({ candidate: promotedCandidate, fromStatus: candidate.status, eventRefs: outcomeEventRefs, record, reasonCode: "experiment_supported_promotion" }),
+      artifactPostOutcomePayload({ artifact: promotedArtifact, fromStatus: previousArtifact?.status ?? null, eventRefs: outcomeEventRefs, record, reasonCode: "pre_registered_experiment_supported" }),
+      priorPostOutcomePayload({ prior: promotedPrior, eventRefs: outcomeEventRefs, record }),
+    ];
+  }
+
+  if (record.outcome === "falsified" || valueOutcome.transferOutcome === "negative_transfer") {
+    const narrowedCandidate = narrowCandidateFromExperiment(candidate, record);
+    const narrowedArtifact = buildPostExperimentArtifact({
+      candidate: narrowedCandidate,
+      previousArtifact,
+      record,
+      valueOutcome,
+      status: "narrowed",
+    });
+    return [
+      generalizationPostOutcomePayload({ candidate: narrowedCandidate, fromStatus: candidate.status, eventRefs: outcomeEventRefs, record, reasonCode: "negative_transfer_narrowed_scope" }),
+      artifactPostOutcomePayload({ artifact: narrowedArtifact, fromStatus: previousArtifact?.status ?? null, eventRefs: outcomeEventRefs, record, reasonCode: "negative_transfer_narrowed_scope" }),
+    ];
+  }
+
+  return [];
+}
+
+function promoteCandidateFromExperiment(
+  candidate: GeneralizationCandidate,
+  record: ExperimentRecord,
+): GeneralizationCandidate {
+  const exactScopeRef = `goal:${candidate.goalId}`;
+  return GeneralizationCandidateSchema.parse({
+    ...candidate,
+    status: "promoted",
+    supportRefs: uniqueStrings([...candidate.supportRefs, ...record.outcomeEvidenceRefs]),
+    transferScopes: candidate.transferScopes.map((scope) => ({
+      ...scope,
+      status: scope.scopeRef === exactScopeRef && scope.status !== "blocked" ? "exact" : scope.status,
+      attempts: scope.scopeRef === exactScopeRef ? Math.min(scope.maxTrials, scope.attempts + 1) : scope.attempts,
+      successRefs: scope.scopeRef === exactScopeRef ? uniqueStrings([...scope.successRefs, record.planId]) : scope.successRefs,
+    })),
+    updatedAt: record.executedAt,
+  });
+}
+
+function narrowCandidateFromExperiment(
+  candidate: GeneralizationCandidate,
+  record: ExperimentRecord,
+): GeneralizationCandidate {
+  return GeneralizationCandidateSchema.parse({
+    ...candidate,
+    status: "narrowed",
+    counterexampleRefs: uniqueStrings([...candidate.counterexampleRefs, record.id, ...record.outcomeEvidenceRefs]),
+    transferScopes: candidate.transferScopes.map((scope) => ({
+      ...scope,
+      status: "narrowed",
+      attempts: Math.min(scope.maxTrials, scope.attempts + 1),
+      negativeTransferRefs: uniqueStrings([...scope.negativeTransferRefs, record.id, ...record.negativeTransferRefs]),
+      narrowedAt: record.executedAt,
+    })),
+    updatedAt: record.executedAt,
+  });
+}
+
+function buildPostExperimentArtifact(input: {
+  candidate: GeneralizationCandidate;
+  previousArtifact: LearningArtifact | null;
+  record: ExperimentRecord;
+  valueOutcome: ExperimentValueOutcome;
+  status: "promoted" | "narrowed";
+}): LearningArtifact {
+  const sourceEvidenceRefs = uniqueStrings([
+    ...(input.previousArtifact?.evidence.runtimeEvidenceRefs ?? []),
+    ...input.candidate.supportRefs,
+    ...input.record.outcomeEvidenceRefs,
+  ]);
+  const artifactId = input.previousArtifact?.id ?? stableLearningId("learning-artifact", [input.candidate.id, input.status]);
+  const targetDimension = targetDimensionFromCandidate(input.candidate);
+  return LearningArtifactSchema.parse({
+    id: artifactId,
+    sourceGoalId: input.candidate.goalId,
+    ...(input.candidate.runId ? { sourceRunId: input.candidate.runId } : {}),
+    kind: "generalization_candidate",
+    summary: redactedLearningLabel({
+      label: `${input.status} reusable structure after ${input.valueOutcome.transferOutcome}`,
+      sourceRefs: sourceEvidenceRefs,
+      maxLength: 160,
+    }),
+    scope: input.candidate.scope,
+    evidence: {
+      frameIds: input.previousArtifact?.evidence.frameIds ?? input.candidate.invariantRefs,
+      hypothesisIds: input.previousArtifact?.evidence.hypothesisIds ?? input.candidate.sourceHypothesisIds,
+      generalizationCandidateIds: [input.candidate.id],
+      experimentPlanIds: uniqueStrings([...(input.previousArtifact?.evidence.experimentPlanIds ?? []), input.record.planId]),
+      experimentRecordIds: uniqueStrings([...(input.previousArtifact?.evidence.experimentRecordIds ?? []), input.record.id]),
+      runtimeEvidenceRefs: sourceEvidenceRefs,
+    },
+    confidence: input.status === "promoted" ? 0.74 : 0.42,
+    status: input.status,
+    trust: input.candidate.trust,
+    correctionState: input.candidate.correctionState,
+    policyEffect: input.status === "promoted"
+      ? promotedArtifactSuggestions({
+          artifactId,
+          candidate: input.candidate,
+          targetDimension,
+          sourceEvidenceRefs,
+          expiresAt: new Date(Date.parse(input.record.executedAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        })
+      : [],
+    guardrails: {
+      authorityClass: "planning_hint_only",
+      cannotGrantAuthority: true,
+      requiresFreshEvidenceBeforePromotion: input.status !== "promoted",
+      contradictionRefs: input.status === "narrowed" ? input.record.outcomeEvidenceRefs : [],
+      falsificationPlanRefs: uniqueStrings([...(input.previousArtifact?.guardrails.falsificationPlanRefs ?? []), input.record.planId]),
+    },
+    createdAt: input.previousArtifact?.createdAt ?? input.record.executedAt,
+    updatedAt: input.record.executedAt,
+  });
+}
+
+function promotedArtifactSuggestions(input: {
+  artifactId: string;
+  candidate: GeneralizationCandidate;
+  targetDimension: string;
+  sourceEvidenceRefs: string[];
+  expiresAt: string;
+}): LearningArtifact["policyEffect"] {
+  return [
+    learningPriorSuggestion({
+      id: stableLearningId("learning-prior-suggestion", [input.artifactId, "post-experiment-task-generation"]),
+      kind: "strategy_preference",
+      consumerPhase: "task_generation",
+      targetRef: { kind: "dimension", id: input.targetDimension },
+      rationale: redactedLearningLabel({
+        label: "Apply the promoted experiment-backed learning structure as a bounded task-generation bias",
+        sourceRefs: input.sourceEvidenceRefs,
+        maxLength: 180,
+      }),
+      sourceArtifactIds: [input.artifactId],
+      experimentPlanIds: input.candidate.transferScopes.flatMap((scope) => scope.successRefs),
+      evidenceRefs: input.sourceEvidenceRefs,
+      strength: 0.6,
+      risk: "low",
+      expiresAt: input.expiresAt,
+      maxUses: 1,
+      sourceContext: { kind: "non_user_context", requestedUseClass: "goal_planning" },
+    }),
+    learningPriorSuggestion({
+      id: stableLearningId("learning-prior-suggestion", [input.artifactId, "post-experiment-next-directive"]),
+      kind: "phase_focus",
+      consumerPhase: "next_iteration_directive",
+      targetRef: { kind: "dimension", id: input.targetDimension },
+      rationale: redactedLearningLabel({
+        label: "Focus the next directive on the promoted experiment-backed learning structure",
+        sourceRefs: input.sourceEvidenceRefs,
+        maxLength: 180,
+      }),
+      sourceArtifactIds: [input.artifactId],
+      experimentPlanIds: input.candidate.transferScopes.flatMap((scope) => scope.successRefs),
+      evidenceRefs: input.sourceEvidenceRefs,
+      strength: 0.5,
+      risk: "low",
+      expiresAt: input.expiresAt,
+      maxUses: 1,
+      sourceContext: { kind: "non_user_context", requestedUseClass: "goal_planning" },
+    }),
+  ];
+}
+
+function buildPostExperimentPrior(input: {
+  artifact: LearningArtifact;
+  candidate: GeneralizationCandidate;
+  plan: LearningExperimentPlan;
+  record: ExperimentRecord;
+}): LearningPriorSnapshot {
+  const id = stableLearningId("learning-prior", [input.artifact.id, "post-experiment", input.record.id]);
+  return LearningPriorSnapshotSchema.parse({
+    id,
+    goalId: input.artifact.sourceGoalId,
+    ...(input.artifact.sourceRunId ? { runId: input.artifact.sourceRunId } : {}),
+    generatedAt: input.record.executedAt,
+    sourceLoopIndex: input.record.loopIndex ?? 0,
+    eligibleFromIteration: (input.record.loopIndex ?? 0) + 1,
+    generationEventRef: `runtime-event-projection:experience-learning:${id}`,
+    sourceCandidateTransitionIds: [stableLearningId("candidate-transition", [input.candidate.id, "promoted", input.record.id])],
+    scope: input.candidate.scope,
+    compatibility: {
+      decision: "compatible",
+      reasonCode: "matched_exact_refs",
+      matchedRefs: [`goalId:${input.artifact.sourceGoalId}`],
+      missingRefs: [],
+    },
+    sourceArtifactIds: [input.artifact.id],
+    suggestions: input.artifact.policyEffect.map((suggestion) => ({
+      ...suggestion,
+      experimentPlanIds: uniqueStrings([...suggestion.experimentPlanIds, input.plan.id]),
+    })),
+    staleOrFalsifiedArtifactIds: [],
+    suppressedByCorrectionIds: [],
+    suppressedByQuarantineIds: [],
+    trust: input.artifact.trust,
+    sourceTrustStates: [{ sourceRef: input.artifact.id, trust: input.artifact.trust }],
+    filterDecision: {
+      decision: "activated",
+      reasonCodes: ["eligible"],
+      evaluatedAt: input.record.executedAt,
+    },
+    confidence: 0.68,
+    traceRef: `experience-learning-prior:${id}`,
+  });
+}
+
+function generalizationPostOutcomePayload(input: {
+  candidate: GeneralizationCandidate;
+  fromStatus: GeneralizationCandidate["status"];
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+  reasonCode: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "generalization_transitioned" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:generalization:${input.candidate.id}:${input.candidate.status}:${input.record.id}`,
+      goalId: input.candidate.goalId,
+      runId: input.candidate.runId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.record.outcomeEvidenceRefs,
+      eventRefs: input.eventRefs,
+      trust: input.candidate.trust,
+      graphNodeRefs: [{ kind: "generalization_candidate", ref: input.candidate.id }],
+    }),
+    event_kind: "generalization_transitioned",
+    generalization_id: input.candidate.id,
+    body_kind: input.candidate.body.kind,
+    transfer_scope_refs: input.candidate.transferScopes.map((scope) => scope.scopeRef),
+    from_status: input.fromStatus,
+    to_status: input.candidate.status,
+    reason_code: input.reasonCode,
+    generalization: input.candidate,
+  };
+}
+
+function artifactPostOutcomePayload(input: {
+  artifact: LearningArtifact;
+  fromStatus: LearningArtifact["status"] | null;
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+  reasonCode: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "artifact_transitioned" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:artifact:${input.artifact.id}:${input.artifact.status}:${input.record.id}`,
+      goalId: input.artifact.sourceGoalId,
+      runId: input.artifact.sourceRunId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.artifact.evidence.runtimeEvidenceRefs,
+      eventRefs: input.eventRefs,
+      trust: input.artifact.trust,
+      graphNodeRefs: [{ kind: "learning_artifact", ref: input.artifact.id }],
+    }),
+    event_kind: "artifact_transitioned",
+    artifact_id: input.artifact.id,
+    source_candidate_ids: input.artifact.evidence.generalizationCandidateIds,
+    from_status: input.fromStatus,
+    to_status: input.artifact.status,
+    reason_code: input.reasonCode,
+    artifact: input.artifact,
+  };
+}
+
+function priorPostOutcomePayload(input: {
+  prior: LearningPriorSnapshot;
+  eventRefs: readonly string[];
+  record: ExperimentRecord;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_generated" }> {
+  return {
+    ...postExperimentPayloadBase({
+      idempotencyKey: `experience-learning:prior-generated:${input.prior.id}`,
+      goalId: input.prior.goalId,
+      runId: input.prior.runId,
+      loopIndex: input.record.loopIndex,
+      evidenceRefs: input.prior.suggestions.flatMap((suggestion) => suggestion.evidenceRefs),
+      eventRefs: input.eventRefs,
+      trust: input.prior.trust,
+      graphNodeRefs: [{ kind: "learning_prior", ref: input.prior.id }],
+    }),
+    event_kind: "prior_generated",
+    prior_id: input.prior.id,
+    artifact_ids: input.prior.sourceArtifactIds,
+    eligible_from_iteration: input.prior.eligibleFromIteration,
+    prior: input.prior,
+  };
+}
+
+function postExperimentPayloadBase(input: {
+  idempotencyKey: string;
+  goalId: string;
+  runId?: string;
+  loopIndex?: number;
+  evidenceRefs: readonly string[];
+  eventRefs: readonly string[];
+  trust: LearningArtifact["trust"];
+  graphNodeRefs: Array<{ kind: string; ref: string }>;
+}): Omit<ExperienceLearningRuntimeEventPayload, "event_kind"> {
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    idempotency_key: input.idempotencyKey,
+    goal_id: input.goalId,
+    ...(input.runId ? { run_id: input.runId } : {}),
+    ...(typeof input.loopIndex === "number" ? { loop_index: input.loopIndex } : {}),
+    source_refs: {
+      evidence_refs: uniqueStrings([...input.evidenceRefs]),
+      event_refs: uniqueStrings([...input.eventRefs]),
+      runtime_graph_refs: [],
+    },
+    trust: input.trust,
+    correction_state: input.trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: input.graphNodeRefs,
+      edge_refs: [],
+    },
+  } as Omit<ExperienceLearningRuntimeEventPayload, "event_kind">;
+}
+
+function targetDimensionFromCandidate(candidate: GeneralizationCandidate): string {
+  const proposal = candidate.body.reuseProposal;
+  const ref = proposal.strategyBiasRefs[0] ?? proposal.actionBiasRefs[0] ?? candidate.id;
+  return ref.startsWith("dimension:") ? ref.slice("dimension:".length) : ref;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.length > 0))];
+}
+
 async function appendPublicResearchEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -898,7 +1833,7 @@ async function appendPublicResearchEvidence(
 }
 
 async function appendDreamReviewCheckpointEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -1020,7 +1955,7 @@ async function loadReadyFinalizationManifestId(input: {
 }
 
 async function appendPhaseEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -1053,7 +1988,7 @@ async function appendPhaseEvidence(
 }
 
 async function appendDecisionEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   directive: LoopIterationResult["nextIterationDirective"],
   fallbackReason: string,
 ): Promise<void> {
@@ -1073,7 +2008,7 @@ async function appendDecisionEvidence(
 }
 
 async function appendTaskCycleEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   taskResult: TaskCycleResult,
 ): Promise<void> {
   const task = taskResult.task;

@@ -133,6 +133,27 @@ describe("cognition writeback queue", () => {
     ]);
   });
 
+  it("removes queue entries by id for compensating rollbacks", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-remove-"));
+    const store = new FileCognitionWritebackQueueStore(tempDir);
+    const first = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:writeback:remove:first",
+      proposal: proposal({ proposal_id: "writeback:remove:first" }),
+      createdAt: NOW,
+    });
+    const second = createCognitionWritebackQueueEntry({
+      queueEntryId: "queue:writeback:remove:second",
+      proposal: proposal({ proposal_id: "writeback:remove:second" }),
+      createdAt: NOW,
+    });
+    await store.enqueue(first);
+    await store.enqueue(second);
+
+    await store.remove(first.queue_entry_id);
+
+    expect((await store.list()).map((entry) => entry.queue_entry_id)).toEqual([second.queue_entry_id]);
+  });
+
   it("does not let replay reprocessing erase an owner decision", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "pulseed-cognition-writeback-"));
     const store = new FileCognitionWritebackQueueStore(tempDir);

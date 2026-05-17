@@ -22,8 +22,10 @@ import type { PacingResult } from "../../base/types/time-horizon.js";
 import { CoreLoopLearning } from "./durable-loop/learning.js";
 import { StaticCorePhasePolicyRegistry } from "./durable-loop/phase-policy.js";
 import { CoreDecisionEngine } from "./durable-loop/decision-engine.js";
+import { ExperienceLearningBridge } from "./durable-loop/experience-learning-bridge.js";
 import type { CorePhasePolicyRegistry } from "./durable-loop/phase-policy.js";
 import { CoreIterationKernel } from "./durable-loop/iteration-kernel.js";
+import { ExperienceLearningStateStore } from "../../runtime/store/experience-learning-state-store.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import { resolveLoopConfig, resolveLoopRunPolicy } from "./run-policy.js";
 import type {
@@ -106,6 +108,7 @@ export class CoreLoop {
   private pendingIterationDirectives = new Map<string, import("./loop-result-types.js").NextIterationDirective>();
   /** Tracks goals that have already been through auto-decompose this run. */
   private decomposedGoals = new Set<string>();
+  private ownedExperienceLearningStore: ExperienceLearningStateStore | null = null;
   /** Optional TimeHorizonEngine for adaptive observation interval (Gap 4). */
   private timeHorizonEngine?: ITimeHorizonEngine;
   /** Last known pacing result — updated each iteration for adaptive delay. */
@@ -130,6 +133,17 @@ export class CoreLoop {
     // Wire optional StrategyTemplateRegistry into StrategyManager for auto-templating
     if (deps.strategyTemplateRegistry) {
       deps.strategyManager.setStrategyTemplateRegistry(deps.strategyTemplateRegistry);
+    }
+    const baseDir = typeof deps.stateManager.getBaseDir === "function"
+      ? deps.stateManager.getBaseDir()
+      : null;
+    if (!deps.experienceLearningStore && baseDir) {
+      const ownedStore = new ExperienceLearningStateStore(baseDir, { controlBaseDir: baseDir });
+      deps.experienceLearningStore = ownedStore;
+      this.ownedExperienceLearningStore = ownedStore;
+    }
+    if (!deps.experienceLearningBridge && deps.experienceLearningStore) {
+      deps.experienceLearningBridge = new ExperienceLearningBridge(deps.experienceLearningStore);
     }
   }
   // ─── Public API ───
@@ -523,6 +537,13 @@ export class CoreLoop {
    */
   stop(): void {
     this.stopped = true;
+  }
+
+  async close(): Promise<void> {
+    if (!this.ownedExperienceLearningStore) return;
+    const store = this.ownedExperienceLearningStore;
+    this.ownedExperienceLearningStore = null;
+    await store.close();
   }
 
   /**

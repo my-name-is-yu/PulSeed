@@ -4,6 +4,7 @@ import type { GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
 import type { RuntimeFailedLineageContext } from "../../../runtime/store/evidence-ledger.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 import type { GapObservation } from "../../../base/types/time-horizon.js";
 import {
   selectMetricTrendForDimension,
@@ -25,6 +26,17 @@ type DimensionGapSample = {
 
 export interface StallActionHints {
   recommendedAction?: "continue" | "refine" | "pivot";
+  learningProjection?: LearningPriorPhaseProjection & { phase: "stall_detection" };
+  learningPriorConsumptionRef?: string;
+  focusEvidenceRefs?: string[];
+  blockedLoopPatternRefs?: string[];
+  experimentPlanIds?: string[];
+}
+
+export interface StallDetectionExecutionResult {
+  status: "completed" | "failed";
+  decisionProduced: boolean;
+  error?: string;
 }
 
 type StrategyStallArgs = [
@@ -186,9 +198,14 @@ async function applyStallAction(
   }
   const analysis = ctx.deps.stallDetector.analyzeStallCause?.(dimHistory);
   result.stallAnalysis = analysis;
+  const projectionRecommendedAction = (stallActionHints?.blockedLoopPatternRefs?.length ?? 0) > 0
+    ? "pivot"
+    : (stallActionHints?.focusEvidenceRefs?.length ?? 0) > 0
+      ? "refine"
+      : undefined;
   const selectedAction = analysis?.recommended_action === "escalate"
     ? "escalate"
-    : stallActionHints?.recommendedAction ?? analysis?.recommended_action ?? "pivot";
+    : stallActionHints?.recommendedAction ?? projectionRecommendedAction ?? analysis?.recommended_action ?? "pivot";
 
   if (selectedAction === "continue") {
     ctx.logger?.info(`CoreLoop: ${logPrefix}stall CONTINUE — replanning evidence prefers continuing current strategy`, {
@@ -293,7 +310,7 @@ async function applyStallAction(
         timestamp: new Date().toISOString(),
         what_worked: [],
         what_failed: [],
-        suggested_next: [],
+        suggested_next: stallActionHints?.focusEvidenceRefs ?? [],
       });
     } catch {
       // non-fatal
@@ -537,7 +554,7 @@ export async function detectStallsAndRebalance(
   goal: Goal,
   result: LoopIterationResult,
   stallActionHints?: StallActionHints
-): Promise<void> {
+): Promise<StallDetectionExecutionResult> {
   try {
     const gapHistory = await ctx.deps.stateManager.loadGapHistory(goalId);
     const gapHistoryByDimension = indexGapHistoryByDimension(goal, gapHistory);
@@ -672,8 +689,14 @@ export async function detectStallsAndRebalance(
     if (ctx.deps.portfolioManager) {
       await rebalancePortfolio(ctx, goalId, goal, waitActivationContext);
     }
+    return { status: "completed", decisionProduced: true };
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
+    return {
+      status: "failed",
+      decisionProduced: Boolean(result.stallDetected || result.stallReport),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

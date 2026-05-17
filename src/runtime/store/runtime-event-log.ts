@@ -23,6 +23,10 @@ import {
   type CommitmentCandidate,
   type CommitmentLifecycleControl,
 } from "../attention/commitment-candidate.js";
+import {
+  ExperienceLearningRuntimeEventPayloadSchema,
+  type ExperienceLearningRuntimeEventPayload,
+} from "../learning/runtime-event-payload.js";
 import { attentionScopeKey } from "../attention/attention-scope.js";
 import {
   isTerminalRuntimeControlState,
@@ -71,6 +75,20 @@ export const RuntimeEventTypeSchema = z.enum([
   "goal.mutation.recorded",
   "task.mutation.recorded",
   "attention.commitment.recorded",
+  "experience_learning.frame.activated",
+  "experience_learning.hypothesis.transitioned",
+  "experience_learning.generalization.transitioned",
+  "experience_learning.micro_probe.recorded",
+  "experience_learning.candidate_transition.recorded",
+  "experience_learning.experiment_plan.registered",
+  "experience_learning.experiment_record.closed",
+  "experience_learning.artifact.transitioned",
+  "experience_learning.prior.generated",
+  "experience_learning.prior.reserved",
+  "experience_learning.prior.applied",
+  "experience_learning.prior.suppressed",
+  "experience_learning.prior.invalidated",
+  "experience_learning.projection.enqueued",
 ]);
 export type RuntimeEventType = z.infer<typeof RuntimeEventTypeSchema>;
 
@@ -150,7 +168,17 @@ const RuntimeAttentionCommitmentEventPayloadSchema = z.object({
   candidate: CommitmentCandidateSchema,
 }).strict();
 
-export const RuntimeEventPayloadSchema = z.discriminatedUnion("schema_version", [
+export type RuntimeEventPayload =
+  | z.infer<typeof RuntimePersonalAgentTraceEventPayloadSchema>
+  | z.infer<typeof RuntimeAuthorityDecisionEventPayloadSchema>
+  | z.infer<typeof RuntimeProjectionRebuildEventPayloadSchema>
+  | z.infer<typeof RuntimeGoalTaskMutationEventPayloadSchema>
+  | z.infer<typeof RuntimeControlOperationEventPayloadSchema>
+  | z.infer<typeof RuntimeMemoryTruthMaintenanceEventPayloadSchema>
+  | z.infer<typeof RuntimeAttentionCommitmentEventPayloadSchema>
+  | ExperienceLearningRuntimeEventPayload;
+
+export const RuntimeEventPayloadSchema: z.ZodType<RuntimeEventPayload> = z.union([
   RuntimePersonalAgentTraceEventPayloadSchema,
   RuntimeAuthorityDecisionEventPayloadSchema,
   RuntimeProjectionRebuildEventPayloadSchema,
@@ -158,10 +186,70 @@ export const RuntimeEventPayloadSchema = z.discriminatedUnion("schema_version", 
   RuntimeControlOperationEventPayloadSchema,
   RuntimeMemoryTruthMaintenanceEventPayloadSchema,
   RuntimeAttentionCommitmentEventPayloadSchema,
-]);
-export type RuntimeEventPayload = z.infer<typeof RuntimeEventPayloadSchema>;
+  ExperienceLearningRuntimeEventPayloadSchema,
+]) as z.ZodType<RuntimeEventPayload>;
 
-export const RuntimeEventEnvelopeSchema = z.object({
+export interface RuntimeEventEnvelope {
+  schema_version: "runtime-event-envelope/v1";
+  event_id: string;
+  event_type: RuntimeEventType;
+  occurred_at: string;
+  trace_id: string;
+  causation_id: string | null;
+  correlation_id: string;
+  idempotency_key: string;
+  actor: z.infer<typeof RuntimeEventActorSchema>;
+  caller_path: PersonalAgentCallerPath;
+  surface: string | null;
+  goal_id: string | null;
+  task_id: string | null;
+  run_id: string | null;
+  session_id: string | null;
+  source_ref: z.infer<typeof RuntimeEventRefSchema>;
+  target_refs: Array<z.infer<typeof RuntimeEventRefSchema>>;
+  authority_decision_ref: z.infer<typeof RuntimeEventRefSchema> | null;
+  runtime_graph_node_ref: z.infer<typeof RuntimeEventRefSchema> | null;
+  runtime_graph_edge_refs: Array<z.infer<typeof RuntimeEventRefSchema>>;
+  side_effect_ref: z.infer<typeof RuntimeEventRefSchema> | null;
+  replay_policy: RuntimeEventReplayPolicy;
+  payload_schema: string;
+  payload_version: string;
+  payload: RuntimeEventPayload;
+}
+
+export type RuntimeEventEnvelopeInput =
+  Omit<RuntimeEventEnvelope,
+    | "causation_id"
+    | "surface"
+    | "goal_id"
+    | "task_id"
+    | "run_id"
+    | "session_id"
+    | "target_refs"
+    | "authority_decision_ref"
+    | "runtime_graph_node_ref"
+    | "runtime_graph_edge_refs"
+    | "side_effect_ref"
+    | "payload_schema"
+    | "payload_version"
+  >
+  & Partial<Pick<RuntimeEventEnvelope,
+    | "causation_id"
+    | "surface"
+    | "goal_id"
+    | "task_id"
+    | "run_id"
+    | "session_id"
+    | "target_refs"
+    | "authority_decision_ref"
+    | "runtime_graph_node_ref"
+    | "runtime_graph_edge_refs"
+    | "side_effect_ref"
+    | "payload_schema"
+    | "payload_version"
+  >>;
+
+export const RuntimeEventEnvelopeSchema: z.ZodType<RuntimeEventEnvelope> = z.object({
   schema_version: z.literal("runtime-event-envelope/v1"),
   event_id: z.string().min(1),
   event_type: RuntimeEventTypeSchema,
@@ -187,9 +275,7 @@ export const RuntimeEventEnvelopeSchema = z.object({
   payload_schema: z.string().min(1).default("runtime-event-payload/unknown"),
   payload_version: z.string().min(1).default("runtime-event-payload/unknown"),
   payload: RuntimeEventPayloadSchema,
-}).strict();
-export type RuntimeEventEnvelope = z.infer<typeof RuntimeEventEnvelopeSchema>;
-export type RuntimeEventEnvelopeInput = z.input<typeof RuntimeEventEnvelopeSchema>;
+}).strict() as z.ZodType<RuntimeEventEnvelope>;
 
 export interface RuntimeEventLogListOptions {
   traceId?: string;
@@ -243,6 +329,18 @@ export interface RuntimeEventProjectionRebuild {
   tool_execution_outcome_summary: Array<Record<string, unknown>>;
   runtime_control_operation_summary: Array<Record<string, unknown>>;
   attention_commitment_lifecycle_summary: Array<Record<string, unknown>>;
+  experience_learning_summary: {
+    frame_count: number;
+    hypothesis_count: number;
+    generalization_count: number;
+    micro_probe_count: number;
+    experiment_count: number;
+    artifact_count: number;
+    prior_count: number;
+    prior_consumption_count: number;
+    projection_count: number;
+    event_kinds: Record<string, number>;
+  };
 }
 
 export type RuntimeEventProjectionName =
@@ -255,7 +353,8 @@ export type RuntimeEventProjectionName =
   | "schedule_wake_execution_summary"
   | "tool_execution_outcome_summary"
   | "runtime_control_operation_summary"
-  | "attention_commitment_lifecycle_summary";
+  | "attention_commitment_lifecycle_summary"
+  | "experience_learning_summary";
 
 export interface RuntimeEventProjectionSnapshot {
   schema_version: "runtime-event-projection-snapshot/v1";
@@ -286,6 +385,7 @@ export interface RuntimeEventProjectionCurrentStateApplySummary {
   interaction_authority_decisions: number;
   runtime_operations: number;
   attention_commitment_candidates: number;
+  experience_learning_projection_events: number;
 }
 
 export interface RuntimeGraphExplainResult {
@@ -616,6 +716,53 @@ export function runtimeEventFromAuthorityDecision(decision: ExecutionAuthorityDe
       schema_version: "runtime-event-payload/authority-decision/v1",
       decision: parsed,
     },
+  };
+}
+
+export function runtimeEventFromExperienceLearningPayload(
+  payloadInput: ExperienceLearningRuntimeEventPayload,
+  occurredAtInput?: string,
+): RuntimeEventEnvelopeInput {
+  const payload = ExperienceLearningRuntimeEventPayloadSchema.parse(payloadInput) as ExperienceLearningRuntimeEventPayload;
+  const occurredAt = validIsoOrNow(occurredAtInput ?? new Date().toISOString());
+  const primaryRef = primaryExperienceLearningRef(payload);
+  const eventId = `runtime-event:${stableId(`experience-learning:${payload.idempotency_key}:${payload.event_kind}:${stableJson(primaryRef)}`)}`;
+  const sourceRefs = uniqueRefs([
+    ...payload.source_refs.evidence_refs.map((ref) => ({ kind: "runtime_evidence", ref })),
+    ...payload.source_refs.event_refs.map((ref) => ({ kind: "runtime_event", ref })),
+    ...payload.source_refs.runtime_graph_refs.map((ref) => ({ kind: "runtime_graph", ref })),
+  ]);
+  return {
+    schema_version: "runtime-event-envelope/v1",
+    event_id: eventId,
+    event_type: eventTypeForExperienceLearning(payload.event_kind),
+    occurred_at: occurredAt,
+    trace_id: `experience-learning:${stableId(`${payload.goal_id}:${payload.run_id ?? ""}:${payload.loop_index ?? ""}`)}`,
+    causation_id: sourceRefs[0]?.ref ?? null,
+    correlation_id: `${payload.goal_id}:${payload.run_id ?? "no-run"}:${payload.loop_index ?? "no-loop"}`,
+    idempotency_key: payload.idempotency_key,
+    actor: { kind: "runtime", ref: "experience-learning-state-store" },
+    caller_path: "task_execution",
+    surface: "operator_debug",
+    goal_id: payload.goal_id,
+    run_id: payload.run_id ?? null,
+    source_ref: primaryRef,
+    target_refs: uniqueRefs([
+      primaryRef,
+      ...experienceLearningTargetRefs(payload),
+      ...sourceRefs,
+      { kind: "projection", ref: "experience_learning" },
+    ]),
+    runtime_graph_node_ref: { kind: "runtime_event", ref: eventId },
+    runtime_graph_edge_refs: [],
+    replay_policy: {
+      mode: "dedupe_by_idempotency_key",
+      duplicate_side_effect_policy: "projection_only",
+      idempotency_scope: "experience-learning",
+    },
+    payload_schema: "runtime-event-payload/experience-learning/v1",
+    payload_version: "runtime-event-payload/experience-learning/v1",
+    payload,
   };
 }
 
@@ -1053,6 +1200,7 @@ function applyEventBackedCurrentStateProjections(
   const authorityDecisions = new Map<string, ExecutionAuthorityDecision>();
   const runtimeOperations = new Map<string, RuntimeControlOperation>();
   const commitmentCandidates = new Map<string, CommitmentCandidate>();
+  let experienceLearningProjectionEvents = 0;
   const goalGenerations = new Map<string, number>();
   for (const event of events) {
     if (event.payload.schema_version === "runtime-event-payload/goal-task-mutation/v1") {
@@ -1092,6 +1240,9 @@ function applyEventBackedCurrentStateProjections(
       if (!current || compareIsoTimestamps(candidate.updated_at, current.updated_at) >= 0) {
         commitmentCandidates.set(candidate.commitment_id, candidate);
       }
+    }
+    if (event.payload.schema_version === "runtime-event-payload/experience-learning/v1") {
+      experienceLearningProjectionEvents++;
     }
   }
   const deletedGoalIds = new Set<string>();
@@ -1149,6 +1300,7 @@ function applyEventBackedCurrentStateProjections(
     interaction_authority_decisions: authorityDecisions.size,
     runtime_operations: runtimeOperations.size,
     attention_commitment_candidates: commitmentCandidates.size,
+    experience_learning_projection_events: experienceLearningProjectionEvents,
   };
 }
 
@@ -1761,6 +1913,10 @@ function upsertRuntimeGraphForEvent(sqlite: SqliteDatabase, event: RuntimeEventE
     upsertGraphNode(sqlite, effectNode);
     insertGraphEdge(sqlite, graphEdgeFor(event, sideEffectEdgeKind(event), effectNode.node_id, eventNode.node_id, "side-effect"));
   }
+
+  if (event.payload.schema_version === "runtime-event-payload/experience-learning/v1") {
+    upsertExperienceLearningRuntimeGraph(sqlite, event);
+  }
 }
 
 function upsertGraphNode(sqlite: SqliteDatabase, node: RuntimeGraphNode): void {
@@ -1808,6 +1964,98 @@ function insertGraphEdge(sqlite: SqliteDatabase, edge: RuntimeGraphEdge): void {
     parsed.created_at,
     JSON.stringify(parsed),
   );
+}
+
+function upsertExperienceLearningRuntimeGraph(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): void {
+  if (event.payload.schema_version !== "runtime-event-payload/experience-learning/v1") return;
+  const payload = ExperienceLearningRuntimeEventPayloadSchema.parse(event.payload) as ExperienceLearningRuntimeEventPayload;
+  const now = event.occurred_at;
+  const primaryRef = primaryExperienceLearningRef(payload);
+  const primaryNode = graphNodeForGenericRef(primaryRef, now, event.event_id, nodeKindForRef(primaryRef));
+  upsertGraphNode(sqlite, primaryNode);
+  insertGraphEdge(sqlite, graphEdgeFor(
+    event,
+    "derived_from",
+    runtimeEventNodeId(event.event_id),
+    primaryNode.node_id,
+    `experience-learning:${primaryRef.kind}:${primaryRef.ref}`,
+  ));
+
+  for (const sourceRef of payload.source_refs.evidence_refs) {
+    const sourceNode = graphNodeForGenericRef({ kind: "runtime_evidence", ref: sourceRef }, now, event.event_id);
+    upsertGraphNode(sqlite, sourceNode);
+    insertGraphEdge(sqlite, graphEdgeFor(event, "derived_from", primaryNode.node_id, sourceNode.node_id, sourceRef));
+  }
+
+  const link = (edgeKind: RuntimeGraphEdge["edge_kind"], ref: RuntimeGraphRef, discriminator: string): void => {
+    const node = graphNodeForGenericRef(ref, now, event.event_id, nodeKindForRef(ref));
+    upsertGraphNode(sqlite, node);
+    insertGraphEdge(sqlite, graphEdgeFor(event, edgeKind, primaryNode.node_id, node.node_id, discriminator));
+  };
+
+  switch (payload.event_kind) {
+    case "frame_activated":
+      break;
+    case "hypothesis_transitioned":
+      for (const frameId of payload.frame_ids) link("derived_from", { kind: "experience_frame", ref: frameId }, `frame:${frameId}`);
+      for (const hypothesisId of payload.competing_hypothesis_ids) link("competes_with", { kind: "learning_hypothesis", ref: hypothesisId }, `competes:${hypothesisId}`);
+      break;
+    case "generalization_transitioned":
+      for (const hypothesisId of payload.generalization?.sourceHypothesisIds ?? []) {
+        link("derived_from", { kind: "learning_hypothesis", ref: hypothesisId }, `hypothesis:${hypothesisId}`);
+      }
+      for (const scopeRef of payload.transfer_scope_refs) link("narrows", { kind: "transfer_scope", ref: scopeRef }, `scope:${scopeRef}`);
+      break;
+    case "micro_probe_recorded":
+      link("tested_by", { kind: "micro_probe_plan", ref: payload.plan_id }, `plan:${payload.plan_id}`);
+      for (const read of payload.read_set) link("decided_by", { kind: read.port, ref: read.ref }, `read:${read.port}:${read.ref}`);
+      break;
+    case "candidate_transition_recorded":
+      link(
+        transitionEdgeKind(payload.reason_code),
+        experienceLearningCandidateTransitionTargetRef(payload),
+        `target:${payload.target_kind}:${payload.target_id}`,
+      );
+      break;
+    case "experiment_plan_registered":
+      for (const hypothesisId of payload.hypothesis_ids) link("tested_by", { kind: "learning_hypothesis", ref: hypothesisId }, `hypothesis:${hypothesisId}`);
+      for (const candidateId of payload.generalization_ids) link("tested_by", { kind: "generalization_candidate", ref: candidateId }, `candidate:${candidateId}`);
+      break;
+    case "experiment_record_closed":
+      link("decided_by", { kind: "learning_experiment_plan", ref: payload.plan_id }, `plan:${payload.plan_id}`);
+      break;
+    case "artifact_transitioned":
+      for (const candidateId of payload.source_candidate_ids) link("derived_from", { kind: "generalization_candidate", ref: candidateId }, `candidate:${candidateId}`);
+      break;
+    case "prior_generated":
+      for (const artifactId of payload.artifact_ids) link("generated", { kind: "learning_artifact", ref: artifactId }, `artifact:${artifactId}`);
+      break;
+    case "prior_reserved":
+      link("derived_from", { kind: "learning_prior", ref: payload.prior_id }, `prior:${payload.prior_id}`);
+      break;
+    case "prior_applied":
+      for (const decisionRef of payload.generated_decision_refs) link("consumed_by", { kind: "consumer_decision", ref: decisionRef }, `decision:${decisionRef}`);
+      break;
+    case "prior_suppressed":
+      break;
+    case "prior_invalidated":
+      for (const invalidationRef of payload.invalidation_refs) link("invalidated_by", { kind: "invalidation", ref: invalidationRef }, `invalidation:${invalidationRef}`);
+      break;
+    case "projection_enqueued":
+      for (const artifactId of payload.artifact_ids) link("derived_from", { kind: "learning_artifact", ref: artifactId }, `artifact:${artifactId}`);
+      link("projected_to", { kind: "owner_review_queue", ref: payload.owner_review_queue_ref }, `owner-review:${payload.owner_review_queue_ref}`);
+      break;
+  }
+}
+
+function transitionEdgeKind(reasonCode: string): RuntimeGraphEdge["edge_kind"] {
+  if (reasonCode === "contradicted" || reasonCode === "correction_suppressed" || reasonCode === "quarantine_suppressed") {
+    return "invalidated_by";
+  }
+  if (reasonCode === "independent_support" || reasonCode === "trial_reuse_ready") return "supports";
+  if (reasonCode === "negative_transfer_observed") return "contradicts";
+  if (reasonCode === "transfer_scope_narrowed") return "narrows";
+  return "decided_by";
 }
 
 function parseRuntimeEvent(value: string): RuntimeEventEnvelope[] {
@@ -1874,9 +2122,14 @@ function rebuildRuntimeEventProjections(
   const graphBackedEvents = sourceEvents.filter((event) => graphEventIds.has(event.event_id));
   const authorityDecisions = graphBackedEvents.flatMap((event) =>
     event.payload.schema_version === "runtime-event-payload/authority-decision/v1" ? [event.payload.decision] : []
-  );
+  ) as ExecutionAuthorityDecision[];
   const traces = graphBackedEvents.flatMap((event) =>
     event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1" ? [event.payload.trace] : []
+  ) as PersonalAgentDecisionTrace[];
+  const experienceLearningEvents: ExperienceLearningRuntimeEventPayload[] = graphBackedEvents.flatMap((event) =>
+    event.payload.schema_version === "runtime-event-payload/experience-learning/v1"
+      ? [ExperienceLearningRuntimeEventPayloadSchema.parse(event.payload) as ExperienceLearningRuntimeEventPayload]
+      : []
   );
   return {
     schema_version: "runtime-event-projection-rebuild/v1",
@@ -2035,6 +2288,24 @@ function rebuildRuntimeEventProjections(
           runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
         }];
       }),
+    experience_learning_summary: {
+      frame_count: experienceLearningEvents.filter((event) => event.event_kind === "frame_activated").length,
+      hypothesis_count: experienceLearningEvents.filter((event) => event.event_kind === "hypothesis_transitioned").length,
+      generalization_count: experienceLearningEvents.filter((event) => event.event_kind === "generalization_transitioned").length,
+      micro_probe_count: experienceLearningEvents.filter((event) => event.event_kind === "micro_probe_recorded").length,
+      experiment_count: experienceLearningEvents.filter((event) =>
+        event.event_kind === "experiment_plan_registered" || event.event_kind === "experiment_record_closed"
+      ).length,
+      artifact_count: experienceLearningEvents.filter((event) => event.event_kind === "artifact_transitioned").length,
+      prior_count: experienceLearningEvents.filter((event) =>
+        event.event_kind === "prior_generated" || event.event_kind === "prior_invalidated"
+      ).length,
+      prior_consumption_count: experienceLearningEvents.filter((event) =>
+        event.event_kind === "prior_reserved" || event.event_kind === "prior_applied" || event.event_kind === "prior_suppressed"
+      ).length,
+      projection_count: experienceLearningEvents.filter((event) => event.event_kind === "projection_enqueued").length,
+      event_kinds: countBy(experienceLearningEvents.map((event) => event.event_kind)),
+    },
   };
 }
 
@@ -2096,6 +2367,129 @@ function operatorDebugEvidence(
     replay_or_dedupe_refs: uniqueStrings(events.map((event) => event.idempotency_key)),
     rebuilt_projection_names: projectionNames(rebuild),
   };
+}
+
+function eventTypeForExperienceLearning(kind: ExperienceLearningRuntimeEventPayload["event_kind"]): RuntimeEventType {
+  switch (kind) {
+    case "frame_activated":
+      return "experience_learning.frame.activated";
+    case "hypothesis_transitioned":
+      return "experience_learning.hypothesis.transitioned";
+    case "generalization_transitioned":
+      return "experience_learning.generalization.transitioned";
+    case "micro_probe_recorded":
+      return "experience_learning.micro_probe.recorded";
+    case "candidate_transition_recorded":
+      return "experience_learning.candidate_transition.recorded";
+    case "experiment_plan_registered":
+      return "experience_learning.experiment_plan.registered";
+    case "experiment_record_closed":
+      return "experience_learning.experiment_record.closed";
+    case "artifact_transitioned":
+      return "experience_learning.artifact.transitioned";
+    case "prior_generated":
+      return "experience_learning.prior.generated";
+    case "prior_reserved":
+      return "experience_learning.prior.reserved";
+    case "prior_applied":
+      return "experience_learning.prior.applied";
+    case "prior_suppressed":
+      return "experience_learning.prior.suppressed";
+    case "prior_invalidated":
+      return "experience_learning.prior.invalidated";
+    case "projection_enqueued":
+      return "experience_learning.projection.enqueued";
+  }
+  throw new Error(`unknown experience learning event kind: ${String(kind)}`);
+}
+
+function primaryExperienceLearningRef(payload: ExperienceLearningRuntimeEventPayload): RuntimeGraphRef {
+  switch (payload.event_kind) {
+    case "frame_activated":
+      return { kind: "experience_frame", ref: payload.frame_id };
+    case "hypothesis_transitioned":
+      return { kind: "learning_hypothesis", ref: payload.hypothesis_id };
+    case "generalization_transitioned":
+      return { kind: "generalization_candidate", ref: payload.generalization_id };
+    case "micro_probe_recorded":
+      return { kind: "micro_probe", ref: payload.record_id };
+    case "candidate_transition_recorded":
+      return { kind: "candidate_transition", ref: payload.transition_id };
+    case "experiment_plan_registered":
+      return { kind: "learning_experiment_plan", ref: payload.plan_id };
+    case "experiment_record_closed":
+      return { kind: "learning_experiment_record", ref: payload.record_id };
+    case "artifact_transitioned":
+      return { kind: "learning_artifact", ref: payload.artifact_id };
+    case "prior_generated":
+    case "prior_invalidated":
+      return { kind: "learning_prior", ref: payload.prior_id };
+    case "prior_reserved":
+    case "prior_applied":
+    case "prior_suppressed":
+      return { kind: "learning_prior_consumption", ref: payload.consumption_id };
+    case "projection_enqueued":
+      return { kind: "learning_projection_proposal", ref: payload.projection_proposal_id };
+  }
+  throw new Error(`unknown experience learning payload kind: ${String((payload as { event_kind?: unknown }).event_kind)}`);
+}
+
+function experienceLearningTargetRefs(payload: ExperienceLearningRuntimeEventPayload): RuntimeGraphRef[] {
+  const evidenceRefs = payload.source_refs.evidence_refs.map((ref) => ({ kind: "runtime_evidence", ref }));
+  switch (payload.event_kind) {
+    case "frame_activated":
+      return evidenceRefs;
+    case "hypothesis_transitioned":
+      return [
+        ...payload.frame_ids.map((ref) => ({ kind: "experience_frame", ref })),
+        ...payload.competing_hypothesis_ids.map((ref) => ({ kind: "learning_hypothesis", ref })),
+        ...evidenceRefs,
+      ];
+    case "generalization_transitioned":
+      return [
+        ...(payload.generalization?.sourceHypothesisIds ?? []).map((ref) => ({ kind: "learning_hypothesis", ref })),
+        ...payload.transfer_scope_refs.map((ref) => ({ kind: "transfer_scope", ref })),
+        ...evidenceRefs,
+      ];
+    case "micro_probe_recorded":
+      return [
+        { kind: "micro_probe_plan", ref: payload.plan_id },
+        ...payload.read_set.map((ref) => ({ kind: ref.port, ref: ref.ref })),
+      ];
+    case "candidate_transition_recorded":
+      return [
+        experienceLearningCandidateTransitionTargetRef(payload),
+        ...evidenceRefs,
+      ];
+    case "experiment_plan_registered":
+      return [
+        ...payload.hypothesis_ids.map((ref) => ({ kind: "learning_hypothesis", ref })),
+        ...payload.generalization_ids.map((ref) => ({ kind: "generalization_candidate", ref })),
+      ];
+    case "experiment_record_closed":
+      return [{ kind: "learning_experiment_plan", ref: payload.plan_id }, ...evidenceRefs];
+    case "artifact_transitioned":
+      return [
+        ...payload.source_candidate_ids.map((ref) => ({ kind: "generalization_candidate", ref })),
+        ...evidenceRefs,
+      ];
+    case "prior_generated":
+      return payload.artifact_ids.map((ref) => ({ kind: "learning_artifact", ref }));
+    case "prior_reserved":
+      return [{ kind: "learning_prior", ref: payload.prior_id }];
+    case "prior_applied":
+      return payload.generated_decision_refs.map((ref) => ({ kind: "consumer_decision", ref }));
+    case "prior_suppressed":
+      return [];
+    case "prior_invalidated":
+      return payload.invalidation_refs.map((ref) => ({ kind: "invalidation", ref }));
+    case "projection_enqueued":
+      return [
+        ...payload.artifact_ids.map((ref) => ({ kind: "learning_artifact", ref })),
+        { kind: "owner_review_queue", ref: payload.owner_review_queue_ref },
+      ];
+  }
+  return [];
 }
 
 function eventTypeForTrace(trace: PersonalAgentDecisionTrace): RuntimeEventType {
@@ -2387,8 +2781,57 @@ function nodeKindForRef(ref: RuntimeGraphRef): RuntimeGraphNode["node_kind"] {
       return "runtime_event";
     case "side_effect":
       return "side_effect";
+    case "experience_frame":
+      return "experience_frame";
+    case "learning_hypothesis":
+      return "learning_hypothesis";
+    case "generalization_candidate":
+      return "generalization_candidate";
+    case "micro_probe":
+    case "micro_probe_plan":
+      return "micro_probe";
+    case "candidate_transition":
+      return "candidate_transition";
+    case "learning_experiment_plan":
+      return "learning_experiment_plan";
+    case "learning_experiment_record":
+      return "learning_experiment_record";
+    case "learning_artifact":
+      return "learning_artifact";
+    case "learning_prior":
+      return "learning_prior";
+    case "learning_prior_consumption":
+      return "learning_prior_consumption";
+    case "learning_projection_proposal":
+      return "learning_projection_proposal";
     default:
       return "artifact";
+  }
+}
+
+function experienceLearningCandidateTransitionTargetRef(
+  payload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }>,
+): RuntimeGraphRef {
+  return {
+    kind: normalizeExperienceLearningCandidateTransitionTargetKind(payload.target_kind),
+    ref: payload.target_id,
+  };
+}
+
+function normalizeExperienceLearningCandidateTransitionTargetKind(
+  kind: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }>["target_kind"],
+): RuntimeGraphRef["kind"] {
+  switch (kind) {
+    case "frame":
+      return "experience_frame";
+    case "hypothesis":
+      return "learning_hypothesis";
+    case "generalization_candidate":
+      return "generalization_candidate";
+    case "artifact":
+      return "learning_artifact";
+    case "prior":
+      return "learning_prior";
   }
 }
 
@@ -2551,6 +2994,8 @@ function projectionValue(
       return rebuild.runtime_control_operation_summary;
     case "attention_commitment_lifecycle_summary":
       return rebuild.attention_commitment_lifecycle_summary;
+    case "experience_learning_summary":
+      return rebuild.experience_learning_summary;
   }
 }
 
@@ -2566,5 +3011,6 @@ function projectionNames(_rebuild: RuntimeEventProjectionRebuild): RuntimeEventP
     "tool_execution_outcome_summary",
     "runtime_control_operation_summary",
     "attention_commitment_lifecycle_summary",
+    "experience_learning_summary",
   ];
 }

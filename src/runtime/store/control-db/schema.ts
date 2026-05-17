@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 44;
+export const CONTROL_DB_SCHEMA_VERSION = 46;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2704,6 +2704,251 @@ CREATE INDEX IF NOT EXISTS runtime_event_projection_snapshots_scope_idx
   ON runtime_event_projection_snapshots(scope_kind, scope_ref, rebuilt_at);
 `.trim();
 
+export const CONTROL_DB_EXPERIENCE_LEARNING_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS experience_learning_frames (
+  frame_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  loop_index INTEGER,
+  trigger TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  frame_json TEXT NOT NULL CHECK (json_valid(frame_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_frames_goal_idx
+  ON experience_learning_frames(goal_id, run_id, loop_index, created_at, frame_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_hypotheses (
+  hypothesis_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  hypothesis_json TEXT NOT NULL CHECK (json_valid(hypothesis_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_hypotheses_goal_idx
+  ON experience_learning_hypotheses(goal_id, run_id, status, updated_at, hypothesis_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_hypothesis_events (
+  event_id TEXT PRIMARY KEY,
+  hypothesis_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_hypothesis_events_hypothesis_idx
+  ON experience_learning_hypothesis_events(hypothesis_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_generalization_candidates (
+  candidate_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  candidate_json TEXT NOT NULL CHECK (json_valid(candidate_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_generalization_candidates_goal_idx
+  ON experience_learning_generalization_candidates(goal_id, run_id, status, updated_at, candidate_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_generalization_events (
+  event_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_generalization_events_candidate_idx
+  ON experience_learning_generalization_events(candidate_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_trial_reuse_readiness_gates (
+  gate_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  eligible_from_iteration INTEGER NOT NULL,
+  remaining_trial_uses INTEGER NOT NULL,
+  gate_json TEXT NOT NULL CHECK (json_valid(gate_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_trial_reuse_readiness_gates_candidate_idx
+  ON experience_learning_trial_reuse_readiness_gates(candidate_id, decision, eligible_from_iteration, gate_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_trial_reuse_budget_consumptions (
+  consumption_id TEXT PRIMARY KEY,
+  gate_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  consumer_attempt_id TEXT NOT NULL,
+  loop_index INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  decision TEXT NOT NULL,
+  consumption_json TEXT NOT NULL CHECK (json_valid(consumption_json)),
+  UNIQUE (gate_id, candidate_id, consumer_attempt_id, loop_index)
+);
+
+CREATE TABLE IF NOT EXISTS experience_learning_micro_probe_plans (
+  plan_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  loop_index INTEGER NOT NULL,
+  frame_id TEXT NOT NULL,
+  plan_json TEXT NOT NULL CHECK (json_valid(plan_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_micro_probe_plans_frame_idx
+  ON experience_learning_micro_probe_plans(frame_id, loop_index, plan_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_micro_probe_records (
+  record_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  ran_at TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_micro_probe_records_plan_idx
+  ON experience_learning_micro_probe_records(plan_id, ran_at, record_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_candidate_transitions (
+  transition_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  loop_index INTEGER NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  transition_json TEXT NOT NULL CHECK (json_valid(transition_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_candidate_transitions_target_idx
+  ON experience_learning_candidate_transitions(target_kind, target_id, loop_index, transition_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_experiment_plans (
+  plan_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  loop_index INTEGER,
+  plan_kind TEXT NOT NULL,
+  planned_task_id TEXT,
+  plan_json TEXT NOT NULL CHECK (json_valid(plan_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_experiment_plans_goal_idx
+  ON experience_learning_experiment_plans(goal_id, run_id, loop_index, plan_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_experiment_records (
+  record_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  loop_index INTEGER,
+  task_id TEXT,
+  outcome TEXT NOT NULL,
+  record_json TEXT NOT NULL CHECK (json_valid(record_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_experiment_records_plan_idx
+  ON experience_learning_experiment_records(plan_id, outcome, record_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_experiment_value_outcomes (
+  outcome_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  outcome_json TEXT NOT NULL CHECK (json_valid(outcome_json))
+);
+
+CREATE TABLE IF NOT EXISTS experience_learning_experiment_events (
+  event_id TEXT PRIMARY KEY,
+  plan_id TEXT,
+  record_id TEXT,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_experiment_events_plan_idx
+  ON experience_learning_experiment_events(plan_id, record_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  source_goal_id TEXT NOT NULL,
+  source_run_id TEXT,
+  status TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  artifact_json TEXT NOT NULL CHECK (json_valid(artifact_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_artifacts_goal_idx
+  ON experience_learning_artifacts(source_goal_id, source_run_id, status, updated_at, artifact_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_artifact_events (
+  event_id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_artifact_events_artifact_idx
+  ON experience_learning_artifact_events(artifact_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_prior_snapshots (
+  prior_id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL,
+  run_id TEXT,
+  source_loop_index INTEGER NOT NULL,
+  eligible_from_iteration INTEGER NOT NULL,
+  filter_decision TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  prior_json TEXT NOT NULL CHECK (json_valid(prior_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_prior_snapshots_goal_idx
+  ON experience_learning_prior_snapshots(goal_id, run_id, eligible_from_iteration, generated_at, prior_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_prior_events (
+  event_id TEXT PRIMARY KEY,
+  prior_id TEXT NOT NULL,
+  event_kind TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (json_valid(event_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_prior_events_prior_idx
+  ON experience_learning_prior_events(prior_id, occurred_at, event_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_prior_consumption_events (
+  consumption_id TEXT PRIMARY KEY,
+  prior_id TEXT NOT NULL,
+  suggestion_id TEXT NOT NULL,
+  consumer_phase TEXT NOT NULL,
+  loop_index INTEGER NOT NULL,
+  consumer_decision_ref TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  consumption_json TEXT NOT NULL CHECK (json_valid(consumption_json)),
+  UNIQUE (prior_id, suggestion_id, consumer_phase, loop_index, consumer_decision_ref)
+);
+CREATE INDEX IF NOT EXISTS experience_learning_prior_consumption_events_prior_idx
+  ON experience_learning_prior_consumption_events(prior_id, consumer_phase, loop_index, consumption_id);
+
+CREATE TABLE IF NOT EXISTS experience_learning_projection_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  owner_review_queue_ref TEXT NOT NULL,
+  source_artifact_ids_json TEXT NOT NULL CHECK (json_valid(source_artifact_ids_json)),
+  correction_lineage_refs_json TEXT NOT NULL CHECK (json_valid(correction_lineage_refs_json)),
+  invalidation_refs_json TEXT NOT NULL CHECK (json_valid(invalidation_refs_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  proposal_json TEXT NOT NULL CHECK (json_valid(proposal_json))
+);
+CREATE INDEX IF NOT EXISTS experience_learning_projection_proposals_status_idx
+  ON experience_learning_projection_proposals(status, updated_at, proposal_id);
+`.trim();
+
+export const CONTROL_DB_EXPERIENCE_LEARNING_METRICS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS experience_learning_metric_baseline_observations (
+  observation_id TEXT PRIMARY KEY,
+  baseline_id TEXT NOT NULL,
+  goal_id TEXT,
+  scenario_class TEXT NOT NULL CHECK (scenario_class IN ('task_work', 'stall_recovery', 'companion_interaction')),
+  run_kind TEXT NOT NULL CHECK (run_kind IN ('no_prior', 'prior_enabled')),
+  run_ref TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  metric_names_json TEXT NOT NULL CHECK (json_valid(metric_names_json)),
+  observation_json TEXT NOT NULL CHECK (json_valid(observation_json)),
+  UNIQUE (baseline_id, scenario_class, run_kind, run_ref)
+);
+
+CREATE INDEX IF NOT EXISTS experience_learning_metric_baseline_observations_goal_idx
+  ON experience_learning_metric_baseline_observations(goal_id, baseline_id, scenario_class, run_kind, observed_at, observation_id);
+`.trim();
+
 export const CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memory_claims (
   claim_id TEXT PRIMARY KEY,
@@ -3101,5 +3346,15 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     44,
     "runtime-event-sequence-counter",
     CONTROL_DB_RUNTIME_EVENT_SEQUENCE_COUNTER_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    45,
+    "experience-learning-runtime-state",
+    CONTROL_DB_EXPERIENCE_LEARNING_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    46,
+    "experience-learning-metric-baselines",
+    CONTROL_DB_EXPERIENCE_LEARNING_METRICS_SCHEMA_SQL
   ),
 ];

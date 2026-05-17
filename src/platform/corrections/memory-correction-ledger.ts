@@ -5,6 +5,18 @@ export const MemoryCorrectionTargetKindSchema = z.enum([
   "soil_record",
   "runtime_evidence",
   "dream_checkpoint",
+  "learning_frame",
+  "learning_hypothesis",
+  "generalization_candidate",
+  "micro_probe_plan",
+  "micro_probe_record",
+  "candidate_transition",
+  "experiment_plan",
+  "experiment_record",
+  "learning_artifact",
+  "learning_prior",
+  "learning_prior_consumption",
+  "learning_projection_proposal",
 ]);
 export type MemoryCorrectionTargetKind = z.infer<typeof MemoryCorrectionTargetKindSchema>;
 

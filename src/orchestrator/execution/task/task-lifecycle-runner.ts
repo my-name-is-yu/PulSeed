@@ -8,7 +8,7 @@ import type { Logger } from "../../../runtime/logger.js";
 import type { HookManager } from "../../../runtime/hook-manager.js";
 import type { ToolExecutor } from "../../../tools/executor.js";
 import type { DimensionSelectionOptions } from "../context/dimension-selector.js";
-import type { TaskCycleResult } from "./task-execution-types.js";
+import type { TaskCycleResult, TaskLearningPriorApplication } from "./task-execution-types.js";
 import type { EthicsGate } from "../../../platform/traits/ethics-gate.js";
 import type { CapabilityDetector } from "../../../platform/observation/capability-detector.js";
 import type { KnowledgeTransfer } from "../../../platform/knowledge/transfer/knowledge-transfer.js";
@@ -24,6 +24,7 @@ import { reloadTaskFromDisk, verifyExecutionWithGitDiff } from "./task-execution
 import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 import { applyVerdictHandlingContextGuards } from "./task-verifier.js";
 
 export interface TaskGenerationResult {
@@ -36,6 +37,8 @@ export interface TaskGenerationResult {
 export interface TaskCycleRunOptionsShape {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  learningProjection?: Extract<LearningPriorPhaseProjection, { phase: "task_generation" }>;
+  learningPriorConsumptionRef?: string;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
   abortSignal?: AbortSignal;
@@ -176,22 +179,102 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   };
 
   let goalDimensions: Dimension[] | undefined;
+  let goalDimensionsLoaded = false;
   try {
     const goal = await stateManager.loadGoal(goalId);
-    goalDimensions = goal?.dimensions ?? undefined;
+    if (Array.isArray(goal?.dimensions)) {
+      goalDimensions = goal.dimensions;
+      goalDimensionsLoaded = true;
+    }
   } catch (err) {
     logger?.warn(`[TaskLifecycle] Failed to load goal "${goalId}" for dimension selection, using unweighted fallback: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const dimensionSelectionOptions = await context.buildDimensionSelectionBackoff(goalId);
-  const targetDimension = options?.targetDimensionOverride
-    ?? await runPhase("select-target-dimension", async () =>
-      context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
-    );
+  const learningProjection = options?.learningProjection;
+  const projectedTargetDimension = learningProjection?.preferredTargetDimension;
+  const projectedTargetDimensionIsCurrent = !!projectedTargetDimension
+    && !!goalDimensions?.some((dimension) => dimension.name === projectedTargetDimension);
+  const projectedTargetDimensionIsStale = !!projectedTargetDimension
+    && goalDimensionsLoaded
+    && !projectedTargetDimensionIsCurrent;
+  const shouldUseProjectedTargetDimension = !!projectedTargetDimension
+    && (!goalDimensionsLoaded || projectedTargetDimensionIsCurrent);
+  const targetDimension = shouldUseProjectedTargetDimension && projectedTargetDimension
+    ? projectedTargetDimension
+    : options?.targetDimensionOverride
+      ?? await runPhase("select-target-dimension", async () =>
+        context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
+      );
 
-  if (options?.targetDimensionOverride) {
+  if (projectedTargetDimensionIsStale) {
+    logger?.warn("TaskLifecycle: ignored stale learning-prior target dimension projection", {
+      goalId,
+      projectedTargetDimension,
+      consumptionRecordId: learningProjection?.consumptionRecordId,
+    });
+  }
+
+  if (shouldUseProjectedTargetDimension) {
+    logger?.info("TaskLifecycle: using learning-prior target dimension projection", {
+      goalId,
+      targetDimension,
+      consumptionRecordId: learningProjection?.consumptionRecordId,
+    });
+  } else if (options?.targetDimensionOverride) {
     logger?.info("TaskLifecycle: using target dimension override", { goalId, targetDimension });
   }
+
+  const buildLearningPriorApplication = (generatedTask: Task): TaskLearningPriorApplication | undefined => {
+    if (!learningProjection) return undefined;
+    if (projectedTargetDimension) {
+      if (projectedTargetDimensionIsStale) {
+        return {
+          consumptionRecordId: learningProjection.consumptionRecordId,
+          status: "suppressed",
+          reason: "preferred_target_dimension_stale",
+        };
+      }
+      const taskTargetsProjectedDimension = generatedTask.primary_dimension === projectedTargetDimension
+        || generatedTask.target_dimensions.includes(projectedTargetDimension);
+      if (taskTargetsProjectedDimension) {
+        return {
+          consumptionRecordId: learningProjection.consumptionRecordId,
+          status: "applied",
+          reason: "preferred_target_dimension_applied",
+          generatedDecisionRefs: [`task:${generatedTask.id}`],
+        };
+      }
+      return {
+        consumptionRecordId: learningProjection.consumptionRecordId,
+        status: "suppressed",
+        reason: "generated_task_projection_mismatch",
+      };
+    }
+    if (learningProjection.requiredExperimentPlanIds.length > 0) return undefined;
+    return {
+      consumptionRecordId: learningProjection.consumptionRecordId,
+      status: "suppressed",
+      reason: "unsupported_projection",
+    };
+  };
+
+  const buildSkippedLearningPriorApplication = (): TaskLearningPriorApplication | undefined => {
+    if (!learningProjection) return undefined;
+    if (projectedTargetDimensionIsStale) {
+      return {
+        consumptionRecordId: learningProjection.consumptionRecordId,
+        status: "suppressed",
+        reason: "preferred_target_dimension_stale",
+      };
+    }
+    if (learningProjection.requiredExperimentPlanIds.length > 0) return undefined;
+    return {
+      consumptionRecordId: learningProjection.consumptionRecordId,
+      status: "suppressed",
+      reason: "task_generation_skipped",
+    };
+  };
 
   const baseKnowledgeContext = [
     options?.knowledgeContextPrefix,
@@ -231,8 +314,14 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
         ? `TaskLifecycle: task generation refused (${genResult.refusalReason}), skipping cycle`
         : "TaskLifecycle: task generation returned null (duplicate detected), skipping cycle"
     );
-    return createSkippedTaskResult(goalId, targetDimension, taskCycleTokens);
+    return createSkippedTaskResult(
+      goalId,
+      targetDimension,
+      taskCycleTokens,
+      buildSkippedLearningPriorApplication()
+    );
   }
+  const learningPriorApplication = buildLearningPriorApplication(task);
 
   void hookManager?.emit("PostTaskCreate", { goal_id: goalId, data: { task_id: task.id } });
   logger?.info(`[task] created: ${task.work_description?.substring(0, 120)}`, { taskId: task.id });
@@ -262,6 +351,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     return {
       ...preCheckResult,
       tokensUsed: taskCycleTokens,
+      ...(learningPriorApplication ? { learningPriorApplication } : {}),
     };
   }
 
@@ -303,6 +393,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
       }),
       action: "discard",
       tokensUsed: taskCycleTokens,
+      ...(learningPriorApplication ? { learningPriorApplication } : {}),
     };
   }
 
@@ -336,6 +427,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
       action: "keep",
       diffEvidenceSource: executionResult.diffEvidenceSource,
       tokensUsed: taskCycleTokens,
+      ...(learningPriorApplication ? { learningPriorApplication } : {}),
     };
   }
 
@@ -413,5 +505,6 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     action: verdictResult.action,
     diffEvidenceSource: executionResult.diffEvidenceSource,
     tokensUsed: taskCycleTokens,
+    ...(learningPriorApplication ? { learningPriorApplication } : {}),
   };
 }

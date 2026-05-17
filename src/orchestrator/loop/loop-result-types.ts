@@ -11,6 +11,8 @@ import type { RuntimeEvidenceDivergentHypothesis } from "../../runtime/store/evi
 import type { TaskCycleResult } from "../execution/task/task-execution-types.js";
 import type { VerificationLayer1Result } from "./verification-layer1.js";
 import type { CorePhaseKind } from "../execution/agent-loop/core-phase-runner.js";
+import type { ExperienceLearningBridgeResult } from "./durable-loop/experience-learning-bridge.js";
+import type { InteractionPolicyBiasProjection } from "../../runtime/learning/learning-prior.js";
 
 export interface CorePhaseIterationResult {
   phase: CorePhaseKind;
@@ -25,11 +27,17 @@ export interface CorePhaseIterationResult {
 }
 
 export interface NextIterationDirective {
-  sourcePhase: "knowledge_refresh" | "replanning_options" | "stall_investigation";
+  sourcePhase: "knowledge_refresh" | "replanning_options" | "stall_investigation" | "learning_prior";
   reason: string;
   focusDimension?: string;
   preferredAction?: "continue" | "refine" | "pivot";
   requestedPhase?: "knowledge_refresh" | "normal";
+  learning_prior_consumption_ref?: string;
+  phase_projection_ref?: string;
+  reason_code?: string;
+  focus_refs?: string[];
+  inhibition_refs?: string[];
+  interaction_policy_biases?: InteractionPolicyBiasProjection[];
 }
 
 export interface LoopIterationResult {
@@ -94,6 +102,10 @@ export interface LoopIterationResult {
   corePhaseResults?: CorePhaseIterationResult[];
   /** Deterministic scheduler directive for the next iteration of the same goal. */
   nextIterationDirective?: NextIterationDirective;
+  /** Experience-to-Structure bridge result for exact iteration evidence learning. */
+  experienceLearning?: ExperienceLearningBridgeResult;
+  /** Exact runtime evidence refs appended during this iteration. */
+  iterationEvidenceRefs?: string[];
 }
 
 /**

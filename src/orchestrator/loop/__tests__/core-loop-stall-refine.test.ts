@@ -813,7 +813,10 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
     const result = makeIterationResult();
 
     // Should not throw
-    await expect(detectStallsAndRebalance(ctx, "goal-1", goal, result)).resolves.toBeUndefined();
+    await expect(detectStallsAndRebalance(ctx, "goal-1", goal, result)).resolves.toEqual({
+      status: "completed",
+      decisionProduced: true,
+    });
     expect(result.stallDetected).toBe(true);
   });
 
@@ -872,7 +875,10 @@ describe("detectStallsAndRebalance — reRefineLeaf on observation-failure stall
     const result = makeIterationResult();
 
     // Should not throw even when reRefineLeaf errors
-    await expect(detectStallsAndRebalance(ctx, "goal-1", goal, result)).resolves.toBeUndefined();
+    await expect(detectStallsAndRebalance(ctx, "goal-1", goal, result)).resolves.toEqual({
+      status: "completed",
+      decisionProduced: true,
+    });
     expect(result.stallDetected).toBe(true);
     expect(mockRefiner.reRefineLeaf).toHaveBeenCalledOnce();
   });
