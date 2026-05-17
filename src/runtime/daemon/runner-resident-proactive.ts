@@ -220,14 +220,17 @@ export async function runResidentCommitmentAttentionCycle(
     feedbackRefs: feedbackContext.feedbackRefs,
     overreach: recentFeedbackSuppressesCommitmentDelivery(feedbackContext.recentFeedback),
   });
-  const materializedCount = countChangedCommitments(dueCandidates, preparedCandidates);
-  await store.saveCommitmentCandidates(preparedCandidates);
-
   const provider = buildCommitmentGuardAttentionFromCandidates({
     candidates: preparedCandidates,
     now,
     triggerKind: feedbackContext.feedbackRefs.length > 0 ? "feedback_cooldown" : "revisit_window",
   });
+  const storedCandidates = clearResidentActiveCareRevisitDeadlines({
+    candidates: preparedCandidates,
+    now,
+  });
+  const materializedCount = countChangedCommitments(dueCandidates, storedCandidates);
+  await store.saveCommitmentCandidates(storedCandidates);
   if (provider.attentionInputs.length === 0 && provider.urgeCandidates.length === 0) {
     if (materializedCount > 0) {
       await persistResidentActivity(context, {
@@ -437,6 +440,26 @@ function materializeCommitmentsForResidentCycle(input: {
       return {
         ...candidate,
         materialization_state: "active_care" as const,
+        updated_at: input.now,
+      };
+    }
+    return candidate;
+  });
+}
+
+function clearResidentActiveCareRevisitDeadlines(input: {
+  candidates: readonly CommitmentCandidate[];
+  now: string;
+}): CommitmentCandidate[] {
+  return input.candidates.map((candidate) => {
+    if (
+      candidate.materialization_state === "active_care"
+      && candidate.next_revisit_at
+      && candidate.next_revisit_at <= input.now
+    ) {
+      return {
+        ...candidate,
+        next_revisit_at: null,
         updated_at: input.now,
       };
     }

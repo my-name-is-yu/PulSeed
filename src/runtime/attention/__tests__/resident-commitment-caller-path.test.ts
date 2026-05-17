@@ -116,7 +116,10 @@ describe("resident commitment attention caller path", () => {
 
     expect(handled).toBe(true);
     await expect(store.listCommitmentCandidates({ includeTerminal: true })).resolves.toMatchObject([
-      expect.objectContaining({ materialization_state: "active_care" }),
+      expect.objectContaining({
+        materialization_state: "active_care",
+        next_revisit_at: null,
+      }),
     ]);
     const peerRecords = await new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .listRecentCandidates();
@@ -138,6 +141,12 @@ describe("resident commitment attention caller path", () => {
     await runResidentCommitmentAttentionCycle(context(baseDir, store), NOW);
     await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
       .listRecentCandidates()).resolves.toHaveLength(1);
+    await expect(store.listCommitmentCandidates({ includeTerminal: true })).resolves.toMatchObject([
+      expect.objectContaining({
+        materialization_state: "active_care",
+        next_revisit_at: null,
+      }),
+    ]);
   });
 
   it("uses recent overreach feedback to quiet due commitments before visible follow-up selection", async () => {
