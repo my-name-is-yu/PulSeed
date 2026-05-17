@@ -346,6 +346,26 @@ export class CoreIterationKernel {
         execution.status === "failed" ? "consumer_execution_failed" : "consumer_no_op",
       ]);
     };
+    const markTaskLearningProjectionFromResult = async (
+      projection: PhaseLearningProjection<"task_generation"> | null | undefined,
+      taskResult: TaskCycleResult | null | undefined,
+    ): Promise<void> => {
+      if (!projection || !taskResult) return;
+      const application = taskResult.learningPriorApplication;
+      if (
+        application?.consumptionRecordId === projection.consumptionRecordId
+        && application.status === "applied"
+      ) {
+        await markLearningProjectionApplied(
+          projection,
+          application.generatedDecisionRefs.length > 0
+            ? application.generatedDecisionRefs
+            : [`task:${taskResult.task.id}`],
+        );
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+    };
     const runPhaseWithLearningProjection = async <T>(
       phase: string,
       projection: LearningPriorPhaseProjection | null | undefined,
@@ -1025,8 +1045,7 @@ export class CoreIterationKernel {
       ? taskLearningResolution.projection
       : undefined;
     const mergedTaskGenerationHints = {
-      targetDimensionOverride: taskLearningProjection?.preferredTargetDimension
-        ?? taskGenerationHints.targetDimensionOverride
+      targetDimensionOverride: taskGenerationHints.targetDimensionOverride
         ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
       ...(taskLearningProjection
@@ -1086,9 +1105,7 @@ export class CoreIterationKernel {
       if (taskExperimentProjection) {
         await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
       } else if (completedTaskResult && taskLearningProjection) {
-        await markLearningProjectionApplied(taskLearningProjection, [
-          `task:${completedTaskResult.task.id}`,
-        ]);
+        await markTaskLearningProjectionFromResult(taskLearningProjection, completedTaskResult);
       } else {
         await markLearningProjectionSuppressed(taskLearningProjection, ["consumer_execution_failed"]);
       }
@@ -1192,9 +1209,7 @@ export class CoreIterationKernel {
           await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
         }
       } else {
-        await markLearningProjectionApplied(taskLearningProjection, [
-          `task:${completedTaskResult.task.id}`,
-        ]);
+        await markTaskLearningProjectionFromResult(taskLearningProjection, completedTaskResult);
       }
     }
     if (this.deps.coreDecisionEngine.shouldRunVerificationEvidence(result) && completedTaskResult) {

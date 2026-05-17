@@ -3,6 +3,26 @@ import type { Task, VerificationResult } from "../../../base/types/task.js";
 import type { AgentResult } from "../adapter-layer.js";
 import type { CapabilityAcquisitionTask } from "../../../base/types/capability.js";
 
+export type TaskLearningPriorApplicationReason =
+  | "preferred_target_dimension_applied"
+  | "preferred_target_dimension_stale"
+  | "generated_task_projection_mismatch"
+  | "task_generation_skipped"
+  | "unsupported_projection";
+
+export type TaskLearningPriorApplication =
+  | {
+      consumptionRecordId: string;
+      status: "applied";
+      reason: TaskLearningPriorApplicationReason;
+      generatedDecisionRefs: readonly string[];
+    }
+  | {
+      consumptionRecordId: string;
+      status: "suppressed";
+      reason: TaskLearningPriorApplicationReason;
+    };
+
 /**
  * Result produced by one full task cycle (generate → approve → execute → verify).
  * Defined here (not in task-lifecycle.ts) to break the circular dependency between
@@ -16,13 +36,25 @@ export interface TaskCycleResult {
   diffEvidenceSource?: AgentResult["diffEvidenceSource"];
   /** Total tokens consumed during this task cycle (generation + native execution + verification). */
   tokensUsed?: number;
+  learningPriorApplication?: TaskLearningPriorApplication;
 }
 
 /**
  * Creates a synthetic TaskCycleResult for a skipped (duplicate-detected) task.
  */
-export function createSkippedTaskResult(goalId: string, targetDimension: string, tokensUsed = 0): TaskCycleResult {
+export function createSkippedTaskResult(
+  goalId: string,
+  targetDimension: string,
+  tokensUsed = 0,
+  learningPriorApplication?: TaskLearningPriorApplication
+): TaskCycleResult {
   const skippedTask = TaskSchema.parse({ id: "skipped", goal_id: goalId, target_dimensions: [], primary_dimension: targetDimension, work_description: "skipped (duplicate)", rationale: "", approach: "", success_criteria: [], scope_boundary: { in_scope: [], out_of_scope: [], blast_radius: "" }, constraints: [], created_at: new Date().toISOString() });
   const skippedVerification = VerificationResultSchema.parse({ task_id: "skipped", verdict: "fail", confidence: 0, evidence: [], dimension_updates: [], timestamp: new Date().toISOString() });
-  return { task: skippedTask, verificationResult: skippedVerification, action: "discard", tokensUsed };
+  return {
+    task: skippedTask,
+    verificationResult: skippedVerification,
+    action: "discard",
+    tokensUsed,
+    ...(learningPriorApplication ? { learningPriorApplication } : {}),
+  };
 }
