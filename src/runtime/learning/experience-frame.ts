@@ -26,6 +26,7 @@ export const ExperienceFrameSchema = z.object({
   runId: z.string().min(1).optional(),
   loopIndex: z.number().int().nonnegative().optional(),
   createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime().optional(),
   trigger: ExperienceFrameTriggerSchema,
   selectedBy: z.enum(["deterministic_bridge", "attention_admission", "compressor_review"]),
   sourceAuthority: LearningTrustEnvelopeSchema.shape.sourceAuthority,

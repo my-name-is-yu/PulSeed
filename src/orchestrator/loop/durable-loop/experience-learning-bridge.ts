@@ -166,6 +166,7 @@ function buildExperienceFrame(input: ExperienceLearningBridgeInput, trigger: Exp
     ...(input.runId ? { runId: input.runId } : {}),
     loopIndex: input.loopIndex,
     createdAt: now,
+    updatedAt: now,
     trigger,
     selectedBy: "deterministic_bridge",
     sourceAuthority: "runtime_evidence",

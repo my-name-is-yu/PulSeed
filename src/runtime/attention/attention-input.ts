@@ -253,6 +253,9 @@ export function createExperienceLearningDiagnosticAttentionInput(input: {
   current_goal_refs?: CompanionAutonomyRef[];
   audit_refs?: CompanionAutonomyRef[];
 }): AttentionInput {
+  const learningRuntimeStateRefs = input.learning_ref.kind === "runtime_event" || input.learning_ref.kind === "runtime_item"
+    ? [input.learning_ref]
+    : [];
   return createAttentionInput({
     source_kind: "runtime_event",
     source_id: input.runtime_event_id,
@@ -268,7 +271,7 @@ export function createExperienceLearningDiagnosticAttentionInput(input: {
     current_goal_refs: input.current_goal_refs ?? [],
     runtime_state_refs: uniqueRefs([
       ref("runtime_event", input.runtime_event_id),
-      ...(input.learning_ref.kind === "runtime_event" ? [input.learning_ref] : []),
+      ...learningRuntimeStateRefs,
     ]),
     audit_refs: [
       ref("audit_trace", `experience-learning:${stableId(input.runtime_event_id)}`),

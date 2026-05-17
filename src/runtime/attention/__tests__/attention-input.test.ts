@@ -212,6 +212,17 @@ describe("AttentionInput intake", () => {
       ref("runtime_event", "experience-learning:prior-1"),
     ]);
 
+    const artifactDiagnostic = createExperienceLearningDiagnosticAttentionInput({
+      runtime_event_id: "runtime-event:experience-learning:2",
+      emitted_at: NOW,
+      summary: "Experience learning artifact produced diagnostic salience.",
+      learning_ref: ref("runtime_item", "learning-artifact:1"),
+    });
+    expect(artifactDiagnostic.runtime_state_refs).toEqual([
+      ref("runtime_event", "runtime-event:experience-learning:2"),
+      ref("runtime_item", "learning-artifact:1"),
+    ]);
+
     expect(() =>
       AttentionInputSchema.parse({
         ...input,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
@@ -49,6 +50,19 @@ describe("ExperienceLearningStateStore", () => {
     expect(first.runtimeEvent.disposition).toBe("inserted");
     expect(second.runtimeEvent.disposition).toBe("deduplicated_by_event_id");
     await expect(store.listFrames("goal-learning")).resolves.toEqual([payload.frame]);
+    const sqlite = new Database(path.join(tmpDir, "state", "pulseed-control.sqlite"), { readonly: true });
+    try {
+      expect(sqlite.prepare(`
+        SELECT created_at, updated_at
+        FROM experience_learning_frames
+        WHERE frame_id = ?
+      `).get(payload.frame_id)).toEqual({
+        created_at: payload.frame!.createdAt,
+        updated_at: payload.frame!.updatedAt,
+      });
+    } finally {
+      sqlite.close();
+    }
 
     const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: tmpDir });
     try {
@@ -561,6 +575,7 @@ function makeFramePayload(): Extract<ExperienceLearningRuntimeEventPayload, { ev
     runId: "run-learning",
     loopIndex: 3,
     createdAt: "2026-05-17T00:00:00.000Z",
+    updatedAt: "2026-05-17T00:05:00.000Z",
     trigger: "repeated_failure",
     selectedBy: "deterministic_bridge",
     sourceAuthority: "runtime_evidence",

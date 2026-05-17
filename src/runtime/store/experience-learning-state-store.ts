@@ -872,6 +872,7 @@ export function applyExperienceLearningPayloadProjection(
 
 function upsertFrame(sqlite: SqliteDatabase, frameInput: ExperienceFrame): void {
   const frame = ExperienceFrameSchema.parse(frameInput);
+  const updatedAt = frame.updatedAt ?? frame.createdAt;
   sqlite.prepare(`
     INSERT INTO experience_learning_frames (
       frame_id, goal_id, run_id, loop_index, trigger, status, created_at, updated_at, frame_json
@@ -880,7 +881,7 @@ function upsertFrame(sqlite: SqliteDatabase, frameInput: ExperienceFrame): void 
       status = excluded.status,
       updated_at = excluded.updated_at,
       frame_json = excluded.frame_json
-  `).run(frame.id, frame.goalId, frame.runId ?? null, frame.loopIndex ?? null, frame.trigger, frame.status, frame.createdAt, frame.createdAt, JSON.stringify(frame));
+  `).run(frame.id, frame.goalId, frame.runId ?? null, frame.loopIndex ?? null, frame.trigger, frame.status, frame.createdAt, updatedAt, JSON.stringify(frame));
 }
 
 function upsertHypothesis(sqlite: SqliteDatabase, hypothesisInput: LearningHypothesis): void {
