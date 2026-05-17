@@ -846,7 +846,7 @@ function runtimeEventFromProjectionRebuild(input: {
   occurredAt?: string;
 }): RuntimeEventEnvelopeInput {
   const occurredAt = validIsoOrNow(input.occurredAt ?? new Date().toISOString());
-  const rebuildId = `projection-rebuild:${stableId(stableJson(input.rebuild))}`;
+  const rebuildId = projectionRebuildId(input.rebuild);
   return {
     schema_version: "runtime-event-envelope/v1",
     event_id: `runtime-event:${stableId(`projection:${rebuildId}:${occurredAt}`)}`,
@@ -876,6 +876,11 @@ function runtimeEventFromProjectionRebuild(input: {
       summary: input.rebuild as unknown as Record<string, unknown>,
     },
   };
+}
+
+function projectionRebuildId(rebuild: RuntimeEventProjectionRebuild): string {
+  const { rebuilt_at: _rebuiltAt, ...stableRebuild } = rebuild;
+  return `projection-rebuild:${stableId(stableJson(stableRebuild))}`;
 }
 
 function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): boolean {
@@ -963,7 +968,7 @@ function readProjectionApplySourceEvents(
     options.traceId ?? null,
     options.traceId ?? null,
   ) as Array<{ event_json: string }>;
-  return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
+  return projectionSourceEvents(rows.flatMap((row) => parseRuntimeEvent(row.event_json)));
 }
 
 function applyEventBackedCurrentStateProjections(
@@ -1301,9 +1306,11 @@ function rebuildRuntimeEventProjections(
   traceId: string | null,
   graph: RuntimeGraphExplainResult["runtime_graph"],
 ): RuntimeEventProjectionRebuild {
-  const graphEvidence = runtimeGraphEvidence(graph);
+  const sourceEvents = projectionSourceEvents(events);
+  const sourceGraph = graphForProjectionSources(graph, sourceEvents);
+  const graphEvidence = runtimeGraphEvidence(sourceGraph);
   const graphEventIds = new Set(graphEvidence.source_event_refs);
-  const graphBackedEvents = events.filter((event) => graphEventIds.has(event.event_id));
+  const graphBackedEvents = sourceEvents.filter((event) => graphEventIds.has(event.event_id));
   const authorityDecisions = graphBackedEvents.flatMap((event) =>
     event.payload.schema_version === "runtime-event-payload/authority-decision/v1" ? [event.payload.decision] : []
   );
@@ -1330,7 +1337,7 @@ function rebuildRuntimeEventProjections(
         approval_ref: decision.bindings.approval_ref ?? null,
         target_binding_ref: decision.bindings.target_binding_ref ?? null,
         idempotency_key: graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.idempotency_key ?? null,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
       })),
     notification_outbox_dedupe_state: graphBackedEvents
       .filter((event) => event.event_type === "notification.dispatch.recorded" || event.event_type === "outbox.enqueue.recorded")
@@ -1341,7 +1348,7 @@ function rebuildRuntimeEventProjections(
         correlation_id: event.correlation_id,
         replay_policy: event.replay_policy,
         target_refs: event.target_refs,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
       })),
     peer_delivery_state: authorityDecisions
       .filter((decision) => decision.source.kind === "peer_initiative" || decision.source.kind === "outbound_conversation" || decision.source.kind === "telegram_callback")
@@ -1354,7 +1361,7 @@ function rebuildRuntimeEventProjections(
         feedback_ref: decision.bindings.feedback_ref ?? null,
         can_send: decision.can_send,
         can_execute: decision.can_execute,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
       })),
     memory_correction_invalidation_summary: [
       ...authorityDecisions
@@ -1363,7 +1370,7 @@ function rebuildRuntimeEventProjections(
           decision_id: decision.decision_id,
           target_refs: decision.bindings.target_refs,
           memory_withheld: decision.memory_withheld,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
         })),
       ...traces.flatMap((trace) => trace.memory_audits
         .filter((audit) => audit.invalidated || audit.action === "correct" || audit.action === "invalidate")
@@ -1374,7 +1381,7 @@ function rebuildRuntimeEventProjections(
           action: audit.action,
           correction_state: audit.correction_state,
           invalidated: audit.invalidated,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
             event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
             && event.payload.trace.trace_id === trace.trace_id
           )?.event_id),
@@ -1399,7 +1406,7 @@ function rebuildRuntimeEventProjections(
           conflict_set_ids: payload?.conflict_set_ids ?? [],
           projection_ids: payload?.projection_ids ?? [],
           recall_ids: payload?.recall_ids ?? [],
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
         };
       }),
     schedule_wake_execution_summary: traces
@@ -1410,7 +1417,7 @@ function rebuildRuntimeEventProjections(
         decision: trace.intervention_decisions.at(-1)?.decision ?? null,
         target_effect: trace.intervention_decisions.at(-1)?.target_effect ?? null,
         outcome_events: trace.initiative_events.filter((event) => event.event_type === "action_outcome").map((event) => event.summary),
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
           event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
           && event.payload.trace.trace_id === trace.trace_id
         )?.event_id),
@@ -1423,7 +1430,7 @@ function rebuildRuntimeEventProjections(
         tool_refs: trace.task_candidates.filter((candidate) => candidate.target_kind === "tool_call").map((candidate) => candidate.target_ref.ref),
         decision: trace.intervention_decisions.at(-1)?.decision ?? null,
         outcome_events: trace.initiative_events.filter((event) => event.event_type === "action_outcome").map((event) => event.summary),
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
           event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
           && event.payload.trace.trace_id === trace.trace_id
         )?.event_id),
@@ -1442,7 +1449,7 @@ function rebuildRuntimeEventProjections(
           terminal: ["verified", "blocked", "failed", "cancelled"].includes(event.payload.operation.state),
           goal_id: event.payload.operation.target?.goal_id ?? null,
           session_id: event.payload.operation.target?.session_id ?? null,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
         }];
       }),
     attention_commitment_lifecycle_summary: graphBackedEvents
@@ -1464,9 +1471,28 @@ function rebuildRuntimeEventProjections(
           source_epoch: event.payload.candidate.source_epoch,
           source_high_watermark: event.payload.candidate.source_high_watermark,
           replay_key: event.payload.candidate.replay_key,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
         }];
       }),
+  };
+}
+
+function projectionSourceEvents(events: readonly RuntimeEventEnvelope[]): RuntimeEventEnvelope[] {
+  return events.filter((event) => event.event_type !== "projection.rebuild.recorded");
+}
+
+function graphForProjectionSources(
+  graph: RuntimeGraphExplainResult["runtime_graph"],
+  events: readonly RuntimeEventEnvelope[],
+): RuntimeGraphExplainResult["runtime_graph"] {
+  const sourceEventIds = new Set(events.map((event) => event.event_id));
+  const edges = graph.edges.filter((edge) =>
+    edge.provenance_refs.some((ref) => ref.kind === "runtime_event" && sourceEventIds.has(ref.ref))
+  );
+  const nodeIds = new Set(edges.flatMap((edge) => [edge.from_node_id, edge.to_node_id]));
+  return {
+    nodes: graph.nodes.filter((node) => nodeIds.has(node.node_id)),
+    edges,
   };
 }
 

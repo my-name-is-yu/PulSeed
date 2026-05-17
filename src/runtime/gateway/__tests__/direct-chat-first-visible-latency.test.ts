@@ -203,6 +203,7 @@ async function runFakeTelegramLikeTurn(inputText: string): Promise<{
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   clearRegisteredGatewayChatSessionPort();
   vi.useRealTimers();
 });

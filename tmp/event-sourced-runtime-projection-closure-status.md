@@ -51,5 +51,6 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run test:changed`
   - `npm run check:public-contracts`
   - `git diff --check`
-- A prior `npm run test:integration` attempt observed a one-off first-visible-latency assertion above 2s. The focused rerun passed, and the later full integration rerun passed.
+- A prior `npm run test:integration` attempt observed a first-visible-latency assertion above 2s. The test now restores leaked mocks before each direct-chat latency case; the focused test, focused file, and later full integration rerun passed.
 - First sub-agent review found material gaps in projection apply ordering, apply-to-current-state completeness, and resident commitment caller-path evidence. Follow-up fixes now append the rebuild event before projection writes, restore event-backed rows for `runtime_operations` and `attention_commitment_candidates`, and tag resident commitment writes with `caller_path: resident_proactive`.
+- Second sub-agent review found a material deterministic rebuild gap: prior `projection.rebuild.recorded` events were recursively included as source evidence and `rebuilt_at` changed the rebuild idempotency key. Follow-up fixes exclude rebuild-record events from projection source events, derive rebuild idempotency from the stable rebuild payload without `rebuilt_at`, and add repeated-apply contract coverage.

@@ -593,6 +593,22 @@ describe("runtime event log source-of-truth contract", () => {
           source_event_count: 2,
         }),
       ]));
+
+      const firstRebuildEvents = await eventLog.listEvents({
+        eventType: "projection.rebuild.recorded",
+        limit: null,
+      });
+      expect(firstRebuildEvents).toHaveLength(1);
+      const appliedAgain = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      expect(appliedAgain.rebuild.source_event_count).toBe(2);
+      expect(appliedAgain.rebuild.runtime_graph_evidence.source_event_refs).toEqual(
+        events.map((event) => event.event_id).sort(),
+      );
+      expect(appliedAgain.event.event_id).toBe(applied.event.event_id);
+      await expect(eventLog.listEvents({
+        eventType: "projection.rebuild.recorded",
+        limit: null,
+      })).resolves.toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
