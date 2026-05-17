@@ -195,21 +195,21 @@ export class ApplyPatchTool implements ITool<ApplyPatchInput> {
 function runGitApply(args: string[], patch: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
     const child = spawn(resolveGitBinary(), args, { cwd });
-    let resolved = false;
     let stdout = "";
     let stderr = "";
+    let settled = false;
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("error", (error) => {
-      if (resolved) return;
-      resolved = true;
-      resolve({ stdout, stderr: error.message, exitCode: -1 });
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      resolve({ stdout, stderr: stderr || err.message, exitCode: -1 });
     });
     child.on("close", (code) => {
-      if (resolved) return;
-      resolved = true;
+      if (settled) return;
+      settled = true;
       resolve({ stdout, stderr, exitCode: code ?? -1 });
     });
     child.stdin.end(patch);

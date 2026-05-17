@@ -63,6 +63,8 @@ export {
   SeedyPresenceProjector,
   createSeedyPresenceTransportFromNonTuiDisplay,
 } from "./seedy-presence-projector.js";
+export { createGatewayCapabilityDecisionRecorder } from "./gateway-channel-capability-admission.js";
+export type { GatewayCapabilityDecisionRecorder } from "./gateway-channel-capability-admission.js";
 export {
   isTerminalSeedyPresence,
   renderSeedyPresenceFallbackAck,

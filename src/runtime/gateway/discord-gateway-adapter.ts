@@ -15,6 +15,12 @@ import { DISCORD_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract 
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import {
+  admitGatewayChannelActionCapabilityRecord,
+  admitGatewayNotificationCapabilityRecord,
+  createGatewayCapabilityDecisionRecorder,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
+import {
   formatExternalAdapterHttpFailure,
   parseExternalAdapterJson,
   readExternalAdapterHttpBody,
@@ -76,12 +82,18 @@ export interface DiscordGatewayConfig {
   ephemeral: boolean;
 }
 
+export interface DiscordGatewayRuntimeOptions {
+  runtimeBaseDir?: string;
+  capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
+}
+
 export class DiscordGatewayNotifier implements INotifier {
   readonly name = "discord-bot";
 
   constructor(
     private readonly api: DiscordAPI,
-    private readonly config: DiscordGatewayConfig
+    private readonly config: DiscordGatewayConfig,
+    private readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder,
   ) {}
 
   supports(eventType: NotificationEventType): boolean {
@@ -89,6 +101,8 @@ export class DiscordGatewayNotifier implements INotifier {
   }
 
   async notify(event: NotificationEvent): Promise<void> {
+    const record = admitGatewayNotificationCapabilityRecord({ channelType: "discord", event });
+    await this.capabilityDecisionRecorder?.(record);
     await this.api.sendChannelMessage(this.config.channel_id, formatPlaintextNotification(event));
   }
 }
@@ -103,8 +117,10 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
   private server: http.Server | null = null;
   private readonly api: DiscordAPI;
   private readonly notifier: DiscordGatewayNotifier;
+  private readonly capabilityDecisionRecorder: GatewayCapabilityDecisionRecorder | undefined;
 
-  constructor(private readonly config: DiscordGatewayConfig) {
+  constructor(private readonly config: DiscordGatewayConfig, options: DiscordGatewayRuntimeOptions = {}) {
+    this.capabilityDecisionRecorder = options.capabilityDecisionRecorder;
     this.api = new DiscordAPI(config.bot_token);
     this.typingIndicator = createRefreshingTypingIndicator({
       intervalMs: 8_000,
@@ -113,15 +129,28 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
           ? context.metadata["channel_id"]
           : context.conversation_id;
         if (!channelId) return;
+        const record = admitGatewayChannelActionCapabilityRecord({
+          channelType: "discord",
+          reportType: "typing_indicator",
+          reportId: `typing:${channelId}`,
+          routeRef: `discord:${channelId}`,
+        });
+        await this.capabilityDecisionRecorder?.(record);
         await this.api.triggerTyping(channelId);
       },
       onError: (err) => console.warn("DiscordGatewayAdapter: typing indicator failed", err),
     });
-    this.notifier = new DiscordGatewayNotifier(this.api, config);
+    this.notifier = new DiscordGatewayNotifier(this.api, config, this.capabilityDecisionRecorder);
   }
 
-  static fromConfigDir(configDir: string): DiscordGatewayAdapter {
-    return new DiscordGatewayAdapter(loadDiscordGatewayConfig(configDir));
+  static fromConfigDir(configDir: string, options: DiscordGatewayRuntimeOptions = {}): DiscordGatewayAdapter {
+    return new DiscordGatewayAdapter(loadDiscordGatewayConfig(configDir), {
+      ...options,
+      capabilityDecisionRecorder: options.capabilityDecisionRecorder
+        ?? (options.runtimeBaseDir
+          ? createGatewayCapabilityDecisionRecorder({ baseDir: options.runtimeBaseDir })
+          : undefined),
+    });
   }
 
   getNotifier(): INotifier {
@@ -273,11 +302,18 @@ export class DiscordGatewayAdapter implements ChannelAdapter {
           },
         },
         transport: displayTransport,
+        channelType: "discord",
+        capabilityDecisionRecorder: this.capabilityDecisionRecorder,
       })
       : null;
     const presenceProjector = new SeedyPresenceProjector({
       presence: resolveGatewayChannelPresenceContract(this.presenceContract),
-      transport: displayTransport !== null ? createSeedyPresenceTransportFromNonTuiDisplay(displayTransport) : undefined,
+      transport: displayTransport !== null
+        ? createSeedyPresenceTransportFromNonTuiDisplay(displayTransport, {
+          channelType: "discord",
+          capabilityDecisionRecorder: this.capabilityDecisionRecorder,
+        })
+        : undefined,
       typingIndicator: this.typingIndicator,
       typingContext: {
         platform: "discord",

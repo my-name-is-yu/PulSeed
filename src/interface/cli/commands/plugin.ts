@@ -12,10 +12,12 @@ import {
   readPluginManifest,
   type PluginManifestReadResult,
 } from "../../../runtime/plugin-manifest-reader.js";
+import type { PluginManifest } from "../../../runtime/types/plugin.js";
 
 const execFile = promisify(cp.execFile);
 const NPM_SOURCE_METADATA = ".pulseed-plugin-source.json";
 const NPM_SOURCE_METADATA_MAX_BYTES = 64 * 1024;
+const CAPABILITY_PROPOSAL_DIR = ".capability-plane/proposals";
 
 function defaultPluginsDir(): string {
   return getPluginsDir();
@@ -150,6 +152,43 @@ async function writeNpmSourceMetadata(pluginDir: string, packageName: string): P
   await fsp.writeFile(
     path.join(pluginDir, NPM_SOURCE_METADATA),
     `${JSON.stringify({ type: "npm", packageName }, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+async function writePluginCapabilityProposal(pluginDir: string, manifest: PluginManifest, source: string): Promise<void> {
+  const proposalDir = path.join(pluginDir, CAPABILITY_PROPOSAL_DIR);
+  await fsp.mkdir(proposalDir, { recursive: true });
+  const proposal = {
+    schema_version: "plugin-capability-proposal/v1",
+    proposed_at: new Date().toISOString(),
+    plugin_name: manifest.name,
+    plugin_version: manifest.version,
+    plugin_type: manifest.type,
+    source,
+    executable: false,
+    reason: "Plugin install/import is proposal-first; runtime enable/run requires CapabilityDescriptor mapping, operator review, and operation-specific verification.",
+    capabilities: manifest.capabilities.map((capability) => ({
+      capability_id: `capability:plugin:${manifest.name}:${capability}`,
+      provider_kind: manifest.type === "adapter" ? "direct_adapter" : "native_plugin",
+      provider_ref: `plugin:${manifest.name}`,
+      capability,
+      readiness_state: "proposal",
+      credential_scope_visible_on_normal_surface: false,
+      approval_fingerprint_visible_on_normal_surface: false,
+      policy_internals_visible_on_normal_surface: false,
+      required_gates: [
+        "descriptor_mapping",
+        "operator_review",
+        "permission_review",
+        "operation_specific_verification",
+      ],
+    })),
+    permissions: manifest.permissions,
+  };
+  await fsp.writeFile(
+    path.join(proposalDir, `${pluginStorageDirName(manifest.name)}.json`),
+    `${JSON.stringify(proposal, null, 2)}\n`,
     "utf-8",
   );
 }
@@ -312,6 +351,7 @@ export async function cmdPluginInstall(
     try {
       await copyPackageRootToPluginDir(getNpmPackageRoot(pluginDir, packageName), pluginDir);
       await writeNpmSourceMetadata(pluginDir, packageName);
+      await writePluginCapabilityProposal(pluginDir, manifest, `npm:${packageName}`);
     } catch (err) {
       logger.error(formatOperationError("prepare npm plugin for runtime discovery", err));
       return 1;
@@ -323,7 +363,7 @@ export async function cmdPluginInstall(
       return 1;
     }
 
-    console.log(`Plugin "${manifest.name}" v${manifest.version} installed from npm.`);
+    console.log(`Plugin "${manifest.name}" v${manifest.version} installed from npm. Capability proposal recorded; runtime execution remains gated by the Capability Plane.`);
     return 0;
   }
 
@@ -356,6 +396,7 @@ export async function cmdPluginInstall(
   try {
     await fsp.mkdir(dir, { recursive: true });
     await fsp.cp(sourcePath, destDir, { recursive: true });
+    await writePluginCapabilityProposal(destDir, manifest, path.resolve(sourcePath));
   } catch (err) {
     logger.error(formatOperationError("copy plugin", err));
     return 1;
@@ -375,7 +416,7 @@ export async function cmdPluginInstall(
     getCliLogger().warn(`Plugin "${manifest.name}" requests shell execution permission.`);
   }
 
-  console.log(`Plugin "${manifest.name}" v${manifest.version} installed.`);
+  console.log(`Plugin "${manifest.name}" v${manifest.version} installed. Capability proposal recorded; runtime execution remains gated by the Capability Plane.`);
   return 0;
 }
 

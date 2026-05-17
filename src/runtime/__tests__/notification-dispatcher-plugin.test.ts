@@ -60,6 +60,51 @@ describe("NotificationDispatcher — NotifierRegistry integration", () => {
     expect(event.summary).toBe("Goal achieved");
   });
 
+  it("records plugin notifier capability admission and fingerprint before notify", async () => {
+    const order: string[] = [];
+    const recordTrace = vi.fn(async (trace: any) => {
+      order.push("trace");
+      return {
+        trace_id: trace.trace_id,
+        replay_key: trace.replay_key,
+        situation_frame: trace.situation_frame,
+        initiative_events: trace.initiative_events,
+        attention_transitions: trace.attention_transitions,
+        task_candidates: trace.task_candidates,
+        capability_decisions: trace.capability_decisions,
+        intervention_decisions: trace.intervention_decisions,
+        runtime_graph_nodes: trace.runtime_graph_nodes,
+        runtime_graph_edges: trace.runtime_graph_edges,
+        memory_audits: trace.memory_audits,
+      };
+    });
+    dispatcher = new NotificationDispatcher({}, registry, undefined, { recordTrace });
+    const notifier = makeNotifier("my-notifier", ["goal_complete"], vi.fn(async () => {
+      order.push("notify");
+    }));
+    registry.register("my-notifier", notifier);
+
+    await dispatcher.dispatch(makeReport({ report_type: "goal_completion" }));
+
+    expect(order).toEqual(["trace", "trace", "notify"]);
+    expect(notifier.notify).toHaveBeenCalledOnce();
+    const traces = recordTrace.mock.calls.map((call) => call[0]);
+    expect(traces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        capability_decisions: expect.arrayContaining([
+          expect.objectContaining({
+            decision: "available",
+            capability_refs: expect.arrayContaining([
+              expect.objectContaining({ kind: "capability_admission" }),
+              expect.objectContaining({ kind: "capability_fingerprint" }),
+              expect.objectContaining({ kind: "notification_channel", ref: "plugin:my-notifier" }),
+            ]),
+          }),
+        ]),
+      }),
+    ]));
+  });
+
   it("does not crash when a plugin notifier throws", async () => {
     const failing = makeNotifier("failing-notifier", ["goal_complete"], async () => {
       throw new Error("network failure");

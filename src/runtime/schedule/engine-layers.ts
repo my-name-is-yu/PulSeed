@@ -29,6 +29,7 @@ import {
 } from "../attention/index.js";
 import { assembleScheduleOperationPlans } from "../capability-operation-planner.js";
 import type { ScheduleExecutionContext } from "./engine-execution.js";
+import { admitScheduleCapability, scheduleCapabilityAdmissionRefs } from "./capability-admission.js";
 import { buildScheduleNotificationReport } from "./notification-report.js";
 import { recordScheduleGoalRunDecision, recordScheduleJobDecision, recordScheduleWaitResumeDecision } from "./personal-agent-trace.js";
 
@@ -234,6 +235,34 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
   }
 
   try {
+    const capabilityAdmission = admitScheduleCapability(entry, `cron:${cfg.job_kind}`, {
+      entry_id: entry.id,
+      job_kind: cfg.job_kind,
+      fired_at: firedAt,
+    });
+    if (capabilityAdmission.admission.status !== "allowed") {
+      await recordScheduleJobDecision({
+        personalAgentRuntime: deps.personalAgentRuntime,
+        entry,
+        firedAt,
+        jobKind: "cron",
+        actionKind: cfg.job_kind,
+        decision: "block",
+        capabilityDecision: "blocked",
+        targetEffect: "none",
+        decisionReason: capabilityAdmission.admission.reason,
+        capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
+      });
+      return ScheduleResultSchema.parse({
+        entry_id: entry.id,
+        status: "error",
+        duration_ms: Date.now() - start,
+        error_message: capabilityAdmission.admission.reason,
+        fired_at: firedAt,
+        failure_kind: "permanent",
+      });
+    }
+
     await recordScheduleJobDecision({
       personalAgentRuntime: deps.personalAgentRuntime,
       entry,
@@ -247,6 +276,7 @@ export async function executeCron(entry: ScheduleEntry, deps: LayerDeps): Promis
         ...(deps.llmClient ? [{ kind: "capability", ref: "llm_schedule_cron" }] : []),
         ...(deps.reportingEngine ? [{ kind: "capability", ref: "schedule_reporting" }] : []),
         ...(deps.notificationDispatcher ? [{ kind: "capability", ref: "notification_dispatch" }] : []),
+        ...scheduleCapabilityAdmissionRefs(capabilityAdmission),
       ],
       currentRefs: [
         ...(cfg.context_sources.map((sourceId) => ({ kind: "data_source", ref: sourceId }))),
@@ -396,6 +426,38 @@ export async function executeGoalTrigger(
     });
   }
 
+  const capabilityAdmission = admitScheduleCapability(entry, "goal_trigger", {
+    entry_id: entry.id,
+    goal_id: cfg.goal_id,
+    scheduled_for: scheduledFor,
+    run_policy: cfg.run_policy,
+  });
+  if (capabilityAdmission.admission.status !== "allowed") {
+    await recordScheduleGoalRunDecision({
+      personalAgentRuntime: deps.personalAgentRuntime,
+      entry,
+      goalId: cfg.goal_id,
+      firedAt,
+      scheduledFor,
+      reason: context.reason,
+      mode: "goal_trigger",
+      runPolicy: cfg.run_policy,
+      maxIterations: cfg.max_iterations,
+      decision: "block",
+      capabilityDecision: "blocked",
+      decisionReason: capabilityAdmission.admission.reason,
+      capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
+    });
+    return ScheduleResultSchema.parse({
+      entry_id: entry.id,
+      status: "error",
+      duration_ms: Date.now() - start,
+      error_message: capabilityAdmission.admission.reason,
+      fired_at: firedAt,
+      failure_kind: "permanent",
+    });
+  }
+
   // Check daily budget
   if ((entry.tokens_used_today ?? 0) >= entry.max_tokens_per_day) {
     await recordScheduleGoalRunDecision({
@@ -410,6 +472,7 @@ export async function executeGoalTrigger(
       maxIterations: cfg.max_iterations,
       decision: "hold",
       decisionReason: "Goal-trigger schedule wake was held because the schedule daily token budget was exhausted.",
+      capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
     });
     deps.logger.info(`GoalTrigger "${entry.name}" skipped: daily budget exceeded`);
     return ScheduleResultSchema.parse({
@@ -424,6 +487,20 @@ export async function executeGoalTrigger(
   // Check if goal is already active
   if (cfg.skip_if_active && deps.stateManager) {
     try {
+      await recordScheduleJobDecision({
+        personalAgentRuntime: deps.personalAgentRuntime,
+        entry,
+        firedAt,
+        scheduledFor,
+        jobKind: "goal_trigger",
+        actionKind: "inspect_active_goal",
+        decision: "allow",
+        capabilityDecision: "available",
+        targetEffect: "none",
+        decisionReason: "Goal-trigger schedule wake was descriptor-admitted to inspect the target goal state before skip_if_active handling.",
+        capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
+        currentRefs: [{ kind: "goal", ref: cfg.goal_id }],
+      });
       const goal = await deps.stateManager.loadGoal(cfg.goal_id);
       if (goal && goal.status === "active") {
         await recordScheduleGoalRunDecision({
@@ -438,6 +515,7 @@ export async function executeGoalTrigger(
           maxIterations: cfg.max_iterations,
           decision: "hold",
           decisionReason: "Goal-trigger schedule wake was held because the target goal was already active.",
+          capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
         });
         deps.logger.info(`GoalTrigger "${entry.name}" skipped: goal ${cfg.goal_id} is already active`);
         return ScheduleResultSchema.parse({
@@ -485,6 +563,7 @@ export async function executeGoalTrigger(
         decisionReason: signalContext.safety_context.hard_blocked
           ? signalContext.safety_context.reason ?? "Wait-resume schedule wake was blocked by signal safety context."
           : "Wait-resume schedule wake was durably admitted as an attention concern before re-evaluation.",
+        capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
         currentRefs: signalContextRuntimeRefs(signalContext),
         staleRefs: signalContext.stale_target_context.stale_refs.map(autonomyRefToRuntimeRef),
         auditRefs: signalContext.audit_refs.map(autonomyRefToRuntimeRef),
@@ -554,6 +633,7 @@ export async function executeGoalTrigger(
       maxIterations: cfg.max_iterations,
       decision: "allow",
       decisionReason: "Goal-trigger schedule wake was allowed to start a DurableLoop goal run.",
+      capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
     });
     const result = cfg.run_policy === "resident"
       ? await deps.coreLoop.run(cfg.goal_id, { maxIterations: null, runPolicy: "resident" })
@@ -674,6 +754,36 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
   }
 
   try {
+    const capabilityAdmission = admitScheduleCapability(entry, "probe:query", {
+      entry_id: entry.id,
+      data_source_id: cfg.data_source_id,
+      probe_dimension: cfg.probe_dimension ?? null,
+      fired_at: firedAt,
+    });
+    if (capabilityAdmission.admission.status !== "allowed") {
+      await recordScheduleJobDecision({
+        personalAgentRuntime: deps.personalAgentRuntime,
+        entry,
+        firedAt,
+        jobKind: "probe",
+        actionKind: "query",
+        decision: "block",
+        capabilityDecision: "blocked",
+        targetEffect: "none",
+        decisionReason: capabilityAdmission.admission.reason,
+        capabilityRefs: scheduleCapabilityAdmissionRefs(capabilityAdmission),
+        currentRefs: [{ kind: "data_source", ref: cfg.data_source_id }],
+      });
+      return ScheduleResultSchema.parse({
+        entry_id: entry.id,
+        status: "error",
+        duration_ms: Date.now() - start,
+        error_message: capabilityAdmission.admission.reason,
+        fired_at: firedAt,
+        failure_kind: "permanent",
+      });
+    }
+
     await recordScheduleJobDecision({
       personalAgentRuntime: deps.personalAgentRuntime,
       entry,
@@ -686,6 +796,7 @@ export async function executeProbe(entry: ScheduleEntry, deps: LayerDeps): Promi
         { kind: "capability", ref: "data_source_query" },
         ...(cfg.llm_on_change && deps.llmClient ? [{ kind: "capability", ref: "llm_schedule_probe" }] : []),
         ...(deps.notificationDispatcher ? [{ kind: "capability", ref: "notification_dispatch" }] : []),
+        ...scheduleCapabilityAdmissionRefs(capabilityAdmission),
       ],
       currentRefs: [{ kind: "data_source", ref: cfg.data_source_id }],
     });

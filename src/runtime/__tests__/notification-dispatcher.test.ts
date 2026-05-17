@@ -189,6 +189,46 @@ describe("dispatch() — Slack channel", () => {
     expect(blockTypes).toContain("divider");
   });
 
+  it("records the concrete capability admission and fingerprint before Slack delivery", async () => {
+    const recordTrace = vi.fn();
+    const dispatcher = new NotificationDispatcher(
+      {
+        channels: [
+          {
+            type: "slack",
+            webhook_url: `http://127.0.0.1:${port}/slack`,
+            report_types: [] as string[],
+            format: "compact",
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      { recordTrace },
+    );
+
+    await dispatcher.dispatch(createMockReport());
+
+    expect(requests).toHaveLength(1);
+    const traces = recordTrace.mock.calls.map((call) => call[0]);
+    expect(traces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        situation_frame: expect.objectContaining({
+          caller_path: "notification_interruption",
+        }),
+        capability_decisions: expect.arrayContaining([
+          expect.objectContaining({
+            decision: "available",
+            capability_refs: expect.arrayContaining([
+              expect.objectContaining({ kind: "capability_admission" }),
+              expect.objectContaining({ kind: "capability_fingerprint" }),
+            ]),
+          }),
+        ]),
+      }),
+    ]));
+  });
+
   it("returns error result when server responds with non-200", async () => {
     // Spin up a server that returns 500
     const errServer = http.createServer((_req, res) => {

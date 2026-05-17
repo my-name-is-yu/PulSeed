@@ -284,6 +284,11 @@ and adapter-backed mechanical verification use the `run-adapter` ToolExecutor
 path. If admission is blocked, the tool is missing, or the tool fails before
 returning an adapter result, PulSeed records a non-executed result and does not
 call the adapter directly outside the `run-adapter` tool implementation.
+The Capability Plane also records descriptor-backed refs for adapter, schedule,
+gateway-channel, plugin, MCP, file, and runtime-control operations. Dangerous
+side-effecting descriptors require authority and approval fingerprint checks
+before execution; missing descriptors and direct adapter production bypasses
+fail closed.
 
 Mutating schedule commands (`add`, `edit`, `pause`, `resume`, `remove`, `run`,
 and dream-suggestion `apply`) execute through the Schedule tools and
@@ -303,6 +308,19 @@ are represented as durable `suppress` InterventionPolicy decisions before a
 channel delivery is dropped. Mixed outcomes can therefore have both an
 admission trace for delivered/plugin routes and a suppression trace for the
 held channel concern.
+Accepted notification channels and plugin notifier routes are represented as
+gateway-channel CapabilityDescriptors before delivery. A descriptor admission
+block produces a non-delivery result instead of calling the transport.
+
+Operators can inspect descriptors with:
+
+```bash
+pulseed runtime capability explain <capability-id> [--json]
+```
+
+That command is not a normal user-facing surface; it may show rollback plans,
+verification refs, credential-scope class, approval-fingerprint inputs, and
+RuntimeGraph refs for debugging.
 
 Run `npm run test:product-gauntlet` before broad authority, gateway,
 notification, approval, memory-correction, or peer initiative changes. The
@@ -371,6 +389,10 @@ the durable SituationFrame/InitiativeEvent trace cannot be written.
 
 Foreign plugin imports are compatibility evidence until reviewed. They are not
 directly runtime-loadable just because a manifest was imported.
+Native plugin manifests are proposal-first too: install/import records plugin
+state and descriptor proposals, but entry points are not imported by default.
+Enable/run requires descriptor mapping, operator review, approval fingerprint
+checks for side effects, and operation-specific verification.
 
 ## What This Page Does Not Claim
 

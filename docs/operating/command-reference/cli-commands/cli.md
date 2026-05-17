@@ -93,6 +93,7 @@ pulseed runtime proactive-calibration [--json]
 pulseed runtime peer-initiative-capability [--json]
 pulseed runtime proactive-feedback --intervention <id> --outcome <accepted|ignored|dismissed|corrected|overreach>
 pulseed runtime proactive-feedback --intervention <id> --outcome overreach --overreach-indicator too_frequent --reason "Too frequent"
+pulseed runtime capability explain <capability-id> [--json]
 pulseed runtime graph explain <trace-id> [--json]
 pulseed runtime event-log rebuild [--dry-run] [--trace <trace-id>] [--json]
 pulseed runtime replay --trace <trace-id> [--json]
@@ -107,6 +108,12 @@ feedback calibration exist for other surfaces.
 The event-log commands are operator/debug surfaces. They expose runtime event
 IDs, RuntimeGraph lineage, idempotency keys, authority refs, and projection
 rebuild evidence that normal chat/status surfaces intentionally redact.
+`runtime capability explain` is also operator/debug-only. It prints the
+`CapabilityDescriptor` for builtin tools, ToolExecutor-admitted actions,
+stored plugin proposals, MCP tool mappings, runtime-control actions, and
+synthetic gateway-channel sends. Normal surfaces must use redacted affordances
+instead of exposing credential scopes, approval fingerprints, raw catalog
+internals, or policy internals.
 `runtime sessions --json` and `runtime runs --json` include a
 `surface_projection` field that follows the shared
 [Surface Projection Protocol](../operator-systems/surface-projection-protocol.md) contract for

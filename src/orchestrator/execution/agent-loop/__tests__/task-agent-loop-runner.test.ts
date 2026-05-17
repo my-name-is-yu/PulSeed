@@ -392,6 +392,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {
     const cwd = process.cwd();
+    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-artifact-"));
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -444,6 +445,7 @@ describe("TaskAgentLoopRunner", () => {
         defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
       } as unknown as AgentLoopModelRegistry,
       contextAssembler: new AgentLoopContextAssembler(),
+      cognitionMemoryBaseDir,
     });
 
     await runner.runTask({ task: makeArtifactTask(), cwd });
@@ -457,5 +459,6 @@ describe("TaskAgentLoopRunner", () => {
     expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
     expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
     expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
+    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
   });
 });

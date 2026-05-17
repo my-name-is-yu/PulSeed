@@ -1,6 +1,7 @@
 // ─── pulseed runtime commands ───
 
 import { parseArgs } from "node:util";
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -57,6 +58,18 @@ import { formatOperationError } from "../utils.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./operator-binding-status.js";
 import { cmdRuntimeCognitionReplay } from "./cognition-replay.js";
+import { MCPServersConfigSchema, type MCPServerConfig } from "../../../base/types/mcp.js";
+import { createBuiltinTools } from "../../../tools/builtin/factory.js";
+import {
+  CapabilityRegistry,
+  descriptorFromGatewayChannelAction,
+  descriptorFromRuntimeControlAction,
+  descriptorsFromMcpServers,
+  descriptorsFromPluginStates,
+  type CapabilityDescriptor,
+} from "../../../runtime/capability-plane.js";
+import { PluginChannelRuntimeStateStore } from "../../../runtime/store/plugin-channel-runtime-state-store.js";
+import { RuntimeControlOperationKindSchema } from "../../../runtime/store/runtime-operation-schemas.js";
 import {
   PersonalAgentRuntimeStore,
   projectPersonalAgentNormalSurface,
@@ -96,6 +109,7 @@ const STATUS_WIDTH = 10;
 const UPDATED_WIDTH = 24;
 const WORKSPACE_WIDTH = 26;
 const TITLE_WIDTH = 32;
+const MCP_CAPABILITY_EXPLAIN_CONFIG_FILES = ["mcp-servers.json", "mcpServers.json"] as const;
 
 type RuntimeListValues = {
   json?: boolean;
@@ -532,6 +546,69 @@ function runtimeEventLogStore(stateManager: StateManager): RuntimeEventLogStore 
   });
 }
 
+async function capabilityRegistryForRuntimeExplain(stateManager: StateManager): Promise<CapabilityRegistry> {
+  const registry = CapabilityRegistry.fromTools(createBuiltinTools({ stateManager }));
+  for (const descriptor of descriptorsFromMcpServers(await loadMcpServersForCapabilityExplain(stateManager))) {
+    registry.register(descriptor);
+  }
+  const pluginStore = new PluginChannelRuntimeStateStore(stateManager.getBaseDir());
+  for (const descriptor of descriptorsFromPluginStates(await pluginStore.listPluginStates())) {
+    registry.register(descriptor);
+  }
+  for (const action of RuntimeControlOperationKindSchema.options) {
+    registry.register(descriptorFromRuntimeControlAction(action));
+  }
+  return registry;
+}
+
+async function loadMcpServersForCapabilityExplain(stateManager: StateManager): Promise<MCPServerConfig[]> {
+  for (const fileName of MCP_CAPABILITY_EXPLAIN_CONFIG_FILES) {
+    const raw = await readCapabilityExplainConfigFile(stateManager, fileName);
+    if (raw === null) continue;
+    const parsed = MCPServersConfigSchema.safeParse(raw);
+    return parsed.success ? parsed.data.servers : [];
+  }
+  return [];
+}
+
+async function readCapabilityExplainConfigFile(
+  stateManager: StateManager,
+  fileName: "mcp-servers.json" | "mcpServers.json"
+): Promise<unknown | null> {
+  try {
+    return JSON.parse(
+      await readFile(path.join(stateManager.getBaseDir(), fileName), "utf8")
+    ) as unknown;
+  } catch (err) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
+}
+
+function printCapabilityDescriptor(descriptor: CapabilityDescriptor): void {
+  const usable = descriptor.readiness_state === "executable_verified"
+    || descriptor.readiness_state === "configured";
+  console.log(`Capability: ${descriptor.capability_id}`);
+  console.log(`  Usable:       ${usable ? "yes" : "no"} (${descriptor.readiness_state})`);
+  console.log(`  Provider:     ${descriptor.provider_kind}:${descriptor.provider_ref}`);
+  console.log(`  Operation:    ${descriptor.operation_kind}`);
+  console.log(`  Authority:    permission=${descriptor.authority_requirements.permission_level}, approval=${descriptor.authority_requirements.approval_required ? "required" : "not-required"}, runtime-control=${descriptor.authority_requirements.runtime_control_required ? "required" : "not-required"}`);
+  console.log(`  Credentials:  ${descriptor.credential_scope.kind} ${descriptor.credential_scope.refs.join(", ") || "-"}`);
+  console.log(`  Sandbox:      ${descriptor.sandbox_requirement.mode}${descriptor.sandbox_requirement.network ? ", network" : ""}`);
+  console.log(`  Risk:         cost=${descriptor.cost_risk_class}, side-effect=${descriptor.side_effect_profile}`);
+  console.log(`  Verification: ${descriptor.verification_probe.kind}${descriptor.verification_probe.required ? " required" : ""} ${descriptor.verification_probe.refs.join(", ") || "-"}`);
+  console.log(`  Rollback:     ${descriptor.rollback_plan.kind}`);
+  for (const step of descriptor.rollback_plan.steps) {
+    console.log(`    - ${step}`);
+  }
+  console.log(`  Event refs:   ${descriptor.event_replay_refs.event_log_ref}, replay=${descriptor.event_replay_refs.replay_policy}`);
+  console.log(`  Graph refs:   ${descriptor.runtime_graph_refs.capability_ref}, ${descriptor.runtime_graph_refs.operation_ref}`);
+  console.log(`  Normal:       ${descriptor.normal_surface_affordance.safe_label}; raw catalog visible=${descriptor.normal_surface_affordance.raw_catalog_visible ? "yes" : "no"}`);
+  console.log(`  Why:          ${descriptor.operator_diagnostics.summary}`);
+}
+
 function printSituationFrame(frame: SituationFrame): void {
   console.log(`SituationFrame: ${frame.frame_id}`);
   console.log(`  Caller:      ${frame.caller_path}`);
@@ -828,7 +905,7 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   const runtimeSubcommand = args[0];
 
   if (!runtimeSubcommand) {
-    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime graph explain <trace-id>, runtime event-log rebuild [--dry-run], runtime replay --trace <trace-id>, runtime memory-provenance");
+    logger.error("Error: runtime subcommand required. Available: runtime bindings, runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime capability explain <capability-id>, runtime runtime-graph <id>, runtime graph explain <trace-id>, runtime event-log rebuild [--dry-run], runtime replay --trace <trace-id>, runtime memory-provenance");
     return 1;
   }
 
@@ -1236,6 +1313,22 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     return 0;
   }
 
+  if (runtimeSubcommand === "capability" && args[1] === "explain") {
+    const values = parseDetailArgs(args.slice(2), "capability explain");
+    if (!values.id) {
+      logger.error("Error: capability ID is required. Usage: pulseed runtime capability explain <capability-id> [--json]");
+      return 1;
+    }
+    const registry = await capabilityRegistryForRuntimeExplain(stateManager);
+    const descriptor = registry.get(values.id) ?? syntheticCapabilityDescriptorForRuntimeExplain(values.id);
+    if (!descriptor) {
+      console.error(`CapabilityDescriptor not found: ${values.id}`);
+      return 1;
+    }
+    values.json ? printJson(descriptor) : printCapabilityDescriptor(descriptor);
+    return 0;
+  }
+
   if (runtimeSubcommand === "runtime-graph") {
     const values = parseDetailArgs(args.slice(1), "runtime-graph");
     if (!values.id) {
@@ -1374,8 +1467,44 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   }
 
   logger.error(`Unknown runtime subcommand: "${runtimeSubcommand}"`);
-  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime runtime-graph <id>, runtime memory-provenance");
+  logger.error("Available: runtime sessions, runtime runs, runtime session <id>, runtime run <id>, runtime experiment-queues, runtime experiment-queue <id>, runtime budgets, runtime budget <id>, runtime evidence <goal-id|run-id>, runtime postmortem <goal-id|run-id>, runtime dream-review <run-id>, runtime proactive-quality, runtime proactive-calibration, runtime resident-activation, runtime peer-initiative-capability, runtime proactive-feedback, runtime attention-continuity, runtime cognition-replay, runtime situation-frame <id>, runtime initiative-trace <ref>, runtime attention-state, runtime intervention-decision <id>, runtime capability-decision <id>, runtime capability explain <capability-id>, runtime runtime-graph <id>, runtime memory-provenance");
   return 1;
+}
+
+function syntheticCapabilityDescriptorForRuntimeExplain(capabilityId: string): CapabilityDescriptor | null {
+  const runtimeControlPrefix = "capability:runtime_control_action:";
+  if (capabilityId.startsWith(runtimeControlPrefix)) {
+    const action = capabilityId.slice(runtimeControlPrefix.length);
+    if (action && isRuntimeControlActionExplainable(action)) {
+      return descriptorFromRuntimeControlAction(action);
+    }
+  }
+
+  const gatewayPrefix = "capability:gateway_channel_action:";
+  if (capabilityId.startsWith(gatewayPrefix)) {
+    const rest = capabilityId.slice(gatewayPrefix.length);
+    const parts = rest.split(":");
+    const reportType = parts.pop();
+    const channelType = parts.join(":");
+    if (channelType && reportType) {
+      return descriptorFromGatewayChannelAction({ channelType, reportType });
+    }
+  }
+  return null;
+}
+
+const RUNTIME_AUTOMATION_CAPABILITY_ACTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["auth_handoff", new Set(["inspect", "complete", "cancel", "expire"])],
+  ["browser_session", new Set(["inspect", "expire"])],
+  ["guardrail", new Set(["inspect", "reset", "unpause", "pause", "half_open"])],
+  ["backpressure", new Set(["inspect", "reset"])],
+]);
+
+function isRuntimeControlActionExplainable(action: string): boolean {
+  if (RuntimeControlOperationKindSchema.safeParse(action).success) return true;
+  const [kind, domain, automationAction, ...rest] = action.split(":");
+  if (kind !== "automation" || !domain || !automationAction || rest.length > 0) return false;
+  return RUNTIME_AUTOMATION_CAPABILITY_ACTIONS.get(domain)?.has(automationAction) ?? false;
 }
 
 async function summarizeEvidenceTarget(ledger: RuntimeEvidenceLedger, id: string): Promise<RuntimeEvidenceSummary> {

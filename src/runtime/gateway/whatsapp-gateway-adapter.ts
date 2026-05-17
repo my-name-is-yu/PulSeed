@@ -14,6 +14,11 @@ import { WHATSAPP_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay } from "./seedy-presence-projector.js";
 import {
+  admitGatewayNotificationCapabilityRecord,
+  createGatewayCapabilityDecisionRecorder,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
+import {
   formatExternalAdapterHttpFailure,
   parseExternalAdapterJson,
   readExternalAdapterHttpBody,
@@ -60,12 +65,18 @@ export interface WhatsAppGatewayConfig {
   app_secret?: string;
 }
 
+export interface WhatsAppGatewayRuntimeOptions {
+  runtimeBaseDir?: string;
+  capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
+}
+
 export class WhatsAppGatewayNotifier implements INotifier {
   readonly name = "whatsapp-webhook";
 
   constructor(
     private readonly client: WhatsAppCloudClient,
-    private readonly config: WhatsAppGatewayConfig
+    private readonly config: WhatsAppGatewayConfig,
+    private readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder,
   ) {}
 
   supports(eventType: NotificationEventType): boolean {
@@ -73,6 +84,8 @@ export class WhatsAppGatewayNotifier implements INotifier {
   }
 
   async notify(event: NotificationEvent): Promise<void> {
+    const record = admitGatewayNotificationCapabilityRecord({ channelType: "whatsapp", event });
+    await this.capabilityDecisionRecorder?.(record);
     await this.client.sendTextMessage({
       to: this.config.recipient_id,
       body: formatPlaintextNotification(event),
@@ -92,14 +105,22 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
   private server: http.Server | null = null;
   private readonly client: WhatsAppCloudClient;
   private readonly notifier: WhatsAppGatewayNotifier;
+  private readonly capabilityDecisionRecorder: GatewayCapabilityDecisionRecorder | undefined;
 
-  constructor(private readonly config: WhatsAppGatewayConfig) {
+  constructor(private readonly config: WhatsAppGatewayConfig, options: WhatsAppGatewayRuntimeOptions = {}) {
+    this.capabilityDecisionRecorder = options.capabilityDecisionRecorder;
     this.client = new WhatsAppCloudClient(config.phone_number_id, config.access_token);
-    this.notifier = new WhatsAppGatewayNotifier(this.client, config);
+    this.notifier = new WhatsAppGatewayNotifier(this.client, config, this.capabilityDecisionRecorder);
   }
 
-  static fromConfigDir(configDir: string): WhatsAppGatewayAdapter {
-    return new WhatsAppGatewayAdapter(loadWhatsAppGatewayConfig(configDir));
+  static fromConfigDir(configDir: string, options: WhatsAppGatewayRuntimeOptions = {}): WhatsAppGatewayAdapter {
+    return new WhatsAppGatewayAdapter(loadWhatsAppGatewayConfig(configDir), {
+      ...options,
+      capabilityDecisionRecorder: options.capabilityDecisionRecorder
+        ?? (options.runtimeBaseDir
+          ? createGatewayCapabilityDecisionRecorder({ baseDir: options.runtimeBaseDir })
+          : undefined),
+    });
   }
 
   getNotifier(): INotifier {
@@ -225,10 +246,15 @@ export class WhatsAppGatewayAdapter implements ChannelAdapter {
         },
       },
       transport,
+      channelType: "whatsapp",
+      capabilityDecisionRecorder: this.capabilityDecisionRecorder,
     });
     const presenceProjector = new SeedyPresenceProjector({
       presence: resolveGatewayChannelPresenceContract(this.presenceContract),
-      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport),
+      transport: createSeedyPresenceTransportFromNonTuiDisplay(transport, {
+        channelType: "whatsapp",
+        capabilityDecisionRecorder: this.capabilityDecisionRecorder,
+      }),
       onError: (error, operation) => console.warn("WhatsAppGatewayAdapter: presence projector failed", { operation, error }),
     });
 

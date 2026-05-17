@@ -1772,6 +1772,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: registry,
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
+      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
     });
 
     const stateManager = new StateManager(tmpDir);
@@ -1873,6 +1874,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["task_update"] },
+      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
     });
     const llmClient = createMockLLMClient([]);
     const lifecycle = new TaskLifecycle(
@@ -1963,6 +1965,7 @@ describe("agentloop phase 2", () => {
         modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
         defaultModel: modelInfo.ref,
         defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
+        cognitionMemoryBaseDir: path.join(daemonDir, ".pulseed-test-cognition"),
         cwd: daemonDir,
       });
       const diffCwds: string[] = [];
@@ -2083,6 +2086,7 @@ describe("agentloop phase 2", () => {
         modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
         defaultModel: modelInfo.ref,
         defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
+        cognitionMemoryBaseDir: path.join(daemonDir, ".pulseed-test-cognition"),
         cwd: daemonDir,
       });
       const stateManager = new StateManager(daemonDir);
@@ -2187,6 +2191,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["echo", "verify"] },
+      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
     });
 
     const result = await taskRunner.runTask({
@@ -2260,6 +2265,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["shell_command"] },
+      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
     });
 
     const result = await taskRunner.runTask({

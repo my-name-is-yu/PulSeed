@@ -3,7 +3,6 @@ import * as fs from "node:fs/promises";
 import { getPluginsDir } from "../base/utils/paths.js";
 import { getPulseedVersion as getPackageVersion } from "../base/utils/pulseed-meta.js";
 import { ValidationError } from "../base/utils/errors.js";
-import { exposeRegisteredGatewayChatSessionPort } from "./gateway/chat-session-port.js";
 import { readForeignPluginCompatibilityArtifact, hasForeignPluginCompatibilityArtifact } from "./foreign-plugins/compatibility.js";
 import { PluginChannelRuntimeStateStore } from "./store/plugin-channel-runtime-state-store.js";
 import { hasPluginManifestFile, readPluginManifest } from "./plugin-manifest-reader.js";
@@ -141,37 +140,7 @@ export class PluginLoader {
       return state;
     }
 
-    // 2. Dynamically import the entry point
-    exposeRegisteredGatewayChatSessionPort();
-    const entryPath = path.resolve(pluginDir, manifest.entry_point);
-    if (!entryPath.startsWith(pluginDir + path.sep) && entryPath !== pluginDir) {
-      throw new ValidationError(`Plugin entry point escapes plugin directory: ${manifest.entry_point}`);
-    }
-    let module: { default?: unknown };
-    try {
-      // Use pathToFileURL for cross-platform compatibility in ESM
-      const { pathToFileURL } = await import("node:url");
-      module = (await import(pathToFileURL(entryPath).href)) as { default?: unknown };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to import plugin entry point: ${entryPath} — ${msg}`);
-    }
-
-    const impl = await this.preparePluginImplementation(module.default, pluginDir);
-    if (impl === undefined || impl === null) {
-      throw new Error(
-        `Plugin entry point has no default export: ${entryPath}`
-      );
-    }
-
-    // 3. Validate interface compliance
-    this.validateInterface(manifest.type, impl);
-    await this.initPluginIfNeeded(impl);
-
-    // 4. Register in the appropriate registry
-    await this.registerPlugin(manifest, impl, pluginDir);
-
-    const state = this.buildSuccessState(manifest);
+    const state = this.buildCapabilityProposalState(manifest);
     await this.persistPluginState(state);
     return state;
   }
@@ -327,6 +296,22 @@ export class PluginLoader {
       name: manifest.name,
       manifest,
       status: "loaded",
+      loaded_at: new Date().toISOString(),
+      trust_score: 0,
+      usage_count: 0,
+      success_count: 0,
+      failure_count: 0,
+    });
+    this.pluginStates.set(manifest.name, state);
+    return state;
+  }
+
+  buildCapabilityProposalState(manifest: PluginManifest): PluginState {
+    const state = PluginStateSchema.parse({
+      name: manifest.name,
+      manifest,
+      status: "disabled",
+      error_message: "Plugin import is proposal-first; runtime enable/run requires CapabilityDescriptor mapping, operator review, approval fingerprint checks, and operation-specific verification.",
       loaded_at: new Date().toISOString(),
       trust_score: 0,
       usage_count: 0,

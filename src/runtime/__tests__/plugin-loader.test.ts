@@ -54,7 +54,7 @@ function makeIsolatedControlDir(): string {
 
 function makeIsolatedPluginLoader(
   pluginsDir?: string,
-  notifierRegistry = makeNotifierRegistry()
+  notifierRegistry = makeNotifierRegistry(),
 ): PluginLoader {
   const controlBaseDir = makeIsolatedControlDir();
   const resolvedPluginsDir = pluginsDir ?? path.join(controlBaseDir, "plugins");
@@ -321,14 +321,13 @@ describe("PluginLoader version compatibility", () => {
     expect(state.error_message).toMatch(/1\.2\.3abc/);
   });
 
-  it("proceeds normally when no version constraints are specified", async () => {
+  it("records a proposal-first disabled state when no version constraints are specified", async () => {
     const manifest = makeValidManifest({ name: "compat-plugin" });
     vi.spyOn(loader, "loadManifest").mockResolvedValue(manifest);
 
-    vi.spyOn(loader, "loadOne").mockResolvedValueOnce(loader.buildSuccessState(manifest));
-
     const state = await loader.loadOne(path.join(pluginRoot, "compat-plugin"));
-    expect(state.status).toBe("loaded");
+    expect(state.status).toBe("disabled");
+    expect(state.error_message).toMatch(/proposal-first/);
   });
 });
 
@@ -730,7 +729,10 @@ describe("PluginLoader.getPluginState and updatePluginState", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      tmpDir
+      tmpDir,
+      undefined,
+      undefined,
+      { controlBaseDir: tmpDir }
     );
   });
 
@@ -815,7 +817,10 @@ describe("PluginLoader cross-platform session exposure", () => {
       makeAdapterRegistry(),
       makeDataSourceRegistry(),
       makeNotifierRegistry(),
-      tmpDir
+      tmpDir,
+      undefined,
+      undefined,
+      { controlBaseDir: tmpDir }
     );
   });
 
@@ -823,7 +828,7 @@ describe("PluginLoader cross-platform session exposure", () => {
     fsSync.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
-  it("exposes the registered cross-platform session getter before plugin import", async () => {
+  it("keeps plugin loading proposal-first without exposing the cross-platform session getter", async () => {
     const pluginDir = path.join(tmpDir, "global-aware-plugin");
     fsSync.mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
     fsSync.writeFileSync(path.join(pluginDir, "plugin.json"), JSON.stringify(makeValidManifest({
@@ -844,9 +849,9 @@ describe("PluginLoader cross-platform session exposure", () => {
     const getter = vi.fn().mockResolvedValue({ manager: true });
     registerGlobalCrossPlatformChatSessionManager(getter);
 
-    await expect(loader.loadOne(pluginDir)).resolves.toMatchObject({ status: "loaded" });
+    await expect(loader.loadOne(pluginDir)).resolves.toMatchObject({ status: "disabled" });
     expect((globalThis as typeof globalThis & {
       __pulseedGetGlobalCrossPlatformChatSessionManager?: typeof getter;
-    }).__pulseedGetGlobalCrossPlatformChatSessionManager).toBe(getter);
+    }).__pulseedGetGlobalCrossPlatformChatSessionManager).toBeUndefined();
   });
 });

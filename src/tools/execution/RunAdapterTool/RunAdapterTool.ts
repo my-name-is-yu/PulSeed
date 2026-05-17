@@ -55,6 +55,12 @@ export class RunAdapterTool implements ITool<RunAdapterInput, unknown> {
         prompt: input.task_description,
         timeout_ms: input.timeout_ms ?? 60_000,
         adapter_type: input.adapter_id,
+        capability_plane_admission: {
+          schema_version: "adapter-capability-plane-admission/v1",
+          boundary: "run_adapter_tool",
+          descriptor_id: _context.capabilityDescriptor?.capability_id ?? "capability:run_adapter:run-adapter",
+          admission_id: _context.capabilityAdmissionDecision?.admission_id ?? `capability-admission:run-adapter:${input.adapter_id}`,
+        },
         ...(input.allowed_tools !== undefined ? { allowed_tools: input.allowed_tools } : {}),
         ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
         ...(input.system_prompt !== undefined ? { system_prompt: input.system_prompt } : {}),

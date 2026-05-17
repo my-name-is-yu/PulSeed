@@ -168,6 +168,18 @@ export class PluginChannelRuntimeStateStore {
     });
   }
 
+  async listPluginStates(): Promise<PluginState[]> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT state_json
+        FROM plugin_runtime_states
+        ORDER BY plugin_name ASC
+      `).all() as Array<{ state_json: string }>;
+      return rows.map((row) => PluginStateSchema.parse(parseJson(row.state_json)));
+    });
+  }
+
   async saveChannelHealth(
     channelName: string,
     update: Partial<Pick<GatewayChannelHealth, "last_inbound_at" | "last_outbound_at" | "last_error" | "last_timing">>,

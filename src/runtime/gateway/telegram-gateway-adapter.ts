@@ -13,6 +13,12 @@ import { TELEGRAM_GATEWAY_DISPLAY_CONTRACT, createGatewayDisplayPolicy } from ".
 import { TELEGRAM_SEEDY_PRESENCE_CONTRACT, resolveGatewayChannelPresenceContract } from "./channel-presence-policy.js";
 import { NonTuiDisplayProjector, type NonTuiDisplayMessageRef, type NonTuiDisplayTransport } from "./non-tui-display-projector.js";
 import { SeedyPresenceProjector, createSeedyPresenceTransportFromNonTuiDisplay, type SeedyPresenceTransport } from "./seedy-presence-projector.js";
+import {
+  admitGatewayChannelActionCapabilityRecord,
+  admitGatewayNotificationCapabilityRecord,
+  createGatewayCapabilityDecisionRecorder,
+  type GatewayCapabilityDecisionRecorder,
+} from "./gateway-channel-capability-admission.js";
 import { formatExternalAdapterHttpFailure, runExternalAdapterBackoffLoop } from "./external-adapter-shell.js";
 import {
   projectOutboundConversationAuthority,
@@ -248,6 +254,7 @@ interface TelegramGatewayRuntimeOptions {
   runtimeStateStore?: PluginChannelRuntimeStateStore;
   runtimeBaseDir?: string;
   controlBaseDir?: string;
+  capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder;
   feedbackIngestionStore?: Pick<FeedbackIngestionStore, "ingest">;
   proactivePolicyStateStore?: Pick<ProactivePolicyStateStore, "applyEvents">;
   interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
@@ -265,7 +272,8 @@ export class TelegramGatewayNotifier implements INotifier {
 
   constructor(
     private readonly api: TelegramAPI,
-    private readonly homeChatStore: TelegramHomeChatStore
+    private readonly homeChatStore: TelegramHomeChatStore,
+    private readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder,
   ) {}
 
   supports(eventType: NotificationEventType): boolean {
@@ -277,6 +285,8 @@ export class TelegramGatewayNotifier implements INotifier {
     if (chatId === undefined) {
       throw new Error("telegram-bot: no home chat configured. Send /sethome from the target Telegram chat.");
     }
+    const record = admitGatewayNotificationCapabilityRecord({ channelType: "telegram", event });
+    await this.capabilityDecisionRecorder?.(record);
     await this.api.sendMessage(chatId, formatTelegramNotification(event));
   }
 }
@@ -388,6 +398,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly timing: TelegramGatewayTimingRecorder;
   private readonly homeChatStore: TelegramHomeChatStore;
   private readonly notifier: TelegramGatewayNotifier;
+  private readonly capabilityDecisionRecorder: GatewayCapabilityDecisionRecorder | undefined;
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
   private readonly proactivePolicyStateStore: Pick<ProactivePolicyStateStore, "applyEvents">;
   private readonly interactionAuthorityStore: Pick<InteractionAuthorityStore, "recordDecision">;
@@ -408,6 +419,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     this.channelName = options.channelName ?? inferGatewayChannelName(pluginDir);
     const runtimeBaseDir = options.runtimeBaseDir ?? inferGatewayRuntimeBaseDir(pluginDir);
     const controlBaseDir = options.controlBaseDir ?? runtimeBaseDir;
+    this.capabilityDecisionRecorder = options.capabilityDecisionRecorder;
     this.runtimeStateStore = options.runtimeStateStore ?? new PluginChannelRuntimeStateStore(runtimeBaseDir, { controlBaseDir });
     this.feedbackIngestionStore = options.feedbackIngestionStore
       ?? new FeedbackIngestionStore(runtimeBaseDir, { controlBaseDir });
@@ -425,6 +437,13 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
         const chatId = parseTelegramIntegerId(context.conversation_id);
         if (chatId === null) return;
         try {
+          const record = admitGatewayChannelActionCapabilityRecord({
+            channelType: "telegram",
+            reportType: "typing_indicator",
+            reportId: `typing:${context.conversation_id}`,
+            routeRef: `telegram:${context.conversation_id}`,
+          });
+          await this.capabilityDecisionRecorder?.(record);
           await this.timing.recordOutbound("typing", () => this.api.sendChatAction(chatId, "typing"));
         } finally {
           await this.recordTiming();
@@ -433,7 +452,7 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       onError: (err) => console.warn("TelegramGatewayAdapter: typing indicator failed", err),
     });
     this.homeChatStore = new TelegramHomeChatStore(this.channelName, this.runtimeStateStore, config.chat_id);
-    this.notifier = new TelegramGatewayNotifier(this.api, this.homeChatStore);
+    this.notifier = new TelegramGatewayNotifier(this.api, this.homeChatStore, this.capabilityDecisionRecorder);
     this.outboundConversation = new TelegramOutboundConversationPort(
       this.api,
       this.homeChatStore,
@@ -457,6 +476,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       ...options,
       runtimeBaseDir,
       controlBaseDir,
+      capabilityDecisionRecorder: options.capabilityDecisionRecorder
+        ?? createGatewayCapabilityDecisionRecorder({ baseDir: runtimeBaseDir }),
     });
   }
 
@@ -842,7 +863,13 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       return;
     }
 
-    const eventAdapter = new TelegramChatEventAdapter(this.api, chatId, this.timing, () => this.recordTiming());
+    const eventAdapter = new TelegramChatEventAdapter(
+      this.api,
+      chatId,
+      this.timing,
+      () => this.recordTiming(),
+      this.capabilityDecisionRecorder,
+    );
     const context = {
       platform: "telegram",
       senderId: String(fromUserId),
@@ -1186,9 +1213,13 @@ class TelegramChatEventAdapter {
     private readonly chatId: number,
     private readonly timing: TelegramGatewayTimingRecorder,
     private readonly onTimingUpdated: () => Promise<void>,
+    private readonly capabilityDecisionRecorder?: GatewayCapabilityDecisionRecorder,
   ) {
     const transport = new TelegramDisplayTransport(api, chatId, timing, onTimingUpdated);
-    this.presenceTransport = createSeedyPresenceTransportFromNonTuiDisplay(transport);
+    this.presenceTransport = createSeedyPresenceTransportFromNonTuiDisplay(transport, {
+      channelType: "telegram",
+      capabilityDecisionRecorder,
+    });
     this.projector = new NonTuiDisplayProjector({
       display: {
         capabilities: TELEGRAM_GATEWAY_DISPLAY_CONTRACT.capabilities,
@@ -1200,6 +1231,8 @@ class TelegramChatEventAdapter {
         },
       },
       transport,
+      channelType: "telegram",
+      capabilityDecisionRecorder,
     });
   }
 

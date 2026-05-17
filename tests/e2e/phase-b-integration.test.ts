@@ -105,7 +105,13 @@ function makeServerConfig(overrides: Partial<MCPServerConfig> = {}): MCPServerCo
     transport: "stdio",
     command: "node",
     args: ["server.js"],
-    tool_mappings: [{ tool_name: "get_metric", dimension_pattern: "metric_*" }],
+    tool_mappings: [{
+      tool_name: "get_metric",
+      dimension_pattern: "metric_*",
+      capability_operation_kind: "read",
+      capability_side_effect_profile: "read",
+      capability_readiness: "executable_verified",
+    }],
     enabled: true,
     ...overrides,
   };
@@ -591,7 +597,13 @@ describe("Phase B — MCP DataSource: observation reads from MCP tool", () => {
     });
 
     const config = makeServerConfig({
-      tool_mappings: [{ tool_name: "get_coverage", dimension_pattern: "coverage" }],
+      tool_mappings: [{
+        tool_name: "get_coverage",
+        dimension_pattern: "coverage",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      }],
     });
     const adapter = new MCPDataSourceAdapter(config, mockConn);
     await adapter.connect();
@@ -613,7 +625,13 @@ describe("Phase B — MCP DataSource: observation reads from MCP tool", () => {
       },
     });
     const config = makeServerConfig({
-      tool_mappings: [{ tool_name: "get_status", dimension_pattern: "ci_status" }],
+      tool_mappings: [{
+        tool_name: "get_status",
+        dimension_pattern: "ci_status",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      }],
     });
     const adapter = new MCPDataSourceAdapter(config, mockConn);
     await adapter.connect();
@@ -625,7 +643,13 @@ describe("Phase B — MCP DataSource: observation reads from MCP tool", () => {
   it("adapter query returns null for a dimension with no tool mapping", async () => {
     const mockConn = makeMockMCPConnection();
     const config = makeServerConfig({
-      tool_mappings: [{ tool_name: "get_coverage", dimension_pattern: "coverage" }],
+      tool_mappings: [{
+        tool_name: "get_coverage",
+        dimension_pattern: "coverage",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      }],
     });
     const adapter = new MCPDataSourceAdapter(config, mockConn);
     await adapter.connect();
@@ -644,7 +668,13 @@ describe("Phase B — MCP DataSource: observation reads from MCP tool", () => {
       },
     });
     const config = makeServerConfig({
-      tool_mappings: [{ tool_name: "get_metric", dimension_pattern: "metric_*" }],
+      tool_mappings: [{
+        tool_name: "get_metric",
+        dimension_pattern: "metric_*",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      }],
     });
     const adapter = new MCPDataSourceAdapter(config, mockConn);
     await adapter.connect();
@@ -661,7 +691,13 @@ describe("Phase B — MCP DataSource: observation reads from MCP tool", () => {
       },
     });
     const config = makeServerConfig({
-      tool_mappings: [{ tool_name: "get_coverage", dimension_pattern: "coverage" }],
+      tool_mappings: [{
+        tool_name: "get_coverage",
+        dimension_pattern: "coverage",
+        capability_operation_kind: "read",
+        capability_side_effect_profile: "read",
+        capability_readiness: "executable_verified",
+      }],
     });
     const adapter = new MCPDataSourceAdapter(config, mockConn);
     await adapter.connect();
