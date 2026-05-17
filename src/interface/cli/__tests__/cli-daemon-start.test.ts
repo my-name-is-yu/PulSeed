@@ -503,6 +503,7 @@ describe("cmdStart", () => {
     ["--check-interval-ms", "10abc"],
     ["--iterations-per-cycle", "1.5"],
     ["--max-concurrent-goals", "0"],
+    ["--ready-timeout-ms", "0"],
     ["--check-interval-ms", undefined],
   ])("rejects invalid daemon integer flag %s=%s", async (flag, value) => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
@@ -787,15 +788,22 @@ describe("cmdStart", () => {
       await expect(cmdStart(
         { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
         {} as never,
-        ["--detach"],
+        ["--detach", "--ready-timeout-ms", "1"],
         {
-          childCommandArgs: ["daemon", "start", "--detach"],
+          childCommandArgs: ["daemon", "start", "--detach", "--ready-timeout-ms", "1"],
           detachedReadyPollMs: 1,
-          detachedReadyTimeoutMs: 1,
         },
       )).rejects.toThrow("process.exit:1");
 
       expect(spawnMock).toHaveBeenCalledOnce();
+      expect(spawnMock).toHaveBeenCalledWith(
+        process.execPath,
+        [expect.any(String), "daemon", "start", "--ready-timeout-ms", "1"],
+        expect.objectContaining({
+          detached: true,
+          stdio: "ignore",
+        })
+      );
       expect(pidStopRuntimeMock).toHaveBeenCalledWith({
         timeoutMs: 5_000,
         pollIntervalMs: 100,

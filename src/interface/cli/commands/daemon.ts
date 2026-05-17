@@ -329,7 +329,7 @@ export async function cmdStart(
   args: string[],
   options: CmdStartOptions = {},
 ): Promise<void> {
-  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string };
+  let values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; "ready-timeout-ms"?: string; workspace?: string };
   try {
     ({ values } = parseArgs({
       args,
@@ -342,10 +342,11 @@ export async function cmdStart(
         "iterations-per-cycle": { type: "string" },
         resident: { type: "boolean" },
         "max-concurrent-goals": { type: "string" },
+        "ready-timeout-ms": { type: "string" },
         workspace: { type: "string" },
       },
       strict: false,
-    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; workspace?: string } });
+    }) as { values: { "api-key"?: string; config?: string; goal?: string[]; detach?: boolean; "check-interval-ms"?: string; "iterations-per-cycle"?: string; resident?: boolean; "max-concurrent-goals"?: string; "ready-timeout-ms"?: string; workspace?: string } });
   } catch (err) {
     getCliLogger().error(formatOperationError("parse start command arguments", err));
     process.exit(1);
@@ -401,6 +402,9 @@ export async function cmdStart(
     daemonConfig = daemonConfig ?? {};
     daemonConfig.max_concurrent_goals = parsed;
   }
+  const configuredReadyTimeoutMs = values["ready-timeout-ms"] !== undefined
+    ? readDaemonPositiveInteger(values["ready-timeout-ms"], "--ready-timeout-ms")
+    : undefined;
   if (values.workspace) {
     daemonConfig = daemonConfig ?? {};
     daemonConfig.workspace_path = path.resolve(values.workspace);
@@ -448,7 +452,8 @@ export async function cmdStart(
       console.error("Failed to start daemon: no PID assigned");
       process.exit(1);
     }
-    const readinessTimeoutMs = options.detachedReadyTimeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS;
+    const readinessTimeoutMs =
+      options.detachedReadyTimeoutMs ?? configuredReadyTimeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS;
     const readiness = await waitForDetachedDaemonReady({
       baseDir,
       eventServerPort: resolvedDaemonConfig.event_server_port,
