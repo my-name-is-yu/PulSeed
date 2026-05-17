@@ -32,6 +32,7 @@ export interface StallActionHints {
 
 export interface StallDetectionExecutionResult {
   status: "completed" | "failed";
+  decisionProduced: boolean;
   error?: string;
 }
 
@@ -680,11 +681,12 @@ export async function detectStallsAndRebalance(
     if (ctx.deps.portfolioManager) {
       await rebalancePortfolio(ctx, goalId, goal, waitActivationContext);
     }
-    return { status: "completed" };
+    return { status: "completed", decisionProduced: true };
   } catch (err) {
     ctx.logger?.warn("CoreLoop: stall detection failed (non-fatal)", { error: err instanceof Error ? err.message : String(err) });
     return {
       status: "failed",
+      decisionProduced: Boolean(result.stallDetected || result.stallReport),
       error: err instanceof Error ? err.message : String(err),
     };
   }

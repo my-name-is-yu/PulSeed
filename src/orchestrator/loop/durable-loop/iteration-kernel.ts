@@ -723,7 +723,7 @@ export class CoreIterationKernel {
         mergedStallActionHints,
       )
     );
-    if (stallDetection.status === "completed") {
+    if (stallDetection.status === "completed" || stallDetection.decisionProduced) {
       await markLearningProjectionApplied(stallDetectionProjection, [
         `stall-detection:${goalId}:${loopIndex}`,
       ]);
