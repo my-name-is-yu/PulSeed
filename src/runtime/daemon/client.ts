@@ -58,6 +58,10 @@ export interface DaemonHealthProbeResult {
   error?: string;
 }
 
+export interface DaemonRunningProbeOptions {
+  eventServerPort?: number | null;
+}
+
 export interface DaemonScheduleRunNowResponse {
   ok: boolean;
   scheduleId: string;
@@ -142,6 +146,13 @@ export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): st
   }
 
   return null;
+}
+
+function readDaemonAuthTokenPort(baseDir?: string): number | null {
+  const tokenFile = readDaemonAuthTokenFile(baseDir);
+  return tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
+    ? tokenFile.token.port
+    : null;
 }
 
 interface ResolvedDaemonClientConfig {
@@ -527,7 +538,10 @@ export async function probeDaemonHealth(config: Pick<DaemonClientConfig, "host" 
   }
 }
 
-export async function isDaemonRunning(baseDir: string): Promise<{ running: boolean; port: number; authToken?: string | null }> {
+export async function isDaemonRunning(
+  baseDir: string,
+  options: DaemonRunningProbeOptions = {},
+): Promise<{ running: boolean; port: number; authToken?: string | null }> {
   // DEFAULT_PORT imported from port-utils
 
   try {
@@ -549,21 +563,28 @@ export async function isDaemonRunning(baseDir: string): Promise<{ running: boole
 
     // Try to read daemon config for port
     let port: number | null = DEFAULT_PORT;
-    try {
-      const configPath = path.join(baseDir, "daemon.json");
-      const config = DaemonConfigSchema.safeParse(await readDaemonConfigJsonFile(configPath));
-      if (config.success) {
-        if (config.data.event_server_port === 0) {
-          const tokenFile = readDaemonAuthTokenFile(baseDir);
-          port = tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
-            ? tokenFile.token.port
-            : null;
-        } else {
-          port = config.data.event_server_port;
-        }
+    if (options.eventServerPort !== undefined && options.eventServerPort !== null) {
+      if (options.eventServerPort === 0) {
+        port = readDaemonAuthTokenPort(baseDir);
+      } else if (isDaemonProbePort(options.eventServerPort)) {
+        port = options.eventServerPort;
       }
-    } catch {
-      // Use default port
+    } else {
+      try {
+        const configPath = path.join(baseDir, "daemon.json");
+        const config = DaemonConfigSchema.safeParse(await readDaemonConfigJsonFile(configPath));
+        if (config.success) {
+          if (config.data.event_server_port === 0) {
+            port = readDaemonAuthTokenPort(baseDir);
+          } else {
+            port = config.data.event_server_port;
+          }
+        } else {
+          port = readDaemonAuthTokenPort(baseDir) ?? DEFAULT_PORT;
+        }
+      } catch {
+        port = readDaemonAuthTokenPort(baseDir) ?? DEFAULT_PORT;
+      }
     }
 
     if (port === null) {

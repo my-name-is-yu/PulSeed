@@ -96,7 +96,7 @@ async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: numb
   let lastDetail = "daemon health endpoint was not checked";
 
   while (Date.now() < deadline) {
-    const running = await isDaemonRunning(baseDir);
+    const running = await isDaemonRunning(baseDir, { eventServerPort });
     lastPort = running.port;
     if (running.running) {
       return { ready: true, port: running.port };
@@ -980,18 +980,18 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   const probe = await probeDaemonHealth({ host: "127.0.0.1", port });
 
   if (probe.ok) {
-    const health = probe.health ?? {};
-    const latencyMs = probe.latency_ms;
-    const status = typeof health.status === "string" ? health.status : "ok";
-    const uptime =
-      typeof health.uptime === "number" && Number.isFinite(health.uptime)
-        ? `, uptime ${health.uptime.toFixed(1)}s`
-        : "";
-    console.log(`Daemon pong: ${status} (${latencyMs}ms, port ${port}${uptime})`);
+    console.log(formatDaemonPong(probe));
     return 0;
   }
 
   const daemonInfo = await isDaemonRunning(baseDir);
+  if (daemonInfo.running && daemonInfo.port !== port) {
+    const resolvedProbe = await probeDaemonHealth({ host: "127.0.0.1", port: daemonInfo.port });
+    if (resolvedProbe.ok) {
+      console.log(formatDaemonPong(resolvedProbe));
+      return 0;
+    }
+  }
   const stateRaw = await new DaemonStateStore(baseDir).load() as Record<string, unknown> | null;
   const stateDetail =
     stateRaw && typeof stateRaw.status === "string"
@@ -1002,6 +1002,16 @@ export async function cmdDaemonPing(_args: string[]): Promise<number> {
   const message = probe.error ?? "unknown error";
   console.log(`Daemon ping failed: no response from EventServer on port ${port}${stateDetail} (${message})`);
   return 1;
+}
+
+function formatDaemonPong(probe: Awaited<ReturnType<typeof probeDaemonHealth>>): string {
+  const health = probe.health ?? {};
+  const status = typeof health.status === "string" ? health.status : "ok";
+  const uptime =
+    typeof health.uptime === "number" && Number.isFinite(health.uptime)
+      ? `, uptime ${health.uptime.toFixed(1)}s`
+      : "";
+  return `Daemon pong: ${status} (${probe.latency_ms}ms, port ${probe.port}${uptime})`;
 }
 
 export async function cmdCron(args: string[]): Promise<number> {

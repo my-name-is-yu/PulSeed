@@ -712,6 +712,11 @@ describe("cmdStart", () => {
       );
       expect(spawnUnrefMock).toHaveBeenCalledOnce();
       expect(isDaemonRunningMock).toHaveBeenCalledTimes(2);
+      expect(isDaemonRunningMock).toHaveBeenNthCalledWith(
+        1,
+        "/tmp/pulseed-daemon-start-base",
+        { eventServerPort: 41700 },
+      );
       expect(probeDaemonHealthMock).toHaveBeenCalledWith({ host: "127.0.0.1", port: 41700 });
       expect(logSpy).toHaveBeenCalledWith("Daemon started in background (PID: 12345, port: 41700)");
     } finally {

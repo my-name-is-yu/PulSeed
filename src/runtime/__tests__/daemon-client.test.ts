@@ -546,6 +546,48 @@ describe("isDaemonRunning", () => {
     expect(probedPorts).toEqual([45678]);
   });
 
+  it("uses the provided OS-assigned event-server config when daemon.json is not the startup source", async () => {
+    await saveDaemonStateFixture(tmpDir);
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "dynamic-token", port: 45678 }),
+      "utf-8"
+    );
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir, { eventServerPort: 0 })).resolves.toEqual({
+      running: true,
+      port: 45678,
+      authToken: "dynamic-token",
+    });
+    expect(probedPorts).toEqual([45678]);
+  });
+
+  it("falls back to the token file port when no daemon config file is present", async () => {
+    await saveDaemonStateFixture(tmpDir);
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "runtime-token", port: 45678 }),
+      "utf-8"
+    );
+    const probedPorts: number[] = [];
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      probedPorts.push((this as unknown as { config: { port: number } }).config.port);
+      return { status: "ok" };
+    });
+
+    await expect(isDaemonRunning(tmpDir)).resolves.toEqual({
+      running: true,
+      port: 45678,
+      authToken: "runtime-token",
+    });
+    expect(probedPorts).toEqual([45678]);
+  });
+
   it("does not probe port 0 when an OS-assigned daemon config has no resolved token port", async () => {
     await saveDaemonStateFixture(tmpDir);
     fs.writeFileSync(

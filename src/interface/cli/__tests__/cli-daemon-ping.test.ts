@@ -99,4 +99,37 @@ describe("cmdDaemonPing", () => {
     expect(output).toContain("daemon state running");
     expect(output).toContain("ECONNREFUSED");
   });
+
+  it("uses daemon-token port fallback when no daemon config file exists", async () => {
+    await new DaemonStateStore(tmpDir).save({
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      last_loop_at: null,
+      loop_count: 0,
+      active_goals: [],
+      status: "running",
+      crash_count: 0,
+      last_error: null,
+      last_resident_at: null,
+      resident_activity: null,
+    });
+    fs.writeFileSync(
+      path.join(tmpDir, "daemon-token.json"),
+      JSON.stringify({ token: "dynamic-token", port: 45678 }),
+      "utf-8"
+    );
+    vi.spyOn(DaemonClient.prototype, "getHealth").mockImplementation(async function (this: DaemonClient) {
+      const port = (this as unknown as { config: { port: number } }).config.port;
+      if (port === 45678) return { status: "ok", uptime: 3.2 };
+      throw new Error("connect ECONNREFUSED");
+    });
+
+    const code = await cmdDaemonPing([]);
+
+    expect(code).toBe(0);
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+    expect(output).toContain("Daemon pong: ok");
+    expect(output).toContain("port 45678");
+    expect(output).toContain("uptime 3.2s");
+  });
 });
