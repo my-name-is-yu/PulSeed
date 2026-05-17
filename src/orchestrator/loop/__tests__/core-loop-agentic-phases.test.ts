@@ -941,6 +941,55 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("suppresses core phase priors when the phase runtime throws before returning an execution", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const defaultPolicyRegistry = deps.corePhasePolicyRegistry!;
+    deps.corePhasePolicyRegistry = {
+      get: vi.fn((phase: string) => {
+        if (phase === "knowledge_refresh") {
+          throw new Error("knowledge runner exploded");
+        }
+        return defaultPolicyRegistry.get(phase as never);
+      }),
+    } as never;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "knowledge_refresh") return null;
+      return {
+        prior: { id: "prior-knowledge-throw" },
+        record: { id: "consumption-knowledge-throw", stage: "reserved" },
+        runtimeEventId: "runtime-event:knowledge-throw",
+        projection: {
+          phase: "knowledge_refresh",
+          projectionKind: "knowledge_refresh_evidence_target",
+          consumptionRecordId: "consumption-knowledge-throw",
+          evidenceTargetRefs: ["evidence-knowledge"],
+          questionFocusRefs: ["dimension:dim1"],
+          queryBiasRefs: ["artifact-knowledge"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await expect(loop.runOneIteration("goal-1", 0)).rejects.toThrow("knowledge runner exploded");
+
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalled();
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge-throw",
+      reasonCodes: ["consumer_execution_failed"],
+    });
+  });
+
   it("suppresses skipped phase priors instead of leaking reserved uses", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };

@@ -346,6 +346,18 @@ export class CoreIterationKernel {
         execution.status === "failed" ? "consumer_execution_failed" : "consumer_no_op",
       ]);
     };
+    const runPhaseWithLearningProjection = async <T>(
+      phase: string,
+      projection: LearningPriorPhaseProjection | null | undefined,
+      work: () => Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await runPhase(phase, work);
+      } catch (err) {
+        await markLearningProjectionSuppressed(projection, ["consumer_execution_failed"]);
+        throw err;
+      }
+    };
     const corePhaseRuntime = new CorePhaseRuntime({
       phaseRunner: this.deps.deps.corePhaseRunner,
       policyRegistry: this.deps.corePhasePolicyRegistry,
@@ -643,7 +655,7 @@ export class CoreIterationKernel {
       ? knowledgeRefreshResolution.projection
       : undefined;
     const knowledgeRefresh = !skipTaskGeneration
-      ? await runPhase("knowledge-refresh", () =>
+      ? await runPhaseWithLearningProjection("knowledge-refresh", knowledgeRefreshProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildKnowledgeRefreshSpec(),
@@ -692,7 +704,7 @@ export class CoreIterationKernel {
       ? replanningOptionsResolution.projection
       : undefined;
     const replanningOptions = shouldRunReplanningOptions
-      ? await runPhase("replanning-options", () =>
+      ? await runPhaseWithLearningProjection("replanning-options", replanningOptionsProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildReplanningOptionsSpec(),
@@ -748,7 +760,7 @@ export class CoreIterationKernel {
           experimentPlanIds: stallDetectionProjection.experimentPlanIds,
         }
       : baseStallActionHints;
-    const stallDetection = await runPhase("stall-detection", () =>
+    const stallDetection = await runPhaseWithLearningProjection("stall-detection", stallDetectionProjection, () =>
       detectStallsAndRebalance(
         ctx,
         goalId,
@@ -777,7 +789,7 @@ export class CoreIterationKernel {
       ? stallInvestigationResolution.projection
       : undefined;
     const stallInvestigation = shouldRunStallInvestigation
-      ? await runPhase("stall-investigation", () =>
+      ? await runPhaseWithLearningProjection("stall-investigation", stallInvestigationProjection, () =>
           corePhaseRuntime.run(
             {
               ...buildStallInvestigationSpec(),
