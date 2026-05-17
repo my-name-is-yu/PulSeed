@@ -392,6 +392,58 @@ describe("ARC-AGI-3 tools", () => {
     expect(artifact.submitted_action_log.map((entry: { action: string }) => entry.action)).toEqual(["RESET"]);
     expect(fs.readFileSync(path.join(tmpDir, "runs", "run-duplicate", "actions.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
   });
+
+  it("does not mark a winning artifact failed when duplicate run id appears during create", async () => {
+    const firstClient = makeMockClient();
+    const deps = {
+      client: firstClient,
+      artifactStore,
+      pulseedCommit: "commit-1",
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli" as const,
+      }),
+    };
+    const first = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-race",
+    }, makeContext());
+    expect(first.success).toBe(true);
+
+    class RacingArtifactStore extends ArcAgi3ArtifactStore {
+      private availabilityChecks = 0;
+
+      override async assertRunIdAvailable(runId: string): Promise<void> {
+        this.availabilityChecks += 1;
+        if (this.availabilityChecks === 1) return;
+        await super.assertRunIdAvailable(runId);
+      }
+    }
+
+    const racingStore = new RacingArtifactStore(path.join(tmpDir, "runs"));
+    const secondClient = makeMockClient();
+    secondClient.openScorecard = async (input) => {
+      secondClient.calls.push({ method: "openScorecard", input });
+      return { card_id: "card-2" };
+    };
+    const second = await new ArcAgi3StartTool({
+      ...deps,
+      client: secondClient,
+      artifactStore: racingStore,
+    }).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-race",
+    }, makeContext());
+
+    expect(second.success).toBe(false);
+    expect(secondClient.calls.map((call) => call.method)).toEqual(["openScorecard", "reset", "closeScorecard"]);
+    expect(secondClient.calls.at(-1)).toEqual({ method: "closeScorecard", input: { cardId: "card-2" } });
+    const artifact = JSON.parse(fs.readFileSync(artifactStore.runPath("run-race"), "utf8"));
+    expect(artifact.card_id).toBe("card-1");
+    expect(artifact.failure_reason).toBeNull();
+    expect(artifact.submitted_action_log.map((entry: { action: string }) => entry.action)).toEqual(["RESET"]);
+  });
 });
 
 describe("ArcAgi3HttpClient", () => {

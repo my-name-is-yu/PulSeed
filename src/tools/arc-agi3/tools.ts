@@ -150,7 +150,7 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
     const runId = input.run_id ?? this.artifactStore.newRunId();
     let openedCardId: string | null = null;
     let client: ArcAgi3RestClient | null = null;
-    let attemptedArtifactCreate = false;
+    let artifactCreateStarted = false;
     try {
       await this.artifactStore.assertRunIdAvailable(runId);
       client = this.client();
@@ -170,7 +170,7 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
         game_id: input.game_id,
         card_id: scorecard.card_id,
       }, context.abortSignal);
-      attemptedArtifactCreate = true;
+      artifactCreateStarted = true;
       const artifact = await this.artifactStore.create({
         runId,
         startInput: input,
@@ -195,8 +195,11 @@ export class ArcAgi3StartTool extends ArcAgi3ToolBase<ArcAgi3StartInput> {
       if (client && openedCardId) {
         await client.closeScorecard(openedCardId).catch(() => undefined);
       }
-      if (attemptedArtifactCreate && await this.artifactStore.exists(runId)) {
-        await this.artifactStore.recordFailure(runId, formatError(err));
+      if (artifactCreateStarted && openedCardId) {
+        const currentArtifact = await this.artifactStore.load(runId).catch(() => null);
+        if (currentArtifact?.card_id === openedCardId) {
+          await this.artifactStore.recordFailure(runId, formatError(err));
+        }
       }
       return this.fail(formatError(err), startTime);
     }
