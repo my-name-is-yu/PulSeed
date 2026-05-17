@@ -494,12 +494,19 @@ function hasStatusBanner(lines) {
 }
 
 function extractDocTruthMetadata(content) {
-  const docStatus = content.match(/(?:^|\n)>\s*Doc status:\s*([a-z_]+)/i)?.[1]
-    ?? content.match(/<!--\s*doc_status:\s*([a-z_]+)\s*-->/i)?.[1]
-    ?? null;
-  const groundingUse = content.match(/(?:^|\n)>\s*Grounding use:\s*([a-z_]+)/i)?.[1]
-    ?? content.match(/<!--\s*grounding_use:\s*([a-z_]+)\s*-->/i)?.[1]
-    ?? null;
+  let docStatus = null;
+  let groundingUse = null;
+  for (const { line } of markdownLinesOutsideFences(content)) {
+    docStatus ??= line.match(/^>\s*Doc status:\s*([a-z_]+)\s*$/i)?.[1]
+      ?? line.match(/^<!--\s*doc_status:\s*([a-z_]+)\s*-->\s*$/i)?.[1]
+      ?? null;
+    groundingUse ??= line.match(/^>\s*Grounding use:\s*([a-z_]+)\s*$/i)?.[1]
+      ?? line.match(/^<!--\s*grounding_use:\s*([a-z_]+)\s*-->\s*$/i)?.[1]
+      ?? null;
+    if (docStatus && groundingUse) {
+      break;
+    }
+  }
   return { docStatus, groundingUse };
 }
 
@@ -602,7 +609,8 @@ function checkMapShape(issueList) {
     }
     const filePath = path.join(repoRoot, relativePath);
     const content = fs.readFileSync(filePath, 'utf8');
-    const localMarkdownTargets = findMarkdownLinkTargets(stripInlineCode(content))
+    const localMarkdownTargets = markdownLinesOutsideFences(content)
+      .flatMap(({ line }) => findMarkdownLinkTargets(stripInlineCode(line)))
       .map((target) => normalizeMarkdownTarget(target))
       .filter((target) => Boolean(target))
       .map((target) => toPosixPath(path.relative(repoRoot, path.resolve(path.dirname(filePath), target))));
@@ -757,6 +765,48 @@ function checkProductClaimLedger(issueList) {
       issueList.push(formatIssue(productClaimLedgerPath, 1, `product claim ledger must include at least one claim from ${root.label}`));
     }
   }
+}
+
+function markdownLinesOutsideFences(content) {
+  const lines = content.split(/\r?\n/);
+  const outsideLines = [];
+  const fenceState = {
+    inFence: false,
+    fenceChar: null,
+    fenceLength: 0,
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmedStart = line.trimStart();
+    const fenceMatch = trimmedStart.match(/^(`{3,}|~{3,})(.*)$/);
+
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const fenceChar = marker[0];
+      const fenceLength = marker.length;
+
+      if (!fenceState.inFence) {
+        fenceState.inFence = true;
+        fenceState.fenceChar = fenceChar;
+        fenceState.fenceLength = fenceLength;
+        continue;
+      }
+
+      if (fenceChar === fenceState.fenceChar && fenceLength >= fenceState.fenceLength) {
+        fenceState.inFence = false;
+        fenceState.fenceChar = null;
+        fenceState.fenceLength = 0;
+        continue;
+      }
+    }
+
+    if (!fenceState.inFence) {
+      outsideLines.push({ line, lineNumber: index + 1 });
+    }
+  }
+
+  return outsideLines;
 }
 
 function getClaimSourceMetadataIssue(claim, sourceMetadata) {
