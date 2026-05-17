@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Writable } from "node:stream";
-import { render } from "ink";
+import { render, useInput } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "../../../runtime/daemon/client.js";
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -11,6 +11,7 @@ import type { TuiChatSurface } from "../chat-surface.js";
 import { ChatRunner } from "../../chat/chat-runner.js";
 import type { AgentResult, IAdapter } from "../../../orchestrator/execution/adapter-layer.js";
 import type { ChatAgentLoopRunner } from "../../../orchestrator/execution/agent-loop/chat-agent-loop-runner.js";
+import type { DurableLoop } from "../../../orchestrator/loop/durable-loop.js";
 import { App, DASHBOARD_REFRESH_INTERVAL_MS, formatDaemonConnectionState } from "../app.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import type { TelegramSetupStatus } from "../../chat/gateway-setup-status.js";
@@ -36,6 +37,7 @@ const testState = vi.hoisted(() => ({
   runtimeSessionSnapshotCalls: 0,
   summarizedRunIds: [] as string[],
   runtimeEvidenceSummaries: {} as Record<string, unknown>,
+  exitApp: vi.fn(),
 }));
 
 vi.mock("ink", async () => {
@@ -43,6 +45,7 @@ vi.mock("ink", async () => {
   return {
     ...actual,
     useInput: vi.fn(),
+    useApp: () => ({ exit: testState.exitApp }),
     useStdout: () => ({ stdout: { columns: 80, rows: 24 } }),
   };
 });
@@ -401,6 +404,13 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function latestUseInputHandler(): (input: string, key: { ctrl?: boolean }) => void {
+  const calls = vi.mocked(useInput).mock.calls;
+  const handler = calls[calls.length - 1]?.[0];
+  expect(handler).toBeTypeOf("function");
+  return handler as (input: string, key: { ctrl?: boolean }) => void;
+}
+
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((innerResolve) => {
@@ -454,6 +464,8 @@ describe("TUI natural empty states", () => {
     testState.runtimeSessionSnapshotCalls = 0;
     testState.summarizedRunIds = [];
     testState.runtimeEvidenceSummaries = {};
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
   });
 
   afterEach(() => {
@@ -481,6 +493,56 @@ describe("TUI natural empty states", () => {
     expect(text).toContain("Examples:");
     expect(text.indexOf("Describe")).toBeLessThan(text.indexOf("/help"));
     expect(text).not.toContain("available commands");
+
+    screen.unmount();
+  });
+});
+
+describe("TUI quit handling", () => {
+  beforeEach(() => {
+    testState.lastChatProps = null;
+    testState.lastChatMessages = [];
+    testState.lastDashboardProps = null;
+    testState.exitApp.mockReset();
+    vi.mocked(useInput).mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses Ink's exit path for Ctrl-C twice so terminal cleanup can run", async () => {
+    const coreLoop = { stop: vi.fn() } as unknown as DurableLoop;
+    const processExitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`unexpected process.exit(${code ?? ""})`);
+    }) as typeof process.exit);
+
+    const screen = render(React.createElement(App, {
+      coreLoop,
+      stateManager: createStateManagerMock() as unknown as StateManager,
+      noFlicker: true,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+
+    const inputHandler = latestUseInputHandler();
+    act(() => {
+      inputHandler("c", { ctrl: true });
+      inputHandler("", {});
+      inputHandler("c", { ctrl: true });
+    });
+
+    expect(coreLoop.stop).toHaveBeenCalledOnce();
+    expect(testState.exitApp).toHaveBeenCalledOnce();
+    expect(processExitSpy).not.toHaveBeenCalled();
 
     screen.unmount();
   });

@@ -26,6 +26,77 @@ import {
   waitForDaemon,
 } from "./entry-daemon.js";
 
+type CtrlCInputStream = {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
+  off(event: "data", listener: (chunk: Buffer | string) => void): unknown;
+};
+
+const CTRL_C_EXIT_WINDOW_MS = 5_000;
+
+function countCtrlCBytes(chunk: Buffer | string): number {
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  let count = 0;
+  for (const byte of bytes) {
+    if (byte === 0x03) count += 1;
+  }
+  return count;
+}
+
+export function attachDoubleCtrlCExit(
+  input: CtrlCInputStream,
+  onExit: () => void,
+  windowMs = CTRL_C_EXIT_WINDOW_MS,
+): () => void {
+  let pending = false;
+  let exiting = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearTimer = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+  };
+
+  const resetPending = () => {
+    clearTimer();
+    pending = false;
+  };
+
+  const armPending = () => {
+    pending = true;
+    clearTimer();
+    timer = setTimeout(() => {
+      pending = false;
+      timer = null;
+    }, windowMs);
+  };
+
+  const handleCtrlC = () => {
+    if (exiting) return;
+    if (pending) {
+      exiting = true;
+      resetPending();
+      onExit();
+      return;
+    }
+    armPending();
+  };
+
+  const onData = (chunk: Buffer | string) => {
+    const count = countCtrlCBytes(chunk);
+    for (let index = 0; index < count; index += 1) {
+      handleCtrlC();
+    }
+  };
+
+  input.on("data", onData);
+
+  return () => {
+    resetPending();
+    input.off("data", onData);
+  };
+}
+
 // ─── Standalone mode ───
 
 async function startTUIStandaloneMode(): Promise<void> {
@@ -90,7 +161,7 @@ async function startTUIStandaloneMode(): Promise<void> {
       ...breadcrumb,
     });
 
-    const { waitUntilExit } = render(
+    const app = render(
       React.createElement(
         AlternateScreen,
         { enabled: noFlicker, stream: terminalStream },
@@ -109,7 +180,15 @@ async function startTUIStandaloneMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    await waitUntilExit();
+    const detachCtrlCExit = attachDoubleCtrlCExit(process.stdin, () => {
+      coreLoop.stop();
+      app.unmount();
+    });
+    try {
+      await app.waitUntilExit();
+    } finally {
+      detachCtrlCExit();
+    }
   } finally {
     cleanup();
   }
@@ -204,7 +283,7 @@ async function startTUIDaemonMode(): Promise<void> {
       controlStream: terminalStream,
     });
 
-    const { waitUntilExit } = render(
+    const app = render(
       React.createElement(
         AlternateScreen,
         { enabled: noFlicker, stream: terminalStream },
@@ -223,7 +302,15 @@ async function startTUIDaemonMode(): Promise<void> {
         stderr: outputController?.renderStderr ?? process.stderr,
       }
     );
-    await waitUntilExit();
+    const detachCtrlCExit = attachDoubleCtrlCExit(process.stdin, () => {
+      daemonClient.disconnect();
+      app.unmount();
+    });
+    try {
+      await app.waitUntilExit();
+    } finally {
+      detachCtrlCExit();
+    }
   } finally {
     cleanup();
   }

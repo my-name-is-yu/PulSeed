@@ -9,10 +9,10 @@
 // - Daemon mode: daemonClient is provided, coreLoop is absent. Events come via SSE.
 // - Standalone mode: coreLoop is provided, runs in-process.
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { theme } from "./theme.js";
 import { buildWorkDashboardRows, Dashboard } from "./dashboard.js";
 import { Chat, type ChatMessage } from "./chat.js";
@@ -76,6 +76,7 @@ import type { ToolExecutor } from "../../tools/executor.js";
 import type { ApprovalRequest as ToolApprovalRequest } from "../../tools/types.js";
 import { defaultExecutionPolicy, type ExecutionPolicy } from "../../orchestrator/execution/agent-loop/execution-policy.js";
 import { recordExplicitCommandDecision, stableId } from "../../runtime/personal-agent/index.js";
+import { logTuiDebug } from "./debug-log.js";
 
 const MAX_MESSAGES = 200;
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
@@ -120,6 +121,47 @@ const INITIAL_CHAT_MESSAGE = [
   'Examples: "organize this project and tell me what to do next" or "keep working on the README until it is ready."',
   "Type /help when you want command details.",
 ].join("\n");
+
+const CTRL_C_CONFIRM_WINDOW_MS = 5_000;
+let sharedCtrlCPendingUntil = 0;
+
+type AppInputKey = {
+  ctrl?: boolean;
+  meta?: boolean;
+  return?: boolean;
+  tab?: boolean;
+  escape?: boolean;
+  backspace?: boolean;
+  delete?: boolean;
+  upArrow?: boolean;
+  downArrow?: boolean;
+  leftArrow?: boolean;
+  rightArrow?: boolean;
+  pageDown?: boolean;
+  pageUp?: boolean;
+  home?: boolean;
+  end?: boolean;
+};
+
+function shouldCancelPendingCtrlC(input: string, key: AppInputKey): boolean {
+  if (key.ctrl || key.meta) return false;
+  if (input.length > 0) return true;
+  return Boolean(
+    key.return
+      || key.tab
+      || key.escape
+      || key.backspace
+      || key.delete
+      || key.upArrow
+      || key.downArrow
+      || key.leftArrow
+      || key.rightArrow
+      || key.pageDown
+      || key.pageUp
+      || key.home
+      || key.end
+  );
+}
 
 export function isChatRunnerOwnedSlashCommand(input: string): boolean {
   const parsed = parseExactSlashCommandToken(input);
@@ -227,6 +269,7 @@ export function App({
   providerName,
   noFlicker,
 }: AppProps) {
+  const { exit } = useApp();
   const isDaemonMode = daemonClient !== undefined && coreLoop === undefined;
 
   // ── Terminal dimensions ──
@@ -389,6 +432,30 @@ export function App({
 
   // Ctrl-C double-press exit state
   const [ctrlCPending, setCtrlCPending] = useState(false);
+  const ctrlCTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCtrlCExitTimer = useCallback(() => {
+    if (ctrlCTimerRef.current === null) return;
+    clearTimeout(ctrlCTimerRef.current);
+    ctrlCTimerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearCtrlCExitTimer();
+    };
+  }, [clearCtrlCExitTimer]);
+
+  const requestTuiExit = useCallback(() => {
+    clearCtrlCExitTimer();
+    sharedCtrlCPendingUntil = 0;
+    if (isDaemonMode && daemonClient) {
+      daemonClient.disconnect();
+    } else if (coreLoop) {
+      coreLoop.stop();
+    }
+    exit();
+  }, [clearCtrlCExitTimer, coreLoop, daemonClient, exit, isDaemonMode]);
 
   // Expose setApprovalRequest to entry.ts via callback prop (standalone mode)
   const showApprovalRequest = useCallback((req: ApprovalRequest) => {
@@ -524,23 +591,33 @@ export function App({
 
   // Handle Ctrl-C via useInput (raw mode — SIGINT does not fire when Ink holds the terminal)
   useInput((input, key) => {
+    const now = Date.now();
     if (input === "c" && key.ctrl) {
-      if (ctrlCPending) {
-        // Second Ctrl-C — disconnect and exit
-        if (isDaemonMode && daemonClient) {
-          daemonClient.disconnect();
-        } else if (coreLoop) {
-          coreLoop.stop();
-        }
-        process.exit(0);
+      logTuiDebug("app", "ctrl-c-input", {
+        pendingUntil: sharedCtrlCPendingUntil,
+        now,
+        willExit: sharedCtrlCPendingUntil > now,
+      });
+      if (sharedCtrlCPendingUntil > now) {
+        requestTuiExit();
+        return;
       }
+      sharedCtrlCPendingUntil = now + CTRL_C_CONFIRM_WINDOW_MS;
       setCtrlCPending(true);
-      setTimeout(() => setCtrlCPending(false), 3000);
+      clearCtrlCExitTimer();
+      ctrlCTimerRef.current = setTimeout(() => {
+        if (Date.now() >= sharedCtrlCPendingUntil) {
+          sharedCtrlCPendingUntil = 0;
+        }
+        setCtrlCPending(false);
+        ctrlCTimerRef.current = null;
+      }, CTRL_C_CONFIRM_WINDOW_MS);
       return;
     }
 
-    // Any other input cancels the pending Ctrl-C
-    if (ctrlCPending) {
+    if (sharedCtrlCPendingUntil > now && shouldCancelPendingCtrlC(input, key)) {
+      clearCtrlCExitTimer();
+      sharedCtrlCPendingUntil = 0;
       setCtrlCPending(false);
     }
 

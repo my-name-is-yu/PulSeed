@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PIDManager, type PIDRuntimeStatus } from "../../../runtime/pid-manager.js";
 import * as daemonClient from "../../../runtime/daemon/client.js";
 import { DEFAULT_PORT } from "../../../runtime/port-utils.js";
-import { resolveRunningDaemonConnection } from "../entry.js";
+import { attachDoubleCtrlCExit, resolveRunningDaemonConnection } from "../entry.js";
 
 function runningPidStatus(): PIDRuntimeStatus {
   return {
@@ -26,6 +27,36 @@ function runningPidStatus(): PIDRuntimeStatus {
     unverifiedLegacyPids: [],
   };
 }
+
+describe("attachDoubleCtrlCExit", () => {
+  it("fires exit on two Ctrl-C bytes even when they arrive in one chunk", () => {
+    const input = new EventEmitter();
+    const onExit = vi.fn();
+    const detach = attachDoubleCtrlCExit(input as Parameters<typeof attachDoubleCtrlCExit>[0], onExit);
+
+    input.emit("data", Buffer.from([0x03, 0x03]));
+
+    expect(onExit).toHaveBeenCalledOnce();
+    detach();
+  });
+
+  it("keeps the first Ctrl-C pending across unrelated terminal bytes until timeout", () => {
+    vi.useFakeTimers();
+    const input = new EventEmitter();
+    const onExit = vi.fn();
+    const detach = attachDoubleCtrlCExit(input as Parameters<typeof attachDoubleCtrlCExit>[0], onExit, 50);
+    try {
+      input.emit("data", Buffer.from([0x03]));
+      input.emit("data", Buffer.from("\u001b[?2026l"));
+      input.emit("data", Buffer.from([0x03]));
+
+      expect(onExit).toHaveBeenCalledOnce();
+    } finally {
+      detach();
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("resolveRunningDaemonConnection", () => {
   let tmpDir: string;
