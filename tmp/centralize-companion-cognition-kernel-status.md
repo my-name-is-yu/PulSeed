@@ -28,7 +28,7 @@
 - [x] Tests and docs.
 - [x] Local verification.
 - [x] Sub-agent review round 1 findings fixed: gateway model prompt policy projection, memory-truth withheld evidence, and broader boundary guard.
-- [ ] Sub-agent review.
+- [x] Sub-agent review: follow-up review reported `No material findings.`
 - [ ] GitHub Codex review.
 
 ## Local Verification
