@@ -508,7 +508,9 @@ export class ChatRunner {
       ].join("\n");
       return this.eventBridge.emitEphemeralAssistantResult(input, output, true, start, {
         context: activeTurn.context,
+        emitAssistantFinal: true,
         operation: steerOperation,
+        suppressAssistantFinalPresence: true,
         surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       });
@@ -530,7 +532,9 @@ export class ChatRunner {
         start,
         {
           context: activeTurn.context,
+          emitAssistantFinal: true,
           operation: steerOperation,
+          suppressAssistantFinalPresence: true,
           surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
           userInput: steerUserInput,
         },
@@ -572,7 +576,9 @@ export class ChatRunner {
       start,
       {
         context: activeTurn.context,
+        emitAssistantFinal: true,
         operation: steerOperation,
+        suppressAssistantFinalPresence: true,
         surfaceProjection: this.projectEphemeralAssistantResultSurface(output, activeTurn.context),
         userInput: steerUserInput,
       },

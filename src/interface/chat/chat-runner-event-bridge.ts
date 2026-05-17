@@ -149,8 +149,10 @@ export class ChatRunnerEventBridge {
     start: number,
     options: {
       context?: ChatEventContext;
+      emitAssistantFinal?: boolean;
       finishActiveTurn?: boolean;
       operation?: TurnOperation;
+      suppressAssistantFinalPresence?: boolean;
       surfaceProjection?: SurfaceProjection;
       userInput?: UserInput;
     } = {},
@@ -177,15 +179,23 @@ export class ChatRunnerEventBridge {
       ...this.eventBase(context),
     });
     const shouldFinishActiveTurn = options.finishActiveTurn ?? options.operation?.kind !== "TurnSteer";
+    const shouldEmitAssistantFinal = options.emitAssistantFinal ?? shouldFinishActiveTurn;
     const elapsed_ms = Date.now() - start;
-    if (shouldFinishActiveTurn) {
-      this.emitEvent({
+    if (shouldEmitAssistantFinal) {
+      const finalEvent: ChatEvent = {
         type: "assistant_final",
         text: output,
         persisted: false,
         ...(options.surfaceProjection ? { surface_projection: options.surfaceProjection } : {}),
         ...this.eventBase(context),
-      });
+      };
+      if (options.suppressAssistantFinalPresence) {
+        void this.deliverEvent(finalEvent);
+      } else {
+        this.emitEvent(finalEvent);
+      }
+    }
+    if (shouldFinishActiveTurn) {
       this.emitSeedyPresence(success ? "complete" : "blocked", context, {
         subject: success ? "Response complete" : "Turn stopped",
         reason: success

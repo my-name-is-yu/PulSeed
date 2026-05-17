@@ -4293,6 +4293,16 @@ describe("ChatRunner", () => {
         view: "normal",
         purpose: "chat/active-turn steer assistant output",
       });
+      await vi.waitFor(() => {
+        const finalEvent = events.find((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+          event.type === "assistant_final"
+            && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+        );
+        expect(finalEvent?.surface_projection).toMatchObject({
+          surface: "chat",
+          view: "normal",
+        });
+      });
       const steer = events.find((event): event is Extract<ChatEvent, { type: "turn_steer" }> =>
         event.type === "turn_steer"
       );
@@ -4361,7 +4371,21 @@ describe("ChatRunner", () => {
         phase: "acting",
         expected_next: "progress",
       });
-      expect(events.filter((event) => event.type === "assistant_final")).toHaveLength(0);
+      await vi.waitFor(() => {
+        expect(events.some((event) =>
+          event.type === "assistant_final"
+            && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+        )).toBe(true);
+      });
+      const steerFinals = events.filter((event): event is Extract<ChatEvent, { type: "assistant_final" }> =>
+        event.type === "assistant_final"
+          && event.surface_projection?.purpose === "chat/active-turn steer assistant output"
+      );
+      expect(steerFinals).toHaveLength(1);
+      expect(steerFinals[0]?.surface_projection).toMatchObject({
+        surface: "chat",
+        view: "normal",
+      });
       expect(events.filter((event) => event.type === "lifecycle_end")).toHaveLength(0);
 
       interruptible.resolveActive();

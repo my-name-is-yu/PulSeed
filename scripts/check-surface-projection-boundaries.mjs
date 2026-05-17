@@ -162,6 +162,12 @@ const chatRunnerEventBridge = existsSync("src/interface/chat/chat-runner-event-b
 if (!chatRunnerEventBridge.includes("surface_projection: options.surfaceProjection")) {
   issues.push("src/interface/chat/chat-runner-event-bridge.ts ephemeral assistant finals must carry SurfaceProjection when provided");
 }
+const chatRunner = existsSync("src/interface/chat/chat-runner.ts")
+  ? readFileSync("src/interface/chat/chat-runner.ts", "utf8")
+  : "";
+if (!chatRunner.includes("emitAssistantFinal: true") || !chatRunner.includes("suppressAssistantFinalPresence: true")) {
+  issues.push("src/interface/chat/chat-runner.ts active-turn steer outputs must emit projected assistant_final events without ending the active turn");
+}
 
 const operatorHandoffSurface = existsSync("src/runtime/operator-handoff-surface.ts")
   ? readFileSync("src/runtime/operator-handoff-surface.ts", "utf8")
