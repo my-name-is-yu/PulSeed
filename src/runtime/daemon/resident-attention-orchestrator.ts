@@ -317,7 +317,10 @@ export function residentAttentionActivityMetadata(
 }
 
 function residentAttentionStore(context: ResidentAttentionContext): Pick<AttentionStateStore, "saveCycle"> {
-  return context.attentionStateStore ?? new AttentionStateStore(
+  if (context.attentionStateStore?.saveCycle) {
+    return context.attentionStateStore as Pick<AttentionStateStore, "saveCycle">;
+  }
+  return new AttentionStateStore(
     resolveDaemonRuntimeRoot(context.baseDir, context.config.runtime_root),
     { controlBaseDir: context.baseDir },
   );

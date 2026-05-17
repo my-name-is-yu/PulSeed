@@ -77,6 +77,52 @@ export type {
   AttentionAdmissionProposalState,
 } from "./attention-admission.js";
 export {
+  CommitmentAllowedMemoryUseSchema,
+  CommitmentCandidateExtractionSchema,
+  CommitmentCandidateSchema,
+  CommitmentCareLifecycleSchema,
+  CommitmentLifecycleControlSchema,
+  CommitmentNudgePolicySchema,
+  CommitmentOwnerSchema,
+  CommitmentWatchVectorSchema,
+  StructuredCommitmentCandidateClassifier,
+  applyCommitmentLifecycleControl,
+  buildCommitmentReemissionInput,
+  commitmentCandidateToUrge,
+  createCommitmentAttentionInput,
+  createCommitmentCandidate,
+  projectCommitmentWhyNowForNormalSurface,
+} from "./commitment-candidate.js";
+export type {
+  CommitmentAllowedMemoryUse,
+  CommitmentCandidate,
+  CommitmentCandidateClassifier,
+  CommitmentCandidateClassifierInput,
+  CommitmentCandidateExtraction,
+  CommitmentCareLifecycle,
+  CommitmentLifecycleControl,
+  CommitmentNudgePolicy,
+  CommitmentOwner,
+  CommitmentReemissionTriggerKind,
+  CommitmentWatchVector,
+} from "./commitment-candidate.js";
+export {
+  buildCommitmentGuardAttention,
+  buildCommitmentGuardAttentionFromCandidates,
+} from "./commitment-guard-provider.js";
+export type {
+  CommitmentGuardProviderResult,
+} from "./commitment-guard-provider.js";
+export {
+  evaluateCommitmentOperationsForAttentionAdmissions,
+  projectCommitmentBoundaryToPeerCandidate,
+} from "./commitment-operation-adapter.js";
+export type {
+  CommitmentOperationAdapterInput,
+  CommitmentOperationAdapterOutcome,
+  CommitmentOperationFamily,
+} from "./commitment-operation-adapter.js";
+export {
   runAttentionCycle,
 } from "./attention-cycle.js";
 export type {

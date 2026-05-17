@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 40;
+export const CONTROL_DB_SCHEMA_VERSION = 41;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -578,6 +578,55 @@ CREATE TABLE IF NOT EXISTS attention_admission_proposals (
 
 CREATE INDEX IF NOT EXISTS attention_admission_proposals_state_idx
   ON attention_admission_proposals(state, updated_at, proposal_id);
+`.trim();
+
+export const CONTROL_DB_COMMITMENT_ATTENTION_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS attention_commitment_candidates (
+  commitment_id TEXT PRIMARY KEY,
+  source_ref TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  replay_key TEXT NOT NULL UNIQUE,
+  source_epoch TEXT NOT NULL,
+  source_high_watermark TEXT NOT NULL,
+  policy_epoch TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN (
+    'candidate',
+    'shadow_held',
+    'ask_confirmation',
+    'watching',
+    'active_care',
+    'quieted',
+    'snoozed',
+    'resolved',
+    'rejected',
+    'tombstoned',
+    'stale'
+  )),
+  nudge_policy TEXT NOT NULL,
+  materialization_id TEXT,
+  next_revisit_at TEXT,
+  due_start TEXT,
+  due_end TEXT,
+  priority_score REAL CHECK (priority_score IS NULL OR (priority_score >= 0 AND priority_score <= 1)),
+  suppression_ref_count INTEGER NOT NULL CHECK (suppression_ref_count >= 0),
+  feedback_ref_count INTEGER NOT NULL CHECK (feedback_ref_count >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  candidate_json TEXT NOT NULL CHECK (json_valid(candidate_json))
+);
+
+CREATE INDEX IF NOT EXISTS attention_commitment_candidates_scope_idx
+  ON attention_commitment_candidates(scope_key, lifecycle, updated_at, commitment_id);
+
+CREATE INDEX IF NOT EXISTS attention_commitment_candidates_revisit_idx
+  ON attention_commitment_candidates(lifecycle, next_revisit_at, commitment_id);
+
+CREATE INDEX IF NOT EXISTS attention_commitment_candidates_source_idx
+  ON attention_commitment_candidates(source_ref, source_epoch, source_high_watermark);
+
+CREATE INDEX IF NOT EXISTS attention_commitment_candidates_target_idx
+  ON attention_commitment_candidates(target_ref, lifecycle, updated_at);
 `.trim();
 
 export const CONTROL_DB_PERSONAL_AGENT_RUNTIME_SCHEMA_SQL = `
@@ -2984,5 +3033,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     40,
     "memory-truth-maintenance-runtime-state",
     CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    41,
+    "commitment-attention-runtime-state",
+    CONTROL_DB_COMMITMENT_ATTENTION_SCHEMA_SQL
   ),
 ];

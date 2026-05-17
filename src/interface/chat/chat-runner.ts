@@ -110,9 +110,13 @@ import {
   feedbackSurfaceRefForReplyTarget,
   ingestFeedbackFromChatEvent,
 } from "./feedback-ingestion.js";
-import { createFeedbackIngestion } from "../../runtime/attention/index.js";
+import {
+  createFeedbackIngestion,
+  type CommitmentCandidateClassifier,
+} from "../../runtime/attention/index.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../runtime/daemon/runtime-root.js";
 import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-store.js";
+import { AttentionStateStore } from "../../runtime/store/attention-state-store.js";
 import {
   CompanionCognitionService,
   CognitionMemoryRequestSchema,
@@ -133,6 +137,7 @@ import {
 import { ToolExecutor } from "../../tools/executor.js";
 import { ToolPermissionManager } from "../../tools/permission.js";
 import { ConcurrencyController } from "../../tools/concurrency.js";
+import { recordChatTurnCommitmentAttention } from "./chat-commitment-attention.js";
 
 export type {
   ChatRunResult,
@@ -227,6 +232,11 @@ export class ChatRunner {
   private readonly feedbackIngestionStore: Pick<FeedbackIngestionStore, "ingest">;
   private readonly companionCognitionService: Pick<CompanionCognitionService, "evaluateTurn">;
   private readonly personalAgentRuntime: Pick<PersonalAgentRuntimeStore, "recordTrace">;
+  private readonly commitmentCandidateClassifier: CommitmentCandidateClassifier | null;
+  private readonly attentionStateStore: Pick<
+    AttentionStateStore,
+    "saveCommitmentCandidates" | "saveCycle" | "listCommitmentCandidates" | "applyCommitmentControl"
+  >;
   private readonly toolExecutor?: ToolExecutor;
 
   constructor(private readonly deps: ChatRunnerDeps) {
@@ -239,6 +249,11 @@ export class ChatRunner {
     this.personalAgentRuntime = deps.personalAgentRuntime ?? new PersonalAgentRuntimeStore(this.providerConfigBaseDir(), {
       controlBaseDir: this.providerConfigBaseDir(),
     });
+    this.commitmentCandidateClassifier = deps.commitmentCandidateClassifier ?? null;
+    this.attentionStateStore = deps.attentionStateStore
+      ?? new AttentionStateStore(resolveConfiguredDaemonRuntimeRoot(this.providerConfigBaseDir()), {
+        controlBaseDir: this.providerConfigBaseDir(),
+      });
     this.toolExecutor = deps.toolExecutor ?? this.createDefaultToolExecutor();
     if (!this.deps.toolExecutor && this.toolExecutor) {
       this.deps.toolExecutor = this.toolExecutor;
@@ -1041,6 +1056,9 @@ export class ChatRunner {
     if (!resumeOnly && (selectedRoute?.kind === "agent_loop" || selectedRoute?.kind === "gateway_model_loop")) {
       try {
         await this.recordShadowCognition(turnContext, history);
+        if (this.commitmentCandidateClassifier) {
+          await this.recordShadowCommitmentAttention(turnContext, eventContext);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const elapsed_ms = Date.now() - start;
@@ -1141,6 +1159,39 @@ export class ChatRunner {
         },
       }));
       throw err;
+    }
+  }
+
+  private async recordShadowCommitmentAttention(
+    turnContext: ChatTurnContext,
+    eventContext: ChatEventContext,
+  ): Promise<void> {
+    try {
+      const result = await recordChatTurnCommitmentAttention({
+        turnContext,
+        classifier: this.commitmentCandidateClassifier,
+        store: this.attentionStateStore,
+      });
+      if (result.diagnostic) {
+        this.eventBridge.emitEvent({
+          type: "activity",
+          kind: "checkpoint",
+          message: result.diagnostic,
+          sourceId: result.candidate?.commitment_id ?? "attention.commitment.shadow",
+          transient: true,
+          ...this.eventBridge.eventBase(eventContext),
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.eventBridge.emitEvent({
+        type: "activity",
+        kind: "checkpoint",
+        message: `commitment attention shadow write failed: ${message}`,
+        sourceId: "attention.commitment.shadow.error",
+        transient: true,
+        ...this.eventBridge.eventBase(eventContext),
+      });
     }
   }
 

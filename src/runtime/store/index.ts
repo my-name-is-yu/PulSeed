@@ -158,6 +158,8 @@ export type {
   AttentionDecisionChainSnapshot,
   AttentionAgendaSuppressionInput,
   AttentionAgendaSuppressionResult,
+  CommitmentCandidateListOptions,
+  CommitmentCandidateWriteResult,
   AttentionConcernStateSnapshot,
   AttentionEventLedgerRecord,
   AttentionInvalidationInput,

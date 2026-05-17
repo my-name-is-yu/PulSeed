@@ -75,6 +75,8 @@ export function decomposeAgendaItem(input: {
     id: input.existing?.id ?? `agenda-decomposition:${stableId(input.agendaItem.agenda_item_id)}`,
     agendaRef: ref("agent_agenda_item", input.agendaItem.agenda_item_id),
     clusterRef,
+    agendaKind: input.agendaItem.kind,
+    commitmentLifecycle: input.agendaItem.commitmentLifecycle,
     scope: input.agendaItem.scope,
     children,
     status,

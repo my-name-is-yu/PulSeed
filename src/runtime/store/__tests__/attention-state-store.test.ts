@@ -203,6 +203,7 @@ describe("AttentionStateStore", () => {
         expect(tables).toEqual([
           "attention_admission_proposals",
           "attention_agenda_items",
+          "attention_commitment_candidates",
           "attention_current_agenda",
           "attention_current_clusters",
           "attention_cycle_results",

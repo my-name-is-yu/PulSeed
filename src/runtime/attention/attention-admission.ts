@@ -2,6 +2,8 @@ import {
   type AgendaDecomposition,
   type AgendaDecompositionChild,
   type AttentionScope,
+  type AgentAgendaItemKind,
+  type AttentionCommitmentLifecycle,
 } from "../types/companion-autonomy.js";
 import {
   assembleResidentOperationPlans,
@@ -24,6 +26,8 @@ export type AttentionAdmissionCandidate = {
   child: AgendaDecompositionChild;
   agendaRef: string;
   clusterRef: string;
+  parentAgendaKind: AgentAgendaItemKind;
+  parentCommitmentLifecycle: AttentionCommitmentLifecycle;
   scope: AttentionScope;
   idempotencyKey: string;
   requiredAuthority: AgendaDecompositionChild["requiredAuthority"];
@@ -59,6 +63,8 @@ export function buildAttentionAdmissionCandidates(
         child,
         agendaRef: child.parentAgendaRef.id,
         clusterRef: child.clusterRef.id,
+        parentAgendaKind: decomposition.agendaKind,
+        parentCommitmentLifecycle: decomposition.commitmentLifecycle,
         scope: decomposition.scope,
         idempotencyKey: child.idempotencyKey,
         requiredAuthority: child.requiredAuthority,
@@ -85,6 +91,9 @@ export function assembleCapabilityPlansForAttentionAdmissions(input: {
       admission: projection,
       assembledAt: input.assembledAt,
       goalId: input.goalId ?? undefined,
+      details: candidate.parentAgendaKind === "commitment_guard"
+        ? { commitment_operation_family: commitmentOperationFamilyForCandidate(candidate) }
+        : undefined,
     })];
   });
 }
@@ -96,6 +105,42 @@ export function scopeBlockKey(scope: AttentionScope): string {
 function residentProjectionForAttentionCandidate(
   candidate: AttentionAdmissionCandidate,
 ): ResidentAttentionOperationProjection | null {
+  if (candidate.parentAgendaKind === "commitment_guard") {
+    if (candidate.child.childType === "watch" || candidate.child.childType === "silence") return null;
+    if (candidate.child.childType === "action_candidate") {
+      return {
+        action: "commitment",
+        source_kind: "resident_proactive_maintenance",
+        attention_input_id: `attention-input:${candidate.candidateId}`,
+        signal_context_id: `signal:${candidate.candidateId}`,
+        urge_id: `urge:${candidate.candidateId}`,
+        agenda_item_id: candidate.agendaRef,
+        inhibition_decision_id: `inhibition:${candidate.candidateId}`,
+        initiative_gate_decision_id: `gate:${candidate.candidateId}`,
+        outcome_decision_id: deterministicRuntimeHandoffId(candidate),
+        requested_outcome: "request_approval",
+        admission_status: "held",
+        final_outcome: undefined,
+        branch_admitted: false,
+      };
+    }
+    const finalOutcome = commitmentOutcomeForCandidate(candidate);
+    return {
+      action: "commitment",
+      source_kind: "resident_proactive_maintenance",
+      attention_input_id: `attention-input:${candidate.candidateId}`,
+      signal_context_id: `signal:${candidate.candidateId}`,
+      urge_id: `urge:${candidate.candidateId}`,
+      agenda_item_id: candidate.agendaRef,
+      inhibition_decision_id: `inhibition:${candidate.candidateId}`,
+      initiative_gate_decision_id: `gate:${candidate.candidateId}`,
+      outcome_decision_id: deterministicRuntimeHandoffId(candidate),
+      requested_outcome: finalOutcome,
+      admission_status: "admitted",
+      final_outcome: finalOutcome,
+      branch_admitted: true,
+    };
+  }
   if (candidate.child.childType === "prepare" || candidate.child.childType === "digest") {
     return {
       action: "curiosity",
@@ -131,6 +176,38 @@ function residentProjectionForAttentionCandidate(
     };
   }
   return null;
+}
+
+function commitmentOperationFamilyForCandidate(candidate: AttentionAdmissionCandidate): string {
+  switch (candidate.child.childType) {
+    case "prepare":
+      return "attention.commitment.prepare_followup";
+    case "digest":
+      return "attention.commitment.digest";
+    case "ask":
+      return "attention.commitment.ask_if_still_relevant";
+    case "action_candidate":
+      return "attention.commitment.ask_if_still_relevant";
+    case "watch":
+    case "silence":
+      return "attention.commitment.watch";
+  }
+}
+
+function commitmentOutcomeForCandidate(candidate: AttentionAdmissionCandidate): string {
+  switch (candidate.child.childType) {
+    case "prepare":
+      return "prepare_silently";
+    case "digest":
+      return "add_to_digest";
+    case "ask":
+      return "express_to_user";
+    case "watch":
+    case "silence":
+      return "keep_watching";
+    case "action_candidate":
+      return "request_approval";
+  }
 }
 
 function deterministicRuntimeHandoffId(candidate: AttentionAdmissionCandidate): string {
