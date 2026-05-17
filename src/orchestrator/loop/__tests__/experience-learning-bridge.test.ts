@@ -120,6 +120,65 @@ describe("ExperienceLearningBridge", () => {
     const updatedCandidate = (await store.listGeneralizationCandidates(goal.id))[0];
     expect(updatedCandidate?.supportRefs).toEqual(["evidence-2", "evidence-3"]);
   });
+
+  it("keeps same-trigger candidates separate across dimensions", async () => {
+    const bridge = new ExperienceLearningBridge(store);
+    const goal = makeGoal({
+      id: "goal-learning",
+      dimensions: [
+        makeDimension({ name: "dim-alpha", label: "Alpha Dimension" }),
+        makeDimension({ name: "dim-beta", label: "Beta Dimension" }),
+      ],
+    });
+
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 0,
+      result: makeFailureResult(goal.id, 0, "dim-alpha"),
+      iterationEvidence: [makeEvidence("evidence-alpha-1", 0, "dim-alpha")],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 1,
+      result: makeFailureResult(goal.id, 1, "dim-alpha"),
+      iterationEvidence: [makeEvidence("evidence-alpha-2", 1, "dim-alpha")],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 2,
+      result: makeFailureResult(goal.id, 2, "dim-beta"),
+      iterationEvidence: [makeEvidence("evidence-beta-1", 2, "dim-beta")],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+    await bridge.processIteration({
+      goal,
+      goalId: goal.id,
+      runId: "run-learning",
+      loopIndex: 3,
+      result: makeFailureResult(goal.id, 3, "dim-beta"),
+      iterationEvidence: [makeEvidence("evidence-beta-2", 3, "dim-beta")],
+      dryRun: false,
+      hasEvidenceLedger: true,
+    });
+
+    const candidates = await store.listGeneralizationCandidates(goal.id);
+    expect(new Set(candidates.map((candidate) => candidate.id)).size).toBe(candidates.length);
+    expect(candidates.map((candidate) => candidate.body.reuseProposal.strategyBiasRefs[0])).toEqual(expect.arrayContaining([
+      "dimension:dim-alpha",
+      "dimension:dim-beta",
+    ]));
+  });
 });
 
 function makeFailureResult(goalId: string, loopIndex: number, dimensionName = "dim-learning") {

@@ -268,16 +268,18 @@ function buildDerivedLifecyclePayloads(
   const mainHypothesis = buildHypothesis(input, {
     idSuffix: "primary",
     trigger,
+    dimensionName,
     now,
     frameIds: sourceFrameIds,
     evidenceRefs: sourceEvidenceRefs,
     scope,
     status: sourceFrames.length >= 2 ? "active" : "candidate",
-    competingHypothesisIds: [stableLearningId("learning-hypothesis", [input.goalId, input.runId ?? null, trigger, "alternative"])],
+    competingHypothesisIds: [stableLearningId("learning-hypothesis", [input.goalId, input.runId ?? null, trigger, dimensionName, "alternative"])],
   });
   const competingHypothesis = buildHypothesis(input, {
     idSuffix: "alternative",
     trigger,
+    dimensionName,
     now,
     frameIds: [frame.id],
     evidenceRefs: frame.evidenceRefs,
@@ -440,6 +442,7 @@ function buildHypothesis(
   data: {
     idSuffix: "primary" | "alternative";
     trigger: ExperienceFrameTrigger;
+    dimensionName: string;
     now: string;
     frameIds: string[];
     evidenceRefs: string[];
@@ -448,7 +451,7 @@ function buildHypothesis(
     competingHypothesisIds: string[];
   },
 ): LearningHypothesis {
-  const id = stableLearningId("learning-hypothesis", [input.goalId, input.runId ?? null, data.trigger, data.idSuffix]);
+  const id = stableLearningId("learning-hypothesis", [input.goalId, input.runId ?? null, data.trigger, data.dimensionName, data.idSuffix]);
   const trust = defaultRuntimeEvidenceTrust({
     targetRef: {
       kind: "learning_hypothesis",
@@ -509,7 +512,7 @@ function buildGeneralizationCandidate(
     status: GeneralizationCandidate["status"];
   },
 ): GeneralizationCandidate {
-  const id = stableLearningId("generalization-candidate", [input.goalId, input.runId ?? null, data.trigger]);
+  const id = stableLearningId("generalization-candidate", [input.goalId, input.runId ?? null, data.trigger, data.dimensionName]);
   const trust = defaultRuntimeEvidenceTrust({
     targetRef: {
       kind: "generalization_candidate",
