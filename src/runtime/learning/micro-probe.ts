@@ -57,6 +57,26 @@ export type MicroProbeReadPort = z.infer<typeof MicroProbeReadPortSchema>;
 export const MicroProbeReadSetEntrySchema = ImmutableSnapshotReadRefBaseSchema.extend({
   port: MicroProbeReadPortSchema,
 }).strict().superRefine((value, ctx) => {
+  const present = [
+    value.snapshotEventRef ? "snapshotEventRef" : null,
+    value.snapshotEvidenceRef ? "snapshotEvidenceRef" : null,
+    value.runtimeEventProjectionRef ? "runtimeEventProjectionRef" : null,
+  ].filter(Boolean);
+  if (present.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "micro-probe read set entry must name exactly one immutable replay source",
+    });
+  }
+  if (value.sourceKind === "snapshot_event" && !value.snapshotEventRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["snapshotEventRef"], message: "snapshot_event requires snapshotEventRef" });
+  }
+  if (value.sourceKind === "snapshot_evidence" && !value.snapshotEvidenceRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["snapshotEvidenceRef"], message: "snapshot_evidence requires snapshotEvidenceRef" });
+  }
+  if (value.sourceKind === "runtime_event_projection" && !value.runtimeEventProjectionRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["runtimeEventProjectionRef"], message: "runtime_event_projection requires runtimeEventProjectionRef" });
+  }
   if ((value.port as string) === "control_db") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -66,6 +86,36 @@ export const MicroProbeReadSetEntrySchema = ImmutableSnapshotReadRefBaseSchema.e
   }
 });
 export type MicroProbeReadSetEntry = z.infer<typeof MicroProbeReadSetEntrySchema>;
+
+export const MICRO_PROBE_FORBIDDEN_CAPABILITIES = [
+  "tool_executor",
+  "shell",
+  "mcp_gateway_adapter",
+  "browser",
+  "network",
+  "external_read",
+  "live_capability_check",
+  "llm_model_client",
+  "task_creation",
+  "approval_request",
+  "runtime_control_mutation",
+  "attention_wake_admission_commitment",
+  "notification_speech_surface_delivery",
+  "companion_cognition_evaluate_turn",
+  "companion_cognition_evaluate_intervention",
+  "companion_cognition_evaluate_task_context",
+  "companion_cognition_evaluate_schedule_wake",
+  "companion_cognition_evaluate_runtime_control_response",
+  "agent_memory_write",
+  "soil_write",
+  "dream_write",
+  "profile_write",
+  "procedural_memory_write",
+  "owner_writeback_write",
+] as const;
+
+export const MicroProbeForbiddenCapabilitySchema = z.enum(MICRO_PROBE_FORBIDDEN_CAPABILITIES);
+export type MicroProbeForbiddenCapability = z.infer<typeof MicroProbeForbiddenCapabilitySchema>;
 
 export const MicroProbeExpectedSignalSchema = z.object({
   polarity: z.enum(["if_true", "if_false"]),
@@ -99,24 +149,17 @@ export const MicroProbePlanSchema = z.object({
   readSet: z.array(MicroProbeReadSetEntrySchema).min(1),
   probeSchemaVersion: z.literal("micro-probe/v1"),
   expectedSignals: z.array(MicroProbeExpectedSignalSchema).min(1),
-  forbiddenCapabilities: z.array(z.enum([
-    "tool_execution",
-    "external_read",
-    "model_call",
-    "task_creation",
-    "attention_wake",
-    "surface_delivery",
-    "memory_write",
-  ])).default([
-    "tool_execution",
-    "external_read",
-    "model_call",
-    "task_creation",
-    "attention_wake",
-    "surface_delivery",
-    "memory_write",
-  ]),
-}).strict();
+  forbiddenCapabilities: z.array(MicroProbeForbiddenCapabilitySchema).default([...MICRO_PROBE_FORBIDDEN_CAPABILITIES]),
+}).strict().superRefine((value, ctx) => {
+  const missing = MICRO_PROBE_FORBIDDEN_CAPABILITIES.filter((capability) => !value.forbiddenCapabilities.includes(capability));
+  if (missing.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["forbiddenCapabilities"],
+      message: `micro-probe plan missing forbidden capabilities: ${missing.join(", ")}`,
+    });
+  }
+});
 export type MicroProbePlan = z.infer<typeof MicroProbePlanSchema>;
 
 export const MicroProbeRecordSchema = z.object({

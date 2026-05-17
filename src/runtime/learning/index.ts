@@ -17,6 +17,7 @@ export * from "./learning-metrics.js";
 export * from "./learning-scope.js";
 export * from "./learning-trust.js";
 export * from "./micro-probe.js";
+export * from "./micro-probe-runner.js";
 export * from "./redacted-learning-text.js";
 export * from "./runtime-event-payload.js";
 export * from "./trial-reuse-budget-consumption.js";
