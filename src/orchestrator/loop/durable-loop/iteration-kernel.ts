@@ -331,7 +331,11 @@ export class CoreIterationKernel {
       execution: { status: "skipped" | "completed" | "low_confidence" | "failed"; traceId?: string } | null | undefined,
       fallbackDecisionRef: string,
     ): Promise<void> => {
-      if (!projection || !execution || execution.status === "skipped") return;
+      if (!projection || !execution) return;
+      if (execution.status === "skipped") {
+        await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+        return;
+      }
       if (execution.status === "completed") {
         await markLearningProjectionApplied(projection, [
           execution.traceId ?? fallbackDecisionRef,

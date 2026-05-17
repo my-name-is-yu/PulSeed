@@ -759,6 +759,50 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("suppresses skipped phase priors instead of leaking reserved uses", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    deps.corePhaseRunner = undefined;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "knowledge_refresh") return null;
+      return {
+        prior: { id: "prior-knowledge-skipped" },
+        record: { id: "consumption-knowledge-skipped", stage: "reserved" },
+        runtimeEventId: "runtime-event:knowledge-skipped",
+        projection: {
+          phase: "knowledge_refresh",
+          projectionKind: "knowledge_refresh_evidence_target",
+          consumptionRecordId: "consumption-knowledge-skipped",
+          evidenceTargetRefs: ["evidence-knowledge"],
+          questionFocusRefs: ["dimension:dim1"],
+          queryBiasRefs: ["artifact-knowledge"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge-skipped",
+      generatedDecisionRefs: expect.anything(),
+    });
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge-skipped",
+      reasonCodes: ["consumer_no_op"],
+    });
+  });
+
   it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
