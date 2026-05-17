@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,11 +8,23 @@ import { VectorIndex } from "../vector-index.js";
 import { MockEmbeddingClient } from "../embedding-client.js";
 import { createMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 import type { CrossGoalPattern, LearnedPattern } from "../../../base/types/learning.js";
 
+const tempDirs = new Set<string>();
+
 function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "kt-persist-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kt-persist-"));
+  tempDirs.add(dir);
+  return dir;
 }
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    cleanupTempDir(dir);
+  }
+  tempDirs.clear();
+});
 
 function makePattern(overrides: Partial<LearnedPattern> = {}): LearnedPattern {
   return {

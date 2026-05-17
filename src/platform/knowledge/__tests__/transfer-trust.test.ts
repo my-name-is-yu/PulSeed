@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TransferTrustManager } from "../transfer/transfer-trust.js";
 import { StateManager } from "../../../base/state/state-manager.js";
+import { cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── Helpers ───
 
@@ -26,6 +27,10 @@ describe("TransferTrustManager", () => {
     tmpDir = makeTmpDir();
     stateManager = makeStateManager(tmpDir);
     manager = new TransferTrustManager({ stateManager });
+  });
+
+  afterEach(() => {
+    cleanupTempDir(tmpDir);
   });
 
   it("starts with trust_score 0.5", async () => {

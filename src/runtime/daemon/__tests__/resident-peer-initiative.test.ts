@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanupTempDir, makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { DaemonConfigSchema, DaemonStateSchema } from "../../types/daemon.js";
 import type {
   GatewayOutboundConversationPort,
@@ -25,6 +25,21 @@ import {
   proactiveTick,
   triggerResidentPeerInitiative,
 } from "../runner-resident-proactive.js";
+
+const tempDirs = new Set<string>();
+
+function makeTrackedTempDir(prefix: string): string {
+  const dir = makeTempDir(prefix);
+  tempDirs.add(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs) {
+    cleanupTempDir(dir);
+  }
+  tempDirs.clear();
+});
 
 function logger() {
   return {
@@ -61,7 +76,7 @@ class FakeOutboundConversationPort implements GatewayOutboundConversationPort {
 
 describe("resident peer initiative caller path", () => {
   it("runs resident proactive tick into a Telegram outbound conversation without a direct user prompt", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-");
     const gatewayPort = new FakeOutboundConversationPort();
     await upsertRelationshipProfileItem(baseDir, {
       stableKey: "peer-initiative-test-context",
@@ -208,7 +223,7 @@ describe("resident peer initiative caller path", () => {
   });
 
   it("keeps digest-only peer initiatives out of outbound chat delivery", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-digest-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-digest-");
     const gatewayPort = new FakeOutboundConversationPort();
     const state = DaemonStateSchema.parse({
       pid: 123,
@@ -318,7 +333,7 @@ describe("resident peer initiative caller path", () => {
   });
 
   it("uses persisted proactive policy feedback in the resident peer initiative caller path", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-policy-state-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-policy-state-");
     const gatewayPort = new FakeOutboundConversationPort();
     const runtimeRoot = path.join(baseDir, "runtime");
     const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: baseDir });
@@ -455,7 +470,7 @@ describe("resident peer initiative caller path", () => {
   });
 
   it("preserves resident activation budget debits in the resident peer initiative caller path", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-budget-state-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-budget-state-");
     const gatewayPort = new FakeOutboundConversationPort();
     const runtimeRoot = path.join(baseDir, "runtime");
     const activationStore = new ResidentActivationStore(runtimeRoot, { controlBaseDir: baseDir });
@@ -595,7 +610,7 @@ describe("resident peer initiative caller path", () => {
   });
 
   it("does not debit resident activation budget for an already pending peer delivery", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-pending-budget-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-pending-budget-");
     const runtimeRoot = path.join(baseDir, "runtime");
     const now = "2026-05-16T00:10:00.000Z";
     vi.useFakeTimers();
@@ -800,7 +815,7 @@ describe("resident peer initiative caller path", () => {
   });
 
   it("marks the candidate held when outbound peer initiative delivery is unavailable", async () => {
-    const baseDir = makeTempDir("resident-peer-initiative-held-delivery-");
+    const baseDir = makeTrackedTempDir("resident-peer-initiative-held-delivery-");
     const state = DaemonStateSchema.parse({
       pid: 123,
       started_at: "2026-05-15T00:00:00.000Z",
