@@ -253,6 +253,7 @@ describe("EventServer durable approval integration", () => {
       {
         port: 0,
         eventsDir: path.join(tmpDir, "events"),
+        now: () => Date.parse("2026-05-17T00:00:00.000Z"),
       }
     );
     const broadcasts: Array<{ eventType: string; data: unknown }> = [];
@@ -283,7 +284,6 @@ describe("EventServer durable approval integration", () => {
       expect(firstResult.status).toBe(200);
       await expect(firstApproval).resolves.toBe(true);
 
-      await new Promise((resolve) => setTimeout(resolve, 5));
       const secondApproval = server.requestApproval("goal-1", {
         id: "task-direct-2",
         description: "Approve second direct request",

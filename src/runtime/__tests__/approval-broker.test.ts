@@ -143,7 +143,7 @@ describe("ApprovalBroker", () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
     const broadcast = vi.fn();
-    let now = Date.parse("2026-05-17T00:00:00.000Z");
+    const now = Date.parse("2026-05-17T00:00:00.000Z");
     const broker = new ApprovalBroker({
       store,
       broadcast,
@@ -165,7 +165,6 @@ describe("ApprovalBroker", () => {
     })).resolves.toBe(true);
     await expect(firstRequest).resolves.toBe(true);
 
-    now += 1000;
     const secondRequest = broker.requestApproval("goal-1", {
       id: "task-2",
       description: "Approve second deployment",

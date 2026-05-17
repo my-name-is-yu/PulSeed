@@ -1,6 +1,7 @@
 import * as fsp from "node:fs/promises";
 import * as http from "node:http";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { DriveSystem } from "../../platform/drive/drive-system.js";
 import { PulSeedEventSchema } from "../../base/types/drive.js";
 import { getEventsDir } from "../../base/utils/paths.js";
@@ -59,6 +60,8 @@ export class EventServer {
   private readonly triggerHandler: EventServerTriggerHandler;
   private readonly commandHandler: EventServerCommandHandler;
   private readonly router: EventServerRouter;
+  private readonly now: () => number;
+  private approvalIssuanceSequence = 0;
   private readonly approvalQueue = new Map<
     string,
     {
@@ -86,6 +89,7 @@ export class EventServer {
     this.logger = logger;
     this.approvalBroker = config?.approvalBroker;
     this.outboxStore = config?.outboxStore;
+    this.now = config?.now ?? (() => Date.now());
     this.snapshotReader = new EventServerSnapshotReader(
       this.eventsDir,
       config?.runtimeRoot,
@@ -197,13 +201,14 @@ export class EventServer {
     if (this.approvalBroker) {
       return this.approvalBroker.requestApproval(goalId, task, undefined, options.requestId);
     }
-    const requestId = options.requestId ?? `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const createdAt = new Date().toISOString();
+    const requestId = options.requestId ?? `approval-${this.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const createdAt = new Date(this.now()).toISOString();
     const expiresAt = new Date(Date.parse(createdAt) + 5 * 60 * 1000).toISOString();
     const surface = projectEventServerApprovalSurface({
       requestId,
       goalId,
       task,
+      issuanceId: this.createApprovalIssuanceId(requestId),
       createdAt,
       expiresAt,
     });
@@ -229,6 +234,11 @@ export class EventServer {
     });
   }
 
+  private createApprovalIssuanceId(requestId: string): string {
+    this.approvalIssuanceSequence += 1;
+    return `${requestId}:issuance:${this.approvalIssuanceSequence}:${randomUUID()}`;
+  }
+
   async resolveApproval(
     requestId: string,
     approved: boolean,
@@ -246,7 +256,7 @@ export class EventServer {
     }
     const entry = this.approvalQueue.get(requestId);
     if (entry) {
-      if (!validateEventServerApprovalBinding(entry, approved, binding)) {
+      if (!validateEventServerApprovalBinding(entry, approved, binding, new Date(this.now()).toISOString())) {
         return false;
       }
       clearTimeout(entry.timer);
@@ -446,11 +456,12 @@ function projectEventServerApprovalSurface(input: {
   requestId: string;
   goalId: string;
   task: EventServerApprovalTask;
+  issuanceId: string;
   createdAt: string;
   expiresAt: string;
 }): { projection: SurfaceProjection; surfaceInstanceRef: string } {
-  const issuanceReplayKey = eventServerApprovalIssuanceReplayKey(input.requestId, input.createdAt);
-  const surfaceInstanceRef = `approval:event:${input.requestId}:issued:${input.createdAt}`;
+  const issuanceReplayKey = eventServerApprovalIssuanceReplayKey(input.requestId, input.issuanceId);
+  const surfaceInstanceRef = `approval:event:${input.requestId}:issued:${input.issuanceId}`;
   const projectionId = `surface:${issuanceReplayKey}`;
   const sourceEventRefs = [
     normalSourceEventRef({
@@ -477,6 +488,7 @@ function projectEventServerApprovalSurface(input: {
     requestId: input.requestId,
     actionKind: "approve",
     projectionId,
+    issuanceReplayKey,
     surfaceInstanceRef,
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
@@ -487,6 +499,7 @@ function projectEventServerApprovalSurface(input: {
     requestId: input.requestId,
     actionKind: "reject",
     projectionId,
+    issuanceReplayKey,
     surfaceInstanceRef,
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
@@ -539,6 +552,7 @@ function createEventServerApprovalBinding(input: {
   requestId: string;
   actionKind: "approve" | "reject";
   projectionId: string;
+  issuanceReplayKey: string;
   surfaceInstanceRef: string;
   createdAt: string;
   expiresAt: string;
@@ -557,15 +571,15 @@ function createEventServerApprovalBinding(input: {
     source_projection_id: input.projectionId,
     source_event_refs: input.sourceEventRefs,
     runtime_graph_refs: input.runtimeGraphRefs,
-    replay_key: `${eventServerApprovalIssuanceReplayKey(input.requestId, input.createdAt)}:${input.actionKind}:event`,
+    replay_key: `${input.issuanceReplayKey}:${input.actionKind}:event`,
     redaction_class: "normal_safe",
     created_at: input.createdAt,
     expires_at: input.expiresAt,
   });
 }
 
-function eventServerApprovalIssuanceReplayKey(requestId: string, createdAt: string): string {
-  return `approval:${requestId}:issued:${createdAt}`;
+function eventServerApprovalIssuanceReplayKey(requestId: string, issuanceId: string): string {
+  return `approval:${requestId}:issued:${issuanceId}`;
 }
 
 function validateEventServerApprovalBinding(
@@ -575,6 +589,7 @@ function validateEventServerApprovalBinding(
   },
   approved: boolean,
   bindingInput: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string },
+  now: string,
 ): boolean {
   const expectedAction = approved ? "approve" : "reject";
   const expectedBindingId = entry.surfaceProjection.actions.find((action) =>
@@ -593,7 +608,7 @@ function validateEventServerApprovalBinding(
     surface: "approval",
     surfaceInstanceRef: entry.surfaceInstanceRef,
     actionKind: expectedAction,
-    now: new Date().toISOString(),
+    now,
   });
   return validation.status === "accepted";
 }

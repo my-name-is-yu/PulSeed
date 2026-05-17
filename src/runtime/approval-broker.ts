@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Logger } from "./logger.js";
 import {
   createSurfaceActionBinding,
@@ -120,6 +121,7 @@ export class ApprovalBroker {
   private readonly createId: () => string;
   private readonly defaultTimeoutMs: number;
   private readonly pending = new Map<string, PendingApprovalSession>();
+  private approvalIssuanceSequence = 0;
   private started = false;
 
   constructor(options: ApprovalBrokerOptions) {
@@ -181,6 +183,7 @@ export class ApprovalBroker {
     const taskWithExpiry = withPermissionExpiry(task, expiresAt);
     const record: ApprovalRecord = {
       approval_id: approvalId,
+      surface_issuance_id: this.createApprovalIssuanceId(approvalId),
       goal_id: goalId,
       request_envelope_id: approvalId,
       correlation_id: approvalId,
@@ -207,6 +210,7 @@ export class ApprovalBroker {
     const taskWithExpiry = withPermissionExpiry(task, expiresAt);
     const record: ApprovalRecord = {
       approval_id: approvalId,
+      surface_issuance_id: this.createApprovalIssuanceId(approvalId),
       goal_id: goalId,
       request_envelope_id: approvalId,
       correlation_id: approvalId,
@@ -363,6 +367,11 @@ export class ApprovalBroker {
       this.trackPending(record, resolve, ready);
       void ready.catch(() => undefined);
     });
+  }
+
+  private createApprovalIssuanceId(approvalId: string): string {
+    this.approvalIssuanceSequence += 1;
+    return `${approvalId}:issuance:${this.approvalIssuanceSequence}:${randomUUID()}`;
   }
 
   private async deliverIfConversational(
@@ -754,7 +763,7 @@ function validateApprovalResolutionBinding(
 
 function approvalSurfaceInstanceRef(record: ApprovalRecord): string {
   const origin = record.origin;
-  const issuanceValue = safeEpochDateTime(record.created_at) ?? String(record.created_at);
+  const issuanceValue = approvalIssuanceIdentity(record);
   if (!origin) {
     return `approval:event:${encodeSurfacePart(record.approval_id)}:issued:${encodeSurfacePart(issuanceValue)}`;
   }
@@ -771,8 +780,11 @@ function approvalSurfaceInstanceRef(record: ApprovalRecord): string {
 }
 
 function approvalIssuanceReplayKey(record: ApprovalRecord): string {
-  const createdAt = safeEpochDateTime(record.created_at) ?? String(record.created_at);
-  return `approval:${record.approval_id}:issued:${createdAt}`;
+  return `approval:${record.approval_id}:issued:${approvalIssuanceIdentity(record)}`;
+}
+
+function approvalIssuanceIdentity(record: ApprovalRecord): string {
+  return record.surface_issuance_id ?? safeEpochDateTime(record.created_at) ?? String(record.created_at);
 }
 
 function safeEpochDateTime(value: number): string | null {

@@ -20,6 +20,7 @@ export interface EventServerConfig {
   healthStatusProvider?: () => Record<string, unknown>;
   eventFileMaxAttempts?: number;
   eventFileRetryDelayMs?: number;
+  now?: () => number;
 }
 
 export interface EventServerSnapshot {
