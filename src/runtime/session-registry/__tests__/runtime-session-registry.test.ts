@@ -520,6 +520,40 @@ describe("RuntimeSessionRegistry", () => {
     }));
   });
 
+  it("does not resurrect stale active supervisor graph runs after the current supervisor snapshot is empty", async () => {
+    await writeSupervisorState({
+      workers: [
+        {
+          workerId: "stale-worker",
+          goalId: "goal-stale",
+          startedAt: Date.parse("2026-04-25T00:00:00.000Z"),
+          iterations: 1,
+        },
+      ],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Date.parse("2026-04-25T00:30:00.000Z"),
+    });
+    const registry = new RuntimeSessionRegistry({ stateManager });
+
+    const activeSnapshot = await registry.snapshot();
+    expect(activeSnapshot.background_runs).toContainEqual(expect.objectContaining({
+      id: "run:coreloop:stale-worker",
+      status: "running",
+    }));
+
+    await writeSupervisorState({
+      workers: [],
+      crashCounts: {},
+      suspendedGoals: [],
+      updatedAt: Date.parse("2026-04-25T00:35:00.000Z"),
+    });
+    const stoppedSnapshot = await registry.snapshot();
+
+    expect(stoppedSnapshot.background_runs.some((run) => run.id === "run:coreloop:stale-worker")).toBe(false);
+    expect(stoppedSnapshot.sessions.some((session) => session.id === "session:coreloop:stale-worker")).toBe(false);
+  });
+
   it("ignores out-of-range supervisor timestamps instead of throwing during snapshot projection", async () => {
     await writeSupervisorState({
       workers: [
