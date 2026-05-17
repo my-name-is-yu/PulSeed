@@ -505,6 +505,113 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("resolves learning priors for non-task DurableLoop phases and records phase application", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true });
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const projections = {
+      knowledge_refresh: {
+        phase: "knowledge_refresh",
+        projectionKind: "knowledge_refresh_evidence_target",
+        consumptionRecordId: "consumption-knowledge",
+        evidenceTargetRefs: ["evidence-knowledge"],
+        questionFocusRefs: ["dimension:dim1"],
+        queryBiasRefs: ["artifact-knowledge"],
+        generalizationBodies: [],
+        suppressedSuggestionIds: [],
+      },
+      replanning_options: {
+        phase: "replanning_options",
+        projectionKind: "replanning_option_order_bias",
+        consumptionRecordId: "consumption-replanning",
+        optionOrderBiasRefs: ["artifact-replanning"],
+        preferStrategyRefs: ["evidence-replanning"],
+        suppressStrategyRefs: [],
+        suppressedOptionPatternRefs: [],
+        generalizationCandidateRefs: [],
+        generalizationBodies: [],
+        suppressedSuggestionIds: [],
+      },
+      stall_detection: {
+        phase: "stall_detection",
+        projectionKind: "stall_focus_bias",
+        consumptionRecordId: "consumption-stall-detection",
+        focusEvidenceRefs: ["evidence-stall-detection"],
+        blockedLoopPatternRefs: [],
+        experimentPlanIds: [],
+        generalizationBodies: [],
+        suppressedSuggestionIds: [],
+      },
+      stall_investigation: {
+        phase: "stall_investigation",
+        projectionKind: "stall_focus_bias",
+        consumptionRecordId: "consumption-stall-investigation",
+        focusEvidenceRefs: ["evidence-stall-investigation"],
+        blockedLoopPatternRefs: ["artifact-stall"],
+        experimentPlanIds: ["experiment-stall"],
+        generalizationBodies: [],
+        suppressedSuggestionIds: [],
+      },
+    } as const;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: keyof typeof projections }) => {
+      const projection = projections[input.consumerPhase];
+      return projection
+        ? {
+            prior: { id: `prior-${input.consumerPhase}` },
+            record: { id: projection.consumptionRecordId, stage: "reserved" },
+            runtimeEventId: `runtime-event:${input.consumerPhase}`,
+            projection,
+          }
+        : null;
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(resolvePriorForPhase.mock.calls.map(([input]) => input.consumerPhase)).toEqual(expect.arrayContaining([
+      "knowledge_refresh",
+      "replanning_options",
+      "stall_detection",
+      "stall_investigation",
+    ]));
+    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "knowledge_refresh" }),
+      expect.objectContaining({ learningProjection: projections.knowledge_refresh }),
+      expect.anything(),
+    );
+    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "replanning_options" }),
+      expect.objectContaining({ learningProjection: projections.replanning_options }),
+      expect.anything(),
+    );
+    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "stall_investigation" }),
+      expect.objectContaining({ learningProjection: projections.stall_investigation }),
+      expect.anything(),
+    );
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge",
+      generatedDecisionRefs: ["trace-knowledge_refresh"],
+    });
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-replanning",
+      generatedDecisionRefs: ["trace-replanning_options"],
+    });
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-detection",
+      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+    });
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-stall-investigation",
+      generatedDecisionRefs: ["trace-stall_investigation"],
+    });
+  });
+
   it("runs an N+1 trial-reuse learning prior through the public DurableLoop iteration path", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     const experienceStore = new ExperienceLearningStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
@@ -578,6 +685,16 @@ describe("CoreLoop agentic phase hooks", () => {
         }),
       ]);
       expect(trialReadyCandidates[0]!.invariantRefs.length).toBeLessThanOrEqual(2);
+      const budgetConsumptions = await experienceStore.listTrialReuseBudgetConsumptions(trialReadyCandidates[0]!.id);
+      expect(budgetConsumptions).toEqual([
+        expect.objectContaining({
+          candidateId: trialReadyCandidates[0]!.id,
+          planId: expect.stringContaining("learning-experiment-plan:"),
+          loopIndex: 2,
+          decision: "reserved",
+          reasonCodes: ["ready"],
+        }),
+      ]);
       const priors = await experienceStore.listPriorSnapshots("goal-1");
       expect(priors).toEqual([
         expect.objectContaining({
@@ -605,6 +722,22 @@ describe("CoreLoop agentic phase hooks", () => {
         }),
       }));
       expect(thirdTaskCycleOptions?.knowledgeContextPrefix ?? "").not.toContain("learning-prior");
+      const controlDir = path.join(tmpDir, "no-prior-control");
+      fs.mkdirSync(controlDir, { recursive: true });
+      const { deps: controlDeps, mocks: controlMocks } = createDeps(controlDir);
+      controlDeps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+      await controlMocks.stateManager.saveGoal(makeGoal({ dimensions: [
+        makeDimension({ name: "dim1", current_value: 0 }),
+        makeDimension({ name: "dim-other", label: "Other Dimension", current_value: 0 }),
+      ] }));
+      const noPriorControlLoop = new CoreLoop(controlDeps, { delayBetweenLoopsMs: 0 });
+      await noPriorControlLoop.runOneIteration("goal-1", 2);
+      const noPriorControlOptions = (controlMocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0]?.[7];
+      expect(noPriorControlOptions?.learningProjection).toBeUndefined();
+      expect(noPriorControlOptions?.learningPriorConsumptionRef).toBeUndefined();
+      expect(thirdTaskCycleOptions?.learningProjection?.requiredExperimentPlanIds).toEqual([
+        priors[0]!.suggestions[0]!.experimentPlanIds[0],
+      ]);
 
       const consumptions = await experienceStore.listPriorConsumptionRecords(priors[0]!.id);
       expect(consumptions).toEqual([

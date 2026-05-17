@@ -12,6 +12,7 @@ import {
   LearningHypothesisSchema,
   LearningPriorSnapshotSchema,
   MicroProbePlanSchema,
+  TrialReuseBudgetConsumptionRecordSchema,
   TrialReuseReadinessGateSchema,
   defaultRuntimeEvidenceTrust,
   learningPriorSuggestion,
@@ -31,6 +32,7 @@ import {
   type MicroProbePlan,
   type MicroProbeReadSetEntry,
   type MicroProbeRecord,
+  type TrialReuseBudgetConsumptionRecord,
   type TrialReuseReadinessGate,
 } from "../../../runtime/learning/index.js";
 import type { LoopIterationResult } from "../loop-result-types.js";
@@ -377,6 +379,13 @@ function buildDerivedLifecyclePayloads(
         sourceEventRefs,
       })
     : null;
+  const trialReuseBudgetConsumption = readinessGate && experimentPlan
+    ? buildTrialReuseBudgetConsumption(input, {
+        now,
+        readinessGate,
+        experimentPlan,
+      })
+    : null;
   const artifact = buildLearningArtifact(input, {
     now,
     trigger,
@@ -405,7 +414,7 @@ function buildDerivedLifecyclePayloads(
     hypothesisPayload(input, competingHypothesis, null, competingHypothesis.status, "competing_alternative_spawned", sourceEventRefs),
     generalizationPayload(input, candidate, null, candidate.status, "deterministic_generalization_candidate", sourceEventRefs),
     microProbePayload(input, microProbePlan, microProbeRecord, sourceEventRefs),
-    candidateTransitionPayload(input, transition, readinessGate, sourceEventRefs),
+    candidateTransitionPayload(input, transition, readinessGate, trialReuseBudgetConsumption, sourceEventRefs),
   ];
   if (experimentPlan) payloads.push(experimentPlanPayload(input, experimentPlan, sourceEventRefs));
   payloads.push(artifactPayload(input, artifact, null, artifact.status, "deterministic_compression", sourceEventRefs));
@@ -652,6 +661,35 @@ function buildExperimentPlan(
       failureSignalRefs: [],
     },
     trust: data.candidate.trust,
+  });
+}
+
+function buildTrialReuseBudgetConsumption(
+  input: ExperienceLearningBridgeInput,
+  data: {
+    now: string;
+    readinessGate: TrialReuseReadinessGate;
+    experimentPlan: LearningExperimentPlan;
+  },
+): TrialReuseBudgetConsumptionRecord {
+  const consumerAttemptId = `trial-reuse-plan:${data.experimentPlan.id}:${data.readinessGate.eligibleFromIteration}`;
+  const idempotencyKey = [
+    "trial-reuse-budget",
+    data.readinessGate.id,
+    data.experimentPlan.id,
+    consumerAttemptId,
+  ].join(":");
+  return TrialReuseBudgetConsumptionRecordSchema.parse({
+    id: stableLearningId("trial-reuse-budget-consumption", [idempotencyKey]),
+    gateId: data.readinessGate.id,
+    candidateId: data.readinessGate.candidateId,
+    planId: data.experimentPlan.id,
+    consumerAttemptId,
+    loopIndex: data.readinessGate.eligibleFromIteration,
+    reservedAt: data.now,
+    decision: "reserved",
+    reasonCodes: ["ready"],
+    idempotencyKey,
   });
 }
 
@@ -907,6 +945,7 @@ function candidateTransitionPayload(
   input: ExperienceLearningBridgeInput,
   transition: CandidateTransition,
   readinessGate: TrialReuseReadinessGate | null,
+  trialReuseBudgetConsumption: TrialReuseBudgetConsumptionRecord | null,
   eventRefs: string[],
 ): ExperienceLearningRuntimeEventPayload {
   const trust = defaultRuntimeEvidenceTrust({
@@ -940,6 +979,7 @@ function candidateTransitionPayload(
     reason_code: transition.reasonCode,
     transition,
     ...(readinessGate ? { readiness_gate: readinessGate } : {}),
+    ...(trialReuseBudgetConsumption ? { trial_reuse_budget_consumption: trialReuseBudgetConsumption } : {}),
   };
 }
 

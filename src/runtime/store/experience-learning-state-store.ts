@@ -444,6 +444,16 @@ export class ExperienceLearningStateStore {
     return this.listJsonRows("experience_learning_prior_consumption_events", "consumption_json", LearningPriorConsumptionRecordSchema, "prior_id = ?", [priorId]);
   }
 
+  async listTrialReuseBudgetConsumptions(candidateId: string): Promise<TrialReuseBudgetConsumptionRecord[]> {
+    return this.listJsonRows(
+      "experience_learning_trial_reuse_budget_consumptions",
+      "consumption_json",
+      TrialReuseBudgetConsumptionRecordSchema,
+      "candidate_id = ?",
+      [candidateId],
+    );
+  }
+
   async listProjectionProposals(sourceArtifactId?: string): Promise<ExperienceLearningProjectionProposal[]> {
     const db = await this.database();
     return db.read((sqlite) => {
@@ -726,8 +736,12 @@ export function applyExperienceLearningPayloadProjection(
       return;
     case "candidate_transition_recorded":
       if (payload.transition) upsertCandidateTransition(sqlite, payload.transition);
-      if (payload.readiness_gate) upsertTrialReuseReadinessGate(sqlite, payload.readiness_gate);
-      if (payload.trial_reuse_budget_consumption) upsertTrialReuseBudgetConsumption(sqlite, payload.trial_reuse_budget_consumption);
+      if (payload.readiness_gate && payload.trial_reuse_budget_consumption) {
+        upsertTrialReuseBudgetReservation(sqlite, payload.readiness_gate, payload.trial_reuse_budget_consumption);
+      } else {
+        if (payload.readiness_gate) upsertTrialReuseReadinessGate(sqlite, payload.readiness_gate);
+        if (payload.trial_reuse_budget_consumption) upsertTrialReuseBudgetConsumptionAgainstStoredGate(sqlite, payload.trial_reuse_budget_consumption);
+      }
       return;
     case "experiment_plan_registered":
       if (payload.plan) upsertExperimentPlan(sqlite, payload.plan);
@@ -869,6 +883,49 @@ function upsertCandidateTransition(sqlite: SqliteDatabase, transitionInput: Cand
   `).run(transition.id, transition.goalId, transition.runId ?? null, transition.loopIndex, transition.targetKind, transition.targetId, transition.reasonCode, JSON.stringify(transition));
 }
 
+function upsertTrialReuseBudgetReservation(
+  sqlite: SqliteDatabase,
+  gateInput: TrialReuseReadinessGate,
+  consumptionInput: TrialReuseBudgetConsumptionRecord,
+): void {
+  const gate = TrialReuseReadinessGateSchema.parse(gateInput);
+  const consumption = TrialReuseBudgetConsumptionRecordSchema.parse(consumptionInput);
+  if (consumption.gateId !== gate.id || consumption.candidateId !== gate.candidateId) {
+    throw new Error("trial reuse budget consumption must reference the readiness gate being projected");
+  }
+  const existing = findTrialReuseBudgetConsumptionByIdempotency(sqlite, consumption.idempotencyKey);
+  if (existing) {
+    upsertTrialReuseReadinessGate(sqlite, gate);
+    upsertTrialReuseBudgetConsumption(sqlite, existing);
+    return;
+  }
+  if (consumption.decision !== "rejected") {
+    const reservedCount = countTrialReuseBudgetReservations(sqlite, gate.id, gate.candidateId);
+    if (reservedCount >= gate.remainingTrialUses) {
+      throw new Error(`trial reuse budget exhausted for readiness gate ${gate.id}`);
+    }
+  }
+  upsertTrialReuseReadinessGate(sqlite, gate);
+  upsertTrialReuseBudgetConsumption(sqlite, consumption);
+}
+
+function upsertTrialReuseBudgetConsumptionAgainstStoredGate(
+  sqlite: SqliteDatabase,
+  consumptionInput: TrialReuseBudgetConsumptionRecord,
+): void {
+  const consumption = TrialReuseBudgetConsumptionRecordSchema.parse(consumptionInput);
+  const gateRow = sqlite.prepare(`
+    SELECT gate_json
+    FROM experience_learning_trial_reuse_readiness_gates
+    WHERE gate_id = ?
+  `).get(consumption.gateId) as { gate_json: string } | undefined;
+  if (!gateRow) {
+    throw new Error(`trial reuse budget readiness gate ${consumption.gateId} is missing`);
+  }
+  const gate = TrialReuseReadinessGateSchema.parse(JSON.parse(gateRow.gate_json) as unknown);
+  upsertTrialReuseBudgetReservation(sqlite, gate, consumption);
+}
+
 function upsertTrialReuseReadinessGate(sqlite: SqliteDatabase, gateInput: TrialReuseReadinessGate): void {
   const gate = TrialReuseReadinessGateSchema.parse(gateInput);
   sqlite.prepare(`
@@ -902,6 +959,35 @@ function upsertTrialReuseBudgetConsumption(sqlite: SqliteDatabase, consumptionIn
     consumption.decision,
     JSON.stringify(consumption),
   );
+}
+
+function findTrialReuseBudgetConsumptionByIdempotency(
+  sqlite: SqliteDatabase,
+  idempotencyKey: string,
+): TrialReuseBudgetConsumptionRecord | null {
+  const row = sqlite.prepare(`
+    SELECT consumption_json
+    FROM experience_learning_trial_reuse_budget_consumptions
+    WHERE idempotency_key = ?
+  `).get(idempotencyKey) as { consumption_json: string } | undefined;
+  return row
+    ? TrialReuseBudgetConsumptionRecordSchema.parse(JSON.parse(row.consumption_json) as unknown)
+    : null;
+}
+
+function countTrialReuseBudgetReservations(
+  sqlite: SqliteDatabase,
+  gateId: string,
+  candidateId: string,
+): number {
+  const row = sqlite.prepare(`
+    SELECT COUNT(*) AS reserved_count
+    FROM experience_learning_trial_reuse_budget_consumptions
+    WHERE gate_id = ?
+      AND candidate_id = ?
+      AND decision IN ('reserved', 'applied')
+  `).get(gateId, candidateId) as { reserved_count: number } | undefined;
+  return row?.reserved_count ?? 0;
 }
 
 function upsertExperimentPlan(sqlite: SqliteDatabase, planInput: LearningExperimentPlan): void {

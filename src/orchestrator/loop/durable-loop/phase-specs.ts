@@ -1,10 +1,26 @@
 import { z } from "zod/v3";
 import type { CorePhaseKind, CorePhaseSpec } from "../../execution/agent-loop/core-phase-runner.js";
+import {
+  LearningPriorPhaseProjectionSchema,
+  type LearningPriorPhaseProjection,
+} from "../../../runtime/learning/index.js";
 
 const PhaseUnitIntervalSchema = z.number().finite().min(0).max(1);
 const PhaseFiniteNumberSchema = z.number().finite();
 const PhaseSafeNonnegativeIntSchema = z.number().finite().int().nonnegative().safe();
 const PhaseSafePositiveIntSchema = z.number().finite().int().positive().safe();
+
+type PhaseLearningProjection<TPhase extends LearningPriorPhaseProjection["phase"]> =
+  LearningPriorPhaseProjection & { phase: TPhase };
+
+function phaseLearningProjectionSchema<TPhase extends LearningPriorPhaseProjection["phase"]>(
+  phase: TPhase,
+): z.ZodType<PhaseLearningProjection<TPhase>, z.ZodTypeDef, unknown> {
+  return LearningPriorPhaseProjectionSchema.refine(
+    (value) => value.phase === phase,
+    { message: `learningProjection must target ${phase}` },
+  ) as unknown as z.ZodType<PhaseLearningProjection<TPhase>, z.ZodTypeDef, unknown>;
+}
 
 export interface CorePhaseInvocationContext {
   goalId: string;
@@ -334,6 +350,7 @@ export function buildKnowledgeRefreshSpec(): ReturnType<typeof baseSpec<{
   goalTitle: string;
   topDimensions: string[];
   gapAggregate: number;
+  learningProjection?: PhaseLearningProjection<"knowledge_refresh">;
 }, KnowledgeRefreshEvidence>> {
   return baseSpec({
     phase: "knowledge_refresh",
@@ -341,6 +358,7 @@ export function buildKnowledgeRefreshSpec(): ReturnType<typeof baseSpec<{
       goalTitle: z.string(),
       topDimensions: z.array(z.string()).default([]),
       gapAggregate: PhaseFiniteNumberSchema,
+      learningProjection: phaseLearningProjectionSchema("knowledge_refresh").optional(),
     }),
     outputSchema: KnowledgeRefreshEvidenceSchema,
     failPolicy: "return_low_confidence",
@@ -355,6 +373,7 @@ export function buildStallInvestigationSpec(): ReturnType<typeof baseSpec<{
   dimensionName?: string;
   suggestedCause?: string;
   taskId?: string;
+  learningProjection?: PhaseLearningProjection<"stall_investigation">;
 }, StallInvestigationEvidence>> {
   return baseSpec({
     phase: "stall_investigation",
@@ -365,6 +384,7 @@ export function buildStallInvestigationSpec(): ReturnType<typeof baseSpec<{
       dimensionName: z.string().optional(),
       suggestedCause: z.string().optional(),
       taskId: z.string().optional(),
+      learningProjection: phaseLearningProjectionSchema("stall_investigation").optional(),
     }),
     outputSchema: StallInvestigationEvidenceSchema,
     failPolicy: "return_low_confidence",
@@ -377,6 +397,7 @@ export function buildReplanningOptionsSpec(): ReturnType<typeof baseSpec<{
   targetDimensions: string[];
   gapAggregate: number;
   currentApproach?: string;
+  learningProjection?: PhaseLearningProjection<"replanning_options">;
 }, ReplanningOptions>> {
   return baseSpec({
     phase: "replanning_options",
@@ -385,6 +406,7 @@ export function buildReplanningOptionsSpec(): ReturnType<typeof baseSpec<{
       targetDimensions: z.array(z.string()).default([]),
       gapAggregate: PhaseFiniteNumberSchema,
       currentApproach: z.string().optional(),
+      learningProjection: phaseLearningProjectionSchema("replanning_options").optional(),
     }),
     outputSchema: ReplanningOptionsSchema,
     failPolicy: "fallback_deterministic",

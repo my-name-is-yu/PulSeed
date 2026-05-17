@@ -4,6 +4,7 @@ import type { GapHistoryEntry } from "../../../base/types/gap.js";
 import type { StallReport } from "../../../base/types/stall.js";
 import type { MetricTrendContext } from "../../../platform/drive/metric-history.js";
 import type { RuntimeFailedLineageContext } from "../../../runtime/store/evidence-ledger.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 import type { GapObservation } from "../../../base/types/time-horizon.js";
 import {
   selectMetricTrendForDimension,
@@ -25,6 +26,8 @@ type DimensionGapSample = {
 
 export interface StallActionHints {
   recommendedAction?: "continue" | "refine" | "pivot";
+  learningProjection?: LearningPriorPhaseProjection & { phase: "stall_detection" };
+  learningPriorConsumptionRef?: string;
 }
 
 type StrategyStallArgs = [

@@ -11,12 +11,15 @@ import {
   defaultRuntimeEvidenceTrust,
   learningPriorSuggestion,
   redactedLearningLabel,
+  type CandidateTransition,
   type ExperienceFrame,
   type ExperienceLearningMetricBaselineObservation,
   type ExperienceLearningMetricBaselineRunKind,
   type ExperienceLearningMetricScenarioClass,
   type ExperienceLearningRuntimeEventPayload,
   type LearningPriorSnapshot,
+  type TrialReuseBudgetConsumptionRecord,
+  type TrialReuseReadinessGate,
 } from "../../learning/index.js";
 
 describe("ExperienceLearningStateStore", () => {
@@ -239,6 +242,49 @@ describe("ExperienceLearningStateStore", () => {
     expect(exhausted?.record.reasonCodes).toEqual(["max_uses_exhausted"]);
     expect(exhausted?.projection).toBeNull();
   });
+
+  it("rolls back RuntimeEventLog append when a trial-reuse budget projection double-reserves", async () => {
+    const first = makeTrialReuseBudgetPayload({
+      transitionId: "transition-budget-1",
+      eventIdempotencyKey: "experience-learning:test:budget-transition-1",
+      consumptionId: "budget-consumption-1",
+      consumptionIdempotencyKey: "trial-reuse-budget:test:first",
+    });
+    const second = makeTrialReuseBudgetPayload({
+      transitionId: "transition-budget-2",
+      eventIdempotencyKey: "experience-learning:test:budget-transition-2",
+      consumptionId: "budget-consumption-2",
+      consumptionIdempotencyKey: "trial-reuse-budget:test:second",
+    });
+
+    await store.appendLifecycleEvent(first);
+    await expect(store.appendLifecycleEvent(second)).rejects.toThrow(/trial reuse budget exhausted/);
+
+    await expect(store.listTrialReuseBudgetConsumptions("candidate-budget")).resolves.toEqual([
+      expect.objectContaining({
+        id: "budget-consumption-1",
+        decision: "reserved",
+        idempotencyKey: "trial-reuse-budget:test:first",
+      }),
+    ]);
+    const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: tmpDir });
+    try {
+      const events = await eventLog.listEvents({ eventType: "experience_learning.candidate_transition.recorded", limit: null });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toMatchObject({
+        event_kind: "candidate_transition_recorded",
+        transition_id: "transition-budget-1",
+        trial_reuse_budget_consumption: expect.objectContaining({
+          id: "budget-consumption-1",
+        }),
+      });
+      expect(events.some((event) =>
+        (event.payload as Record<string, unknown>)["idempotency_key"] === "experience-learning:test:budget-transition-2"
+      )).toBe(false);
+    } finally {
+      await eventLog.close();
+    }
+  });
 });
 
 function makeBaselineObservation(
@@ -419,5 +465,98 @@ function makePriorGeneratedPayload(): Extract<ExperienceLearningRuntimeEventPayl
     artifact_ids: ["artifact-1"],
     eligible_from_iteration: 2,
     prior,
+  };
+}
+
+function makeTrialReuseBudgetPayload(input: {
+  transitionId: string;
+  eventIdempotencyKey: string;
+  consumptionId: string;
+  consumptionIdempotencyKey: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "candidate_transition_recorded" }> {
+  const trust = defaultRuntimeEvidenceTrust({
+    targetRef: {
+      kind: "candidate_transition",
+      id: input.transitionId,
+      scope: { goal_id: "goal-learning", run_id: "run-learning" },
+    },
+    provenanceRefs: ["evidence-budget"],
+  });
+  const readinessGate: TrialReuseReadinessGate = {
+    id: "gate-budget",
+    candidateId: "candidate-budget",
+    sourceLoopIndex: 1,
+    eligibleFromIteration: 2,
+    sourceTransitionId: input.transitionId,
+    disjointSupportRefs: ["evidence-budget"],
+    actionShape: "reversible",
+    risk: "low",
+    scopeDecision: "exact",
+    transferScopeRef: "goal:goal-learning",
+    trialReuseBudgetId: "trial-reuse-budget:test",
+    remainingTrialUses: 1,
+    decision: "ready",
+    reasonCodes: ["independent_support", "n_plus_one", "low_risk"],
+  };
+  const consumption: TrialReuseBudgetConsumptionRecord = {
+    id: input.consumptionId,
+    gateId: readinessGate.id,
+    candidateId: readinessGate.candidateId,
+    planId: "experiment-plan-budget",
+    consumerAttemptId: `trial-reuse-plan:${input.consumptionId}`,
+    loopIndex: 2,
+    reservedAt: "2026-05-17T00:04:00.000Z",
+    decision: "reserved",
+    reasonCodes: ["ready"],
+    idempotencyKey: input.consumptionIdempotencyKey,
+  };
+  const transition: CandidateTransition = {
+    id: input.transitionId,
+    goalId: "goal-learning",
+    runId: "run-learning",
+    loopIndex: 1,
+    targetKind: "generalization_candidate",
+    targetId: readinessGate.candidateId,
+    fromStatus: "candidate",
+    toStatus: "trial_reuse_ready",
+    reasonCode: "trial_reuse_ready",
+    diagnosticLabel: "test budget reservation",
+    microProbeRecordIds: ["probe-record-budget"],
+    evidenceRefs: ["evidence-budget"],
+    eventRefs: [],
+    runtimeGraphRefs: [],
+    readinessGateId: readinessGate.id,
+  };
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    event_kind: "candidate_transition_recorded",
+    idempotency_key: input.eventIdempotencyKey,
+    goal_id: "goal-learning",
+    run_id: "run-learning",
+    loop_index: 1,
+    source_refs: {
+      evidence_refs: ["evidence-budget"],
+      event_refs: [],
+      runtime_graph_refs: [],
+    },
+    trust,
+    correction_state: trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: [
+        { kind: "candidate_transition", ref: input.transitionId },
+        { kind: "generalization_candidate", ref: readinessGate.candidateId },
+      ],
+      edge_refs: [],
+    },
+    transition_id: input.transitionId,
+    target_kind: "generalization_candidate",
+    target_id: readinessGate.candidateId,
+    from_status: "candidate",
+    to_status: "trial_reuse_ready",
+    reason_code: "trial_reuse_ready",
+    transition,
+    readiness_gate: readinessGate,
+    trial_reuse_budget_consumption: consumption,
   };
 }

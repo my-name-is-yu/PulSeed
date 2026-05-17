@@ -99,6 +99,7 @@ import type {
   ExperienceLearningRuntimeEventPayload,
   GeneralizationCandidate,
   LearningArtifact,
+  LearningConsumerPhase,
   LearningExperimentPlan,
   LearningPriorPhaseProjection,
   LearningPriorSnapshot,
@@ -140,6 +141,16 @@ export interface RunCoreIterationInput {
   loopIndex: number;
   isFirstIteration?: boolean;
   abortSignal?: AbortSignal;
+}
+
+type PhaseLearningProjection<TPhase extends LearningPriorPhaseProjection["phase"]> =
+  LearningPriorPhaseProjection & { phase: TPhase };
+
+function isLearningProjectionPhase<TPhase extends LearningPriorPhaseProjection["phase"]>(
+  projection: LearningPriorPhaseProjection | null | undefined,
+  phase: TPhase,
+): projection is PhaseLearningProjection<TPhase> {
+  return projection?.phase === phase;
 }
 
 export class CoreIterationKernel {
@@ -242,7 +253,7 @@ export class CoreIterationKernel {
       },
     });
     const resolveLearningProjection = async (
-      consumerPhase: "task_generation" | "next_iteration_directive",
+      consumerPhase: LearningConsumerPhase,
       consumerDecisionRef: string,
     ) => {
       if (config.dryRun || !this.deps.deps.experienceLearningStore) return null;
@@ -572,6 +583,15 @@ export class CoreIterationKernel {
       highDissatisfactionDimensions = driveResult.highDissatisfactionDimensions;
     }
 
+    const knowledgeRefreshResolution = !skipTaskGeneration
+      ? await resolveLearningProjection(
+          "knowledge_refresh",
+          `knowledge-refresh:${goalId}:${loopIndex}`,
+        )
+      : null;
+    const knowledgeRefreshProjection = isLearningProjectionPhase(knowledgeRefreshResolution?.projection, "knowledge_refresh")
+      ? knowledgeRefreshResolution.projection
+      : undefined;
     const knowledgeRefresh = !skipTaskGeneration
       ? await runPhase("knowledge-refresh", () =>
           corePhaseRuntime.run(
@@ -593,19 +613,35 @@ export class CoreIterationKernel {
                     ...driveScores.map((score) => score.dimension_name),
                   ].filter((value, index, values) => values.indexOf(value) === index),
               gapAggregate,
+              ...(knowledgeRefreshProjection ? { learningProjection: knowledgeRefreshProjection } : {}),
             },
             { goalId, gapAggregate },
           )
         )
       : null;
     if (knowledgeRefresh) rememberPhase(knowledgeRefresh);
+    if (knowledgeRefresh && knowledgeRefresh.status !== "skipped") {
+      await markLearningProjectionApplied(knowledgeRefreshProjection, [
+        knowledgeRefresh.traceId ?? `knowledge-refresh:${goalId}:${loopIndex}`,
+      ]);
+    }
     if (knowledgeRefresh) await appendPhaseEvidence(appendRuntimeEvidence, knowledgeRefresh, "strategy");
 
-    const replanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
+    const shouldRunReplanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
       skipTaskGeneration: Boolean(skipTaskGeneration),
       taskCycleBlocked: false,
       gapAggregate,
-    })
+    });
+    const replanningOptionsResolution = shouldRunReplanningOptions
+      ? await resolveLearningProjection(
+          "replanning_options",
+          `replanning-options:${goalId}:${loopIndex}`,
+        )
+      : null;
+    const replanningOptionsProjection = isLearningProjectionPhase(replanningOptionsResolution?.projection, "replanning_options")
+      ? replanningOptionsResolution.projection
+      : undefined;
+    const replanningOptions = shouldRunReplanningOptions
       ? await runPhase("replanning-options", () =>
           corePhaseRuntime.run(
             {
@@ -618,12 +654,18 @@ export class CoreIterationKernel {
               goalTitle: goal.title,
               targetDimensions: driveScores.map((score) => score.dimension_name),
               gapAggregate,
+              ...(replanningOptionsProjection ? { learningProjection: replanningOptionsProjection } : {}),
             },
             { goalId, gapAggregate },
           )
         )
       : null;
     if (replanningOptions) rememberPhase(replanningOptions);
+    if (replanningOptions && replanningOptions.status !== "skipped") {
+      await markLearningProjectionApplied(replanningOptionsProjection, [
+        replanningOptions.traceId ?? `replanning-options:${goalId}:${loopIndex}`,
+      ]);
+    }
     if (replanningOptions) await appendPhaseEvidence(appendRuntimeEvidence, replanningOptions, "strategy");
 
     await runPhase("completion-check", () =>
@@ -634,20 +676,48 @@ export class CoreIterationKernel {
     const stallActionHints = this.deps.coreDecisionEngine.buildStallActionHints({
       phase: replanningOptions,
     });
+    const stallDetectionResolution = await resolveLearningProjection(
+      "stall_detection",
+      `stall-detection:${goalId}:${loopIndex}`,
+    );
+    const stallDetectionProjection = isLearningProjectionPhase(stallDetectionResolution?.projection, "stall_detection")
+      ? stallDetectionResolution.projection
+      : undefined;
+    const baseStallActionHints = stallActionHints.recommendedAction
+      ? stallActionHints
+      : pendingDirective?.preferredAction
+        ? { recommendedAction: pendingDirective.preferredAction }
+        : undefined;
+    const mergedStallActionHints = stallDetectionProjection
+      ? {
+          ...baseStallActionHints,
+          learningProjection: stallDetectionProjection,
+          learningPriorConsumptionRef: stallDetectionProjection.consumptionRecordId,
+        }
+      : baseStallActionHints;
     await runPhase("stall-detection", () =>
       detectStallsAndRebalance(
         ctx,
         goalId,
         goal,
         result,
-        stallActionHints.recommendedAction
-          ? stallActionHints
-          : pendingDirective?.preferredAction
-            ? { recommendedAction: pendingDirective.preferredAction }
-            : undefined,
+        mergedStallActionHints,
       )
     );
-    const stallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result)
+    await markLearningProjectionApplied(stallDetectionProjection, [
+      `stall-detection:${goalId}:${loopIndex}`,
+    ]);
+    const shouldRunStallInvestigation = this.deps.coreDecisionEngine.shouldRunStallInvestigation(result);
+    const stallInvestigationResolution = shouldRunStallInvestigation
+      ? await resolveLearningProjection(
+          "stall_investigation",
+          `stall-investigation:${goalId}:${loopIndex}`,
+        )
+      : null;
+    const stallInvestigationProjection = isLearningProjectionPhase(stallInvestigationResolution?.projection, "stall_investigation")
+      ? stallInvestigationResolution.projection
+      : undefined;
+    const stallInvestigation = shouldRunStallInvestigation
       ? await runPhase("stall-investigation", () =>
           corePhaseRuntime.run(
             {
@@ -663,6 +733,7 @@ export class CoreIterationKernel {
               ...(result.stallReport?.dimension_name ? { dimensionName: result.stallReport.dimension_name } : {}),
               ...(result.stallReport?.suggested_cause ? { suggestedCause: result.stallReport.suggested_cause } : {}),
               ...(result.stallReport?.task_id ? { taskId: result.stallReport.task_id } : {}),
+              ...(stallInvestigationProjection ? { learningProjection: stallInvestigationProjection } : {}),
             },
             {
               goalId,
@@ -674,6 +745,11 @@ export class CoreIterationKernel {
         )
       : null;
     if (stallInvestigation) rememberPhase(stallInvestigation);
+    if (stallInvestigation && stallInvestigation.status !== "skipped") {
+      await markLearningProjectionApplied(stallInvestigationProjection, [
+        stallInvestigation.traceId ?? `stall-investigation:${goalId}:${loopIndex}`,
+      ]);
+    }
     if (stallInvestigation) await appendPhaseEvidence(appendRuntimeEvidence, stallInvestigation, "failure");
 
     if (result.stallDetected && result.stallReport) {
