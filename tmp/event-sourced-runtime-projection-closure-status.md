@@ -145,3 +145,12 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:database-first-legacy-stores`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `90ed164e` found:
+  - P1: the database-first event-sourced projection guard still allowed a bypass when a concrete append API was imported or mentioned without being called.
+- Follow-up fixes parse source files with TypeScript and require an actual append API call expression before suppressing event-sourced projection write findings. Focused verification passed:
+  - `npm run check:database-first-legacy-stores`
+  - `npm run test:unit -- --run src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run check:docs`
+  - `git diff --check`

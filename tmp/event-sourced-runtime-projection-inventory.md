@@ -103,8 +103,9 @@ not current-state row apply targets:
   rebuild apply does not hit SQLite expression-depth limits around large task
   histories.
 - The database-first guard now requires a concrete event append API in the same
-  production module before event-sourced projection writes are accepted; a mere
-  `RuntimeEventLogStore` import/reference no longer bypasses the guard.
+  production module before event-sourced projection writes are accepted. The
+  guard parses real call expressions, so an import/reference, comment, or
+  string containing an append API name no longer bypasses the guard.
 - `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
   does not duplicate outbox notifications, schedule runs, denied tool calls,
   peer deliveries, memory correction effects, or commitment operations while

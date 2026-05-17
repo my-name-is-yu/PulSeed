@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -317,8 +318,13 @@ const EVENT_SOURCED_PROJECTION_WRITE_PATTERN = new RegExp(
   "i",
 );
 
-const EVENT_SOURCED_PROJECTION_EVENT_PATTERN =
-  /\b(?:appendRuntimeEventEnvelopeInTransaction|appendAuthorityDecisionWithDisposition|appendGoalTaskMutation|appendRuntimeControlOperation|appendAttentionCommitment|runtimeEventFromAttentionCommitment|runtimeEventFromRuntimeControlOperationTransition)\b/;
+const EVENT_SOURCED_PROJECTION_EVENT_APPEND_APIS = new Set([
+  "appendRuntimeEventEnvelopeInTransaction",
+  "appendAuthorityDecisionWithDisposition",
+  "appendGoalTaskMutation",
+  "appendRuntimeControlOperation",
+  "appendAttentionCommitment",
+]);
 
 const EVENT_SOURCED_PROJECTION_SKIP_PATH = /(^|\/)(?:__tests__|tests|docs|tmp)\//;
 const EVENT_SOURCED_PROJECTION_SCHEMA_PATH = /(^|\/)src\/runtime\/store\/control-db\/schema\.ts$/;
@@ -1031,7 +1037,7 @@ function scanEventSourcedProjectionWriteBypasses(normalizedPath, text) {
   if (EVENT_SOURCED_PROJECTION_SKIP_PATH.test(normalizedPath)) return [];
   if (EVENT_SOURCED_PROJECTION_SCHEMA_PATH.test(normalizedPath)) return [];
   if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(text)) return [];
-  if (EVENT_SOURCED_PROJECTION_EVENT_PATTERN.test(text)) return [];
+  if (hasEventSourcedProjectionEventAppendCall(normalizedPath, text)) return [];
   return text.split(/\r?\n/).flatMap((line, index) => {
     if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(line)) return [];
     return [{
@@ -1043,6 +1049,43 @@ function scanEventSourcedProjectionWriteBypasses(normalizedPath, text) {
       allowlistReason: "production projection/current-state writes to event-sourced tables must use the runtime event-log pattern in the same module",
     }];
   });
+}
+
+function hasEventSourcedProjectionEventAppendCall(normalizedPath, text) {
+  const sourceFile = ts.createSourceFile(
+    normalizedPath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(normalizedPath),
+  );
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (ts.isCallExpression(node)) {
+      const callName = eventAppendCallName(node.expression);
+      if (callName && EVENT_SOURCED_PROJECTION_EVENT_APPEND_APIS.has(callName)) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function eventAppendCallName(expression) {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return null;
+}
+
+function scriptKindForPath(filePath) {
+  if (filePath.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (filePath.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (filePath.endsWith(".ts")) return ts.ScriptKind.TS;
+  return ts.ScriptKind.JS;
 }
 
 function* walkFiles(root) {
