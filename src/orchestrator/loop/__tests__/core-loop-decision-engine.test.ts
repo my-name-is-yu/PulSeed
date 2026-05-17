@@ -350,4 +350,41 @@ describe("CoreDecisionEngine", () => {
       inhibition_refs: ["inhibition-prior"],
     }));
   });
+
+  it("leaves stale next-directive focus priors unapplied on existing directives", () => {
+    const engine = new CoreDecisionEngine();
+    const directive = engine.buildNextIterationDirective({
+      learningProjection: {
+        phase: "next_iteration_directive",
+        projectionKind: "next_directive_mode_bias",
+        consumptionRecordId: "consumption-stale-prior",
+        preferredFocusDimension: "stale-dim",
+        focusRefs: [],
+        inhibitionRefs: [],
+        directiveModeBiasRefs: [],
+        interactionPolicyBiases: [],
+        suppressedSuggestionIds: [],
+      },
+      knowledgeRefreshPhase: {
+        status: "completed",
+        output: {
+          summary: "Acquire current missing API evidence",
+          required_knowledge: ["current API contract"],
+          acquisition_candidates: ["official docs"],
+          confidence: 0.92,
+          worthwhile: true,
+        },
+      },
+      replanningPhase: null,
+      goalDimensions: ["dim1"],
+      fallbackFocusDimension: "dim1",
+    });
+
+    expect(directive).toEqual(expect.objectContaining({
+      sourcePhase: "knowledge_refresh",
+      focusDimension: "dim1",
+    }));
+    expect(directive?.phase_projection_ref).toBeUndefined();
+    expect(directive?.learning_prior_consumption_ref).toBeUndefined();
+  });
 });

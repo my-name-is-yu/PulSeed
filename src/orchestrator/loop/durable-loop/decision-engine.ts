@@ -147,12 +147,15 @@ export class CoreDecisionEngine {
     goalDimensions: string[];
     fallbackFocusDimension?: string;
   }): NextIterationDirective | undefined {
+    const projectedFocusDimension = input.learningProjection?.preferredFocusDimension
+      && input.goalDimensions.includes(input.learningProjection.preferredFocusDimension)
+      ? input.learningProjection.preferredFocusDimension
+      : undefined;
+    const projectionHasDirectiveEffect = Boolean(projectedFocusDimension)
+      || (input.learningProjection?.interactionPolicyBiases.length ?? 0) > 0;
     const mergeLearningProjection = (directive: NextIterationDirective): NextIterationDirective => {
       if (!input.learningProjection) return directive;
-      const projectedFocusDimension = input.learningProjection.preferredFocusDimension
-        && input.goalDimensions.includes(input.learningProjection.preferredFocusDimension)
-        ? input.learningProjection.preferredFocusDimension
-        : undefined;
+      if (!projectionHasDirectiveEffect) return directive;
       return {
         ...directive,
         focusDimension: projectedFocusDimension ?? directive.focusDimension,
@@ -195,7 +198,7 @@ export class CoreDecisionEngine {
       });
     }
 
-    if (input.learningProjection) {
+    if (input.learningProjection && projectionHasDirectiveEffect) {
       return mergeLearningProjection({
         sourcePhase: "learning_prior",
         reason: "learning_prior_phase_projection",

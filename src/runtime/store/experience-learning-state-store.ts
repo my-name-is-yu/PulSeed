@@ -544,7 +544,7 @@ export class ExperienceLearningStateStore {
         WHERE goal_id = ?
           AND filter_decision = 'activated'
           AND eligible_from_iteration <= ?
-        ORDER BY generated_at ASC, prior_id ASC
+        ORDER BY generated_at DESC, prior_id DESC
       `).all(parsedInput.goalId, parsedInput.loopIndex) as Array<{ prior_json: string }>;
       const resolver = new LearningPriorResolver();
       for (const row of rows) {

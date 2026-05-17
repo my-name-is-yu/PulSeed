@@ -1201,6 +1201,52 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("suppresses stale next-directive priors instead of marking them applied", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const nextDirectiveProjection = {
+      phase: "next_iteration_directive",
+      projectionKind: "next_directive_mode_bias",
+      consumptionRecordId: "consumption-next-stale",
+      preferredFocusDimension: "stale-dim",
+      focusRefs: [],
+      inhibitionRefs: [],
+      directiveModeBiasRefs: [],
+      interactionPolicyBiases: [],
+      suppressedSuggestionIds: [],
+    } as const;
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "next_iteration_directive") return null;
+      return {
+        prior: { id: "prior-next-stale" },
+        record: { id: nextDirectiveProjection.consumptionRecordId, stage: "reserved" },
+        runtimeEventId: "runtime-event:next-stale",
+        projection: nextDirectiveProjection,
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+    ] }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.nextIterationDirective?.focusDimension).not.toBe("stale-dim");
+    expect(result.nextIterationDirective?.phase_projection_ref).toBeUndefined();
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalled();
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-next-stale",
+      reasonCodes: ["consumer_no_op"],
+    });
+  });
+
   it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };

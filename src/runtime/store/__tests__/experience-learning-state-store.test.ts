@@ -357,7 +357,7 @@ describe("ExperienceLearningStateStore", () => {
     })).resolves.toBeNull();
   });
 
-  it("continues past suppressed older priors to reserve a newer eligible prior", async () => {
+  it("reserves a newer eligible prior before an older exhausted prior", async () => {
     const older = makePriorGeneratedPayload();
     await store.appendLifecycleEvent(older);
     const first = await store.resolvePriorForPhase({
@@ -402,12 +402,48 @@ describe("ExperienceLearningStateStore", () => {
       phase: "task_generation",
       preferredTargetDimension: "dim-newer",
     }));
-    await expect(store.listPriorConsumptionRecords("prior-1")).resolves.toEqual(expect.arrayContaining([
+    await expect(store.listPriorConsumptionRecords("prior-1")).resolves.toEqual([
       expect.objectContaining({
-        stage: "suppressed",
-        reasonCodes: ["max_uses_exhausted"],
+        stage: "applied",
+        generatedDecisionRefs: ["task:old-prior"],
       }),
-    ]));
+    ]);
+  });
+
+  it("resolves the newest activated prior before older still-eligible priors", async () => {
+    await store.appendLifecycleEvent(makePriorGeneratedPayload({
+      priorId: "prior-old",
+      suggestionId: "suggestion-old",
+      artifactId: "artifact-old",
+      idempotencyKey: "experience-learning:test:prior-old",
+      generatedAt: "2026-05-17T00:01:00.000Z",
+      targetDimension: "dim-old",
+    }));
+    await store.appendLifecycleEvent(makePriorGeneratedPayload({
+      priorId: "prior-new",
+      suggestionId: "suggestion-new",
+      artifactId: "artifact-new",
+      idempotencyKey: "experience-learning:test:prior-new",
+      generatedAt: "2026-05-17T00:09:00.000Z",
+      targetDimension: "dim-new",
+    }));
+
+    const resolved = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-newest-first",
+      consumerDecisionRef: "task-generation:goal-learning:2:newest-first",
+      now: "2026-05-17T00:10:00.000Z",
+    });
+
+    expect(resolved?.prior.id).toBe("prior-new");
+    expect(resolved?.projection).toEqual(expect.objectContaining({
+      phase: "task_generation",
+      preferredTargetDimension: "dim-new",
+    }));
   });
 
   it("does not inject run-scoped priors into consumers without the matching run id", async () => {

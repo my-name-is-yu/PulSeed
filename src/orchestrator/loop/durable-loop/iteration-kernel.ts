@@ -366,6 +366,21 @@ export class CoreIterationKernel {
       }
       await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
     };
+    const markNextDirectiveLearningProjection = async (
+      projection: PhaseLearningProjection<"next_iteration_directive"> | null | undefined,
+      directive: NextIterationDirective | undefined,
+      fallbackDecisionRef: string,
+    ): Promise<void> => {
+      if (!projection) return;
+      const expectedProjectionRef = `learning-prior-projection:${projection.consumptionRecordId}`;
+      if (directive?.phase_projection_ref === expectedProjectionRef) {
+        await markLearningProjectionApplied(projection, [
+          directive.phase_projection_ref ?? fallbackDecisionRef,
+        ]);
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, ["consumer_no_op"]);
+    };
     const runPhaseWithLearningProjection = async <T>(
       phase: string,
       projection: LearningPriorPhaseProjection | null | undefined,
@@ -997,11 +1012,11 @@ export class CoreIterationKernel {
         goalDimensions: goal.dimensions.map((dimension) => dimension.name),
         fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
       });
-      if (learningDirectiveProjection && result.nextIterationDirective) {
-        await markLearningProjectionApplied(learningDirectiveProjection, [
-          result.nextIterationDirective.phase_projection_ref ?? learningConsumerRef("next-directive", "skip"),
-        ]);
-      }
+      await markNextDirectiveLearningProjection(
+        learningDirectiveProjection,
+        result.nextIterationDirective,
+        learningConsumerRef("next-directive", "skip"),
+      );
       await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "skip_task_generation");
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
@@ -1252,11 +1267,11 @@ export class CoreIterationKernel {
       goalDimensions: goal.dimensions.map((dimension) => dimension.name),
       fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
     });
-    if (learningDirectiveProjection && result.nextIterationDirective) {
-      await markLearningProjectionApplied(learningDirectiveProjection, [
-        result.nextIterationDirective.phase_projection_ref ?? learningConsumerRef("next-directive"),
-      ]);
-    }
+    await markNextDirectiveLearningProjection(
+      learningDirectiveProjection,
+      result.nextIterationDirective,
+      learningConsumerRef("next-directive"),
+    );
     await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "next_iteration_directive");
 
     await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
