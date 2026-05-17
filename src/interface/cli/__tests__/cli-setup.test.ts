@@ -83,6 +83,23 @@ describe("cmdSetup non-interactive", () => {
     expect(config.api_key).toBe("sk-test-key-12345678");
   });
 
+  it("prints the actual provider config path when PULSEED_HOME is overridden", async () => {
+    const { cmdSetup } = await import("../commands/setup.js");
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = await cmdSetup(["--provider", "ollama"]);
+
+    expect(result).toBe(0);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      `Setup complete! Configuration saved to ${path.join(tmpDir, "provider.json")}`
+    );
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("~/.pulseed/provider.json")
+    );
+
+    consoleSpy.mockRestore();
+  });
+
   it("uses default model when --model is not provided", async () => {
     process.env["OPENAI_API_KEY"] = "sk-test-key-12345678";
     const { cmdSetup } = await import("../commands/setup.js");
