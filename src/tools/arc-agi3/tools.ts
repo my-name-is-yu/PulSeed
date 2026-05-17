@@ -99,7 +99,7 @@ export class ArcAgi3ListGamesTool extends ArcAgi3ToolBase<ArcAgi3ListGamesInput>
     permissionLevel: "read_only",
     isReadOnly: true,
     isDestructive: false,
-    shouldDefer: true,
+    shouldDefer: false,
     alwaysLoad: false,
     maxConcurrency: 2,
     maxOutputChars: 20_000,

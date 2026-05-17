@@ -307,6 +307,11 @@ describe("ARC-AGI-3 tools", () => {
     expect(() => createArcAgi3Tools()).not.toThrow();
   });
 
+  it("keeps the ARC game-list tool directly visible inside the ARC-only tool policy", () => {
+    const listGames = createArcAgi3Tools({ artifactStore }).find((tool) => tool.metadata.name === "arc_agi3_list_games");
+    expect(listGames?.metadata.shouldDefer).toBe(false);
+  });
+
   it("closes an opened scorecard when start fails before artifact creation", async () => {
     const calls: Array<{ method: string; input?: unknown }> = [];
     const client: ArcAgi3RestClient = {
