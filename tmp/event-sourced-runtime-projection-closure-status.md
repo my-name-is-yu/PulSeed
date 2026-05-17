@@ -10,7 +10,7 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
 
 - Branch: `yu/event-sourced-runtime-projection-closure`
 - Base: `origin/main`
-- PR state: draft PR #2003 opened before broad implementation began.
+- PR state: draft PR #2003 opened before broad implementation began; ready after clean local sub-agent review.
 - Session language: Japanese
 - GitHub-facing artifacts: English
 
@@ -28,7 +28,7 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
 - [x] Add replay/rebuild contract coverage.
 - [x] Update docs.
 - [x] Run required full verification.
-- [ ] Complete sub-agent review.
+- [x] Complete sub-agent review.
 - [ ] Request and clear GitHub Codex review.
 
 ## Notes
@@ -54,3 +54,4 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
 - A prior `npm run test:integration` attempt observed a first-visible-latency assertion above 2s. The test now restores leaked mocks before each direct-chat latency case; the focused test, focused file, and later full integration rerun passed.
 - First sub-agent review found material gaps in projection apply ordering, apply-to-current-state completeness, and resident commitment caller-path evidence. Follow-up fixes now append the rebuild event before projection writes, restore event-backed rows for `runtime_operations` and `attention_commitment_candidates`, and tag resident commitment writes with `caller_path: resident_proactive`.
 - Second sub-agent review found a material deterministic rebuild gap: prior `projection.rebuild.recorded` events were recursively included as source evidence and `rebuilt_at` changed the rebuild idempotency key. Follow-up fixes exclude rebuild-record events from projection source events, derive rebuild idempotency from the stable rebuild payload without `rebuilt_at`, and add repeated-apply contract coverage.
+- Third sub-agent review returned `No material findings.`
