@@ -35,6 +35,12 @@ import {
   buildToolFailureResult,
   buildToolOutcomeSummary,
 } from "./tool-result-envelope.js";
+import {
+  CapabilityPlane,
+  descriptorCapabilityExecutionContext,
+  type CapabilityAdmissionDecision,
+  type CapabilityDescriptor,
+} from "../runtime/capability-plane.js";
 import type {
   CapabilityRegistryDecisionKind,
   InterventionDecisionKind,
@@ -70,6 +76,7 @@ export class ToolExecutor {
   private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private readonly interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   private readonly traceBaseDir?: string | null;
+  private readonly capabilityPlane: CapabilityPlane;
 
   constructor(deps: ToolExecutorDeps) {
     this.registry = deps.registry;
@@ -78,6 +85,7 @@ export class ToolExecutor {
     this.personalAgentRuntime = deps.personalAgentRuntime;
     this.interactionAuthorityStore = deps.interactionAuthorityStore;
     this.traceBaseDir = deps.traceBaseDir ?? null;
+    this.capabilityPlane = deps.capabilityPlane ?? CapabilityPlane.fromToolRegistry(deps.registry);
   }
 
   async execute(
@@ -134,14 +142,18 @@ export class ToolExecutor {
     }
     const input = parseResult.data;
 
-    const hostPreflightResult = await this.checkHostPolicyPreflight(tool, input, context, startTime);
+    const capabilityPreflightResult = await this.checkCapabilityPlanePreflight(tool, input, context, startTime);
+    if (capabilityPreflightResult.result) return capabilityPreflightResult.result;
+    const capabilityContext = capabilityPreflightResult.context;
+
+    const hostPreflightResult = await this.checkHostPolicyPreflight(tool, input, capabilityContext, startTime);
     if (hostPreflightResult) return hostPreflightResult;
 
     let precheckedPermissionResult: Awaited<ReturnType<ToolPermissionManager["check"]>> | null = null;
-    let executionContext = context;
+    let executionContext = capabilityContext;
 
     // --- Gate 2: Semantic Validation (tool-specific) ---
-    const semanticResult = await tool.checkPermissions(input, context);
+    const semanticResult = await tool.checkPermissions(input, executionContext);
     if (semanticResult.status === "denied") {
       await this.recordToolPolicyDecision(tool, input, context, {
         decision: "block",
@@ -388,6 +400,84 @@ export class ToolExecutor {
 
   // --- Private Helpers ---
 
+  private async checkCapabilityPlanePreflight(
+    tool: ITool,
+    input: unknown,
+    context: ToolCallContext,
+    startTime: number,
+  ): Promise<{ context: ToolCallContext; result?: ToolResult }> {
+    const admission = this.capabilityPlane.admitToolExecution({ tool, rawInput: input, context });
+    const descriptorContext = this.withCapabilityDescriptorContext(context, tool, admission);
+
+    if (admission.status === "blocked") {
+      const blocked = buildNotExecutedToolResult({
+        summary: `Capability Plane blocked ${tool.metadata.name}: ${admission.reason}`,
+        durationMs: Date.now() - startTime,
+        reason: "policy_blocked",
+        message: admission.reason,
+      });
+      await this.recordToolPolicyDecision(tool, input, descriptorContext, {
+        decision: "block",
+        capabilityDecision: admission.descriptor ? "blocked" : "missing",
+        decisionReason: admission.reason,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution was blocked by Capability Plane before side effects.`,
+        outcomeSummary: buildToolOutcomeSummary(tool.metadata.name, blocked),
+      });
+      return { context: descriptorContext, result: blocked };
+    }
+
+    if (admission.status === "requires_approval") {
+      await this.recordToolPolicyDecision(tool, input, descriptorContext, {
+        decision: "confirm_required",
+        capabilityDecision: "permission_required",
+        decisionReason: admission.reason,
+        targetEffect: "execute_tool",
+        targetSummary: `${tool.metadata.name} tool execution requires descriptor-backed approval before side effects.`,
+      });
+      const approvalResult = await this.requestPermissionApproval({
+        tool,
+        input,
+        context: descriptorContext,
+        startTime,
+        reason: admission.reason,
+        reversibility: reversibilityForDescriptor(admission.descriptor),
+      });
+      if (approvalResult.status === "blocked") return { context: descriptorContext, result: approvalResult.result };
+      return { context: approvalResult.context };
+    }
+
+    await this.recordToolPolicyDecision(tool, input, descriptorContext, {
+      decision: "allow",
+      capabilityDecision: "available",
+      decisionReason: admission.reason,
+      targetEffect: "execute_tool",
+      targetSummary: `${tool.metadata.name} tool execution passed Capability Plane descriptor admission.`,
+    });
+    return { context: descriptorContext };
+  }
+
+  private withCapabilityDescriptorContext(
+    context: ToolCallContext,
+    tool: ITool,
+    admission: CapabilityAdmissionDecision,
+  ): ToolCallContext {
+    const descriptor = admission.descriptor;
+    if (!descriptor) {
+      return {
+        ...context,
+        capabilityAdmissionDecision: admission,
+      };
+    }
+    return {
+      ...context,
+      capabilityDescriptor: descriptor,
+      capabilityAdmissionDecision: admission,
+      capabilityExecution: context.capabilityExecution
+        ?? descriptorCapabilityExecutionContext(descriptor, tool.metadata.name, context.callId),
+    };
+  }
+
   private async requestPermissionApproval(input: {
     tool: ITool;
     input: unknown;
@@ -531,6 +621,7 @@ export class ToolExecutor {
         targetEffect: options.targetEffect,
         targetSummary: options.targetSummary,
         capabilityRefs: [
+          ...this.capabilityPlaneRefs(tool, context),
           { kind: "tool", ref: tool.metadata.name },
           { kind: "tool_permission", ref: tool.metadata.permissionLevel },
           ...(tool.metadata.activityCategory ? [{ kind: "tool_activity", ref: tool.metadata.activityCategory }] : []),
@@ -587,6 +678,22 @@ export class ToolExecutor {
   ): Pick<RuntimeEventLogStore, "appendAuthorityDecision"> {
     const baseDir = context.providerConfigBaseDir ?? this.traceBaseDir ?? getPulseedDirPath();
     return new RuntimeEventLogStore(baseDir, { controlBaseDir: baseDir });
+  }
+
+  private capabilityPlaneRefs(tool: ITool, context: ToolCallContext): Array<{ kind: string; ref: string }> {
+    const descriptor = context.capabilityDescriptor;
+    const admission = context.capabilityAdmissionDecision;
+    return [
+      ...(descriptor ? [
+        { kind: "capability", ref: descriptor.capability_id },
+        { kind: "capability_provider", ref: descriptor.provider_ref },
+        { kind: "capability_operation", ref: descriptor.runtime_graph_refs.operation_ref },
+        { kind: "capability_readiness", ref: descriptor.readiness_state },
+      ] : [{ kind: "capability", ref: `tool:${tool.metadata.name}` }]),
+      ...(admission?.capability_fingerprint ? [
+        { kind: "capability_fingerprint", ref: admission.capability_fingerprint },
+      ] : []),
+    ];
   }
 
   private async checkHostPolicyPreflight(
@@ -727,6 +834,15 @@ export class ToolExecutor {
   }
 }
 
+function reversibilityForDescriptor(descriptor: CapabilityDescriptor | null): "reversible" | "irreversible" | "unknown" {
+  if (!descriptor) return "unknown";
+  if (descriptor.rollback_plan.kind === "none" || descriptor.rollback_plan.kind === "reversible" || descriptor.rollback_plan.kind === "append_only") {
+    return "reversible";
+  }
+  if (descriptor.rollback_plan.kind === "irreversible") return "irreversible";
+  return "unknown";
+}
+
 export class ToolExecutionTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`Tool call timed out after ${timeoutMs}ms`);
@@ -738,6 +854,7 @@ export interface ToolExecutorDeps {
   registry: ToolRegistry;
   permissionManager: ToolPermissionManager;
   concurrency: ConcurrencyController;
+  capabilityPlane?: CapabilityPlane;
   personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   traceBaseDir?: string | null;

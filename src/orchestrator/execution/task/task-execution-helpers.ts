@@ -191,6 +191,7 @@ function createToolBackedAdapter(input: {
   const traceStore = new PersonalAgentRuntimeStore(baseDir, { controlBaseDir: baseDir });
   return {
     adapterType: adapter.adapterType,
+    capabilityPlaneBoundary: "run_adapter_tool",
     ...(adapter.capabilities !== undefined ? { capabilities: adapter.capabilities } : {}),
     ...(adapter.formatPrompt ? { formatPrompt: adapter.formatPrompt.bind(adapter) } : {}),
     ...(adapter.checkDuplicate ? { checkDuplicate: adapter.checkDuplicate.bind(adapter) } : {}),
