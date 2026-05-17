@@ -1689,13 +1689,16 @@ describe("agentloop phase 1", () => {
 
 describe("agentloop phase 2", () => {
   let tmpDir: string;
+  let cognitionMemoryBaseDir: string;
 
   beforeEach(() => {
     tmpDir = makeTempDir();
+    cognitionMemoryBaseDir = makeTempDir();
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
   it("runs TaskLifecycle execution through TaskAgentLoopRunner and owns task status updates", async () => {
@@ -1772,7 +1775,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: registry,
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
-      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
+      cognitionMemoryBaseDir,
     });
 
     const stateManager = new StateManager(tmpDir);
@@ -1874,7 +1877,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["task_update"] },
-      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
+      cognitionMemoryBaseDir,
     });
     const llmClient = createMockLLMClient([]);
     const lifecycle = new TaskLifecycle(
@@ -1965,7 +1968,7 @@ describe("agentloop phase 2", () => {
         modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
         defaultModel: modelInfo.ref,
         defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
-        cognitionMemoryBaseDir: path.join(daemonDir, ".pulseed-test-cognition"),
+        cognitionMemoryBaseDir,
         cwd: daemonDir,
       });
       const diffCwds: string[] = [];
@@ -2086,7 +2089,7 @@ describe("agentloop phase 2", () => {
         modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
         defaultModel: modelInfo.ref,
         defaultToolPolicy: { allowedTools: ["apply_patch", "verify"] },
-        cognitionMemoryBaseDir: path.join(daemonDir, ".pulseed-test-cognition"),
+        cognitionMemoryBaseDir,
         cwd: daemonDir,
       });
       const stateManager = new StateManager(daemonDir);
@@ -2191,7 +2194,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["echo", "verify"] },
-      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
+      cognitionMemoryBaseDir,
     });
 
     const result = await taskRunner.runTask({
@@ -2265,7 +2268,7 @@ describe("agentloop phase 2", () => {
       modelRegistry: new StaticAgentLoopModelRegistry([modelInfo]),
       defaultModel: modelInfo.ref,
       defaultToolPolicy: { allowedTools: ["shell_command"] },
-      cognitionMemoryBaseDir: path.join(tmpDir, ".pulseed-test-cognition"),
+      cognitionMemoryBaseDir,
     });
 
     const result = await taskRunner.runTask({

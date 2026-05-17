@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../../../base/types/task.js";
 import { makeTask as makeFixtureTask } from "../../../../../tests/helpers/fixtures.js";
 import { upsertRelationshipProfileItem } from "../../../../platform/profile/relationship-profile.js";
@@ -24,6 +24,20 @@ const { finalize, prepareTaskAgentLoopWorkspace } = vi.hoisted(() => ({
 vi.mock("../task-agent-loop-worktree.js", () => ({
   prepareTaskAgentLoopWorkspace,
 }));
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});
+
+function makeCognitionTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function makeTask(): Task {
   return makeFixtureTask({
@@ -111,7 +125,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("continues into the bounded runner through canonical grounding without legacy Soil prefetch", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-memory-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-memory-");
     await upsertRelationshipProfileItem(cognitionMemoryBaseDir, {
       stableKey: "task.status_style",
       kind: "preference",
@@ -217,7 +231,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("keeps task cognition replay records distinct across retry attempts", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-retry-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-retry-");
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -295,7 +309,7 @@ describe("TaskAgentLoopRunner", () => {
 
   it("updates task cognition replay with post-run command trace refs", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-trace-"));
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-trace-");
     finalize.mockResolvedValue({
       requestedCwd: cwd,
       executionCwd: cwd,
@@ -392,73 +406,76 @@ describe("TaskAgentLoopRunner", () => {
 
   it("passes exact artifact contract and verification command into the assembled task prompt", async () => {
     const cwd = process.cwd();
-    const cognitionMemoryBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pulseed-task-cognition-artifact-"));
-    finalize.mockResolvedValue({
-      requestedCwd: cwd,
-      executionCwd: cwd,
-      isolated: false,
-      cleanupStatus: "not_requested",
-    });
-    prepareTaskAgentLoopWorkspace.mockResolvedValue({
-      requestedCwd: cwd,
-      executionCwd: cwd,
-      isolated: false,
-      finalize,
-    });
-    const boundedRunner = {
-      run: vi.fn().mockResolvedValue({
-        success: true,
-        output: {
-          status: "done",
-          finalAnswer: "finished",
-          summary: "summary",
-          filesChanged: [],
-          testsRun: [],
-          completionEvidence: ["bounded runner reached"],
-          verificationHints: [],
-          blockers: [],
-        },
-        finalText: "finished",
-        stopReason: "completed",
-        elapsedMs: 1,
-        modelTurns: 1,
-        toolCalls: 0,
-        compactions: 0,
-        changedFiles: [],
-        commandResults: [],
-        traceId: "trace-1",
-        sessionId: "session-1",
-        turnId: "turn-1",
-      }),
-    } as unknown as BoundedAgentLoopRunner;
-    const modelInfo = {
-      ref: { providerId: "test", modelId: "model" },
-      displayName: "test/model",
-      capabilities: {},
-    };
-    const runner = new TaskAgentLoopRunner({
-      boundedRunner,
-      modelClient: {
-        getModelInfo: vi.fn().mockResolvedValue(modelInfo),
-      } as unknown as AgentLoopModelClient,
-      modelRegistry: {
-        defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
-      } as unknown as AgentLoopModelRegistry,
-      contextAssembler: new AgentLoopContextAssembler(),
-      cognitionMemoryBaseDir,
-    });
+    const cognitionMemoryBaseDir = makeCognitionTempDir("pulseed-task-cognition-artifact-");
+    try {
+      finalize.mockResolvedValue({
+        requestedCwd: cwd,
+        executionCwd: cwd,
+        isolated: false,
+        cleanupStatus: "not_requested",
+      });
+      prepareTaskAgentLoopWorkspace.mockResolvedValue({
+        requestedCwd: cwd,
+        executionCwd: cwd,
+        isolated: false,
+        finalize,
+      });
+      const boundedRunner = {
+        run: vi.fn().mockResolvedValue({
+          success: true,
+          output: {
+            status: "done",
+            finalAnswer: "finished",
+            summary: "summary",
+            filesChanged: [],
+            testsRun: [],
+            completionEvidence: ["bounded runner reached"],
+            verificationHints: [],
+            blockers: [],
+          },
+          finalText: "finished",
+          stopReason: "completed",
+          elapsedMs: 1,
+          modelTurns: 1,
+          toolCalls: 0,
+          compactions: 0,
+          changedFiles: [],
+          commandResults: [],
+          traceId: "trace-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+        }),
+      } as unknown as BoundedAgentLoopRunner;
+      const modelInfo = {
+        ref: { providerId: "test", modelId: "model" },
+        displayName: "test/model",
+        capabilities: {},
+      };
+      const runner = new TaskAgentLoopRunner({
+        boundedRunner,
+        modelClient: {
+          getModelInfo: vi.fn().mockResolvedValue(modelInfo),
+        } as unknown as AgentLoopModelClient,
+        modelRegistry: {
+          defaultModel: vi.fn().mockResolvedValue(modelInfo.ref),
+        } as unknown as AgentLoopModelRegistry,
+        contextAssembler: new AgentLoopContextAssembler(),
+        cognitionMemoryBaseDir,
+      });
 
-    await runner.runTask({ task: makeArtifactTask(), cwd });
+      await runner.runTask({ task: makeArtifactTask(), cwd });
 
-    const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
-    expect(userMessage).toContain("Artifact contract:");
-    expect(userMessage).toContain("\"mean_roc_auc\"");
-    expect(userMessage).toContain("\"sequence_hazard_features\"");
-    expect(userMessage).toContain("\"field_types\"");
-    expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
-    expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
-    expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
-    fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
+      const turn = (boundedRunner.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      const userMessage = turn.messages.find((message: { role: string }) => message.role === "user")?.content;
+      expect(userMessage).toContain("Artifact contract:");
+      expect(userMessage).toContain("\"mean_roc_auc\"");
+      expect(userMessage).toContain("\"sequence_hazard_features\"");
+      expect(userMessage).toContain("\"field_types\"");
+      expect(userMessage).toContain(".venv/bin/python src/experiments/train_sequence_hazard_auc.py --check-contract");
+      expect(userMessage).toContain("must validate the exact required_artifacts, required_fields, and field_types above");
+      expect(userMessage).toContain("PulSeed enforces fresh_after_task_start relative to the task start time");
+    } finally {
+      fs.rmSync(cognitionMemoryBaseDir, { recursive: true, force: true });
+    }
   });
 });

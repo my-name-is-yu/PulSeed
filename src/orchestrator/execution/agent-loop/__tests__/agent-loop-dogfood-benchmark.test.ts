@@ -614,6 +614,8 @@ function makeTaskRunner(
     denyShellCommand?: (command: string) => boolean;
   } = {},
 ): TaskAgentLoopRunner {
+  const cognitionMemoryBaseDir = makeTempDir();
+  tempDirs.push(cognitionMemoryBaseDir);
   const registry = new ToolRegistry();
   registry.register(new ApplyPatchTool());
   registry.register(new ShellCommandTool());
@@ -653,7 +655,7 @@ function makeTaskRunner(
       maxCompletionValidationAttempts: 1,
       ...options.defaultBudget,
     },
-    cognitionMemoryBaseDir: path.join(cwd, ".pulseed-test-cognition"),
+    cognitionMemoryBaseDir,
     cwd,
     ...(options.createSession ? { createSession: options.createSession } : {}),
   });
