@@ -194,6 +194,40 @@ describe("ApprovalBroker", () => {
     await expect(secondRequest).resolves.toBe(true);
   });
 
+  it("allows deterministic surface issuance ids for production-path trace harnesses", async () => {
+    tmpDir = makeTempDir();
+    const store = new ApprovalStore(tmpDir);
+    const broker = new ApprovalBroker({
+      store,
+      createId: () => "approval-deterministic",
+      createSurfaceIssuanceId: (approvalId, sequence) => `${approvalId}:issuance:${sequence}:trace-seed`,
+      now: () => Date.parse("2026-05-17T00:00:00.000Z"),
+    });
+
+    const request = broker.requestApproval("goal-1", {
+      id: "task-deterministic",
+      description: "Approve deterministic trace",
+      action: "deploy",
+    });
+
+    await waitForPendingApproval(store, "approval-deterministic");
+    const event = broker.getPendingApprovalEvents()[0];
+    expect(event?.surface_projection).toMatchObject({
+      projection_id: "surface:approval:approval-deterministic:issued:approval-deterministic:issuance:1:trace-seed",
+      replay_key: "approval:approval-deterministic:issued:approval-deterministic:issuance:1:trace-seed",
+    });
+    expect(event?.surface_projection?.action_bindings.map((binding) => binding.replay_key)).toEqual([
+      "approval:approval-deterministic:issued:approval-deterministic:issuance:1:trace-seed:approve:event:::",
+      "approval:approval-deterministic:issued:approval-deterministic:issuance:1:trace-seed:reject:event:::",
+    ]);
+
+    const approveBindingId = surfaceApprovalBindingId(broker, "approval-deterministic", true);
+    await expect(broker.resolveApproval("approval-deterministic", true, "tui", {
+      surfaceActionBindingId: approveBindingId,
+    })).resolves.toBe(true);
+    await expect(request).resolves.toBe(true);
+  });
+
   it("rejects non-conversational approval responses without the matching surface binding", async () => {
     tmpDir = makeTempDir();
     const store = new ApprovalStore(tmpDir);
