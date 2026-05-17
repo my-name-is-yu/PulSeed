@@ -495,6 +495,65 @@ describe("LoopSupervisor", () => {
     }
   });
 
+  it("marks shutdown-relinquished DurableLoop background runs queued for restart recovery", async () => {
+    const runId = "run:coreloop:bg-restart";
+    let started = false;
+    const { supervisor, deps, journalQueue, runtimeRoot } = makeSupervisor(
+      (async () => {
+        started = true;
+        await new Promise<void>(() => undefined);
+        return makeLoopResult({ goalId: "g-bg-restart" });
+      }) as unknown as (...args: any[]) => Promise<LoopResult>,
+      {},
+      { concurrency: 1, pollIntervalMs: 10, activeStopGraceMs: 30 }
+    );
+    const ledger = new BackgroundRunLedger(runtimeRoot);
+    await ledger.ensureReady();
+    await ledger.create({
+      id: runId,
+      kind: "coreloop_run",
+      notify_policy: "silent",
+      reply_target_source: "none",
+      parent_session_id: null,
+      title: "Restartable DurableLoop",
+      workspace: "/repo",
+    });
+    (deps as { backgroundRunLedger?: BackgroundRunLedger }).backgroundRunLedger = ledger;
+
+    try {
+      await supervisor.start([]);
+      supervisor.activateGoal("g-bg-restart", {
+        backgroundRun: {
+          backgroundRunId: runId,
+          parentSessionId: null,
+        },
+      });
+      await waitFor(() => started);
+      const running = await pollForBackgroundRunMatch(ledger, runId, (run) =>
+        run.status === "running" &&
+        typeof run.child_session_id === "string" &&
+        run.child_session_id.startsWith("session:coreloop:")
+      );
+
+      await supervisor.shutdown();
+
+      const queued = await ledger.load(runId);
+      expect(running.child_session_id).not.toBeNull();
+      expect(queued).toMatchObject({
+        id: runId,
+        status: "queued",
+        child_session_id: null,
+        process_session_id: null,
+        completed_at: null,
+        summary: "DurableLoop interrupted by daemon shutdown; queued for restart recovery.",
+        error: null,
+      });
+      expect(journalQueue.snapshot().pending.normal.length).toBe(1);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("shutdown() does not start a new execution after an in-flight poll observes stop", async () => {
     let leaseStarted = false;
     let releaseLease: (() => void) | undefined;

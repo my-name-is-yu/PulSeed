@@ -47,7 +47,7 @@ export interface SupervisorDeps {
   driveSystem: DriveSystem;
   stateManager: StateManager;
   logger?: Logger;
-  backgroundRunLedger?: Pick<BackgroundRunLedger, 'load' | 'link' | 'started' | 'terminal'>;
+  backgroundRunLedger?: Pick<BackgroundRunLedger, 'load' | 'link' | 'started' | 'queued' | 'terminal'>;
   personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   onCycleComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
   onGoalComplete?: (goalId: string, result: WorkerResult) => Promise<void> | void;
@@ -658,6 +658,7 @@ export class LoopSupervisor {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    await this.markBackgroundRunQueuedForShutdownRelinquish(activation, execution.workerId);
 
     this.deps.logger?.warn('Relinquished active goal execution after supervisor shutdown grace', {
       goalId: activation.goalId,
@@ -847,6 +848,31 @@ export class LoopSupervisor {
       this.deps.logger?.warn('Failed to mark background run terminal', {
         goalId: activation.goalId,
         backgroundRunId: runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async markBackgroundRunQueuedForShutdownRelinquish(activation: GoalActivation, workerId: string): Promise<void> {
+    const runId = activation.backgroundRun?.backgroundRunId;
+    if (!runId || !this.deps.backgroundRunLedger) return;
+    const sourceRefs = await this.mergeBackgroundRunSourceRefs(runId, [
+      this.supervisorStateRef(),
+      this.evidenceLedgerRef(activation),
+    ]);
+    try {
+      await this.deps.backgroundRunLedger.queued(runId, {
+        child_session_id: null,
+        process_session_id: null,
+        summary: "DurableLoop interrupted by daemon shutdown; queued for restart recovery.",
+        error: null,
+        source_refs: sourceRefs,
+      });
+    } catch (err) {
+      this.deps.logger?.warn('Failed to mark shutdown-relinquished background run queued', {
+        goalId: activation.goalId,
+        backgroundRunId: runId,
+        workerId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
