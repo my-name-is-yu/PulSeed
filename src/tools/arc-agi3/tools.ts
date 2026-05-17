@@ -351,7 +351,7 @@ export class ArcAgi3FinishTool extends ArcAgi3ToolBase<ArcAgi3FinishInput> {
         card_id: artifact.card_id,
         replay_url: updated.replay_url,
         official_score: updated.official_score,
-        scorecard,
+        scorecard: updated.scorecard,
         artifact_path: this.artifactStore.runPath(input.run_id),
         claim_mode: updated.claim_mode,
       }, `Finished ARC-AGI-3 run ${input.run_id} with community online scorecard ${artifact.card_id}.`, startTime, [
@@ -396,7 +396,7 @@ export class ArcAgi3ScorecardTool extends ArcAgi3ToolBase<ArcAgi3ScorecardInput>
       const updated = await this.artifactStore.recordScorecard(input.run_id, scorecard);
       return this.ok({
         run_id: input.run_id,
-        scorecard,
+        scorecard: updated.scorecard,
         official_score: updated.official_score,
         replay_url: updated.replay_url,
         claim_mode: updated.claim_mode,

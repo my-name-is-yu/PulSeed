@@ -14,6 +14,7 @@ import {
   ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
   createArcAgi3Tools,
+  type ArcAgi3Scorecard,
   type ArcAgi3Snapshot,
 } from "../index.js";
 
@@ -27,6 +28,24 @@ const baseSnapshot: ArcAgi3Snapshot = {
   action_input: { id: 0, data: {} },
   available_actions: [1, 2, 3, 4, 6],
 };
+function makeSensitiveScorecard(cardId: string): ArcAgi3Scorecard {
+  return {
+    card_id: cardId,
+    score: 7,
+    total_actions: 1,
+    environments: [{
+      score: 7,
+      email: "operator@example.com",
+      public_value: "kept",
+    }],
+    api_key: "arc-secret-key",
+    user_id: "operator-1",
+    nested: {
+      token: "nested-secret-token",
+      public_value: "kept",
+    },
+  } as ArcAgi3Scorecard;
+}
 const providerEnvKeys = [
   "PULSEED_PROVIDER",
   "PULSEED_LLM_PROVIDER",
@@ -83,15 +102,15 @@ function makeMockClient(): ArcAgi3RestClient & {
     },
     async retrieveScorecard(cardId) {
       calls.push({ method: "retrieveScorecard", input: { cardId } });
-      return { card_id: cardId, score: 7, total_actions: 1, environments: [] };
+      return makeSensitiveScorecard(cardId);
     },
     async retrieveScorecardForGame(cardId, gameId) {
       calls.push({ method: "retrieveScorecardForGame", input: { cardId, gameId } });
-      return { card_id: cardId, score: 7, total_actions: 1, environments: [] };
+      return makeSensitiveScorecard(cardId);
     },
     async closeScorecard(cardId) {
       calls.push({ method: "closeScorecard", input: { cardId } });
-      return { card_id: cardId, score: 7, total_actions: 1, environments: [] };
+      return makeSensitiveScorecard(cardId);
     },
   };
 }
@@ -188,9 +207,13 @@ describe("ARC-AGI-3 tools", () => {
       official_score: 7,
       claim_mode: "community_online_scorecard",
     });
+    expect(JSON.stringify(finish.data)).not.toContain("arc-secret-key");
+    expect(JSON.stringify(finish.data)).not.toContain("operator@example.com");
+    expect(JSON.stringify(finish.data)).not.toContain("nested-secret-token");
 
     const artifactText = fs.readFileSync(artifactStore.runPath("run-1"), "utf8");
     expect(artifactText).not.toContain("secret");
+    expect(artifactText).not.toContain("operator@example.com");
     expect(artifactText).not.toContain("Verified");
     expect(artifactText).not.toContain("Kaggle-compatible");
     const artifact = JSON.parse(artifactText);
@@ -206,6 +229,8 @@ describe("ARC-AGI-3 tools", () => {
       model_provider: "openai",
       model_id: "gpt-5.4",
     });
+    expect(artifact.scorecard.nested.public_value).toBe("kept");
+    expect(artifact.scorecard.environments[0].public_value).toBe("kept");
     expect(artifact.submitted_action_log.map((entry: { action: string }) => entry.action)).toEqual(["RESET", "ACTION6"]);
     expect(fs.readFileSync(path.join(tmpDir, "runs", "run-1", "actions.jsonl"), "utf8").trim().split("\n")).toHaveLength(2);
     expect(fs.existsSync(artifactStore.scorecardPath("run-1"))).toBe(true);

@@ -9,6 +9,7 @@ import {
   ARC_AGI3_TOOL_POLICY_VERSION,
   ArcAgi3ActionLogEntrySchema,
   ArcAgi3RunArtifactSchema,
+  ArcAgi3ScorecardSchema,
   type ArcAgi3ActionLogEntry,
   type ArcAgi3ModelIdentity,
   type ArcAgi3RunArtifact,
@@ -143,15 +144,16 @@ export class ArcAgi3ArtifactStore {
 
   async recordScorecard(runId: string, scorecard: ArcAgi3Scorecard): Promise<ArcAgi3RunArtifact> {
     const current = await this.load(runId);
+    const sanitizedScorecard = sanitizeScorecard(scorecard);
     const updated = ArcAgi3RunArtifactSchema.parse({
       ...current,
       updated_at: new Date().toISOString(),
-      official_score: typeof scorecard.score === "number" ? scorecard.score : current.official_score,
-      scorecard,
+      official_score: typeof sanitizedScorecard.score === "number" ? sanitizedScorecard.score : current.official_score,
+      scorecard: sanitizedScorecard,
       failure_reason: null,
     });
     await this.writeArtifact(updated);
-    await this.writeScorecard(runId, scorecard);
+    await this.writeScorecard(runId, sanitizedScorecard);
     return updated;
   }
 
@@ -193,4 +195,46 @@ export class ArcAgi3ArtifactStore {
 
 export function replayUrl(cardId: string): string {
   return `${ARC_AGI3_REPLAY_BASE_URL}/${encodeURIComponent(cardId)}`;
+}
+
+function sanitizeScorecard(scorecard: ArcAgi3Scorecard): ArcAgi3Scorecard {
+  return ArcAgi3ScorecardSchema.parse(redactSensitiveScorecardFields(scorecard));
+}
+
+function redactSensitiveScorecardFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveScorecardFields(entry));
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !isSensitiveScorecardKey(key))
+      .map(([key, entry]) => [key, redactSensitiveScorecardFields(entry)]),
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSensitiveScorecardKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized === "apikey"
+    || normalized === "authorization"
+    || normalized === "auth"
+    || normalized === "cookie"
+    || normalized === "session"
+    || normalized === "token"
+    || normalized === "accesstoken"
+    || normalized === "refreshtoken"
+    || normalized === "secret"
+    || normalized === "userid"
+    || normalized === "user"
+    || normalized === "username"
+    || normalized === "email"
+    || normalized === "account"
+    || normalized === "accountid"
+    || normalized === "identity";
 }
