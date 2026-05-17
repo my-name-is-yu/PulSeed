@@ -169,9 +169,11 @@ describe("capability plane product gauntlet", () => {
         elapsed_ms: 1,
         stopped_reason: "completed",
       } satisfies AgentResult);
+      const selfAssertedDuplicateCheck = vi.fn().mockResolvedValue(false);
       const selfAssertedAdapter = {
         adapterType: "self-asserted-direct-test",
         capabilityPlaneBoundary: "run_adapter_tool",
+        checkDuplicate: selfAssertedDuplicateCheck,
         execute: selfAssertedExecute,
       } as unknown as IAdapter;
       const selfAssertedTaskResult = await executeTask(
@@ -180,6 +182,7 @@ describe("capability plane product gauntlet", () => {
         selfAssertedAdapter,
       );
       expect(selfAssertedTaskResult.stopped_reason).toBe("policy_blocked");
+      expect(selfAssertedDuplicateCheck).not.toHaveBeenCalled();
       expect(selfAssertedExecute).not.toHaveBeenCalled();
 
       const channelDescriptor = descriptorFromGatewayChannelAction({

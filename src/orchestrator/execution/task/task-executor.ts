@@ -148,33 +148,33 @@ export async function executeTask(
   // Execute
   let result: AgentResult;
   try {
-    // Generic dedup check — any adapter may optionally implement checkDuplicate
-    if (adapter.checkDuplicate) {
-      try {
-        const isDuplicate = await adapter.checkDuplicate(agentTask);
-        if (isDuplicate) {
-          // Return synthetic result — task already exists, skip execution
-          result = {
-            success: true,
-            output: 'Skipped: duplicate task detected by adapter',
-            error: null,
-            exit_code: 0,
-            elapsed_ms: 0,
-            stopped_reason: 'completed',
-          };
-          // End session and update task status without calling adapter.execute
-          const skipSummary = 'Task skipped: duplicate detected by adapter';
-          await sessionManager.endSession(session.id, skipSummary);
-          const skipNow = new Date().toISOString();
-          const skippedTask = { ...runningTask, status: 'completed' as const, completed_at: skipNow };
-          await stateManager.saveTask(skippedTask);
-          return result;
-        }
-      } catch { /* non-fatal: proceed with execution if dedup check fails */ }
-    }
     if (!adapterExecutionHasCapabilityPlaneAdmission(agentTask, adapter)) {
       result = blockedDirectAdapterExecutionResult(adapter.adapterType);
     } else {
+      // Generic dedup check — any adapter may optionally implement checkDuplicate
+      if (adapter.checkDuplicate) {
+        try {
+          const isDuplicate = await adapter.checkDuplicate(agentTask);
+          if (isDuplicate) {
+            // Return synthetic result — task already exists, skip execution
+            result = {
+              success: true,
+              output: 'Skipped: duplicate task detected by adapter',
+              error: null,
+              exit_code: 0,
+              elapsed_ms: 0,
+              stopped_reason: 'completed',
+            };
+            // End session and update task status without calling adapter.execute
+            const skipSummary = 'Task skipped: duplicate detected by adapter';
+            await sessionManager.endSession(session.id, skipSummary);
+            const skipNow = new Date().toISOString();
+            const skippedTask = { ...runningTask, status: 'completed' as const, completed_at: skipNow };
+            await stateManager.saveTask(skippedTask);
+            return result;
+          }
+        } catch { /* non-fatal: proceed with execution if dedup check fails */ }
+      }
       result = await adapter.execute(agentTask);
     }
   } catch (err) {
