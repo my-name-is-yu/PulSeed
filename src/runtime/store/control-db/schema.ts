@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 45;
+export const CONTROL_DB_SCHEMA_VERSION = 46;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2931,6 +2931,24 @@ CREATE INDEX IF NOT EXISTS experience_learning_projection_proposals_status_idx
   ON experience_learning_projection_proposals(status, updated_at, proposal_id);
 `.trim();
 
+export const CONTROL_DB_EXPERIENCE_LEARNING_METRICS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS experience_learning_metric_baseline_observations (
+  observation_id TEXT PRIMARY KEY,
+  baseline_id TEXT NOT NULL,
+  goal_id TEXT,
+  scenario_class TEXT NOT NULL CHECK (scenario_class IN ('task_work', 'stall_recovery', 'companion_interaction')),
+  run_kind TEXT NOT NULL CHECK (run_kind IN ('no_prior', 'prior_enabled')),
+  run_ref TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  metric_names_json TEXT NOT NULL CHECK (json_valid(metric_names_json)),
+  observation_json TEXT NOT NULL CHECK (json_valid(observation_json)),
+  UNIQUE (baseline_id, scenario_class, run_kind, run_ref)
+);
+
+CREATE INDEX IF NOT EXISTS experience_learning_metric_baseline_observations_goal_idx
+  ON experience_learning_metric_baseline_observations(goal_id, baseline_id, scenario_class, run_kind, observed_at, observation_id);
+`.trim();
+
 export const CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memory_claims (
   claim_id TEXT PRIMARY KEY,
@@ -3333,5 +3351,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     45,
     "experience-learning-runtime-state",
     CONTROL_DB_EXPERIENCE_LEARNING_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    46,
+    "experience-learning-metric-baselines",
+    CONTROL_DB_EXPERIENCE_LEARNING_METRICS_SCHEMA_SQL
   ),
 ];

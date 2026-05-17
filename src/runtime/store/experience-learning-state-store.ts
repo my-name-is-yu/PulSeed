@@ -29,7 +29,10 @@ import {
   LearningPriorConsumptionRecordSchema,
   LearningPriorSnapshotSchema,
   LearningConsumerPhaseSchema,
+  EXPERIENCE_LEARNING_BASELINE_RUN_KINDS,
+  EXPERIENCE_LEARNING_BASELINE_SCENARIO_CLASSES,
   EXPERIENCE_LEARNING_METRIC_DEFINITIONS,
+  ExperienceLearningMetricBaselineObservationSchema,
   ExperienceLearningMetricsSnapshotSchema,
   LearningPriorPhaseProjectionSchema,
   LearningPriorResolver,
@@ -52,7 +55,10 @@ import {
   type LearningPriorPhaseProjection,
   type LearningPriorSnapshot,
   type LearningConsumerPhase,
+  type ExperienceLearningMetricBaselineObservation,
   type ExperienceLearningMetricName,
+  type ExperienceLearningMetricScenarioClass,
+  type ExperienceLearningMetricValidity,
   type ExperienceLearningMetricsSnapshot,
   type LearningScope,
   type MicroProbePlan,
@@ -434,10 +440,47 @@ export class ExperienceLearningStateStore {
     return this.listJsonRows("experience_learning_prior_consumption_events", "consumption_json", LearningPriorConsumptionRecordSchema, "prior_id = ?", [priorId]);
   }
 
+  async recordMetricBaselineObservation(input: ExperienceLearningMetricBaselineObservation): Promise<ExperienceLearningMetricBaselineObservation> {
+    const observation = ExperienceLearningMetricBaselineObservationSchema.parse(input);
+    const db = await this.database();
+    return db.transaction((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO experience_learning_metric_baseline_observations (
+          observation_id, baseline_id, goal_id, scenario_class, run_kind, run_ref,
+          observed_at, metric_names_json, observation_json
+        ) VALUES (
+          @observation_id, @baseline_id, @goal_id, @scenario_class, @run_kind, @run_ref,
+          @observed_at, @metric_names_json, @observation_json
+        )
+        ON CONFLICT(observation_id) DO UPDATE SET
+          baseline_id = excluded.baseline_id,
+          goal_id = excluded.goal_id,
+          scenario_class = excluded.scenario_class,
+          run_kind = excluded.run_kind,
+          run_ref = excluded.run_ref,
+          observed_at = excluded.observed_at,
+          metric_names_json = excluded.metric_names_json,
+          observation_json = excluded.observation_json
+      `).run({
+        observation_id: observation.id,
+        baseline_id: observation.baselineId,
+        goal_id: observation.goalId ?? null,
+        scenario_class: observation.scenarioClass,
+        run_kind: observation.runKind,
+        run_ref: observation.runRef,
+        observed_at: observation.observedAt,
+        metric_names_json: JSON.stringify(observation.metricNames),
+        observation_json: JSON.stringify(observation),
+      });
+      return observation;
+    });
+  }
+
   async getMetricsSnapshot(goalId?: string): Promise<ExperienceLearningMetricsSnapshot> {
     const db = await this.database();
     return db.read((sqlite) => {
       const counts = experienceLearningMetricCounts(sqlite, goalId);
+      const baselineObservations = listMetricBaselineObservations(sqlite, goalId);
       return ExperienceLearningMetricsSnapshotSchema.parse({
         schema_version: "experience-learning-metrics/v1",
         generated_at: new Date().toISOString(),
@@ -451,6 +494,7 @@ export class ExperienceLearningStateStore {
             numerator_value: numerator,
             denominator_value: denominator,
             value: denominator > 0 ? numerator / denominator : 0,
+            validity: metricValidityForBaseline(definition.name, baselineObservations),
           };
         }),
       });
@@ -1179,6 +1223,91 @@ function priorPayloadBase(
 
 function stableHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+
+function listMetricBaselineObservations(
+  sqlite: SqliteDatabase,
+  goalId?: string,
+): ExperienceLearningMetricBaselineObservation[] {
+  const rows = goalId
+    ? sqlite.prepare(`
+        SELECT observation_json
+        FROM experience_learning_metric_baseline_observations
+        WHERE goal_id = ?
+        ORDER BY observed_at ASC, observation_id ASC
+      `).all(goalId) as Array<{ observation_json: string }>
+    : sqlite.prepare(`
+        SELECT observation_json
+        FROM experience_learning_metric_baseline_observations
+        ORDER BY observed_at ASC, observation_id ASC
+      `).all() as Array<{ observation_json: string }>;
+  return rows.map((row) => ExperienceLearningMetricBaselineObservationSchema.parse(JSON.parse(row.observation_json) as unknown));
+}
+
+function metricValidityForBaseline(
+  name: ExperienceLearningMetricName,
+  observations: ExperienceLearningMetricBaselineObservation[],
+): ExperienceLearningMetricValidity {
+  const relevant = observations.filter((observation) => observation.metricNames.includes(name));
+  if (!EXPERIENCE_LEARNING_METRIC_DEFINITIONS.find((definition) => definition.name === name)?.baseline_requirement.required) {
+    return {
+      decision: "valid",
+      baseline_ids: [],
+      baseline_observation_ids: [],
+    };
+  }
+
+  const baselineIds = uniqueStrings(relevant.map((observation) => observation.baselineId));
+  for (const baselineId of baselineIds) {
+    const baselineRows = relevant.filter((observation) => observation.baselineId === baselineId);
+    const missingScenarioClasses = missingBaselineScenarioClasses(baselineRows);
+    if (missingScenarioClasses.length === 0) {
+      return {
+        decision: "valid",
+        baseline_ids: [baselineId],
+        baseline_observation_ids: baselineRows.map((observation) => observation.id),
+      };
+    }
+  }
+
+  const missingScenarioClasses = missingBaselineScenarioClasses(relevant);
+  return {
+    decision: "invalid",
+    reason_codes: uniqueStrings([
+      "paired_baseline_required",
+      ...missingScenarioClasses.map((scenarioClass) => missingPairReasonCode(scenarioClass)),
+    ]),
+    missing_scenario_classes: missingScenarioClasses,
+    baseline_ids: baselineIds,
+    baseline_observation_ids: relevant.map((observation) => observation.id),
+  };
+}
+
+function missingBaselineScenarioClasses(
+  observations: ExperienceLearningMetricBaselineObservation[],
+): ExperienceLearningMetricScenarioClass[] {
+  return EXPERIENCE_LEARNING_BASELINE_SCENARIO_CLASSES.filter((scenarioClass) =>
+    !EXPERIENCE_LEARNING_BASELINE_RUN_KINDS.every((runKind) =>
+      observations.some((observation) => observation.scenarioClass === scenarioClass && observation.runKind === runKind)
+    )
+  );
+}
+
+function missingPairReasonCode(
+  scenarioClass: ExperienceLearningMetricScenarioClass,
+): "missing_task_work_pair" | "missing_stall_recovery_pair" | "missing_companion_interaction_pair" {
+  switch (scenarioClass) {
+    case "task_work":
+      return "missing_task_work_pair";
+    case "stall_recovery":
+      return "missing_stall_recovery_pair";
+    case "companion_interaction":
+      return "missing_companion_interaction_pair";
+  }
+}
+
+function uniqueStrings<T extends string>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function experienceLearningMetricCounts(

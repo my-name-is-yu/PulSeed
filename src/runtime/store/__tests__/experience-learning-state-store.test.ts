@@ -12,6 +12,9 @@ import {
   learningPriorSuggestion,
   redactedLearningLabel,
   type ExperienceFrame,
+  type ExperienceLearningMetricBaselineObservation,
+  type ExperienceLearningMetricBaselineRunKind,
+  type ExperienceLearningMetricScenarioClass,
   type ExperienceLearningRuntimeEventPayload,
   type LearningPriorSnapshot,
 } from "../../learning/index.js";
@@ -78,14 +81,57 @@ describe("ExperienceLearningStateStore", () => {
 
     expect(snapshot.definitions.map((definition) => definition.name)).toContain("experience_frames_created");
     expect(snapshot.definitions.every((definition) => definition.read_path === "ExperienceLearningStateStore.getMetricsSnapshot")).toBe(true);
+    expect(snapshot.definitions.find((definition) => definition.name === "prior_outcome_delta")?.baseline_requirement).toEqual({
+      required: true,
+      scenario_classes: ["task_work", "stall_recovery", "companion_interaction"],
+      run_kinds: ["no_prior", "prior_enabled"],
+    });
     expect(snapshot.values).toEqual(expect.arrayContaining([
       expect.objectContaining({
         name: "experience_frames_created",
         numerator_value: 1,
         denominator_value: 1,
         value: 1,
+        validity: { decision: "valid", baseline_ids: [], baseline_observation_ids: [] },
       }),
     ]));
+    expect(snapshot.values.find((value) => value.name === "prior_outcome_delta")?.validity).toEqual({
+      decision: "invalid",
+      reason_codes: [
+        "paired_baseline_required",
+        "missing_task_work_pair",
+        "missing_stall_recovery_pair",
+        "missing_companion_interaction_pair",
+      ],
+      missing_scenario_classes: ["task_work", "stall_recovery", "companion_interaction"],
+      baseline_ids: [],
+      baseline_observation_ids: [],
+    });
+  });
+
+  it("requires paired no-prior and prior-enabled baselines before outcome-delta metrics are valid", async () => {
+    for (const scenarioClass of ["task_work", "stall_recovery", "companion_interaction"] as const) {
+      for (const runKind of ["no_prior", "prior_enabled"] as const) {
+        await store.recordMetricBaselineObservation(makeBaselineObservation(scenarioClass, runKind));
+      }
+    }
+
+    const snapshot = await store.getMetricsSnapshot("goal-learning");
+    const priorOutcomeValidity = snapshot.values.find((value) => value.name === "prior_outcome_delta")?.validity;
+    expect(priorOutcomeValidity).toMatchObject({
+      decision: "valid",
+      baseline_ids: ["baseline:ordinary-pulseed"],
+    });
+    expect(priorOutcomeValidity?.baseline_observation_ids).toEqual(expect.arrayContaining([
+      "metric-baseline:task_work:no_prior",
+      "metric-baseline:task_work:prior_enabled",
+      "metric-baseline:stall_recovery:no_prior",
+      "metric-baseline:stall_recovery:prior_enabled",
+      "metric-baseline:companion_interaction:no_prior",
+      "metric-baseline:companion_interaction:prior_enabled",
+    ]));
+    expect(priorOutcomeValidity?.baseline_observation_ids).toHaveLength(6);
+    expect(snapshot.values.find((value) => value.name === "interaction_policy_bias_outcome_delta")?.validity.decision).toBe("valid");
   });
 
   it("projects experience-learning refs into RuntimeGraph explanations", async () => {
@@ -194,6 +240,31 @@ describe("ExperienceLearningStateStore", () => {
     expect(exhausted?.projection).toBeNull();
   });
 });
+
+function makeBaselineObservation(
+  scenarioClass: ExperienceLearningMetricScenarioClass,
+  runKind: ExperienceLearningMetricBaselineRunKind,
+): ExperienceLearningMetricBaselineObservation {
+  const priorEnabledGain = runKind === "prior_enabled" ? 2 : 1;
+  return {
+    id: `metric-baseline:${scenarioClass}:${runKind}`,
+    baselineId: "baseline:ordinary-pulseed",
+    goalId: "goal-learning",
+    scenarioClass,
+    runKind,
+    runRef: `scenario-run:${scenarioClass}:${runKind}`,
+    observedAt: "2026-05-17T00:10:00.000Z",
+    metricNames: [
+      "prior_outcome_delta",
+      "interaction_policy_bias_outcome_delta",
+      "action_savings_after_reuse",
+      "experiences_to_trial_reuse_ready",
+    ],
+    numeratorValue: priorEnabledGain,
+    denominatorValue: 2,
+    value: priorEnabledGain / 2,
+  };
+}
 
 function makeFramePayload(): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "frame_activated" }> {
   const trust = defaultRuntimeEvidenceTrust({
