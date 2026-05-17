@@ -179,9 +179,13 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   };
 
   let goalDimensions: Dimension[] | undefined;
+  let goalDimensionsLoaded = false;
   try {
     const goal = await stateManager.loadGoal(goalId);
-    goalDimensions = goal?.dimensions ?? undefined;
+    if (Array.isArray(goal?.dimensions)) {
+      goalDimensions = goal.dimensions;
+      goalDimensionsLoaded = true;
+    }
   } catch (err) {
     logger?.warn(`[TaskLifecycle] Failed to load goal "${goalId}" for dimension selection, using unweighted fallback: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -191,14 +195,19 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   const projectedTargetDimension = learningProjection?.preferredTargetDimension;
   const projectedTargetDimensionIsCurrent = !!projectedTargetDimension
     && !!goalDimensions?.some((dimension) => dimension.name === projectedTargetDimension);
-  const targetDimension = projectedTargetDimensionIsCurrent
+  const projectedTargetDimensionIsStale = !!projectedTargetDimension
+    && goalDimensionsLoaded
+    && !projectedTargetDimensionIsCurrent;
+  const shouldUseProjectedTargetDimension = !!projectedTargetDimension
+    && (!goalDimensionsLoaded || projectedTargetDimensionIsCurrent);
+  const targetDimension = shouldUseProjectedTargetDimension && projectedTargetDimension
     ? projectedTargetDimension
     : options?.targetDimensionOverride
       ?? await runPhase("select-target-dimension", async () =>
         context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
       );
 
-  if (projectedTargetDimension && !projectedTargetDimensionIsCurrent) {
+  if (projectedTargetDimensionIsStale) {
     logger?.warn("TaskLifecycle: ignored stale learning-prior target dimension projection", {
       goalId,
       projectedTargetDimension,
@@ -206,7 +215,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
     });
   }
 
-  if (projectedTargetDimensionIsCurrent) {
+  if (shouldUseProjectedTargetDimension) {
     logger?.info("TaskLifecycle: using learning-prior target dimension projection", {
       goalId,
       targetDimension,
@@ -219,7 +228,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   const buildLearningPriorApplication = (generatedTask: Task): TaskLearningPriorApplication | undefined => {
     if (!learningProjection) return undefined;
     if (projectedTargetDimension) {
-      if (!projectedTargetDimensionIsCurrent) {
+      if (projectedTargetDimensionIsStale) {
         return {
           consumptionRecordId: learningProjection.consumptionRecordId,
           status: "suppressed",
@@ -252,7 +261,7 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
 
   const buildSkippedLearningPriorApplication = (): TaskLearningPriorApplication | undefined => {
     if (!learningProjection) return undefined;
-    if (projectedTargetDimension && !projectedTargetDimensionIsCurrent) {
+    if (projectedTargetDimensionIsStale) {
       return {
         consumptionRecordId: learningProjection.consumptionRecordId,
         status: "suppressed",

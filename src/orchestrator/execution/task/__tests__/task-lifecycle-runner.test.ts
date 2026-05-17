@@ -72,11 +72,33 @@ describe("runTaskLifecycleCycle", () => {
     });
   });
 
+  it("does not classify projected dimensions as stale when goal loading fails", async () => {
+    const { context, selectTargetDimension, generateTaskWithTokens } = makeContext({
+      learningProjectionTargetDimension: "dim-prior",
+      selectedDimension: "dim1",
+      generateTask: true,
+      approveIrreversible: false,
+      failGoalLoad: true,
+    });
+
+    const result = await runTaskLifecycleCycle(context);
+
+    expect(selectTargetDimension).not.toHaveBeenCalled();
+    expect(generateTaskWithTokens.mock.calls[0]?.[1]).toBe("dim-prior");
+    expect(result.learningPriorApplication).toEqual({
+      consumptionRecordId: "consumption-task-prior",
+      status: "applied",
+      reason: "preferred_target_dimension_applied",
+      generatedDecisionRefs: ["task:task-dim-prior"],
+    });
+  });
+
   function makeContext(input: {
     learningProjectionTargetDimension: string;
     selectedDimension: string;
     generateTask?: boolean;
     approveIrreversible?: boolean;
+    failGoalLoad?: boolean;
   }): {
     context: TaskLifecycleTaskCycleContext;
     selectTargetDimension: ReturnType<typeof vi.fn>;
@@ -90,7 +112,9 @@ describe("runTaskLifecycleCycle", () => {
       ],
     });
     const stateManager = {
-      loadGoal: vi.fn().mockResolvedValue(goal),
+      loadGoal: input.failGoalLoad
+        ? vi.fn().mockRejectedValue(new Error("goal load unavailable"))
+        : vi.fn().mockResolvedValue(goal),
       getBaseDir: () => tmpDir ?? "",
       loadTaskOutcomeLedger: vi.fn().mockResolvedValue(null),
       saveTaskOutcomeLedger: vi.fn().mockResolvedValue(undefined),
