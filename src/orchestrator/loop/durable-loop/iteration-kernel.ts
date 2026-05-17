@@ -1361,7 +1361,7 @@ function promoteCandidateFromExperiment(
   return GeneralizationCandidateSchema.parse({
     ...candidate,
     status: "promoted",
-    supportRefs: uniqueStrings([...candidate.supportRefs, record.id, ...record.outcomeEvidenceRefs]),
+    supportRefs: uniqueStrings([...candidate.supportRefs, ...record.outcomeEvidenceRefs]),
     transferScopes: candidate.transferScopes.map((scope) => ({
       ...scope,
       status: scope.scopeRef === exactScopeRef && scope.status !== "blocked" ? "exact" : scope.status,

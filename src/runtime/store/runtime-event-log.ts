@@ -2004,7 +2004,7 @@ function upsertExperienceLearningRuntimeGraph(sqlite: SqliteDatabase, event: Run
       for (const hypothesisId of payload.generalization?.sourceHypothesisIds ?? []) {
         link("derived_from", { kind: "learning_hypothesis", ref: hypothesisId }, `hypothesis:${hypothesisId}`);
       }
-      for (const scopeRef of payload.transfer_scope_refs) link("narrows", { kind: "artifact", ref: scopeRef }, `scope:${scopeRef}`);
+      for (const scopeRef of payload.transfer_scope_refs) link("narrows", { kind: "transfer_scope", ref: scopeRef }, `scope:${scopeRef}`);
       break;
     case "micro_probe_recorded":
       link("tested_by", { kind: "micro_probe_plan", ref: payload.plan_id }, `plan:${payload.plan_id}`);

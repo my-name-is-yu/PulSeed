@@ -1110,6 +1110,7 @@ describe("CoreLoop agentic phase hooks", () => {
           }),
         }),
       ]);
+      expect(promotedArtifacts[0]!.evidence.runtimeEvidenceRefs).not.toContain(experimentRecords[0]!.id);
       expect(deps.cognitionWritebackQueue.enqueue).toHaveBeenCalledWith(expect.objectContaining({
         review_required: true,
         owner_write_performed: false,
