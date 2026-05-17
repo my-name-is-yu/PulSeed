@@ -81,6 +81,20 @@ import { logTuiDebug } from "./debug-log.js";
 const MAX_MESSAGES = 200;
 export const DASHBOARD_REFRESH_INTERVAL_MS = 5_000;
 
+type StartLoopResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+function formatStartLoopError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return "start request failed";
+}
+
 export interface ApprovalRequest {
   task: Task;
   resolve: (approved: boolean) => void;
@@ -299,7 +313,7 @@ export function App({
 
   const loopState = isDaemonMode ? daemonLoopState : (standaloneHook?.loopState ?? IDLE_LOOP_STATE);
   const startLoop = isDaemonMode
-    ? async (goalId: string) => {
+    ? async (goalId: string): Promise<StartLoopResult> => {
         const replayKey = ["tui_start_goal", "daemon_app", goalId].join(":");
         try {
           await recordExplicitCommandDecision({
@@ -323,10 +337,20 @@ export function App({
         } catch {
           // The audit trace must not prevent an explicit operator start command.
         }
-        await daemonClient!.startGoal(goalId).catch(() => {});
+        try {
+          await daemonClient!.startGoal(goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatStartLoopError(error) };
+        }
       }
-    : async (goalId: string) => {
-        standaloneHook?.start(goalId);
+    : async (goalId: string): Promise<StartLoopResult> => {
+        try {
+          standaloneHook?.start(goalId);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: formatStartLoopError(error) };
+        }
       };
   const stopLoop = isDaemonMode
     ? async () => {
@@ -825,7 +849,16 @@ export function App({
           }
 
           if (result.startLoop) {
-            await startLoop(result.startLoop.goalId);
+            const startResult = await startLoop(result.startLoop.goalId);
+            if (!startResult.ok) {
+              setMessages((prev) => [...prev, {
+                id: randomUUID(),
+                role: "pulseed" as const,
+                text: `Start failed: ${startResult.error}`,
+                timestamp: new Date(),
+                messageType: "error" as const,
+              }].slice(-MAX_MESSAGES));
+            }
           }
           if (result.stopLoop) {
             await stopLoop();
@@ -844,11 +877,19 @@ export function App({
             const runnableGoals = await listRunnableStartGoals(stateManager);
             const goal = goalArg ? selectRunnableStartGoal(runnableGoals, goalArg) : undefined;
             if (goal) {
-              await startLoop(goal.id);
-              setMessages((prev) => [...prev, {
-                id: randomUUID(), role: "pulseed" as const,
-                text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
-              }].slice(-MAX_MESSAGES));
+              const startResult = await startLoop(goal.id);
+              if (startResult.ok) {
+                setMessages((prev) => [...prev, {
+                  id: randomUUID(), role: "pulseed" as const,
+                  text: `Starting goal: ${goal.title}`, timestamp: new Date(), messageType: "info" as const,
+                }].slice(-MAX_MESSAGES));
+              } else {
+                setMessages((prev) => [...prev, {
+                  id: randomUUID(), role: "pulseed" as const,
+                  text: `Start failed for ${goal.title}: ${startResult.error}`,
+                  timestamp: new Date(), messageType: "error" as const,
+                }].slice(-MAX_MESSAGES));
+              }
             } else {
               setMessages((prev) => [...prev, {
                 id: randomUUID(), role: "pulseed" as const,

@@ -1983,6 +1983,45 @@ describe("daemon-mode chat routing", () => {
     screen.unmount();
   });
 
+  it("reports daemon-mode /start failures instead of showing a successful start", async () => {
+    const daemonClient = createDaemonClientMock();
+    const stateManager = createStateManagerMock();
+    const chatRunner = createChatRunnerMock();
+    const goals = [
+      { id: "goal-alpha", title: "Improve alpha routing", status: "active" },
+    ];
+    vi.mocked(stateManager.listGoalIds).mockResolvedValue(goals.map((goal) => goal.id));
+    vi.mocked(stateManager.loadGoal).mockImplementation(async (id) => (goals.find((goal) => goal.id === id) ?? null) as never);
+    vi.mocked(daemonClient.startGoal).mockRejectedValueOnce(new Error("daemon offline"));
+
+    const screen = render(React.createElement(App, {
+      daemonClient: daemonClient as unknown as DaemonClient,
+      stateManager: stateManager as unknown as StateManager,
+      chatRunner: chatRunner as unknown as TuiChatSurface,
+      noFlicker: false,
+      controlStream: process.stdout,
+      cwd: "~/workspace",
+      gitBranch: "main",
+      providerName: "claude",
+    }), {
+      patchConsole: false,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+
+    await flush();
+    expect(testState.lastChatProps).not.toBeNull();
+
+    await testState.lastChatProps!.onSubmit("/start 1");
+    await flush();
+
+    expect(daemonClient.startGoal).toHaveBeenCalledWith("goal-alpha");
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Start failed for Improve alpha routing: daemon offline"))).toBe(true);
+    expect(testState.lastChatMessages.some((message) => message.text.includes("Starting goal: Improve alpha routing"))).toBe(false);
+
+    screen.unmount();
+  });
+
   it("records daemon-mode /stop admission before calling stopGoal", async () => {
     const daemonClient = createDaemonClientMock();
     const stateManager = createStateManagerMock();
