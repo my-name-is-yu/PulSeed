@@ -256,6 +256,15 @@ export class ToolExecutor {
       executionContext = approvalResult.context;
     }
 
+    const capabilityApprovalResult = await this.requestCapabilityPlaneApprovalIfNeeded(
+      tool,
+      input,
+      executionContext,
+      startTime,
+    );
+    if (capabilityApprovalResult.status === "blocked") return capabilityApprovalResult.result;
+    executionContext = capabilityApprovalResult.context;
+
     // --- Gate 4: Input Sanitization ---
     const sanitizeError = this.sanitizeInput(tool, input, executionContext);
     if (sanitizeError) {
@@ -435,16 +444,7 @@ export class ToolExecutor {
         targetEffect: "execute_tool",
         targetSummary: `${tool.metadata.name} tool execution requires descriptor-backed approval before side effects.`,
       });
-      const approvalResult = await this.requestPermissionApproval({
-        tool,
-        input,
-        context: descriptorContext,
-        startTime,
-        reason: admission.reason,
-        reversibility: reversibilityForDescriptor(admission.descriptor),
-      });
-      if (approvalResult.status === "blocked") return { context: descriptorContext, result: approvalResult.result };
-      return { context: approvalResult.context };
+      return { context: descriptorContext };
     }
 
     await this.recordToolPolicyDecision(tool, input, descriptorContext, {
@@ -464,18 +464,34 @@ export class ToolExecutor {
   ): ToolCallContext {
     const descriptor = admission.descriptor;
     if (!descriptor) {
-      return {
-        ...context,
-        capabilityAdmissionDecision: admission,
-      };
+      context.capabilityAdmissionDecision = admission;
+      return context;
     }
-    return {
-      ...context,
-      capabilityDescriptor: descriptor,
-      capabilityAdmissionDecision: admission,
-      capabilityExecution: context.capabilityExecution
-        ?? descriptorCapabilityExecutionContext(descriptor, tool.metadata.name, context.callId),
-    };
+    context.capabilityDescriptor = descriptor;
+    context.capabilityAdmissionDecision = admission;
+    context.capabilityExecution = context.capabilityExecution
+      ?? descriptorCapabilityExecutionContext(descriptor, tool.metadata.name, context.callId);
+    return context;
+  }
+
+  private async requestCapabilityPlaneApprovalIfNeeded(
+    tool: ITool,
+    input: unknown,
+    context: ToolCallContext,
+    startTime: number,
+  ): Promise<PermissionApprovalResult> {
+    const admission = context.capabilityAdmissionDecision;
+    if (admission?.status !== "requires_approval" || context.preApproved === true) {
+      return { status: "approved", context };
+    }
+    return this.requestPermissionApproval({
+      tool,
+      input,
+      context,
+      startTime,
+      reason: admission.reason,
+      reversibility: reversibilityForDescriptor(admission.descriptor),
+    });
   }
 
   private async requestPermissionApproval(input: {
