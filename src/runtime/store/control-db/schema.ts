@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 41;
+export const CONTROL_DB_SCHEMA_VERSION = 42;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2656,6 +2656,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_idempotency_unique_idx
   );
 `.trim();
 
+export const CONTROL_DB_RUNTIME_EVENT_PROJECTION_SNAPSHOT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_event_projection_snapshots (
+  projection_name TEXT NOT NULL,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('trace', 'control_db')),
+  scope_ref TEXT NOT NULL,
+  rebuilt_at TEXT NOT NULL,
+  source_event_count INTEGER NOT NULL CHECK (source_event_count >= 0),
+  source_event_refs_json TEXT NOT NULL CHECK (json_valid(source_event_refs_json)),
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+  PRIMARY KEY (projection_name, scope_kind, scope_ref)
+);
+
+CREATE INDEX IF NOT EXISTS runtime_event_projection_snapshots_scope_idx
+  ON runtime_event_projection_snapshots(scope_kind, scope_ref, rebuilt_at);
+`.trim();
+
 export const CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memory_claims (
   claim_id TEXT PRIMARY KEY,
@@ -3038,5 +3054,10 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     41,
     "commitment-attention-runtime-state",
     CONTROL_DB_COMMITMENT_ATTENTION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    42,
+    "runtime-event-projection-snapshots",
+    CONTROL_DB_RUNTIME_EVENT_PROJECTION_SNAPSHOT_SCHEMA_SQL
   ),
 ];

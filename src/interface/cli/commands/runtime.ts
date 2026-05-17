@@ -69,6 +69,7 @@ import {
 } from "../../../runtime/personal-agent/index.js";
 import {
   RuntimeEventLogStore,
+  type RuntimeEventProjectionApplyResult,
   type RuntimeEventProjectionRebuild,
   type RuntimeGraphExplainResult,
 } from "../../../runtime/store/runtime-event-log.js";
@@ -557,6 +558,14 @@ function printRuntimeEventProjectionRebuild(rebuild: RuntimeEventProjectionRebui
   console.log(`  Memory:       ${rebuild.memory_correction_invalidation_summary.length}`);
   console.log(`  Schedule:     ${rebuild.schedule_wake_execution_summary.length}`);
   console.log(`  Tools:        ${rebuild.tool_execution_outcome_summary.length}`);
+  console.log(`  Runtime ops:  ${rebuild.runtime_control_operation_summary.length}`);
+  console.log(`  Commitments:  ${rebuild.attention_commitment_lifecycle_summary.length}`);
+}
+
+function printRuntimeEventProjectionApply(applied: RuntimeEventProjectionApplyResult): void {
+  printRuntimeEventProjectionRebuild(applied.rebuild);
+  console.log(`  Applied:      ${applied.snapshots.length} projection snapshot(s)`);
+  console.log(`  Event:        ${applied.event.event_id}`);
 }
 
 function printRuntimeGraphExplain(explain: RuntimeGraphExplainResult): void {
@@ -1190,11 +1199,13 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
   if (runtimeSubcommand === "event-log" && args[1] === "rebuild") {
     const values = parseRuntimeEventArgs(args.slice(2), "event-log rebuild");
     const store = runtimeEventLogStore(stateManager);
-    const rebuild = await store.rebuildProjections({ traceId: values.trace });
-    if (values.dryRun !== true) {
-      await store.recordProjectionRebuild({ rebuild, dryRun: false });
+    if (values.dryRun === true) {
+      const rebuild = await store.rebuildProjections({ traceId: values.trace });
+      values.json ? printJson(rebuild) : printRuntimeEventProjectionRebuild(rebuild);
+      return 0;
     }
-    values.json ? printJson(rebuild) : printRuntimeEventProjectionRebuild(rebuild);
+    const applied = await store.applyProjectionRebuild({ traceId: values.trace });
+    values.json ? printJson(applied) : printRuntimeEventProjectionApply(applied);
     return 0;
   }
 

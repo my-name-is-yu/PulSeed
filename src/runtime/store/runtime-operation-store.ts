@@ -9,6 +9,10 @@ import {
   runtimeEventFromOperationTransition,
   runtimeItemFromOperation,
 } from "./runtime-operation-companion.js";
+import {
+  appendRuntimeEventEnvelopeInTransaction,
+  runtimeEventFromRuntimeControlOperationTransition,
+} from "./runtime-event-log.js";
 import { createRuntimeStorePaths, type RuntimeStorePaths } from "./runtime-paths.js";
 import {
   createJsonRowCodec,
@@ -156,10 +160,15 @@ export class RuntimeOperationStore {
     const parsed = RuntimeControlOperationSchema.parse(operation);
     const db = await this.database();
     db.transaction((sqlite) => {
+      const previous = loadRuntimeOperation(sqlite, parsed.operation_id);
+      appendRuntimeEventEnvelopeInTransaction(
+        sqlite,
+        runtimeEventFromRuntimeControlOperationTransition(parsed, previous),
+      );
       persistStateTransitionWithAudit({
         current: parsed,
         emitAudit: options.emitEvent,
-        loadPrevious: () => loadRuntimeOperation(sqlite, parsed.operation_id),
+        loadPrevious: () => previous,
         persistCurrent: () => upsertRuntimeOperation(sqlite, parsed),
         buildAudit: runtimeEventFromOperationTransition,
         persistAudit: (event) => insertRuntimeOperationEvent(sqlite, event, parsed.operation_id),

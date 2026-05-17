@@ -99,8 +99,9 @@ append-only `runtime_events` control-DB table plus RuntimeGraph linkage in
 `personal_agent_runtime_graph_nodes` and
 `personal_agent_runtime_graph_edges`. Existing current-state tables remain
 their production write projections, indexes, or compatibility views unless this
-page names them as a write owner for a narrower domain. This PR adds
-deterministic event-log summary rebuilds; it does not yet rewrite every legacy
+page names them as a write owner for a narrower domain. The rebuild operator
+path now applies deterministic projection snapshots into
+`runtime_event_projection_snapshots`; it still does not rewrite every legacy
 projection table from replay.
 
 Each runtime event uses the typed `runtime-event-envelope/v1` contract. The
@@ -112,7 +113,9 @@ payload schema/version. Payload JSON is accepted only behind typed payload
 schemas such as `runtime-event-payload/personal-agent-trace/v1`,
 `runtime-event-payload/authority-decision/v1`, and
 `runtime-event-payload/projection-rebuild/v1`, and
-`runtime-event-payload/goal-task-mutation/v1`.
+`runtime-event-payload/goal-task-mutation/v1`,
+`runtime-event-payload/runtime-control-operation/v1`, and
+`runtime-event-payload/attention-commitment/v1`.
 
 Production callers that write the canonical personal-agent trace or interaction
 authority path now append the event before the projection row update. That
@@ -121,8 +124,9 @@ pause/resume/cancel requests, schedule cron/probe/goal-trigger/wait-resume
 wakes, notification/outbox enqueue and suppression decisions, Telegram peer
 delivery and callback authority, memory correction/forget/recall-impact
 invalidation, goal/task mutation traces already routed through the runtime
-stores, daemon resident peer initiative, and gateway/chat ingress traces that
-trigger runtime action. If a future caller bypasses those canonical stores, it
+stores, runtime-control operation projection writes, #2000 commitment candidate
+lifecycle writes, daemon resident peer initiative, and gateway/chat ingress
+traces that trigger runtime action. If a future caller bypasses those canonical stores, it
 must either append its own typed event before side effects or be documented as a
 contract-only/future surface.
 
@@ -151,8 +155,17 @@ Rebuildable projections currently include:
 - notification/outbox dedupe state
 - peer delivery state
 - memory correction invalidation summary
+- memory truth maintenance summary
 - schedule wake execution summary
 - tool execution outcome summary
+- runtime-control operation summary
+- attention commitment lifecycle summary
+
+Without `--dry-run`, `pulseed runtime event-log rebuild` applies those
+rebuildable summaries as typed projection snapshots scoped either to the
+requested trace or to the whole control DB. The snapshot recipe is deterministic
+over `runtime_events` and RuntimeGraph evidence; it does not read current-state
+projection tables as hidden truth.
 
 Operator/debug inspection commands:
 

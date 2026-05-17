@@ -302,6 +302,27 @@ const RULES = [
   },
 ];
 
+const EVENT_SOURCED_PROJECTION_TABLES = [
+  "attention_commitment_candidates",
+  "goal_records",
+  "interaction_authority_decisions",
+  "memory_projection_records",
+  "runtime_event_projection_snapshots",
+  "runtime_operations",
+  "task_records",
+];
+
+const EVENT_SOURCED_PROJECTION_WRITE_PATTERN = new RegExp(
+  String.raw`\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:${EVENT_SOURCED_PROJECTION_TABLES.join("|")})\b`,
+  "i",
+);
+
+const EVENT_SOURCED_PROJECTION_EVENT_PATTERN =
+  /\b(?:appendRuntimeEventEnvelopeInTransaction|RuntimeEventLogStore|runtimeEventFromAttentionCommitment|runtimeEventFromRuntimeControlOperationTransition)\b/;
+
+const EVENT_SOURCED_PROJECTION_SKIP_PATH = /(^|\/)(?:__tests__|tests|docs|tmp)\//;
+const EVENT_SOURCED_PROJECTION_SCHEMA_PATH = /(^|\/)src\/runtime\/store\/control-db\/schema\.ts$/;
+
 const DIRECT_FILE_OWNER_INVENTORY = [
   inventory({
     id: "drive-system-schedule",
@@ -858,6 +879,7 @@ export function scanTextDetailed(filePath, text) {
       }
     }
   });
+  findings.push(...scanEventSourcedProjectionWriteBypasses(normalizedPath, text));
   return { findings, classifiedFindings };
 }
 
@@ -1003,6 +1025,24 @@ function isConfigAllowed(line) {
     || /\bmcpServers\.json\b/.test(line)
     || /\bplugin\.ya?ml\b/.test(line)
     || /\bgateway\/channels\/[^`'"]+\/config\.json\b/.test(line);
+}
+
+function scanEventSourcedProjectionWriteBypasses(normalizedPath, text) {
+  if (EVENT_SOURCED_PROJECTION_SKIP_PATH.test(normalizedPath)) return [];
+  if (EVENT_SOURCED_PROJECTION_SCHEMA_PATH.test(normalizedPath)) return [];
+  if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(text)) return [];
+  if (EVENT_SOURCED_PROJECTION_EVENT_PATTERN.test(text)) return [];
+  return text.split(/\r?\n/).flatMap((line, index) => {
+    if (!EVENT_SOURCED_PROJECTION_WRITE_PATTERN.test(line)) return [];
+    return [{
+      filePath: normalizedPath,
+      line: index + 1,
+      rule: "event-sourced-projection-write",
+      owner: "RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes",
+      text: line.trim(),
+      allowlistReason: "production projection/current-state writes to event-sourced tables must use the runtime event-log pattern in the same module",
+    }];
+  });
 }
 
 function* walkFiles(root) {

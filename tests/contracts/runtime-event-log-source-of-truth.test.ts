@@ -24,8 +24,17 @@ import {
   RuntimeEventEnvelopeSchema,
   RuntimeEventLogStore,
 } from "../../src/runtime/store/runtime-event-log.js";
+import { AttentionStateStore } from "../../src/runtime/store/attention-state-store.js";
 import { GoalTaskStateStore } from "../../src/runtime/store/goal-task-state-store.js";
 import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait-plan-store.js";
+import { RuntimeOperationStore } from "../../src/runtime/store/runtime-operation-store.js";
+import { RuntimeControlOperationSchema } from "../../src/runtime/store/runtime-operation-schemas.js";
+import {
+  CommitmentCandidateExtractionSchema,
+  createCommitmentCandidate,
+  ref,
+} from "../../src/runtime/attention/index.js";
+import type { AttentionScope } from "../../src/runtime/types/companion-autonomy.js";
 import {
   ConcurrencyController,
   ToolExecutor,
@@ -503,10 +512,190 @@ describe("runtime event log source-of-truth contract", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("event-sources commitment candidate lifecycle before current projection writes and applies rebuild snapshots", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+      const firstCandidate = commitmentCandidate();
+
+      await attentionStore.saveCommitmentCandidates([firstCandidate]);
+      await attentionStore.saveCommitmentCandidates([firstCandidate]);
+      const resolved = await attentionStore.applyCommitmentControl({
+        commitmentId: firstCandidate.commitment_id,
+        control: "already_done",
+        now: "2026-05-16T00:05:00.000Z",
+        feedbackRef: "feedback:commitment-done",
+      });
+
+      expect(resolved).toMatchObject({
+        commitment_id: firstCandidate.commitment_id,
+        materialization_state: "resolved",
+        feedback_refs: ["feedback:commitment-done"],
+      });
+
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const events = await eventLog.listEvents({
+        eventType: "attention.commitment.recorded",
+        limit: null,
+      });
+      expect(events).toHaveLength(2);
+      expect(events.map((event) => event.payload_schema)).toEqual([
+        "runtime-event-payload/attention-commitment/v1",
+        "runtime-event-payload/attention-commitment/v1",
+      ]);
+      expect(events.flatMap((event) =>
+        event.payload.schema_version === "runtime-event-payload/attention-commitment/v1"
+          ? [event.payload.operation]
+          : []
+      )).toEqual(["candidate_saved", "lifecycle_control_applied"]);
+
+      const rebuild = await eventLog.rebuildProjections({ traceId: events[0]!.trace_id });
+      expect(rebuild.attention_commitment_lifecycle_summary).toEqual([
+        expect.objectContaining({
+          operation: "candidate_saved",
+          commitment_id: firstCandidate.commitment_id,
+          materialization_state: "watching",
+          replay_key: firstCandidate.replay_key,
+        }),
+        expect.objectContaining({
+          operation: "lifecycle_control_applied",
+          commitment_id: firstCandidate.commitment_id,
+          previous_materialization_state: "watching",
+          materialization_state: "resolved",
+          feedback_ref: "feedback:commitment-done",
+        }),
+      ]);
+
+      const applied = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      expect(applied.snapshots).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          projection_name: "attention_commitment_lifecycle_summary",
+          scope: { kind: "trace", ref: events[0]!.trace_id },
+        }),
+      ]));
+      await expect(eventLog.listProjectionSnapshots()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          projection_name: "attention_commitment_lifecycle_summary",
+          source_event_count: 2,
+        }),
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("event-sources runtime-control operation projection transitions", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const store = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const operation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:event-log-contract",
+        kind: "inspect_run",
+        state: "pending",
+        requested_at: NOW,
+        updated_at: NOW,
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "Contract test runtime operation projection.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          goal_id: "runtime-event-goal",
+          session_id: "runtime-event-session",
+        },
+      });
+
+      await store.save(operation);
+      await store.save(RuntimeControlOperationSchema.parse({
+        ...operation,
+        state: "verified",
+        updated_at: "2026-05-16T00:01:00.000Z",
+        completed_at: "2026-05-16T00:01:00.000Z",
+      }));
+
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const events = await eventLog.listEvents({
+        eventType: "runtime_control.operation.recorded",
+        limit: null,
+      });
+      expect(events).toHaveLength(2);
+      const rebuild = await eventLog.rebuildProjections();
+      expect(rebuild.runtime_control_operation_summary).toEqual([
+        expect.objectContaining({
+          operation_id: operation.operation_id,
+          previous_state: null,
+          state: "pending",
+          goal_id: "runtime-event-goal",
+        }),
+        expect.objectContaining({
+          operation_id: operation.operation_id,
+          previous_state: "pending",
+          state: "verified",
+          terminal: true,
+          session_id: "runtime-event-session",
+        }),
+      ]);
+      expect(rebuild.runtime_graph_evidence.edge_kinds).toEqual(expect.objectContaining({
+        caused_by: expect.any(Number),
+        projected_to: expect.any(Number),
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fixtureRoot(): string {
   return mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-event-contract-"));
+}
+
+function commitmentScope(): AttentionScope {
+  return {
+    userId: "user-1",
+    identityId: "identity-1",
+    workspaceId: "workspace-1",
+    conversationId: "conversation-1",
+    sessionId: "session-1",
+    surfaceClass: "telegram",
+    surfaceRef: "surface:telegram",
+    permissionScope: "read_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: "policy:runtime-event-contract",
+  };
+}
+
+function commitmentCandidate() {
+  const created = createCommitmentCandidate({
+    extraction: CommitmentCandidateExtractionSchema.parse({
+      outcome: "candidate",
+      summary: "Review the launch note before Monday.",
+      owner: "user",
+      confidence: 0.82,
+      sensitivity: "internal",
+      allowed_memory_use: "attention_only",
+      nudge_policy: "allowed",
+      watch_vector: ["related_conversation", "deadline"],
+    }),
+    scope: commitmentScope(),
+    turnId: "turn-runtime-event",
+    sessionId: "session-1",
+    sourceId: "chat:session-1:turn-runtime-event:user",
+    emittedAt: NOW,
+    policyEpoch: "policy:runtime-event-contract",
+    activeSurfaceRef: ref("surface", "surface:telegram"),
+  });
+  expect(created).not.toBeNull();
+  return {
+    ...created!,
+    materialization_state: "watching" as const,
+    next_revisit_at: NOW,
+  };
 }
 
 async function captureConsoleLog(run: () => Promise<number>): Promise<{ code: number; output: string }> {

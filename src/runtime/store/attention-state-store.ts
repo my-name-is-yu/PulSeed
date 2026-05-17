@@ -52,6 +52,10 @@ import {
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "./control-db/index.js";
+import {
+  appendRuntimeEventEnvelopeInTransaction,
+  runtimeEventFromAttentionCommitment,
+} from "./runtime-event-log.js";
 import type { CompanionWideControl } from "../types/companion-state.js";
 
 export const AttentionStoreLifecycleSchema = z.enum([
@@ -306,6 +310,15 @@ export class AttentionStateStore {
           duplicates.push(existing);
           continue;
         }
+        if (existing && candidate.updated_at <= existing.updated_at) {
+          accepted.push(existing);
+          continue;
+        }
+        appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromAttentionCommitment({
+          operation: "candidate_saved",
+          candidate,
+          previousCandidate: existing,
+        }));
         upsertCommitmentCandidate(sqlite, candidate);
         accepted.push(candidate);
       }
@@ -340,6 +353,14 @@ export class AttentionStateStore {
         snoozeUntil: input.snoozeUntil,
         reason: input.reason,
       });
+      appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromAttentionCommitment({
+        operation: "lifecycle_control_applied",
+        candidate: updated,
+        previousCandidate: existing,
+        control: input.control,
+        feedbackRef: input.feedbackRef,
+        occurredAt: input.now,
+      }));
       upsertCommitmentCandidate(sqlite, updated);
       return updated;
     });
