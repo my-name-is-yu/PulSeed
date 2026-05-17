@@ -325,6 +325,18 @@ async function runCLI(...args: string[]): Promise<number> {
   return runner.run(args);
 }
 
+async function expectFileEventuallyContains(filePath: string, expected: string): Promise<void> {
+  let lastContent = "";
+  for (let i = 0; i < 50; i++) {
+    if (fs.existsSync(filePath)) {
+      lastContent = fs.readFileSync(filePath, "utf-8");
+      if (lastContent.includes(expected)) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(lastContent).toContain(expected);
+}
+
 // ─── Construction ─────────────────────────────────────────────────────────────
 
 // NOTE: All significant dependencies are replaced with vi.fn() mocks.
@@ -984,6 +996,10 @@ describe("run subcommand", async () => {
 
     expect(code).toBe(1);
     expect(vi.mocked(CoreLoop)).not.toHaveBeenCalled();
+    await expectFileEventuallyContains(
+      path.join(tmpDir, "logs", "pulseed.log"),
+      "--max-iterations must be a positive integer"
+    );
   });
 
   it("rejects bare --max-iterations before CoreLoop construction", async () => {

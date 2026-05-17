@@ -63,7 +63,7 @@ export async function cmdRun(
       });
 
   const approvalFn = autoApprove ? buildAutoApprovalFn() : buildApprovalFn(rl!);
-  const logger = buildLoopLogger();
+  const logger = buildLoopLogger(stateManager.getBaseDir());
   const onProgress = buildProgressHandler();
 
   let deps: Awaited<ReturnType<typeof buildDeps>>;
