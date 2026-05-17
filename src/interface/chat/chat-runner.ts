@@ -3,8 +3,8 @@
 // Central coordinator for chat execution.
 
 import type { StateManager } from "../../base/state/state-manager.js";
-import { getPulseedDirPath } from "../../base/utils/paths.js";
 import { ChatHistory, type ChatSession } from "./chat-history.js";
+import { resolveChatStateBaseDir } from "./chat-state-base-dir.js";
 import {
   ChatSessionCatalog,
   ChatSessionSelectorError,
@@ -119,9 +119,9 @@ import { FeedbackIngestionStore } from "../../runtime/store/feedback-ingestion-s
 import { AttentionStateStore } from "../../runtime/store/attention-state-store.js";
 import {
   CompanionCognitionKernel,
-  CompanionCognitionService,
   createCognitionReplayRecord,
   createRelationshipProfileCognitionMemoryPort,
+  type CompanionCognitionService,
   type CompanionCognitionInput,
   type CompanionCognitionOutput,
   type CognitionRef,
@@ -1566,8 +1566,7 @@ export class ChatRunner {
   }
 
   private providerConfigBaseDir(): string {
-    const stateManager = this.deps.stateManager as StateManager & { getBaseDir?: () => string };
-    return typeof stateManager.getBaseDir === "function" ? stateManager.getBaseDir() : getPulseedDirPath();
+    return resolveChatStateBaseDir(this.deps.stateManager);
   }
 
   private createDefaultToolExecutor(): ToolExecutor | undefined {

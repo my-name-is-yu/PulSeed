@@ -283,6 +283,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 let tmpDir: string;
 let stateManager: StateManager;
 let origApiKey: string | undefined;
+let origPulseedHome: string | undefined;
 
 beforeEach(() => {
   tmpDir = makeTempDir();
@@ -294,8 +295,10 @@ beforeEach(() => {
 
   // Provide a dummy API key so requireApiKey() passes by default.
   origApiKey = process.env.ANTHROPIC_API_KEY;
+  origPulseedHome = process.env.PULSEED_HOME;
   process.env.ANTHROPIC_API_KEY = "test-api-key";
   process.env.PULSEED_LLM_PROVIDER = "anthropic";
+  process.env.PULSEED_HOME = tmpDir;
 });
 
 afterEach(() => {
@@ -303,6 +306,11 @@ afterEach(() => {
     delete process.env.ANTHROPIC_API_KEY;
   } else {
     process.env.ANTHROPIC_API_KEY = origApiKey;
+  }
+  if (origPulseedHome === undefined) {
+    delete process.env.PULSEED_HOME;
+  } else {
+    process.env.PULSEED_HOME = origPulseedHome;
   }
   delete process.env.PULSEED_LLM_PROVIDER;
 

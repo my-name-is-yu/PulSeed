@@ -26,6 +26,22 @@
 - [x] Production caller migrations.
 - [x] Guardrail.
 - [x] Tests and docs.
-- [ ] Local verification.
+- [x] Local verification.
 - [ ] Sub-agent review.
 - [ ] GitHub Codex review.
+
+## Local Verification
+
+- `npm run check:database-first-legacy-stores`
+- `npm run check:docs`
+- `npm run typecheck`
+- `npm run lint:boundaries` (0 errors; existing warnings remain)
+- `npm run test:contracts`
+- `npm run test:replay`
+- `npm run test:product-gauntlet`
+- `npm run test:smoke`
+- `npm run test:integration`
+- `npm run test:changed`
+- `npm run build`
+- `npm run check:public-contracts`
+- `git diff --check`
