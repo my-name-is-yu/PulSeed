@@ -405,6 +405,19 @@ function createDeps(tmpDir: string, options?: { stall?: boolean; publicResearch?
   };
 }
 
+function phaseInput(runMock: ReturnType<typeof vi.fn>, phase: string): Record<string, unknown> | undefined {
+  return runMock.mock.calls.find(([spec]) =>
+    typeof spec === "object" && spec !== null && (spec as { phase?: string }).phase === phase
+  )?.[1] as Record<string, unknown> | undefined;
+}
+
+function phaseSummary(
+  result: { corePhaseResults?: Array<{ phase: string; summary?: string }> },
+  phase: string,
+): string | undefined {
+  return result.corePhaseResults?.find((entry) => entry.phase === phase)?.summary;
+}
+
 describe("CoreLoop agentic phase hooks", () => {
   let tmpDir: string;
 
@@ -505,9 +518,102 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
-  it("resolves learning priors for non-task DurableLoop phases and records phase application", async () => {
+  it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const makePriorSensitivePhaseRunner = () =>
+      vi.fn().mockImplementation(async (
+        spec: { phase: string },
+        input: { learningProjection?: { phase: string } },
+      ) => {
+        const hasProjection = Boolean(input.learningProjection);
+        const outputs: Record<string, unknown> = {
+          observe_evidence: { summary: "observe-summary", evidence: ["git clean"], missing_info: [], confidence: 0.8 },
+          knowledge_refresh: hasProjection
+            ? {
+                summary: "knowledge-prior-summary",
+                required_knowledge: ["prior evidence target"],
+                acquisition_candidates: ["prior query bias"],
+                confidence: 0.88,
+                worthwhile: true,
+              }
+            : {
+                summary: "knowledge-summary",
+                required_knowledge: ["recent architectural note"],
+                acquisition_candidates: ["soil lookup"],
+                confidence: 0.85,
+                worthwhile: true,
+              },
+          replanning_options: hasProjection
+            ? {
+                summary: "replan-prior-summary",
+                recommended_action: "refine",
+                candidates: [{
+                  title: "Prior-biased task",
+                  rationale: "uses prior evidence",
+                  expected_evidence_gain: "high",
+                  blast_radius: "low",
+                  target_dimensions: ["dim-prior"],
+                  dependencies: [],
+                }],
+                confidence: 0.82,
+              }
+            : {
+                summary: "replan-summary",
+                recommended_action: "continue",
+                candidates: [{
+                  title: "Task A",
+                  rationale: "fast",
+                  expected_evidence_gain: "medium",
+                  blast_radius: "low",
+                  target_dimensions: ["dim1"],
+                  dependencies: [],
+                }],
+                confidence: 0.8,
+              },
+          stall_investigation: hasProjection
+            ? {
+                summary: "stall-prior-summary",
+                suspected_causes: ["prior-loop-pattern"],
+                recommended_next_evidence: ["experiment-stall"],
+                relevant_actions: ["pivot"],
+                confidence: 0.74,
+              }
+            : {
+                summary: "stall-summary",
+                suspected_causes: ["approach_failure"],
+                recommended_next_evidence: ["inspect files"],
+                relevant_actions: ["refine"],
+                confidence: 0.7,
+              },
+          verification_evidence: {
+            summary: "verify-summary",
+            supported_claims: ["tests pass"],
+            unsupported_claims: [],
+            blockers: [],
+            confidence: 0.9,
+          },
+        };
+        return {
+          success: true,
+          output: outputs[spec.phase],
+          finalText: "",
+          stopReason: "completed",
+          elapsedMs: 1,
+          modelTurns: 1,
+          toolCalls: 0,
+          compactions: 0,
+          changedFiles: [],
+          commandResults: [],
+          traceId: `trace-${spec.phase}`,
+          sessionId: `session-${spec.phase}`,
+          turnId: `turn-${spec.phase}`,
+        };
+      });
+    const priorPhaseRunner = makePriorSensitivePhaseRunner();
+    const controlPhaseRunner = makePriorSensitivePhaseRunner();
+    mocks.corePhaseRunner.run = priorPhaseRunner;
+    deps.corePhaseRunner = mocks.corePhaseRunner as never;
     const projections = {
       knowledge_refresh: {
         phase: "knowledge_refresh",
@@ -568,10 +674,26 @@ describe("CoreLoop agentic phase hooks", () => {
       resolvePriorForPhase,
       markPriorConsumptionApplied,
     } as never;
-    await mocks.stateManager.saveGoal(makeGoal());
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-prior", label: "Prior Dimension", current_value: 0 }),
+    ] }));
 
     const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
-    await loop.runOneIteration("goal-1", 0);
+    const priorResult = await loop.runOneIteration("goal-1", 0);
+
+    const controlDir = path.join(tmpDir, "non-task-no-prior-control");
+    fs.mkdirSync(controlDir, { recursive: true });
+    const { deps: controlDeps, mocks: controlMocks } = createDeps(controlDir, { stall: true });
+    controlDeps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    controlMocks.corePhaseRunner.run = controlPhaseRunner;
+    controlDeps.corePhaseRunner = controlMocks.corePhaseRunner as never;
+    await controlMocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-prior", label: "Prior Dimension", current_value: 0 }),
+    ] }));
+    const controlLoop = new CoreLoop(controlDeps, { delayBetweenLoopsMs: 0 });
+    const controlResult = await controlLoop.runOneIteration("goal-1", 0);
 
     expect(resolvePriorForPhase.mock.calls.map(([input]) => input.consumerPhase)).toEqual(expect.arrayContaining([
       "knowledge_refresh",
@@ -579,21 +701,30 @@ describe("CoreLoop agentic phase hooks", () => {
       "stall_detection",
       "stall_investigation",
     ]));
-    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
-      expect.objectContaining({ phase: "knowledge_refresh" }),
-      expect.objectContaining({ learningProjection: projections.knowledge_refresh }),
-      expect.anything(),
-    );
-    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
-      expect.objectContaining({ phase: "replanning_options" }),
-      expect.objectContaining({ learningProjection: projections.replanning_options }),
-      expect.anything(),
-    );
-    expect(mocks.corePhaseRunner.run).toHaveBeenCalledWith(
-      expect.objectContaining({ phase: "stall_investigation" }),
-      expect.objectContaining({ learningProjection: projections.stall_investigation }),
-      expect.anything(),
-    );
+    expect(phaseInput(mocks.corePhaseRunner.run, "knowledge_refresh")).toEqual(expect.objectContaining({
+      learningProjection: projections.knowledge_refresh,
+    }));
+    expect(phaseInput(controlMocks.corePhaseRunner.run, "knowledge_refresh")?.learningProjection).toBeUndefined();
+    expect(phaseSummary(priorResult, "knowledge_refresh")).toBe("knowledge-prior-summary");
+    expect(phaseSummary(controlResult, "knowledge_refresh")).toBe("knowledge-summary");
+    expect(phaseInput(mocks.corePhaseRunner.run, "replanning_options")).toEqual(expect.objectContaining({
+      learningProjection: projections.replanning_options,
+    }));
+    expect(phaseInput(controlMocks.corePhaseRunner.run, "replanning_options")?.learningProjection).toBeUndefined();
+    expect(phaseSummary(priorResult, "replanning_options")).toBe("replan-prior-summary");
+    expect(phaseSummary(controlResult, "replanning_options")).toBe("replan-summary");
+    expect((mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0]?.[7]).toEqual(expect.objectContaining({
+      targetDimensionOverride: "dim-prior",
+    }));
+    expect((controlMocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0]?.[7]).toEqual(expect.objectContaining({
+      targetDimensionOverride: "dim1",
+    }));
+    expect(phaseInput(mocks.corePhaseRunner.run, "stall_investigation")).toEqual(expect.objectContaining({
+      learningProjection: projections.stall_investigation,
+    }));
+    expect(phaseInput(controlMocks.corePhaseRunner.run, "stall_investigation")?.learningProjection).toBeUndefined();
+    expect(phaseSummary(priorResult, "stall_investigation")).toBe("stall-prior-summary");
+    expect(phaseSummary(controlResult, "stall_investigation")).toBe("stall-summary");
     expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
       consumptionId: "consumption-knowledge",
       generatedDecisionRefs: ["trace-knowledge_refresh"],

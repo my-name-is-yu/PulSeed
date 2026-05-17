@@ -539,6 +539,7 @@ export class ExperienceLearningStateStore {
     };
     const db = await this.database();
     return db.transaction((sqlite) => {
+      let suppressedResult: ExperienceLearningPriorResolutionResult | null = null;
       const rows = sqlite.prepare(`
         SELECT prior_json
         FROM experience_learning_prior_snapshots
@@ -564,7 +565,7 @@ export class ExperienceLearningStateStore {
         });
         const existing = findPriorConsumptionByIdempotency(sqlite, resolved.record.idempotencyKey);
         if (existing) {
-          return {
+          const existingResult = {
             prior,
             record: existing,
             projection: existing.stage === "suppressed" || !resolved.projection
@@ -572,6 +573,11 @@ export class ExperienceLearningStateStore {
               : LearningPriorPhaseProjectionSchema.parse(projectionForExistingReservation(resolved.projection, existing)),
             runtimeEventId: null,
           };
+          if (existing.stage === "suppressed") {
+            suppressedResult ??= existingResult;
+            continue;
+          }
+          return existingResult;
         }
 
         let record = resolved.record;
@@ -601,14 +607,19 @@ export class ExperienceLearningStateStore {
         if (runtimeEvent.disposition === "inserted") {
           applyExperienceLearningPayloadProjection(sqlite, payload, runtimeEvent.event.event_id, runtimeEvent.event.occurred_at);
         }
-        return {
+        const result = {
           prior,
           record,
           projection,
           runtimeEventId: runtimeEvent.event.event_id,
         };
+        if (record.stage === "suppressed") {
+          suppressedResult ??= result;
+          continue;
+        }
+        return result;
       }
-      return null;
+      return suppressedResult;
     });
   }
 
@@ -1426,35 +1437,77 @@ function experienceLearningMetricCounts(
   };
   const goalParams = goalId ? [goalId] : [];
   const frames = run(`SELECT COUNT(*) AS count_value FROM experience_learning_frames${goalClause}`, goalParams);
-  const probes = run("SELECT COUNT(*) AS count_value FROM experience_learning_micro_probe_records");
+  const probes = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_micro_probe_records r
+    JOIN experience_learning_micro_probe_plans p ON p.plan_id = r.plan_id
+    ${goalId ? "WHERE p.goal_id = ?" : ""}
+  `, goalParams);
   const candidates = run(`SELECT COUNT(*) AS count_value FROM experience_learning_generalization_candidates${goalClause}`, goalParams);
   const trialReady = run(`SELECT COUNT(*) AS count_value FROM experience_learning_generalization_candidates${goalClause}${goalId ? " AND" : " WHERE"} status = 'trial_reuse_ready'`, goalParams);
   const promotedCandidates = run(`SELECT COUNT(*) AS count_value FROM experience_learning_generalization_candidates${goalClause}${goalId ? " AND" : " WHERE"} status = 'promoted'`, goalParams);
   const artifacts = run(`SELECT COUNT(*) AS count_value FROM experience_learning_artifacts${goalId ? " WHERE source_goal_id = ?" : ""}`, goalParams);
   const promotedArtifacts = run(`SELECT COUNT(*) AS count_value FROM experience_learning_artifacts${goalId ? " WHERE source_goal_id = ? AND" : " WHERE"} status = 'promoted'`, goalParams);
-  const priorsApplied = run("SELECT COUNT(*) AS count_value FROM experience_learning_prior_consumption_events WHERE stage = 'applied'");
-  const priorsSuppressed = run("SELECT COUNT(*) AS count_value FROM experience_learning_prior_consumption_events WHERE stage = 'suppressed'");
-  const experimentPlans = run("SELECT COUNT(*) AS count_value FROM experience_learning_experiment_plans");
-  const experimentRecords = run("SELECT COUNT(*) AS count_value FROM experience_learning_experiment_records");
-  const experimentOutcomes = run("SELECT COUNT(*) AS count_value FROM experience_learning_experiment_value_outcomes");
-  const trialReuseAttempts = run("SELECT COUNT(*) AS count_value FROM experience_learning_trial_reuse_budget_consumptions");
+  const priorsApplied = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_prior_consumption_events c
+    JOIN experience_learning_prior_snapshots p ON p.prior_id = c.prior_id
+    WHERE c.stage = 'applied'${goalId ? " AND p.goal_id = ?" : ""}
+  `, goalParams);
+  const priorsSuppressed = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_prior_consumption_events c
+    JOIN experience_learning_prior_snapshots p ON p.prior_id = c.prior_id
+    WHERE c.stage = 'suppressed'${goalId ? " AND p.goal_id = ?" : ""}
+  `, goalParams);
+  const experimentPlans = run(`SELECT COUNT(*) AS count_value FROM experience_learning_experiment_plans${goalClause}`, goalParams);
+  const experimentRecords = run(`SELECT COUNT(*) AS count_value FROM experience_learning_experiment_records${goalClause}`, goalParams);
+  const experimentOutcomes = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_experiment_value_outcomes o
+    JOIN experience_learning_experiment_records r ON r.record_id = o.record_id
+    ${goalId ? "WHERE r.goal_id = ?" : ""}
+  `, goalParams);
+  const trialReuseAttempts = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_trial_reuse_budget_consumptions c
+    JOIN experience_learning_generalization_candidates g ON g.candidate_id = c.candidate_id
+    ${goalId ? "WHERE g.goal_id = ?" : ""}
+  `, goalParams);
   const trialReuseSuccess = run(`
     SELECT COUNT(*) AS count_value
-    FROM experience_learning_experiment_value_outcomes
-    WHERE json_extract(outcome_json, '$.transferOutcome') = 'exact_success'
-  `);
+    FROM experience_learning_experiment_value_outcomes o
+    JOIN experience_learning_experiment_records r ON r.record_id = o.record_id
+    WHERE json_extract(o.outcome_json, '$.transferOutcome') = 'exact_success'${goalId ? " AND r.goal_id = ?" : ""}
+  `, goalParams);
   const negativeTransfer = run(`
     SELECT COUNT(*) AS count_value
-    FROM experience_learning_experiment_value_outcomes
-    WHERE json_extract(outcome_json, '$.transferOutcome') = 'negative_transfer'
-  `);
+    FROM experience_learning_experiment_value_outcomes o
+    JOIN experience_learning_experiment_records r ON r.record_id = o.record_id
+    WHERE json_extract(o.outcome_json, '$.transferOutcome') = 'negative_transfer'${goalId ? " AND r.goal_id = ?" : ""}
+  `, goalParams);
   const staleSuppressions = run(`
     SELECT COUNT(DISTINCT consumption_id) AS count_value
-    FROM experience_learning_prior_consumption_events, json_each(consumption_json, '$.reasonCodes')
-    WHERE stage = 'suppressed' AND json_each.value = 'stale_or_expired'
-  `);
+    FROM experience_learning_prior_consumption_events c
+    JOIN experience_learning_prior_snapshots p ON p.prior_id = c.prior_id,
+      json_each(c.consumption_json, '$.reasonCodes')
+    WHERE c.stage = 'suppressed' AND json_each.value = 'stale_or_expired'${goalId ? " AND p.goal_id = ?" : ""}
+  `, goalParams);
   const falsifiedArtifacts = run(`SELECT COUNT(*) AS count_value FROM experience_learning_artifacts${goalId ? " WHERE source_goal_id = ? AND" : " WHERE"} status = 'falsified'`, goalParams);
   const falsifiedHypotheses = run(`SELECT COUNT(*) AS count_value FROM experience_learning_hypotheses${goalClause}${goalId ? " AND" : " WHERE"} status = 'falsified'`, goalParams);
+  const microProbeFalsified = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_micro_probe_records r
+    JOIN experience_learning_micro_probe_plans p ON p.plan_id = r.plan_id
+    WHERE r.outcome = 'falsified'${goalId ? " AND p.goal_id = ?" : ""}
+  `, goalParams);
+  const microProbeDeferred = run(`
+    SELECT COUNT(*) AS count_value
+    FROM experience_learning_micro_probe_records r
+    JOIN experience_learning_micro_probe_plans p ON p.plan_id = r.plan_id
+    WHERE r.outcome = 'deferred'${goalId ? " AND p.goal_id = ?" : ""}
+  `, goalParams);
+  const falsifiedExperimentRecords = run(`SELECT COUNT(*) AS count_value FROM experience_learning_experiment_records${goalClause}${goalId ? " AND" : " WHERE"} outcome = 'falsified'`, goalParams);
   return {
     experience_frames_created: frames,
     hypotheses_created: run(`SELECT COUNT(*) AS count_value FROM experience_learning_hypotheses${goalClause}`, goalParams),
@@ -1462,8 +1515,8 @@ function experienceLearningMetricCounts(
     generalization_candidates_created: candidates,
     micro_probe_eligible_candidates: candidates,
     micro_probe_attempted: probes,
-    micro_probe_falsified: run("SELECT COUNT(*) AS count_value FROM experience_learning_micro_probe_records WHERE outcome = 'falsified'"),
-    micro_probe_deferred: run("SELECT COUNT(*) AS count_value FROM experience_learning_micro_probe_records WHERE outcome = 'deferred'"),
+    micro_probe_falsified: microProbeFalsified,
+    micro_probe_deferred: microProbeDeferred,
     micro_probe_self_confirmation_rejections: 0,
     micro_probe_replay_drift_count: 0,
     experiences_to_trial_reuse_ready: trialReady,
@@ -1486,9 +1539,9 @@ function experienceLearningMetricCounts(
     prior_suppressed_at_consumption: priorsSuppressed,
     prior_consumed_by_phase: priorsApplied,
     prior_outcome_delta: experimentRecords,
-    repeated_failed_action_rate: run("SELECT COUNT(*) AS count_value FROM experience_learning_experiment_records WHERE outcome = 'falsified'"),
+    repeated_failed_action_rate: falsifiedExperimentRecords,
     avoidable_loop_count: priorsApplied,
-    falsification_latency: falsifiedHypotheses + falsifiedArtifacts + run("SELECT COUNT(*) AS count_value FROM experience_learning_experiment_records WHERE outcome = 'falsified'"),
+    falsification_latency: falsifiedHypotheses + falsifiedArtifacts + falsifiedExperimentRecords,
     contradiction_to_demotion_latency: falsifiedHypotheses + falsifiedArtifacts,
     artifact_reuse_success_rate: trialReuseSuccess,
     delayed_false_promotion_rate: 0,

@@ -243,6 +243,94 @@ describe("ExperienceLearningStateStore", () => {
     expect(exhausted?.projection).toBeNull();
   });
 
+  it("continues past suppressed older priors to reserve a newer eligible prior", async () => {
+    const older = makePriorGeneratedPayload();
+    await store.appendLifecycleEvent(older);
+    const first = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-old",
+      consumerDecisionRef: "task-generation:goal-learning:2:old",
+      now: "2026-05-17T00:05:00.000Z",
+    });
+    await store.markPriorConsumptionApplied({
+      consumptionId: first!.record.id,
+      generatedDecisionRefs: ["task:old-prior"],
+      completedAt: "2026-05-17T00:06:00.000Z",
+    });
+    const newer = makePriorGeneratedPayload({
+      priorId: "prior-2",
+      suggestionId: "suggestion-task-2",
+      artifactId: "artifact-2",
+      idempotencyKey: "experience-learning:test:prior-2",
+      generatedAt: "2026-05-17T00:07:00.000Z",
+      targetDimension: "dim-newer",
+    });
+    await store.appendLifecycleEvent(newer);
+
+    const second = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-new",
+      consumerDecisionRef: "task-generation:goal-learning:2:new",
+      now: "2026-05-17T00:08:00.000Z",
+    });
+
+    expect(second?.prior.id).toBe("prior-2");
+    expect(second?.record.stage).toBe("reserved");
+    expect(second?.projection).toEqual(expect.objectContaining({
+      phase: "task_generation",
+      preferredTargetDimension: "dim-newer",
+    }));
+    await expect(store.listPriorConsumptionRecords("prior-1")).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stage: "suppressed",
+        reasonCodes: ["max_uses_exhausted"],
+      }),
+    ]));
+  });
+
+  it("keeps goal-scoped metric snapshots from counting other goals' prior consumption", async () => {
+    const otherGoalPrior = makePriorGeneratedPayload({
+      goalId: "goal-other",
+      runId: "run-other",
+      priorId: "prior-other",
+      suggestionId: "suggestion-other",
+      artifactId: "artifact-other",
+      idempotencyKey: "experience-learning:test:prior-other",
+      targetDimension: "dim-other",
+    });
+    await store.appendLifecycleEvent(otherGoalPrior);
+    const otherGoalResolution = await store.resolvePriorForPhase({
+      goalId: "goal-other",
+      runId: "run-other",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-other", runId: "run-other" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-other",
+      consumerDecisionRef: "task-generation:goal-other:2",
+      now: "2026-05-17T00:05:00.000Z",
+    });
+    await store.markPriorConsumptionApplied({
+      consumptionId: otherGoalResolution!.record.id,
+      generatedDecisionRefs: ["task:other-goal"],
+      completedAt: "2026-05-17T00:06:00.000Z",
+    });
+
+    const scopedSnapshot = await store.getMetricsSnapshot("goal-learning");
+    expect(scopedSnapshot.values.find((value) => value.name === "action_savings_after_reuse")?.numerator_value).toBe(0);
+    expect(scopedSnapshot.values.find((value) => value.name === "learning_prior_injections")?.numerator_value).toBe(0);
+    expect(scopedSnapshot.values.find((value) => value.name === "prior_consumed_by_phase")?.numerator_value).toBe(0);
+    const unscopedSnapshot = await store.getMetricsSnapshot();
+    expect(unscopedSnapshot.values.find((value) => value.name === "action_savings_after_reuse")?.numerator_value).toBe(1);
+  });
+
   it("rolls back RuntimeEventLog append when a trial-reuse budget projection double-reserves", async () => {
     const first = makeTrialReuseBudgetPayload({
       transitionId: "transition-budget-1",
@@ -384,43 +472,59 @@ function makeFramePayload(): Extract<ExperienceLearningRuntimeEventPayload, { ev
   };
 }
 
-function makePriorGeneratedPayload(): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_generated" }> {
+function makePriorGeneratedPayload(input: {
+  goalId?: string;
+  runId?: string;
+  priorId?: string;
+  suggestionId?: string;
+  artifactId?: string;
+  idempotencyKey?: string;
+  generatedAt?: string;
+  targetDimension?: string;
+} = {}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_generated" }> {
+  const goalId = input.goalId ?? "goal-learning";
+  const runId = input.runId ?? "run-learning";
+  const priorId = input.priorId ?? "prior-1";
+  const suggestionId = input.suggestionId ?? "suggestion-task";
+  const artifactId = input.artifactId ?? "artifact-1";
+  const generatedAt = input.generatedAt ?? "2026-05-17T00:00:00.000Z";
+  const targetDimension = input.targetDimension ?? "dim-prior";
   const trust = defaultRuntimeEvidenceTrust({
     targetRef: {
       kind: "learning_prior",
-      id: "prior-1",
-      scope: { goal_id: "goal-learning", run_id: "run-learning" },
+      id: priorId,
+      scope: { goal_id: goalId, run_id: runId },
     },
     provenanceRefs: ["evidence-1", "evidence-2"],
   });
   const prior: LearningPriorSnapshot = {
-    id: "prior-1",
-    goalId: "goal-learning",
-    runId: "run-learning",
-    generatedAt: "2026-05-17T00:00:00.000Z",
+    id: priorId,
+    goalId,
+    runId,
+    generatedAt,
     sourceLoopIndex: 1,
     eligibleFromIteration: 2,
-    generationEventRef: "runtime-event-projection:experience-learning:prior-1",
+    generationEventRef: `runtime-event-projection:experience-learning:${priorId}`,
     sourceCandidateTransitionIds: ["transition-1"],
-    scope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+    scope: { refs: { goalId, runId } },
     compatibility: {
       decision: "compatible",
       reasonCode: "matched_exact_refs",
-      matchedRefs: ["goalId:goal-learning"],
+      matchedRefs: [`goalId:${goalId}`],
       missingRefs: [],
     },
-    sourceArtifactIds: ["artifact-1"],
+    sourceArtifactIds: [artifactId],
     suggestions: [
       learningPriorSuggestion({
-        id: "suggestion-task",
+        id: suggestionId,
         kind: "strategy_preference",
         consumerPhase: "task_generation",
-        targetRef: { kind: "dimension", id: "dim-prior" },
+        targetRef: { kind: "dimension", id: targetDimension },
         rationale: redactedLearningLabel({
           label: "Use typed prior dimension bias",
           sourceRefs: ["evidence-1", "evidence-2"],
         }),
-        sourceArtifactIds: ["artifact-1"],
+        sourceArtifactIds: [artifactId],
         experimentPlanIds: ["experiment-plan-1"],
         evidenceRefs: ["evidence-1", "evidence-2"],
         strength: 0.6,
@@ -434,20 +538,20 @@ function makePriorGeneratedPayload(): Extract<ExperienceLearningRuntimeEventPayl
     suppressedByCorrectionIds: [],
     suppressedByQuarantineIds: [],
     trust,
-    sourceTrustStates: [{ sourceRef: "artifact-1", trust }],
+    sourceTrustStates: [{ sourceRef: artifactId, trust }],
     filterDecision: {
       decision: "activated",
       reasonCodes: ["eligible"],
-      evaluatedAt: "2026-05-17T00:00:00.000Z",
+      evaluatedAt: generatedAt,
     },
     confidence: 0.7,
   };
   return {
     schema_version: "runtime-event-payload/experience-learning/v1",
     event_kind: "prior_generated",
-    idempotency_key: "experience-learning:test:prior-1",
-    goal_id: "goal-learning",
-    run_id: "run-learning",
+    idempotency_key: input.idempotencyKey ?? "experience-learning:test:prior-1",
+    goal_id: goalId,
+    run_id: runId,
     loop_index: 1,
     source_refs: {
       evidence_refs: ["evidence-1", "evidence-2"],
@@ -458,11 +562,11 @@ function makePriorGeneratedPayload(): Extract<ExperienceLearningRuntimeEventPayl
     correction_state: trust.correctionState,
     redaction_class: "refs_only",
     graph: {
-      node_refs: [{ kind: "learning_prior", ref: "prior-1" }],
+      node_refs: [{ kind: "learning_prior", ref: priorId }],
       edge_refs: [],
     },
-    prior_id: "prior-1",
-    artifact_ids: ["artifact-1"],
+    prior_id: priorId,
+    artifact_ids: [artifactId],
     eligible_from_iteration: 2,
     prior,
   };
