@@ -75,7 +75,7 @@ pulseed
 
 The bare `pulseed` command opens the interactive TUI after provider setup. For
 pinned versions, npm fallback installs, and first-run details, see
-[Getting Started](./docs/start/index.md).
+[Getting Started](./docs/getting-started/first-run.md).
 
 ## What Exists Now
 
@@ -112,29 +112,24 @@ pulseed memory history <kind:id>
 For the complete command surface, use `pulseed help` or see the docs:
 
 - [Docs Map](docs/index.md)
-- [Getting Started](./docs/start/index.md)
-- [Runtime](./docs/operate/runtime.md)
-- [Configuration](./docs/operate/configuration.md)
-- [Status](./docs/operate/status.md)
-- [Architecture Map](./docs/architecture/architecture-map.md)
-- [Module Map](./docs/architecture/module-map.md)
+- [Operating PulSeed](./docs/operating/operating-map.md)
+- [Command Reference](./docs/operating/command-reference/command-reference-map.md)
 
 ## How The Docs Are Organized
 
 Start with the current operating docs when you want to use PulSeed today:
 
-- [Getting Started](./docs/start/index.md)
-- [Guide](./docs/start/guide.md)
-- [Concepts](./docs/concepts/index.md)
-- [Reference](docs/reference/index.md)
-- [Architecture](./docs/architecture/index.md)
+- [Getting Started](./docs/getting-started/getting-started-map.md)
+- [Operating PulSeed](./docs/operating/operating-map.md)
+- [System Architecture](./docs/system-architecture/system-architecture-map.md)
+- [Companion Autonomy](./docs/companion-autonomy/companion-autonomy-map.md)
 
 Product direction, companion scenarios, and design boundaries live under
-[Product Design](./docs/product/index.md), with a code-backed/current-vs-design
+[Product Direction](./docs/product-direction/product-direction-map.md), with a code-backed/current-vs-design
 boundary in the
-[Product Completion Scenario Matrix](./docs/product/completion-matrix.md).
-Design documents,
-audits, and design history live under [Design Documentation](docs/design/index.md).
+[Product Boundaries](./docs/product-direction/product-boundaries/product-boundaries-map.md).
+Design documents and design boundaries are grouped through
+[System Architecture](./docs/system-architecture/system-architecture-map.md).
 
 ## Evidence
 
