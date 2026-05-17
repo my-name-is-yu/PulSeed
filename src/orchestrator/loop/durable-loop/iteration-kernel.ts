@@ -1272,6 +1272,7 @@ function taskMatchesExperimentPlan(input: {
   plan: LearningExperimentPlan | null;
   planId: string;
 }): boolean {
+  if (!canCloseTaskExperimentRecord(input.taskResult)) return false;
   if (!input.projection.requiredExperimentPlanIds.includes(input.planId)) return false;
   if (!input.plan || input.plan.plannedConsumerPhase !== "task_generation") return false;
   if (input.plan.plannedTaskId) {
@@ -1281,6 +1282,10 @@ function taskMatchesExperimentPlan(input: {
   if (!preferredDimension) return false;
   return input.taskResult.task.primary_dimension === preferredDimension
     || input.taskResult.task.target_dimensions.includes(preferredDimension);
+}
+
+function canCloseTaskExperimentRecord(taskResult: TaskCycleResult): boolean {
+  return taskResult.action === "completed" && taskResult.task.id !== "skipped";
 }
 
 function buildExperimentRecordClosedPayload(input: {

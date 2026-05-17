@@ -964,7 +964,7 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
-  it("records non-completed failed experiment tasks as inconclusive instead of falsified", async () => {
+  it("suppresses experiment priors when the task did not execute to completion", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     let evidenceSeq = 0;
     deps.evidenceLedger = {
@@ -1014,10 +1014,11 @@ describe("CoreLoop agentic phase hooks", () => {
       };
     });
     const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
     deps.experienceLearningStore = {
       resolvePriorForPhase,
       markPriorConsumptionApplied: vi.fn().mockResolvedValue(null),
-      markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
+      markPriorConsumptionSuppressed,
       listExperimentPlans: vi.fn().mockResolvedValue([
         {
           id: "matching-experiment-plan",
@@ -1034,19 +1035,13 @@ describe("CoreLoop agentic phase hooks", () => {
     const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
     await loop.runOneIteration("goal-1", 0);
 
-    expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "experiment_record_closed",
-      outcome: "inconclusive",
-      record: expect.objectContaining({
-        outcome: "inconclusive",
-        eliminatedHypothesisIds: [],
-        narrowedGeneralizationCandidateIds: [],
-        negativeTransferRefs: [],
-      }),
-      value_outcome: expect.objectContaining({
-        transferOutcome: "inconclusive",
-      }),
     }));
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-task-experiment",
+      reasonCodes: ["consumer_no_op"],
+    });
   });
 
   it("suppresses failed knowledge-refresh priors instead of marking them applied", async () => {
