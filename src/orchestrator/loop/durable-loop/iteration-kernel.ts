@@ -92,6 +92,7 @@ import {
   verificationToOutcome,
 } from "./iteration-kernel-evidence-helpers.js";
 import { recordExperienceLearningCheckpoint } from "./experience-learning-bridge.js";
+import { enqueueExperienceLearningProjectionForOwnerReview } from "../../../reflection/experience-learning-writeback.js";
 import type {
   ExperimentRecord,
   ExperimentValueOutcome,
@@ -948,12 +949,16 @@ export class CoreIterationKernel {
       && iterationEvidence.length > 0
     ) {
       try {
+        const experimentPlanId = taskLearningProjection.requiredExperimentPlanIds[0]!;
+        const experimentPlan = (await this.deps.deps.experienceLearningStore.listExperimentPlans(goalId))
+          .find((plan) => plan.id === experimentPlanId) ?? null;
         const experimentClosedPayload = buildExperimentRecordClosedPayload({
           goalId,
           runId: runtimeEvidenceScope.run_id,
           loopIndex,
           taskResult: completedTaskResult,
-          planId: taskLearningProjection.requiredExperimentPlanIds[0]!,
+          planId: experimentPlanId,
+          plan: experimentPlan,
           evidenceRefs: iterationEvidence.map((entry) => entry.id),
           eventRefs: iterationEvidence.flatMap((entry) =>
             entry.raw_refs
@@ -969,6 +974,18 @@ export class CoreIterationKernel {
         });
         for (const payload of postOutcomePayloads) {
           await this.deps.deps.experienceLearningStore.appendLifecycleEvent(payload);
+          if (
+            payload.event_kind === "artifact_transitioned"
+            && payload.artifact?.status === "promoted"
+            && this.deps.deps.cognitionWritebackQueue
+          ) {
+            await enqueueExperienceLearningProjectionForOwnerReview({
+              artifact: payload.artifact,
+              learningStore: this.deps.deps.experienceLearningStore,
+              queueStore: this.deps.deps.cognitionWritebackQueue,
+              createdAt: payload.artifact.updatedAt,
+            });
+          }
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
@@ -1039,6 +1056,7 @@ function buildExperimentRecordClosedPayload(input: {
   loopIndex: number;
   taskResult: TaskCycleResult;
   planId: string;
+  plan?: LearningExperimentPlan | null;
   evidenceRefs: readonly string[];
   eventRefs: readonly string[];
 }): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> {
@@ -1054,6 +1072,8 @@ function buildExperimentRecordClosedPayload(input: {
     : input.taskResult.verificationResult.verdict === "fail"
       ? "falsified"
       : "inconclusive";
+  const testedGeneralizationCandidateIds = input.plan?.generalizationCandidateIds ?? [];
+  const eliminatedHypothesisIds = outcome === "falsified" ? input.plan?.hypothesisIds ?? [] : [];
   const trust = defaultRuntimeEvidenceTrust({
     targetRef: {
       kind: "experiment_record",
@@ -1079,9 +1099,9 @@ function buildExperimentRecordClosedPayload(input: {
     outcomeEvidenceRefs: [...input.evidenceRefs],
     outcomeEventRefs: [...input.eventRefs],
     outcomeRuntimeGraphRefs: [],
-    eliminatedHypothesisIds: [],
-    testedGeneralizationCandidateIds: [],
-    narrowedGeneralizationCandidateIds: [],
+    eliminatedHypothesisIds,
+    testedGeneralizationCandidateIds,
+    narrowedGeneralizationCandidateIds: outcome === "falsified" ? testedGeneralizationCandidateIds : [],
     negativeTransferRefs: outcome === "falsified" ? [...input.evidenceRefs] : [],
     followUpFrameIds: [],
     trust,
@@ -1091,8 +1111,8 @@ function buildExperimentRecordClosedPayload(input: {
     planId: input.planId,
     recordId,
     realizedInformationGain: outcome === "inconclusive" ? 0.2 : 0.7,
-    eliminatedHypothesisIds: [],
-    eliminatedHypothesisCount: 0,
+    eliminatedHypothesisIds,
+    eliminatedHypothesisCount: eliminatedHypothesisIds.length,
     actualCost: "low",
     actualRisk: "low",
     actualTimeToSignal: "same_iteration",
@@ -1199,15 +1219,16 @@ function promoteCandidateFromExperiment(
   candidate: GeneralizationCandidate,
   record: ExperimentRecord,
 ): GeneralizationCandidate {
+  const exactScopeRef = `goal:${candidate.goalId}`;
   return GeneralizationCandidateSchema.parse({
     ...candidate,
     status: "promoted",
     supportRefs: uniqueStrings([...candidate.supportRefs, record.id, ...record.outcomeEvidenceRefs]),
     transferScopes: candidate.transferScopes.map((scope) => ({
       ...scope,
-      status: scope.status === "blocked" ? "blocked" : "exact",
-      attempts: Math.min(scope.maxTrials, scope.attempts + 1),
-      successRefs: uniqueStrings([...scope.successRefs, record.id]),
+      status: scope.scopeRef === exactScopeRef && scope.status !== "blocked" ? "exact" : scope.status,
+      attempts: scope.scopeRef === exactScopeRef ? Math.min(scope.maxTrials, scope.attempts + 1) : scope.attempts,
+      successRefs: scope.scopeRef === exactScopeRef ? uniqueStrings([...scope.successRefs, record.id]) : scope.successRefs,
     })),
     updatedAt: record.executedAt,
   });

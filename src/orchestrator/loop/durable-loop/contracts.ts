@@ -39,6 +39,7 @@ import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-
 import type { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
 import type { AttentionLearningBridgePort } from "./attention-learning-bridge.js";
 import type { ExperienceLearningBridgePort } from "./experience-learning-bridge.js";
+import type { CognitionWritebackQueueStore } from "../../../reflection/cognition-writeback-queue.js";
 import type {
   RuntimeBudgetLimitInput,
   RuntimeBudgetStore,
@@ -338,6 +339,8 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   experienceLearningBridge?: ExperienceLearningBridgePort;
   /** Optional attention-to-learning adapter; contributes refs/salience only. */
   attentionLearningBridge?: AttentionLearningBridgePort;
+  /** Optional owner-review queue for promoted experience-learning projection candidates. */
+  cognitionWritebackQueue?: CognitionWritebackQueueStore;
   /** Optional durable budget store for long-running goal/run budget governance. */
   runtimeBudgetStore?: RuntimeBudgetStore;
   /** Optional durable operator handoff store for deadline, budget, and approval gates. */

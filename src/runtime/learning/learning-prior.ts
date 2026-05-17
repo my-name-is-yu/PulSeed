@@ -38,6 +38,8 @@ export const LearningPriorSourceContextSchema = z.discriminatedUnion("kind", [
     ]),
     governedMemoryDecisionRef: z.string().min(1),
     governedMemoryUseAuditRef: z.string().min(1),
+    governedMemoryDecisionStatus: z.literal("allowed"),
+    governedMemoryUseAuditOutcome: z.literal("allowed"),
   }).strict(),
 ]);
 export type LearningPriorSourceContext = z.infer<typeof LearningPriorSourceContextSchema>;
@@ -58,6 +60,7 @@ export const LearningPriorSuggestionSchema = z.object({
   risk: z.enum(["low", "medium", "high"]),
   expiresAt: z.string().datetime(),
   maxUses: z.number().int().positive(),
+  interactionPolicyBias: InteractionPolicyBiasBodySchema.optional(),
   authorityClass: z.literal("planning_hint_only"),
   blockedUseClasses: z.array(z.enum([
     "side_effect_authorization",
@@ -78,12 +81,65 @@ export const LearningPriorSuggestionSchema = z.object({
       message: `blockedUseClasses missing ${missing.join(", ")}`,
     });
   }
-  if (value.kind === "interaction_policy_bias" && value.sourceContext.requestedUseClass !== "expression_mode_selection") {
+  const allowedUseClasses = requiredUseClassesForSuggestionKind(value.kind);
+  if (!allowedUseClasses.includes(value.sourceContext.requestedUseClass)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["sourceContext", "requestedUseClass"],
-      message: "interaction_policy_bias requires expression_mode_selection",
+      message: `${value.kind} requires ${allowedUseClasses.join(" or ")}`,
     });
+  }
+  if (value.kind !== "interaction_policy_bias" && value.interactionPolicyBias !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["interactionPolicyBias"],
+      message: "interactionPolicyBias payload is only allowed for interaction_policy_bias suggestions",
+    });
+  }
+  if (value.kind === "interaction_policy_bias") {
+    if (value.consumerPhase !== "next_iteration_directive") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["consumerPhase"],
+        message: "interaction_policy_bias can only project through next_iteration_directive",
+      });
+    }
+    if (value.targetRef?.kind !== "interaction_policy") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetRef"],
+        message: "interaction_policy_bias requires an interaction_policy target ref",
+      });
+    }
+    if (value.sourceContext.kind !== "governed_user_context") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sourceContext", "kind"],
+        message: "interaction_policy_bias requires governed_user_context",
+      });
+    }
+    if (value.interactionPolicyBias === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["interactionPolicyBias"],
+        message: "interaction_policy_bias requires bounded interactionPolicyBias payload",
+      });
+    } else if (value.sourceContext.kind === "governed_user_context") {
+      if (value.interactionPolicyBias.governedMemoryDecisionRef !== value.sourceContext.governedMemoryDecisionRef) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["interactionPolicyBias", "governedMemoryDecisionRef"],
+          message: "interaction_policy_bias must preserve the exact governed-memory decision ref",
+        });
+      }
+      if (value.interactionPolicyBias.governedMemoryUseAuditRef !== value.sourceContext.governedMemoryUseAuditRef) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["interactionPolicyBias", "governedMemoryUseAuditRef"],
+          message: "interaction_policy_bias must preserve the exact governed-memory use-audit ref",
+        });
+      }
+    }
   }
   if (value.kind === "trial_reuse_experiment" && value.risk !== "low") {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["risk"], message: "trial_reuse_experiment priors must be low risk" });
@@ -231,6 +287,22 @@ export function blockedUseClassesForSuggestionKind(_kind: LearningPriorSuggestio
     "tool_permission",
     "memory_write",
   ];
+}
+
+export function requiredUseClassesForSuggestionKind(kind: LearningPriorSuggestionKind): LearningPriorSourceContext["requestedUseClass"][] {
+  switch (kind) {
+    case "planning_inhibition":
+      return ["behavioral_inhibition", "ask_for_confirmation"];
+    case "interaction_policy_bias":
+      return ["expression_mode_selection"];
+    case "phase_focus":
+    case "strategy_preference":
+    case "hypothesis_to_test":
+    case "evidence_to_seek":
+    case "generalization_to_try":
+    case "trial_reuse_experiment":
+      return ["goal_planning"];
+  }
 }
 
 export function learningPriorSuggestion(input: Omit<z.input<typeof LearningPriorSuggestionSchema>, "authorityClass" | "blockedUseClasses">): LearningPriorSuggestion {

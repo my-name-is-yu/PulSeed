@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  InteractionPolicyBiasProjectionSchema,
   LearningPriorPhaseProjectionSchema,
   LearningPriorSnapshotSchema,
+  type InteractionPolicyBiasProjection,
   type LearningPriorPhaseProjection,
   type LearningPriorSnapshot,
   type LearningPriorSuggestion,
@@ -9,6 +11,7 @@ import {
 import {
   LearningPriorConsumptionRecordSchema,
   type LearningPriorConsumptionRecord,
+  type LearningPriorConsumptionReadSetEntry,
 } from "./learning-prior-consumption.js";
 import { evaluateLearningScopeCompatibility, type LearningScope } from "./learning-scope.js";
 import { isLearningTrustActivationAllowed } from "./learning-trust.js";
@@ -65,19 +68,7 @@ export class LearningPriorResolver {
       consumerPhase: input.consumerPhase,
       loopIndex: input.loopIndex,
       reservedAt: now,
-      readSet: [{
-        sourceKind: "runtime_event_projection",
-        ref: prior.id,
-        snapshotId: `prior-snapshot:${prior.id}`,
-        runtimeEventProjectionRef: prior.generationEventRef,
-        portSchemaVersion: "learning-prior-snapshot/v1",
-        versionOrSequence: prior.generationEventRef,
-        highWatermark: prior.generationEventRef,
-        inputHash: hash(idempotencyKey),
-        snapshotPayloadHash: hash(JSON.stringify(prior)),
-        redactionClass: "refs_only",
-        port: "learning_prior_snapshot",
-      }],
+      readSet: priorConsumptionReadSet({ prior, suggestion, idempotencyKey }),
       stage: reasonCodes.length === 1 && reasonCodes[0] === "eligible" ? "reserved" : "suppressed",
       reasonCodes,
       generatedDecisionRefs: [],
@@ -88,12 +79,16 @@ export class LearningPriorResolver {
       return { record, projection: null };
     }
 
-    const projection = LearningPriorPhaseProjectionSchema.parse(projectionForSuggestion(record.id, suggestion));
+    const projection = LearningPriorPhaseProjectionSchema.parse(projectionForSuggestion(record.id, prior, suggestion));
     return { record, projection };
   }
 }
 
-function projectionForSuggestion(consumptionRecordId: string, suggestion: LearningPriorSuggestion): LearningPriorPhaseProjection {
+function projectionForSuggestion(
+  consumptionRecordId: string,
+  prior: LearningPriorSnapshot,
+  suggestion: LearningPriorSuggestion,
+): LearningPriorPhaseProjection {
   switch (suggestion.consumerPhase) {
     case "knowledge_refresh":
       return {
@@ -152,10 +147,116 @@ function projectionForSuggestion(consumptionRecordId: string, suggestion: Learni
         focusRefs: suggestion.kind === "phase_focus" ? suggestion.evidenceRefs : [],
         inhibitionRefs: suggestion.kind === "planning_inhibition" ? suggestion.evidenceRefs : [],
         directiveModeBiasRefs: suggestion.sourceArtifactIds,
-        interactionPolicyBiases: [],
+        interactionPolicyBiases: interactionPolicyBiasProjections({ prior, suggestion, consumptionRecordId }),
         suppressedSuggestionIds: [],
       };
   }
+}
+
+function priorConsumptionReadSet(input: {
+  prior: LearningPriorSnapshot;
+  suggestion: LearningPriorSuggestion | null;
+  idempotencyKey: string;
+}): LearningPriorConsumptionReadSetEntry[] {
+  const readSet: LearningPriorConsumptionReadSetEntry[] = [{
+    sourceKind: "runtime_event_projection",
+    ref: input.prior.id,
+    snapshotId: `prior-snapshot:${input.prior.id}`,
+    runtimeEventProjectionRef: input.prior.generationEventRef,
+    portSchemaVersion: "learning-prior-snapshot/v1",
+    versionOrSequence: input.prior.generationEventRef,
+    highWatermark: input.prior.generationEventRef,
+    inputHash: hash(input.idempotencyKey),
+    snapshotPayloadHash: hash(JSON.stringify(input.prior)),
+    redactionClass: "refs_only",
+    port: "learning_prior_snapshot",
+  }];
+
+  if (input.suggestion?.sourceContext.kind === "governed_user_context") {
+    const sourceContext = input.suggestion.sourceContext;
+    readSet.push(
+      governedReadSetEntry({
+        port: "governed_memory_decision_snapshot",
+        ref: sourceContext.governedMemoryDecisionRef,
+        schemaVersion: "governed-memory-use-decision/v1",
+        idempotencyKey: input.idempotencyKey,
+        requestedUseClass: sourceContext.requestedUseClass,
+        acceptedState: sourceContext.governedMemoryDecisionStatus,
+      }),
+      governedReadSetEntry({
+        port: "governed_memory_use_audit_snapshot",
+        ref: sourceContext.governedMemoryUseAuditRef,
+        schemaVersion: "governed-memory-use-audit/v1",
+        idempotencyKey: input.idempotencyKey,
+        requestedUseClass: sourceContext.requestedUseClass,
+        acceptedState: sourceContext.governedMemoryUseAuditOutcome,
+      })
+    );
+  }
+
+  return readSet;
+}
+
+function governedReadSetEntry(input: {
+  port: "governed_memory_decision_snapshot" | "governed_memory_use_audit_snapshot";
+  ref: string;
+  schemaVersion: string;
+  idempotencyKey: string;
+  requestedUseClass: string;
+  acceptedState: string;
+}): LearningPriorConsumptionReadSetEntry {
+  return {
+    sourceKind: "snapshot_event",
+    ref: input.ref,
+    snapshotId: `${input.port}:${input.ref}`,
+    snapshotEventRef: input.ref,
+    portSchemaVersion: input.schemaVersion,
+    versionOrSequence: input.ref,
+    highWatermark: input.ref,
+    inputHash: hash(`${input.idempotencyKey}:${input.port}`),
+    snapshotPayloadHash: hash(JSON.stringify({
+      ref: input.ref,
+      requestedUseClass: input.requestedUseClass,
+      acceptedState: input.acceptedState,
+    })),
+    redactionClass: "refs_only",
+    port: input.port,
+  };
+}
+
+function interactionPolicyBiasProjections(input: {
+  prior: LearningPriorSnapshot;
+  suggestion: LearningPriorSuggestion;
+  consumptionRecordId: string;
+}): InteractionPolicyBiasProjection[] {
+  if (input.suggestion.kind !== "interaction_policy_bias" || !input.suggestion.interactionPolicyBias) {
+    return [];
+  }
+
+  const body = input.suggestion.interactionPolicyBias;
+  return [
+    InteractionPolicyBiasProjectionSchema.parse({
+      priorId: input.prior.id,
+      suggestionId: input.suggestion.id,
+      consumptionRecordId: input.consumptionRecordId,
+      targetDecision: body.targetDecision,
+      direction: body.direction,
+      boundedDelta: Math.min(0.2, body.strength * input.suggestion.strength),
+      strength: input.suggestion.strength,
+      expiresAt: earlierIso(input.suggestion.expiresAt, body.expiresAt),
+      maxUses: Math.min(input.suggestion.maxUses, body.maxApplications),
+      cooldown: body.cooldown,
+      requiresAttentionAdmission: true,
+      surfaceEligible: false,
+      proactiveEligible: false,
+      successSignalRefs: body.successSignalRefs,
+      failureSignalRefs: body.failureSignalRefs,
+    }),
+  ];
+}
+
+function earlierIso(first: string, second: string): string {
+  return Date.parse(first) <= Date.parse(second) ? first : second;
 }
 
 function hash(seed: string): string {

@@ -509,6 +509,15 @@ describe("CoreLoop agentic phase hooks", () => {
     const { deps, mocks } = createDeps(tmpDir);
     const experienceStore = new ExperienceLearningStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
     deps.experienceLearningStore = experienceStore;
+    const ownerReviewEntries: unknown[] = [];
+    deps.cognitionWritebackQueue = {
+      enqueue: vi.fn(async (entry) => {
+        ownerReviewEntries.push(entry);
+        return entry;
+      }),
+      update: vi.fn(async (entry) => entry),
+      list: vi.fn(async () => ownerReviewEntries as never),
+    };
     let evidenceSeq = 0;
     deps.evidenceLedger = {
       append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
@@ -555,6 +564,20 @@ describe("CoreLoop agentic phase hooks", () => {
 
       expect(first.experienceLearning?.status).toBe("processed");
       expect(second.experienceLearning?.status).toBe("processed");
+      const trialReadyCandidates = await experienceStore.listGeneralizationCandidates("goal-1");
+      expect(trialReadyCandidates).toEqual([
+        expect.objectContaining({
+          status: "trial_reuse_ready",
+          invariantRefs: expect.arrayContaining([
+            expect.stringContaining("experience-frame:"),
+          ]),
+          transferScopes: expect.arrayContaining([
+            expect.objectContaining({ scopeRef: "goal:goal-1", status: "trial_allowed", maxTrials: 1 }),
+            expect.objectContaining({ scopeRef: "adjacent:goal-1:dim1", status: "adjacent_candidate", maxTrials: 1 }),
+          ]),
+        }),
+      ]);
+      expect(trialReadyCandidates[0]!.invariantRefs.length).toBeLessThanOrEqual(2);
       const priors = await experienceStore.listPriorSnapshots("goal-1");
       expect(priors).toEqual([
         expect.objectContaining({
@@ -613,6 +636,19 @@ describe("CoreLoop agentic phase hooks", () => {
           }),
         }),
       ]);
+      expect(deps.cognitionWritebackQueue.enqueue).toHaveBeenCalledWith(expect.objectContaining({
+        review_required: true,
+        owner_write_performed: false,
+        runtime_authority: false,
+        state: "queued",
+      }));
+      await expect(experienceStore.listProjectionProposals(promotedArtifacts[0]!.id)).resolves.toEqual([
+        expect.objectContaining({
+          sourceArtifactIds: [promotedArtifacts[0]!.id],
+          ownerReviewQueueRef: `queue:experience-learning:${promotedArtifacts[0]!.id}`,
+          status: "queued",
+        }),
+      ]);
       const postExperimentPriors = await experienceStore.listPriorSnapshots("goal-1");
       expect(postExperimentPriors).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -630,6 +666,134 @@ describe("CoreLoop agentic phase hooks", () => {
           ]),
         }),
       ]));
+      const promotedCandidates = (await experienceStore.listGeneralizationCandidates("goal-1"))
+        .filter((candidate) => candidate.status === "promoted");
+      expect(promotedCandidates).toEqual([
+        expect.objectContaining({
+          status: "promoted",
+          transferScopes: expect.arrayContaining([
+            expect.objectContaining({ scopeRef: "goal:goal-1", status: "exact", attempts: 1 }),
+            expect.objectContaining({ scopeRef: "adjacent:goal-1:dim1", status: "adjacent_candidate", attempts: 0 }),
+          ]),
+        }),
+      ]);
+    } finally {
+      await experienceStore.close();
+    }
+  });
+
+  it("narrows transfer scope and records counterexamples after a failed N+1 trial reuse", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    const experienceStore = new ExperienceLearningStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+    deps.experienceLearningStore = experienceStore;
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `negative-transfer-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:negative-transfer-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `negative transfer evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    let taskCall = 0;
+    (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      taskCall += 1;
+      return makeTaskCycleResult({
+        taskId: `negative-task-${taskCall}`,
+        action: "discard",
+        verdict: "fail",
+      });
+    });
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-other", label: "Other Dimension", current_value: 0 }),
+    ] }));
+
+    try {
+      const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+
+      await loop.runOneIteration("goal-1", 0);
+      await loop.runOneIteration("goal-1", 1);
+      const priors = await experienceStore.listPriorSnapshots("goal-1");
+      expect(priors).toEqual([
+        expect.objectContaining({
+          suggestions: [expect.objectContaining({ kind: "trial_reuse_experiment" })],
+        }),
+      ]);
+
+      await loop.runOneIteration("goal-1", 2);
+
+      const experimentRecords = await experienceStore.listExperimentRecords("goal-1");
+      expect(experimentRecords).toEqual([
+        expect.objectContaining({
+          taskId: "negative-task-3",
+          outcome: "falsified",
+          testedGeneralizationCandidateIds: [expect.stringContaining("generalization-candidate:")],
+          narrowedGeneralizationCandidateIds: [expect.stringContaining("generalization-candidate:")],
+          negativeTransferRefs: expect.arrayContaining([expect.stringMatching(/^negative-transfer-evidence-/)]),
+        }),
+      ]);
+      const narrowedCandidates = (await experienceStore.listGeneralizationCandidates("goal-1"))
+        .filter((candidate) => candidate.status === "narrowed");
+      expect(narrowedCandidates).toEqual([
+        expect.objectContaining({
+          status: "narrowed",
+          counterexampleRefs: expect.arrayContaining([
+            experimentRecords[0]!.id,
+            expect.stringMatching(/^negative-transfer-evidence-/),
+          ]),
+          transferScopes: expect.arrayContaining([
+            expect.objectContaining({
+              scopeRef: "goal:goal-1",
+              status: "narrowed",
+              attempts: 1,
+              negativeTransferRefs: expect.arrayContaining([
+                experimentRecords[0]!.id,
+                expect.stringMatching(/^negative-transfer-evidence-/),
+              ]),
+            }),
+            expect.objectContaining({
+              scopeRef: "adjacent:goal-1:dim1",
+              status: "narrowed",
+              attempts: 1,
+              negativeTransferRefs: expect.arrayContaining([
+                experimentRecords[0]!.id,
+                expect.stringMatching(/^negative-transfer-evidence-/),
+              ]),
+            }),
+          ]),
+        }),
+      ]);
+      const artifacts = await experienceStore.listArtifacts("goal-1");
+      expect(artifacts).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: "narrowed",
+          guardrails: expect.objectContaining({
+            requiresFreshEvidenceBeforePromotion: true,
+            contradictionRefs: expect.arrayContaining([expect.stringMatching(/^negative-transfer-evidence-/)]),
+          }),
+        }),
+      ]));
+      expect((await experienceStore.listPriorSnapshots("goal-1")).filter((prior) =>
+        prior.sourceArtifactIds.some((artifactId) =>
+          artifacts.some((artifact) => artifact.id === artifactId && artifact.status === "narrowed")
+        )
+      )).toEqual([]);
     } finally {
       await experienceStore.close();
     }

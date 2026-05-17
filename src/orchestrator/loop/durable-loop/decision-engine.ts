@@ -158,6 +158,7 @@ export class CoreDecisionEngine {
         reason_code: input.learningProjection.projectionKind,
         focus_refs: input.learningProjection.focusRefs,
         inhibition_refs: input.learningProjection.inhibitionRefs,
+        interaction_policy_biases: input.learningProjection.interactionPolicyBiases,
       };
     }
 

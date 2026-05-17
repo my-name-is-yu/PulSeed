@@ -12,7 +12,28 @@ export const LearningPriorConsumptionReadSetEntrySchema = ImmutableSnapshotReadR
     "governed_memory_decision_snapshot",
     "governed_memory_use_audit_snapshot",
   ]),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const present = [
+    value.snapshotEventRef ? "snapshotEventRef" : null,
+    value.snapshotEvidenceRef ? "snapshotEvidenceRef" : null,
+    value.runtimeEventProjectionRef ? "runtimeEventProjectionRef" : null,
+  ].filter(Boolean);
+  if (present.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "learning-prior read set entry must name exactly one immutable replay source",
+    });
+  }
+  if (value.sourceKind === "snapshot_event" && !value.snapshotEventRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["snapshotEventRef"], message: "snapshot_event requires snapshotEventRef" });
+  }
+  if (value.sourceKind === "snapshot_evidence" && !value.snapshotEvidenceRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["snapshotEvidenceRef"], message: "snapshot_evidence requires snapshotEvidenceRef" });
+  }
+  if (value.sourceKind === "runtime_event_projection" && !value.runtimeEventProjectionRef) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["runtimeEventProjectionRef"], message: "runtime_event_projection requires runtimeEventProjectionRef" });
+  }
+});
 export type LearningPriorConsumptionReadSetEntry = z.infer<typeof LearningPriorConsumptionReadSetEntrySchema>;
 
 export const LearningPriorConsumptionReasonCodeSchema = z.enum([

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GeneralizationCandidateSchema,
+  LearningPriorResolver,
   LearningPriorSnapshotSchema,
   MicroProbeRecordSchema,
   RedactedLearningTextSchema,
@@ -179,5 +180,182 @@ describe("experience learning contracts", () => {
         confidence: 0.7,
       })
     ).toThrow(/unknown or conflicting scope/);
+  });
+
+  it("requires governed user context and bounded payload for interaction-policy priors", () => {
+    const base = {
+      id: "suggestion-interaction",
+      kind: "interaction_policy_bias" as const,
+      consumerPhase: "next_iteration_directive" as const,
+      targetRef: { kind: "interaction_policy" as const, id: "ask_confirmation" },
+      rationale: redactedLearningLabel({ label: "Bound expression-mode bias", sourceRefs: ["evidence-1"] }),
+      sourceArtifactIds: ["artifact-1"],
+      evidenceRefs: ["evidence-1"],
+      strength: 0.5,
+      risk: "low" as const,
+      expiresAt: "2026-05-18T00:00:00.000Z",
+      maxUses: 2,
+    };
+
+    expect(() =>
+      learningPriorSuggestion({
+        ...base,
+        sourceContext: { kind: "non_user_context", requestedUseClass: "expression_mode_selection" },
+      })
+    ).toThrow(/governed_user_context/);
+
+    expect(() =>
+      learningPriorSuggestion({
+        ...base,
+        sourceContext: {
+          kind: "governed_user_context",
+          requestedUseClass: "goal_planning",
+          governedMemoryDecisionRef: "decision-1",
+          governedMemoryUseAuditRef: "audit-1",
+          governedMemoryDecisionStatus: "allowed",
+          governedMemoryUseAuditOutcome: "allowed",
+        },
+      })
+    ).toThrow(/expression_mode_selection/);
+
+    expect(() =>
+      learningPriorSuggestion({
+        ...base,
+        sourceContext: {
+          kind: "governed_user_context",
+          requestedUseClass: "expression_mode_selection",
+          governedMemoryDecisionRef: "decision-1",
+          governedMemoryUseAuditRef: "audit-1",
+          governedMemoryDecisionStatus: "allowed",
+          governedMemoryUseAuditOutcome: "allowed",
+        },
+      })
+    ).toThrow(/bounded interactionPolicyBias payload/);
+  });
+
+  it("projects governed interaction-policy bias through immutable read refs and no surface authority", () => {
+    const resolver = new LearningPriorResolver();
+    const trust = defaultRuntimeEvidenceTrust({
+      targetRef: { kind: "learning_prior", id: "prior-interaction" },
+      provenanceRefs: ["evidence-1"],
+    });
+    const sourceContext = {
+      kind: "governed_user_context" as const,
+      requestedUseClass: "expression_mode_selection" as const,
+      governedMemoryDecisionRef: "governed-memory-decision:accepted-expression-mode",
+      governedMemoryUseAuditRef: "governed-memory-audit:accepted-expression-mode",
+      governedMemoryDecisionStatus: "allowed" as const,
+      governedMemoryUseAuditOutcome: "allowed" as const,
+    };
+    const prior = LearningPriorSnapshotSchema.parse({
+      id: "prior-interaction",
+      goalId: "goal-1",
+      generatedAt: "2026-05-17T00:00:00.000Z",
+      sourceLoopIndex: 1,
+      eligibleFromIteration: 2,
+      generationEventRef: "runtime-event-projection:experience-learning:prior-interaction",
+      sourceCandidateTransitionIds: ["transition-1"],
+      scope: { refs: { goalId: "goal-1" } },
+      compatibility: {
+        decision: "compatible",
+        reasonCode: "matched_exact_refs",
+        matchedRefs: ["goalId:goal-1"],
+        missingRefs: [],
+      },
+      sourceArtifactIds: ["artifact-1"],
+      suggestions: [
+        learningPriorSuggestion({
+          id: "suggestion-interaction",
+          kind: "interaction_policy_bias",
+          consumerPhase: "next_iteration_directive",
+          targetRef: { kind: "interaction_policy", id: "ask_confirmation" },
+          rationale: redactedLearningLabel({ label: "Bound expression-mode bias", sourceRefs: ["evidence-1"] }),
+          sourceArtifactIds: ["artifact-1"],
+          evidenceRefs: ["evidence-1"],
+          strength: 0.5,
+          risk: "low",
+          expiresAt: "2026-05-18T00:00:00.000Z",
+          maxUses: 2,
+          sourceContext,
+          interactionPolicyBias: {
+            targetDecision: "ask_confirmation",
+            direction: "increase",
+            strength: 0.6,
+            maxApplications: 3,
+            decay: { kind: "uses", value: 2 },
+            cooldown: { kind: "duration", value: "PT30M" },
+            expiresAt: "2026-05-18T00:00:00.000Z",
+            applicabilityPredicates: [{
+              id: "predicate-1",
+              kind: "applicability",
+              subjectRef: "interaction-policy:ask_confirmation",
+              signalRefs: ["evidence-1"],
+              relation: "present",
+              evaluatorPort: "companion_cognition_ref",
+              confidence: 0.8,
+              failureBoundary: "defer",
+              diagnosticLabel: "accepted governed expression-mode context is current",
+            }],
+            successSignalRefs: ["success-signal-1"],
+            failureSignalRefs: ["failure-signal-1"],
+            companionCognitionRefs: ["companion-cognition:decision-1"],
+            governedMemoryDecisionRef: sourceContext.governedMemoryDecisionRef,
+            governedMemoryUseAuditRef: sourceContext.governedMemoryUseAuditRef,
+            requiresAttentionAdmission: true,
+            surfaceEligible: false,
+            proactiveEligible: false,
+          },
+        }),
+      ],
+      staleOrFalsifiedArtifactIds: [],
+      suppressedByCorrectionIds: [],
+      suppressedByQuarantineIds: [],
+      trust,
+      sourceTrustStates: [],
+      filterDecision: {
+        decision: "activated",
+        reasonCodes: ["eligible"],
+        evaluatedAt: "2026-05-17T00:00:00.000Z",
+      },
+      confidence: 0.7,
+    });
+
+    const result = resolver.resolveForPhase({
+      prior,
+      consumerPhase: "next_iteration_directive",
+      consumerScope: { refs: { goalId: "goal-1" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-1",
+      consumerDecisionRef: "next-directive:goal-1:2",
+      now: "2026-05-17T00:05:00.000Z",
+    });
+
+    expect(result.record.stage).toBe("reserved");
+    expect(result.record.readSet.map((entry) => entry.port)).toEqual([
+      "learning_prior_snapshot",
+      "governed_memory_decision_snapshot",
+      "governed_memory_use_audit_snapshot",
+    ]);
+    expect(result.projection).toEqual(expect.objectContaining({
+      phase: "next_iteration_directive",
+      projectionKind: "next_directive_mode_bias",
+    }));
+    expect(result.projection).toMatchObject({
+      interactionPolicyBiases: [{
+        priorId: "prior-interaction",
+        suggestionId: "suggestion-interaction",
+        targetDecision: "ask_confirmation",
+        direction: "increase",
+        boundedDelta: 0.2,
+        strength: 0.5,
+        maxUses: 2,
+        cooldown: { kind: "duration", value: "PT30M" },
+        requiresAttentionAdmission: true,
+        surfaceEligible: false,
+        proactiveEligible: false,
+        successSignalRefs: ["success-signal-1"],
+        failureSignalRefs: ["failure-signal-1"],
+      }],
+    });
   });
 });

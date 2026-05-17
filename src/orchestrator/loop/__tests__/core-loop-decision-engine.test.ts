@@ -268,7 +268,23 @@ describe("CoreDecisionEngine", () => {
         focusRefs: ["evidence-1"],
         inhibitionRefs: [],
         directiveModeBiasRefs: ["artifact-1"],
-        interactionPolicyBiases: [],
+        interactionPolicyBiases: [{
+          priorId: "prior-1",
+          suggestionId: "suggestion-1",
+          consumptionRecordId: "consumption-1",
+          targetDecision: "ask_confirmation",
+          direction: "increase",
+          boundedDelta: 0.1,
+          strength: 0.5,
+          expiresAt: "2026-05-18T00:00:00.000Z",
+          maxUses: 1,
+          cooldown: { kind: "duration", value: "PT30M" },
+          requiresAttentionAdmission: true,
+          surfaceEligible: false,
+          proactiveEligible: false,
+          successSignalRefs: ["success-signal-1"],
+          failureSignalRefs: ["failure-signal-1"],
+        }],
         suppressedSuggestionIds: [],
       },
       knowledgeRefreshPhase: null,
@@ -283,6 +299,13 @@ describe("CoreDecisionEngine", () => {
       focusDimension: "dim-prior",
       learning_prior_consumption_ref: "consumption-1",
       focus_refs: ["evidence-1"],
+      interaction_policy_biases: [expect.objectContaining({
+        targetDecision: "ask_confirmation",
+        boundedDelta: 0.1,
+        requiresAttentionAdmission: true,
+        surfaceEligible: false,
+        proactiveEligible: false,
+      })],
     }));
     expect(directive?.reason).not.toContain("artifact-1");
   });

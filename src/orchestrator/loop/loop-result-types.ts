@@ -12,6 +12,7 @@ import type { TaskCycleResult } from "../execution/task/task-execution-types.js"
 import type { VerificationLayer1Result } from "./verification-layer1.js";
 import type { CorePhaseKind } from "../execution/agent-loop/core-phase-runner.js";
 import type { ExperienceLearningBridgeResult } from "./durable-loop/experience-learning-bridge.js";
+import type { InteractionPolicyBiasProjection } from "../../runtime/learning/learning-prior.js";
 
 export interface CorePhaseIterationResult {
   phase: CorePhaseKind;
@@ -36,6 +37,7 @@ export interface NextIterationDirective {
   reason_code?: string;
   focus_refs?: string[];
   inhibition_refs?: string[];
+  interaction_policy_biases?: InteractionPolicyBiasProjection[];
 }
 
 export interface LoopIterationResult {
