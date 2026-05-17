@@ -14,7 +14,16 @@ import {
 } from "../../src/runtime/control/index.js";
 import { PersonalAgentRuntimeStore } from "../../src/runtime/personal-agent/index.js";
 import { ScheduleEngine } from "../../src/runtime/schedule/engine.js";
+import {
+  CommitmentCandidateExtractionSchema,
+  createCommitmentCandidate,
+  ref,
+} from "../../src/runtime/attention/index.js";
+import { runResidentCommitmentAttentionCycle } from "../../src/runtime/daemon/runner-resident-proactive.js";
+import type { AttentionScope } from "../../src/runtime/types/companion-autonomy.js";
 import { PeerInitiativeStore } from "../../src/runtime/peer-initiative/index.js";
+import { AttentionStateStore } from "../../src/runtime/store/attention-state-store.js";
+import { FeedbackIngestionStore } from "../../src/runtime/store/feedback-ingestion-store.js";
 import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
 import {
   PermissionWaitPlanStore,
@@ -43,6 +52,7 @@ describe("runtime event log restart/replay invariants", () => {
         telegram_send: 0,
         outbox_notify: 0,
         schedule_run: 0,
+        commitment_operation: 0,
         denied_tool_call: 0,
       };
 
@@ -158,6 +168,13 @@ describe("runtime event log restart/replay invariants", () => {
       const scheduleDistinct = await runDueSchedule({ root, runtimeRoot, controlBaseDir, label: "distinct" });
       sideEffects.schedule_run += scheduleDistinct.runCount;
 
+      const commitmentFirst = await runCommitmentOperationCycle({ root, runtimeRoot, controlBaseDir, label: "first" });
+      sideEffects.commitment_operation += commitmentFirst.preparedCount;
+      const commitmentReplay = await runCommitmentOperationCycle({ root, runtimeRoot, controlBaseDir, label: "first" });
+      sideEffects.commitment_operation += commitmentReplay.preparedCount;
+      const commitmentDistinct = await runCommitmentOperationCycle({ root, runtimeRoot, controlBaseDir, label: "distinct" });
+      sideEffects.commitment_operation += commitmentDistinct.preparedCount;
+
       await runDeniedToolAfterRestart({
         root,
         runtimeRoot,
@@ -199,6 +216,7 @@ describe("runtime event log restart/replay invariants", () => {
         telegram_send: 2,
         outbox_notify: 2,
         schedule_run: 2,
+        commitment_operation: 2,
         denied_tool_call: 0,
       });
       expect(events.map((event) => event.event_type)).toEqual(expect.arrayContaining([
@@ -208,7 +226,12 @@ describe("runtime event log restart/replay invariants", () => {
         "memory.correction.recorded",
         "schedule.wake.recorded",
         "tool.call.recorded",
+        "attention.commitment.recorded",
       ]));
+      expect(events
+        .filter((event) => event.event_type === "attention.commitment.recorded")
+        .map((event) => event.caller_path)
+      ).toEqual(expect.arrayContaining(["resident_proactive"]));
       expect(events.every((event) =>
         event.trace_id.length > 0
         && event.correlation_id.length > 0
@@ -224,6 +247,7 @@ describe("runtime event log restart/replay invariants", () => {
       expect(rebuild.memory_correction_invalidation_summary.length).toBeGreaterThan(0);
       expect(rebuild.schedule_wake_execution_summary.length).toBeGreaterThan(0);
       expect(rebuild.tool_execution_outcome_summary.length).toBeGreaterThan(0);
+      expect(rebuild.attention_commitment_lifecycle_summary.length).toBeGreaterThan(0);
       expect(explanation.runtime_graph.edges.map((edge) => edge.edge_kind)).toEqual(expect.arrayContaining([
         "caused_by",
         "approved_by",
@@ -234,6 +258,87 @@ describe("runtime event log restart/replay invariants", () => {
     }
   });
 });
+
+function commitmentScope(label: string): AttentionScope {
+  return {
+    userId: "user-1",
+    identityId: "identity-1",
+    workspaceId: "workspace-1",
+    conversationId: `conversation-${label}`,
+    sessionId: `session-${label}`,
+    surfaceClass: "telegram",
+    surfaceRef: "surface:telegram",
+    permissionScope: "read_only",
+    sensitivity: "medium",
+    memoryOwner: null,
+    policyEpoch: "policy:runtime-event-replay",
+  };
+}
+
+function replayCommitmentCandidate(label: string) {
+  const candidate = createCommitmentCandidate({
+    extraction: CommitmentCandidateExtractionSchema.parse({
+      outcome: "candidate",
+      summary: `Review the ${label} launch note tomorrow.`,
+      due: {
+        window_start: NOW,
+        window_end: "2026-05-16T01:00:00.000Z",
+        uncertainty: "medium",
+        reason: "replay test due window",
+      },
+      owner: "user",
+      confidence: 0.86,
+      sensitivity: "internal",
+      allowed_memory_use: "attention_only",
+      nudge_policy: "allowed",
+      watch_vector: ["deadline", "related_conversation"],
+    }),
+    scope: commitmentScope(label),
+    turnId: `turn-${label}`,
+    sessionId: `session-${label}`,
+    sourceId: `chat:session-${label}:turn-${label}:user`,
+    emittedAt: "2026-05-15T23:50:00.000Z",
+    policyEpoch: "policy:runtime-event-replay",
+    activeSurfaceRef: ref("surface", "surface:telegram"),
+  });
+  expect(candidate).not.toBeNull();
+  return {
+    ...candidate!,
+    materialization_state: "watching" as const,
+    next_revisit_at: NOW,
+  };
+}
+
+async function runCommitmentOperationCycle(input: {
+  root: string;
+  runtimeRoot: string;
+  controlBaseDir: string;
+  label: string;
+}): Promise<{ preparedCount: number }> {
+  const store = new AttentionStateStore(input.runtimeRoot, { controlBaseDir: input.controlBaseDir });
+  const peerStore = new PeerInitiativeStore(input.runtimeRoot, { controlBaseDir: input.controlBaseDir });
+  const before = await peerStore.listRecentCandidates();
+  await store.saveCommitmentCandidates([replayCommitmentCandidate(input.label)]);
+  await runResidentCommitmentAttentionCycle({
+    baseDir: input.root,
+    config: { runtime_root: "runtime" },
+    state: {
+      started_at: NOW,
+      loop_count: 1,
+    },
+    logger: {
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    },
+    saveDaemonState: vi.fn(async () => {}),
+    attentionStateStore: store,
+    feedbackIngestionStore: new FeedbackIngestionStore(input.runtimeRoot, { controlBaseDir: input.controlBaseDir }),
+  } as never, NOW);
+  const after = await peerStore.listRecentCandidates();
+  return { preparedCount: Math.max(0, after.length - before.length) };
+}
 
 function canonicalPlan(input: { root: string; callId: string }): PermissionWaitCanonicalPlan {
   return {

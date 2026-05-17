@@ -158,6 +158,8 @@ pulseed runtime memory-provenance [--json]
 
 These are operator and debugging surfaces. They may expose raw IDs and
 diagnostic labels that normal user-facing chat should hide by default.
+`event-log rebuild --trace` is inspection-only and must be combined with
+`--dry-run`; current-state apply uses the full event log with no trace filter.
 `peer-initiative-capability` is the exception that deliberately narrows the
 current product claim: resident peer initiative delivery is Telegram-only.
 
@@ -179,15 +181,23 @@ and RuntimeGraph edges to answer what caused the trace, what admitted or blocked
 it, what it touched, whether replay/dedupe was involved, and which summary
 projections can be rebuilt. `runtime event-log rebuild --dry-run`
 deterministically rebuilds the current interaction-authority, approval-resume,
-outbox/notification, peer-delivery, memory-correction, schedule-wake, and
-tool-outcome summaries from events plus RuntimeGraph evidence without writing a
+outbox/notification, peer-delivery, memory-correction, memory-truth,
+schedule-wake, tool-outcome, runtime-control operation, and attention
+commitment summaries from events plus RuntimeGraph evidence without writing a
 rebuild event; without `--dry-run`, the rebuild itself is recorded as a
-projection event. It does not rewrite every legacy current-state table yet.
+projection event before event-backed current-state rows are restored for
+goals, tasks, interaction authority decisions, runtime-control operations, and
+attention commitments, and the summaries are then applied as typed projection
+snapshots. It does not rewrite side-effect queues, transport receipts, scheduler
+owner/history rows, memory truth owner rows, approval wait rows, tool effects,
+or live daemon/session status rows.
 Goal/task mutations routed through `GoalTaskStateStore` append typed mutation
-events before their current-state projection writes. Replays with the same event
-type, idempotency key, replay policy, and side-effect ref resolve to the already
-recorded runtime event and side-effect-guarded authority callers suppress the
-duplicate boundary instead of executing it again. Distinct
+events before their current-state projection writes. Runtime-control operations
+and attention-led commitment candidate lifecycle transitions use the same event
+append -> RuntimeGraph link -> projection update ordering. Replays with the same
+event type, idempotency key, replay policy, and side-effect ref resolve to the
+already recorded runtime event and side-effect-guarded authority callers
+suppress the duplicate boundary instead of executing it again. Distinct
 transport/side-effect refs remain append-only outcome evidence.
 
 The Interaction Authority Kernel is the shared contract for side-effect

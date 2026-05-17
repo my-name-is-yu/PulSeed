@@ -52,6 +52,11 @@ import {
   type RuntimeControlDbStoreOptions,
   type SqliteDatabase,
 } from "./control-db/index.js";
+import {
+  appendRuntimeEventEnvelopeInTransaction,
+  runtimeEventFromAttentionCommitment,
+} from "./runtime-event-log.js";
+import type { PersonalAgentCallerPath } from "../personal-agent/contracts.js";
 import type { CompanionWideControl } from "../types/companion-state.js";
 
 export const AttentionStoreLifecycleSchema = z.enum([
@@ -293,7 +298,8 @@ export class AttentionStateStore {
   }
 
   async saveCommitmentCandidates(
-    candidates: readonly CommitmentCandidate[]
+    candidates: readonly CommitmentCandidate[],
+    options: { callerPath?: PersonalAgentCallerPath } = {},
   ): Promise<CommitmentCandidateWriteResult> {
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -306,6 +312,22 @@ export class AttentionStateStore {
           duplicates.push(existing);
           continue;
         }
+        if (existing) {
+          const timestampComparison = compareIsoTimestamps(candidate.updated_at, existing.updated_at);
+          if (
+            timestampComparison < 0
+            || (timestampComparison === 0 && sameCommitmentCandidateRevision(candidate, existing))
+          ) {
+            accepted.push(existing);
+            continue;
+          }
+        }
+        appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromAttentionCommitment({
+          operation: "candidate_saved",
+          candidate,
+          previousCandidate: existing,
+          callerPath: options.callerPath,
+        }));
         upsertCommitmentCandidate(sqlite, candidate);
         accepted.push(candidate);
       }
@@ -327,6 +349,7 @@ export class AttentionStateStore {
     feedbackRef?: string | null;
     snoozeUntil?: string | null;
     reason?: string;
+    callerPath?: PersonalAgentCallerPath;
   }): Promise<CommitmentCandidate | null> {
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -340,6 +363,15 @@ export class AttentionStateStore {
         snoozeUntil: input.snoozeUntil,
         reason: input.reason,
       });
+      appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromAttentionCommitment({
+        operation: "lifecycle_control_applied",
+        candidate: updated,
+        previousCandidate: existing,
+        control: input.control,
+        feedbackRef: input.feedbackRef,
+        occurredAt: input.now,
+        callerPath: input.callerPath,
+      }));
       upsertCommitmentCandidate(sqlite, updated);
       return updated;
     });
@@ -1305,6 +1337,10 @@ function upsertCommitmentCandidate(sqlite: SqliteDatabase, raw: CommitmentCandid
   );
 }
 
+function sameCommitmentCandidateRevision(left: CommitmentCandidate, right: CommitmentCandidate): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
 function readCommitmentCandidate(sqlite: SqliteDatabase, commitmentId: string): CommitmentCandidate | null {
   const row = sqlite.prepare(`
     SELECT candidate_json
@@ -1351,6 +1387,19 @@ function listCommitmentCandidates(
     ORDER BY updated_at ASC, commitment_id ASC
   `).all(...params) as Array<{ candidate_json: string }>;
   return rows.flatMap((row) => parseStored<CommitmentCandidate>(row.candidate_json, CommitmentCandidateSchema));
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, sortJsonValue(record[key])]));
+  }
+  return value;
 }
 
 function upsertAttentionInput(
@@ -1815,6 +1864,15 @@ function shouldPreferLegacyAgendaMutation(
 function compareAgendaItems(left: AgentAgendaItem, right: AgentAgendaItem): number {
   return left.updated_at.localeCompare(right.updated_at)
     || left.agenda_item_id.localeCompare(right.agenda_item_id);
+}
+
+function compareIsoTimestamps(left: string, right: string): number {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+    return leftMs - rightMs;
+  }
+  return left.localeCompare(right);
 }
 
 function listCurrentAgendaItems(

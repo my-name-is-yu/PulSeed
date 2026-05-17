@@ -9,6 +9,10 @@ import {
   runtimeEventFromOperationTransition,
   runtimeItemFromOperation,
 } from "./runtime-operation-companion.js";
+import {
+  appendRuntimeEventEnvelopeInTransaction,
+  runtimeEventFromRuntimeControlOperationTransition,
+} from "./runtime-event-log.js";
 import { createRuntimeStorePaths, type RuntimeStorePaths } from "./runtime-paths.js";
 import {
   createJsonRowCodec,
@@ -156,10 +160,17 @@ export class RuntimeOperationStore {
     const parsed = RuntimeControlOperationSchema.parse(operation);
     const db = await this.database();
     db.transaction((sqlite) => {
+      const previous = loadRuntimeOperation(sqlite, parsed.operation_id);
+      if (!isNoopRuntimeOperationTransition(parsed, previous)) {
+        appendRuntimeEventEnvelopeInTransaction(
+          sqlite,
+          runtimeEventFromRuntimeControlOperationTransition(parsed, previous),
+        );
+      }
       persistStateTransitionWithAudit({
         current: parsed,
         emitAudit: options.emitEvent,
-        loadPrevious: () => loadRuntimeOperation(sqlite, parsed.operation_id),
+        loadPrevious: () => previous,
         persistCurrent: () => upsertRuntimeOperation(sqlite, parsed),
         buildAudit: runtimeEventFromOperationTransition,
         persistAudit: (event) => insertRuntimeOperationEvent(sqlite, event, parsed.operation_id),
@@ -231,6 +242,14 @@ function upsertRuntimeOperation(
     updated_at: operation.updated_at,
     operation_json: RuntimeOperationJsonCodec.stringify(operation),
   });
+}
+
+function isNoopRuntimeOperationTransition(
+  operation: RuntimeControlOperation,
+  previous: RuntimeControlOperation | null,
+): boolean {
+  return previous !== null
+    && RuntimeOperationJsonCodec.stringify(previous) === RuntimeOperationJsonCodec.stringify(operation);
 }
 
 function insertRuntimeOperationEvent(

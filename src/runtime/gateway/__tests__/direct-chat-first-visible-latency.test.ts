@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod/v3";
 import { CrossPlatformChatSessionManager } from "../../../interface/chat/cross-platform-session.js";
 import type { ChatEvent } from "../../../interface/chat/chat-events.js";
@@ -201,6 +201,12 @@ async function runFakeTelegramLikeTurn(inputText: string): Promise<{
     llmClient,
   };
 }
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  clearRegisteredGatewayChatSessionPort();
+  vi.useRealTimers();
+});
 
 afterEach(() => {
   clearRegisteredGatewayChatSessionPort();

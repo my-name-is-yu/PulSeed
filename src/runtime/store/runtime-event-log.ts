@@ -11,11 +11,24 @@ import {
   PersonalAgentDecisionTraceSchema,
   RuntimeGraphEdgeSchema,
   RuntimeGraphNodeSchema,
+  type PersonalAgentCallerPath,
   type PersonalAgentDecisionTrace,
   type RuntimeGraphEdge,
   type RuntimeGraphNode,
   type RuntimeGraphRef,
 } from "../personal-agent/contracts.js";
+import {
+  CommitmentCandidateSchema,
+  CommitmentLifecycleControlSchema,
+  type CommitmentCandidate,
+  type CommitmentLifecycleControl,
+} from "../attention/commitment-candidate.js";
+import { attentionScopeKey } from "../attention/attention-scope.js";
+import {
+  isTerminalRuntimeControlState,
+  RuntimeControlOperationSchema,
+  type RuntimeControlOperation,
+} from "./runtime-operation-schemas.js";
 import {
   createRuntimeStorePaths,
   type RuntimeStorePaths,
@@ -57,6 +70,7 @@ export const RuntimeEventTypeSchema = z.enum([
   "projection.rebuild.recorded",
   "goal.mutation.recorded",
   "task.mutation.recorded",
+  "attention.commitment.recorded",
 ]);
 export type RuntimeEventType = z.infer<typeof RuntimeEventTypeSchema>;
 
@@ -103,6 +117,12 @@ const RuntimeGoalTaskMutationEventPayloadSchema = z.object({
   ]),
 }).strict();
 
+const RuntimeControlOperationEventPayloadSchema = z.object({
+  schema_version: z.literal("runtime-event-payload/runtime-control-operation/v1"),
+  operation: RuntimeControlOperationSchema,
+  previous_operation: RuntimeControlOperationSchema.nullable().default(null),
+}).strict();
+
 const RuntimeMemoryTruthMaintenanceEventPayloadSchema = z.object({
   schema_version: z.literal("runtime-event-payload/memory-truth-maintenance/v1"),
   operation: z.enum(["snapshot", "correction", "recall", "projection_rebuild"]),
@@ -118,12 +138,26 @@ const RuntimeMemoryTruthMaintenanceEventPayloadSchema = z.object({
   }).strict(),
 }).strict();
 
+const RuntimeAttentionCommitmentEventPayloadSchema = z.object({
+  schema_version: z.literal("runtime-event-payload/attention-commitment/v1"),
+  operation: z.enum(["candidate_saved", "lifecycle_control_applied", "projection_rebuild"]),
+  commitment_id: z.string().min(1),
+  previous_materialization_state: z.string().min(1).nullable().default(null),
+  control: CommitmentLifecycleControlSchema.nullable().default(null),
+  feedback_ref: z.string().min(1).nullable().default(null),
+  materialization_ref: z.string().min(1).nullable().default(null),
+  suppression_refs: z.array(z.string().min(1)).default([]),
+  candidate: CommitmentCandidateSchema,
+}).strict();
+
 export const RuntimeEventPayloadSchema = z.discriminatedUnion("schema_version", [
   RuntimePersonalAgentTraceEventPayloadSchema,
   RuntimeAuthorityDecisionEventPayloadSchema,
   RuntimeProjectionRebuildEventPayloadSchema,
   RuntimeGoalTaskMutationEventPayloadSchema,
+  RuntimeControlOperationEventPayloadSchema,
   RuntimeMemoryTruthMaintenanceEventPayloadSchema,
+  RuntimeAttentionCommitmentEventPayloadSchema,
 ]);
 export type RuntimeEventPayload = z.infer<typeof RuntimeEventPayloadSchema>;
 
@@ -173,6 +207,16 @@ export interface RuntimeEventAppendResult {
   disposition: RuntimeEventAppendDisposition;
 }
 
+export interface RuntimeAttentionCommitmentEventInput {
+  operation: "candidate_saved" | "lifecycle_control_applied" | "projection_rebuild";
+  candidate: CommitmentCandidate;
+  previousCandidate?: CommitmentCandidate | null;
+  control?: CommitmentLifecycleControl | null;
+  feedbackRef?: string | null;
+  occurredAt?: string;
+  callerPath?: PersonalAgentCallerPath;
+}
+
 export interface RuntimeEventProjectionRebuild {
   schema_version: "runtime-event-projection-rebuild/v1";
   rebuilt_at: string;
@@ -197,6 +241,51 @@ export interface RuntimeEventProjectionRebuild {
   memory_truth_maintenance_summary: Array<Record<string, unknown>>;
   schedule_wake_execution_summary: Array<Record<string, unknown>>;
   tool_execution_outcome_summary: Array<Record<string, unknown>>;
+  runtime_control_operation_summary: Array<Record<string, unknown>>;
+  attention_commitment_lifecycle_summary: Array<Record<string, unknown>>;
+}
+
+export type RuntimeEventProjectionName =
+  | "interaction_authority_summary"
+  | "approval_resume_outcomes"
+  | "notification_outbox_dedupe_state"
+  | "peer_delivery_state"
+  | "memory_correction_invalidation_summary"
+  | "memory_truth_maintenance_summary"
+  | "schedule_wake_execution_summary"
+  | "tool_execution_outcome_summary"
+  | "runtime_control_operation_summary"
+  | "attention_commitment_lifecycle_summary";
+
+export interface RuntimeEventProjectionSnapshot {
+  schema_version: "runtime-event-projection-snapshot/v1";
+  projection_name: RuntimeEventProjectionName;
+  scope: {
+    kind: "trace" | "control_db";
+    ref: string;
+  };
+  rebuilt_at: string;
+  source_event_count: number;
+  source_event_refs: string[];
+  snapshot: unknown;
+}
+
+export interface RuntimeEventProjectionApplyResult {
+  schema_version: "runtime-event-projection-apply/v1";
+  applied_at: string;
+  dry_run: false;
+  rebuild: RuntimeEventProjectionRebuild;
+  snapshots: RuntimeEventProjectionSnapshot[];
+  current_state_projection_rows: RuntimeEventProjectionCurrentStateApplySummary;
+  event: RuntimeEventEnvelope;
+}
+
+export interface RuntimeEventProjectionCurrentStateApplySummary {
+  goal_records: number;
+  task_records: number;
+  interaction_authority_decisions: number;
+  runtime_operations: number;
+  attention_commitment_candidates: number;
 }
 
 export interface RuntimeGraphExplainResult {
@@ -273,40 +362,77 @@ export class RuntimeEventLogStore {
     return this.append(runtimeEventFromGoalTaskMutation(input));
   }
 
+  async appendRuntimeControlOperation(input: {
+    operation: RuntimeControlOperation;
+    previousOperation?: RuntimeControlOperation | null;
+  }): Promise<RuntimeEventEnvelope> {
+    return this.append(runtimeEventFromRuntimeControlOperationTransition(input.operation, input.previousOperation ?? null));
+  }
+
+  async appendAttentionCommitment(input: RuntimeAttentionCommitmentEventInput): Promise<RuntimeEventEnvelope> {
+    return this.append(runtimeEventFromAttentionCommitment(input));
+  }
+
   async recordProjectionRebuild(input: {
     rebuild: RuntimeEventProjectionRebuild;
     dryRun: boolean;
   }): Promise<RuntimeEventEnvelope> {
-    const occurredAt = new Date().toISOString();
-    const rebuildId = `projection-rebuild:${stableId(stableJson(input.rebuild))}`;
-    return this.append({
-      schema_version: "runtime-event-envelope/v1",
-      event_id: `runtime-event:${stableId(`projection:${rebuildId}:${occurredAt}`)}`,
-      event_type: "projection.rebuild.recorded",
-      occurred_at: occurredAt,
-      trace_id: input.rebuild.trace_id ?? rebuildId,
-      causation_id: input.rebuild.trace_id,
-      correlation_id: input.rebuild.trace_id ?? rebuildId,
-      idempotency_key: rebuildId,
-      actor: { kind: "operator", ref: "runtime-event-log-rebuild" },
-      caller_path: "explicit_user_command",
-      surface: "operator_debug",
-      source_ref: { kind: "runtime_event_projection_rebuild", ref: rebuildId },
-      target_refs: projectionNames(input.rebuild).map((name) => ({ kind: "projection", ref: name })),
-      replay_policy: {
-        mode: input.dryRun ? "projection_rebuild" : "dedupe_by_idempotency_key",
-        duplicate_side_effect_policy: "projection_only",
-        idempotency_scope: "runtime-event-projection-rebuild",
-      },
-      payload_schema: "runtime-event-payload/projection-rebuild/v1",
-      payload_version: "runtime-event-payload/projection-rebuild/v1",
-      payload: {
-        schema_version: "runtime-event-payload/projection-rebuild/v1",
-        rebuild_id: rebuildId,
-        dry_run: input.dryRun,
-        projection_names: projectionNames(input.rebuild),
-        summary: input.rebuild as unknown as Record<string, unknown>,
-      },
+    return this.append(runtimeEventFromProjectionRebuild(input));
+  }
+
+  async applyProjectionRebuild(options: { traceId?: string } = {}): Promise<RuntimeEventProjectionApplyResult> {
+    if (options.traceId) {
+      throw new Error(
+        "Trace-scoped projection apply is not supported; use rebuild --dry-run --trace for inspection or omit --trace to apply the full event log.",
+      );
+    }
+    const appliedAt = new Date().toISOString();
+    const db = await this.database();
+    const applied = db.transaction((sqlite) => {
+      const sourceEvents = readProjectionApplySourceEvents(sqlite, options);
+      const graph = readRuntimeGraphForEvents(sqlite, sourceEvents);
+      const rebuild = rebuildRuntimeEventProjections(sourceEvents, options.traceId ?? null, graph);
+      const snapshots = projectionSnapshots(rebuild, appliedAt);
+      const append = appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromProjectionRebuild({
+        rebuild,
+        dryRun: false,
+        occurredAt: appliedAt,
+      }));
+      const currentStateProjectionRows = applyEventBackedCurrentStateProjections(
+        sqlite,
+        sourceEvents,
+        { pruneStaleRows: true },
+      );
+      for (const snapshot of snapshots) {
+        upsertProjectionSnapshot(sqlite, snapshot);
+      }
+      return {
+        event: append.event,
+        currentStateProjectionRows,
+        rebuild,
+        snapshots,
+      };
+    });
+    return {
+      schema_version: "runtime-event-projection-apply/v1",
+      applied_at: appliedAt,
+      dry_run: false,
+      rebuild: applied.rebuild,
+      snapshots: applied.snapshots,
+      current_state_projection_rows: applied.currentStateProjectionRows,
+      event: applied.event,
+    };
+  }
+
+  async listProjectionSnapshots(): Promise<RuntimeEventProjectionSnapshot[]> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT snapshot_json
+        FROM runtime_event_projection_snapshots
+        ORDER BY projection_name ASC, scope_kind ASC, scope_ref ASC
+      `).all() as Array<{ snapshot_json: string }>;
+      return rows.flatMap((row) => parseProjectionSnapshot(row.snapshot_json));
     });
   }
 
@@ -327,7 +453,7 @@ export class RuntimeEventLogStore {
         FROM runtime_events
         WHERE (? IS NULL OR trace_id = ?)
           AND (? IS NULL OR event_type = ?)
-        ORDER BY occurred_at ASC, event_id ASC
+        ORDER BY occurred_at ASC, event_sequence ASC
         ${hasLimit ? "LIMIT ?" : ""}
       `).all(...params) as Array<{ event_json: string }>;
       return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
@@ -591,9 +717,190 @@ export function runtimeEventFromGoalTaskMutation(input:
   };
 }
 
+export function runtimeEventFromRuntimeControlOperationTransition(
+  operationInput: RuntimeControlOperation,
+  previousOperationInput: RuntimeControlOperation | null,
+): RuntimeEventEnvelopeInput {
+  const operation = RuntimeControlOperationSchema.parse(operationInput);
+  const previousOperation = previousOperationInput ? RuntimeControlOperationSchema.parse(previousOperationInput) : null;
+  const operationRevision = stableId(stableJson(operation));
+  const transitionIdentity = [
+    "runtime-control-operation",
+    operation.operation_id,
+    previousOperation?.state ?? "created",
+    operation.state,
+    operation.updated_at,
+    operationRevision,
+  ].join(":");
+  const eventId = `runtime-event:${stableId(transitionIdentity)}`;
+  const operationRef = { kind: "runtime_control_operation", ref: operation.operation_id };
+  const targetRefs = uniqueRefs([
+    operationRef,
+    { kind: "projection", ref: "runtime_operations" },
+    { kind: "surface_projection", ref: `runtime-control:${operation.operation_id}` },
+    ...(operation.target?.goal_id ? [{ kind: "goal", ref: operation.target.goal_id }] : []),
+    ...(operation.target?.session_id ? [{ kind: "session", ref: operation.target.session_id }] : []),
+  ]);
+  return {
+    schema_version: "runtime-event-envelope/v1",
+    event_id: eventId,
+    event_type: "runtime_control.operation.recorded",
+    occurred_at: validIsoOrNow(operation.updated_at),
+    trace_id: `runtime-control:${stableId(operation.operation_id)}`,
+    causation_id: previousOperation?.operation_id ?? null,
+    correlation_id: operation.operation_id,
+    idempotency_key: transitionIdentity,
+    actor: { kind: "operator", ref: "runtime-operation-store" },
+    caller_path: "runtime_control",
+    surface: "operator_debug",
+    goal_id: operation.target?.goal_id ?? null,
+    session_id: operation.target?.session_id ?? null,
+    source_ref: operationRef,
+    target_refs: targetRefs,
+    runtime_graph_node_ref: { kind: "runtime_event", ref: eventId },
+    replay_policy: {
+      mode: "dedupe_by_idempotency_key",
+      duplicate_side_effect_policy: "projection_only",
+      idempotency_scope: "runtime-operation-store",
+    },
+    payload_schema: "runtime-event-payload/runtime-control-operation/v1",
+    payload_version: "runtime-event-payload/runtime-control-operation/v1",
+    payload: {
+      schema_version: "runtime-event-payload/runtime-control-operation/v1",
+      operation,
+      previous_operation: previousOperation,
+    },
+  };
+}
+
+export function runtimeEventFromAttentionCommitment(input: RuntimeAttentionCommitmentEventInput): RuntimeEventEnvelopeInput {
+  const candidate = CommitmentCandidateSchema.parse(input.candidate);
+  const occurredAt = validIsoOrNow(input.occurredAt ?? candidate.updated_at);
+  const operation = input.operation;
+  const callerPath = input.callerPath ?? "chat_gateway_turn";
+  const commitmentRef = { kind: "commitment", ref: candidate.commitment_id };
+  const sourceRef = graphRefFromCommitmentSource(candidate.source_ref);
+  const materializationRef = candidate.materialization_id
+    ? `commitment-materialization:${candidate.materialization_id}`
+    : null;
+  const candidateRevision = stableId(stableJson(candidate));
+  const eventId = `runtime-event:${stableId([
+    "attention-commitment",
+    operation,
+    candidate.commitment_id,
+    candidate.replay_key,
+    candidate.updated_at,
+    candidateRevision,
+    input.control ?? "",
+    input.feedbackRef ?? "",
+  ].join(":"))}`;
+  const targetRefs = uniqueRefs([
+    commitmentRef,
+    sourceRef,
+    graphRefFromCommitmentTarget(candidate.target_ref),
+    { kind: "projection", ref: "attention_commitment_candidates" },
+    { kind: "surface_projection", ref: `attention-commitment:${candidate.commitment_id}` },
+    ...(candidate.materialization_id ? [{ kind: "commitment_materialization", ref: candidate.materialization_id }] : []),
+    ...candidate.feedback_refs.map((ref) => ({ kind: "feedback", ref })),
+    ...candidate.suppression_refs.map((ref) => ({ kind: "suppression", ref })),
+  ]);
+  return {
+    schema_version: "runtime-event-envelope/v1",
+    event_id: eventId,
+    event_type: "attention.commitment.recorded",
+    occurred_at: occurredAt,
+    trace_id: `attention-commitment:${stableId(candidate.commitment_id)}`,
+    causation_id: candidate.source_ref.id,
+    correlation_id: candidate.commitment_id,
+    idempotency_key: [
+      "attention-commitment",
+      operation,
+      candidate.replay_key,
+      candidate.materialization_state,
+      candidate.updated_at,
+      candidateRevision,
+      input.control ?? "",
+      input.feedbackRef ?? "",
+    ].join(":"),
+    actor: { kind: "runtime", ref: "attention-state-store" },
+    caller_path: callerPath,
+    surface: candidate.scope.surfaceClass,
+    session_id: candidate.scope.sessionId ?? null,
+    source_ref: sourceRef,
+    target_refs: targetRefs,
+    runtime_graph_node_ref: { kind: "runtime_event", ref: eventId },
+    side_effect_ref: candidate.materialization_id
+      ? { kind: "commitment_materialization", ref: candidate.materialization_id }
+      : null,
+    replay_policy: {
+      mode: "dedupe_by_idempotency_key",
+      duplicate_side_effect_policy: "projection_only",
+      idempotency_scope: "attention-commitment-candidate",
+    },
+    payload_schema: "runtime-event-payload/attention-commitment/v1",
+    payload_version: "runtime-event-payload/attention-commitment/v1",
+    payload: {
+      schema_version: "runtime-event-payload/attention-commitment/v1",
+      operation,
+      commitment_id: candidate.commitment_id,
+      previous_materialization_state: input.previousCandidate?.materialization_state ?? null,
+      control: input.control ?? null,
+      feedback_ref: input.feedbackRef ?? null,
+      materialization_ref: materializationRef,
+      suppression_refs: candidate.suppression_refs,
+      candidate,
+    },
+  };
+}
+
+function runtimeEventFromProjectionRebuild(input: {
+  rebuild: RuntimeEventProjectionRebuild;
+  dryRun: boolean;
+  occurredAt?: string;
+}): RuntimeEventEnvelopeInput {
+  const occurredAt = validIsoOrNow(input.occurredAt ?? new Date().toISOString());
+  const rebuildId = projectionRebuildId(input.rebuild);
+  return {
+    schema_version: "runtime-event-envelope/v1",
+    event_id: `runtime-event:${stableId(`projection:${rebuildId}:${occurredAt}`)}`,
+    event_type: "projection.rebuild.recorded",
+    occurred_at: occurredAt,
+    trace_id: input.rebuild.trace_id ?? rebuildId,
+    causation_id: input.rebuild.trace_id,
+    correlation_id: input.rebuild.trace_id ?? rebuildId,
+    idempotency_key: rebuildId,
+    actor: { kind: "operator", ref: "runtime-event-log-rebuild" },
+    caller_path: "explicit_user_command",
+    surface: "operator_debug",
+    source_ref: { kind: "runtime_event_projection_rebuild", ref: rebuildId },
+    target_refs: projectionNames(input.rebuild).map((name) => ({ kind: "projection", ref: name })),
+    replay_policy: {
+      mode: input.dryRun ? "projection_rebuild" : "dedupe_by_idempotency_key",
+      duplicate_side_effect_policy: "projection_only",
+      idempotency_scope: "runtime-event-projection-rebuild",
+    },
+    payload_schema: "runtime-event-payload/projection-rebuild/v1",
+    payload_version: "runtime-event-payload/projection-rebuild/v1",
+    payload: {
+      schema_version: "runtime-event-payload/projection-rebuild/v1",
+      rebuild_id: rebuildId,
+      dry_run: input.dryRun,
+      projection_names: projectionNames(input.rebuild),
+      summary: input.rebuild as unknown as Record<string, unknown>,
+    },
+  };
+}
+
+function projectionRebuildId(rebuild: RuntimeEventProjectionRebuild): string {
+  const { rebuilt_at: _rebuiltAt, ...stableRebuild } = rebuild;
+  return `projection-rebuild:${stableId(stableJson(stableRebuild))}`;
+}
+
 function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): boolean {
+  const eventSequence = nextRuntimeEventSequence(sqlite);
   const result = sqlite.prepare(`
     INSERT OR IGNORE INTO runtime_events (
+      event_sequence,
       event_id,
       event_type,
       schema_version,
@@ -614,8 +921,9 @@ function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope)
       side_effect_ref,
       event_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
   `).run(
+    eventSequence,
     event.event_id,
     event.event_type,
     event.schema_version,
@@ -639,6 +947,53 @@ function insertRuntimeEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope)
   return result.changes > 0;
 }
 
+function nextRuntimeEventSequence(sqlite: SqliteDatabase): number {
+  const result = sqlite.prepare(`
+    UPDATE runtime_event_sequence_counter
+    SET next_sequence = next_sequence + 1
+    WHERE scope = 'runtime_events'
+  `).run();
+  if (result.changes === 0) {
+    initializeRuntimeEventSequenceCounter(sqlite);
+    sqlite.prepare(`
+      UPDATE runtime_event_sequence_counter
+      SET next_sequence = next_sequence + 1
+      WHERE scope = 'runtime_events'
+    `).run();
+  }
+  const row = sqlite.prepare(`
+    SELECT next_sequence - 1 AS event_sequence
+    FROM runtime_event_sequence_counter
+    WHERE scope = 'runtime_events'
+  `).get() as { event_sequence: number } | undefined;
+  if (!row || !Number.isSafeInteger(row.event_sequence) || row.event_sequence <= 0) {
+    throw new Error("runtime event sequence allocation failed");
+  }
+  const maxRow = sqlite.prepare(`
+    SELECT COALESCE(MAX(event_sequence), 0) AS max_event_sequence
+    FROM runtime_events
+  `).get() as { max_event_sequence: number } | undefined;
+  const maxEventSequence = maxRow?.max_event_sequence ?? 0;
+  if (row.event_sequence <= maxEventSequence) {
+    const recoveredSequence = maxEventSequence + 1;
+    sqlite.prepare(`
+      UPDATE runtime_event_sequence_counter
+      SET next_sequence = ?
+      WHERE scope = 'runtime_events'
+    `).run(recoveredSequence + 1);
+    return recoveredSequence;
+  }
+  return row.event_sequence;
+}
+
+function initializeRuntimeEventSequenceCounter(sqlite: SqliteDatabase): void {
+  sqlite.prepare(`
+    INSERT OR IGNORE INTO runtime_event_sequence_counter (scope, next_sequence)
+    SELECT 'runtime_events', COALESCE(MAX(event_sequence), 0) + 1
+    FROM runtime_events
+  `).run();
+}
+
 function readRuntimeEventById(sqlite: SqliteDatabase, eventId: string): RuntimeEventEnvelope | null {
   const row = sqlite.prepare("SELECT event_json FROM runtime_events WHERE event_id = ?").get(eventId) as { event_json: string } | undefined;
   return row ? parseRuntimeEvent(row.event_json)[0] ?? null : null;
@@ -652,7 +1007,7 @@ function readRuntimeEventByIdempotency(sqlite: SqliteDatabase, event: RuntimeEve
       AND idempotency_key = ?
       AND replay_policy = ?
       AND COALESCE(side_effect_ref, 'pending') = ?
-    ORDER BY occurred_at ASC, event_id ASC
+    ORDER BY occurred_at ASC, event_sequence ASC
     LIMIT 1
   `).get(
     event.event_type,
@@ -661,6 +1016,701 @@ function readRuntimeEventByIdempotency(sqlite: SqliteDatabase, event: RuntimeEve
     event.side_effect_ref ? refKey(event.side_effect_ref) : "pending",
   ) as { event_json: string } | undefined;
   return row ? parseRuntimeEvent(row.event_json)[0] ?? null : null;
+}
+
+function readProjectionApplySourceEvents(
+  sqlite: SqliteDatabase,
+  options: { traceId?: string },
+): RuntimeEventEnvelope[] {
+  const rows = sqlite.prepare(`
+    SELECT event_json
+    FROM runtime_events
+    WHERE (? IS NULL OR trace_id = ?)
+    ORDER BY occurred_at ASC, event_sequence ASC
+  `).all(
+    options.traceId ?? null,
+    options.traceId ?? null,
+  ) as Array<{ event_json: string }>;
+  return projectionSourceEvents(rows.flatMap((row) => parseRuntimeEvent(row.event_json)));
+}
+
+function applyEventBackedCurrentStateProjections(
+  sqlite: SqliteDatabase,
+  events: readonly RuntimeEventEnvelope[],
+  options: { pruneStaleRows?: boolean } = {},
+): RuntimeEventProjectionCurrentStateApplySummary {
+  const goals = new Map<string, {
+    action: "save" | "archive" | "delete";
+    goal: Goal;
+  }>();
+  const tasks = new Map<string, {
+    action: "save" | "delete";
+    goalId: string;
+    taskId: string;
+    task: Task | null;
+    goalGeneration: number;
+  }>();
+  const authorityDecisions = new Map<string, ExecutionAuthorityDecision>();
+  const runtimeOperations = new Map<string, RuntimeControlOperation>();
+  const commitmentCandidates = new Map<string, CommitmentCandidate>();
+  const goalGenerations = new Map<string, number>();
+  for (const event of events) {
+    if (event.payload.schema_version === "runtime-event-payload/goal-task-mutation/v1") {
+      if (event.payload.mutation.entity_kind === "goal") {
+        const goalId = event.payload.mutation.goal.id;
+        if (event.payload.mutation.action === "delete") {
+          goalGenerations.set(goalId, (goalGenerations.get(goalId) ?? 0) + 1);
+        }
+        goals.set(goalId, {
+          action: event.payload.mutation.action,
+          goal: GoalSchema.parse(event.payload.mutation.goal),
+        });
+      } else {
+        const goalGeneration = goalGenerations.get(event.payload.mutation.goal_id) ?? 0;
+        tasks.set(`${event.payload.mutation.goal_id}:${event.payload.mutation.task_id}`, {
+          action: event.payload.mutation.action,
+          goalId: event.payload.mutation.goal_id,
+          taskId: event.payload.mutation.task_id,
+          task: event.payload.mutation.task ? TaskSchema.parse(event.payload.mutation.task) : null,
+          goalGeneration,
+        });
+      }
+    }
+    if (event.payload.schema_version === "runtime-event-payload/authority-decision/v1") {
+      authorityDecisions.set(event.payload.decision.decision_id, event.payload.decision);
+    }
+    if (event.payload.schema_version === "runtime-event-payload/runtime-control-operation/v1") {
+      const operation = RuntimeControlOperationSchema.parse(event.payload.operation);
+      const current = runtimeOperations.get(operation.operation_id);
+      if (!current || compareIsoTimestamps(operation.updated_at, current.updated_at) >= 0) {
+        runtimeOperations.set(operation.operation_id, operation);
+      }
+    }
+    if (event.payload.schema_version === "runtime-event-payload/attention-commitment/v1") {
+      const candidate = CommitmentCandidateSchema.parse(event.payload.candidate);
+      const current = commitmentCandidates.get(candidate.commitment_id);
+      if (!current || compareIsoTimestamps(candidate.updated_at, current.updated_at) >= 0) {
+        commitmentCandidates.set(candidate.commitment_id, candidate);
+      }
+    }
+  }
+  const deletedGoalIds = new Set<string>();
+  const shouldApplyTask = (mutation: {
+    action: "save" | "delete";
+    goalId: string;
+    task: Task | null;
+    goalGeneration: number;
+  }): boolean =>
+    mutation.action !== "delete"
+    && mutation.task !== null
+    && !deletedGoalIds.has(mutation.goalId)
+    && mutation.goalGeneration === (goalGenerations.get(mutation.goalId) ?? 0);
+  for (const [goalId, mutation] of goals) {
+    if (mutation.action === "delete") {
+      deletedGoalIds.add(goalId);
+      deleteGoalProjection(sqlite, goalId);
+      continue;
+    }
+    upsertGoalProjection(sqlite, mutation.goal, mutation.action === "archive" ? 1 : 0);
+  }
+  for (const mutation of goals.values()) {
+    if (mutation.action !== "delete") {
+      upsertGoalParentProjectionEdge(sqlite, mutation.goal);
+    }
+  }
+  if (options.pruneStaleRows === true) {
+    pruneGoalProjectionRows(sqlite, [...goals.entries()]
+      .filter(([, mutation]) => mutation.action !== "delete")
+      .map(([goalId]) => goalId));
+    pruneTaskProjectionRows(sqlite, [...tasks.values()].filter(shouldApplyTask));
+    pruneInteractionAuthorityDecisionRows(sqlite, [...authorityDecisions.keys()]);
+    pruneRuntimeOperationRows(sqlite, [...runtimeOperations.keys()]);
+    pruneCommitmentCandidateRows(sqlite, [...commitmentCandidates.keys()]);
+  }
+  for (const mutation of tasks.values()) {
+    if (!shouldApplyTask(mutation)) {
+      deleteTaskProjection(sqlite, mutation.goalId, mutation.taskId);
+      continue;
+    }
+    upsertTaskProjection(sqlite, mutation.task as Task);
+  }
+  for (const decision of authorityDecisions.values()) {
+    upsertInteractionAuthorityDecisionProjection(sqlite, decision);
+  }
+  for (const operation of runtimeOperations.values()) {
+    upsertRuntimeOperationProjection(sqlite, operation);
+  }
+  for (const candidate of commitmentCandidates.values()) {
+    upsertCommitmentCandidateProjection(sqlite, candidate);
+  }
+  return {
+    goal_records: [...goals.values()].filter((mutation) => mutation.action !== "delete").length,
+    task_records: [...tasks.values()].filter(shouldApplyTask).length,
+    interaction_authority_decisions: authorityDecisions.size,
+    runtime_operations: runtimeOperations.size,
+    attention_commitment_candidates: commitmentCandidates.size,
+  };
+}
+
+function upsertGoalProjection(sqlite: SqliteDatabase, goalInput: Goal, archived: 0 | 1): void {
+  const goal = GoalSchema.parse(goalInput);
+  upsertProjectionRuntimeGraphNode(sqlite, buildGoalProjectionRuntimeGraphNode(goal, archived));
+  if (goal.node_type === "milestone") {
+    upsertProjectionRuntimeGraphNode(sqlite, buildMilestoneProjectionRuntimeGraphNode(goal, archived));
+    insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+      schema_version: "runtime-graph-edge/v1",
+      edge_id: `runtime-graph:edge:goal-milestone:${goal.id}`,
+      edge_kind: "produced",
+      from_node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+      to_node_id: milestoneProjectionRuntimeGraphNodeId(goal.id),
+      created_at: validIsoOrNow(goal.updated_at),
+      provenance_refs: [{ kind: "goal", ref: goal.id }],
+    });
+  }
+  sqlite.prepare(`
+    INSERT INTO goal_records (goal_id, parent_goal_id, status, updated_at, archived, goal_json)
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(goal_id) DO UPDATE SET
+      parent_goal_id = excluded.parent_goal_id,
+      status = excluded.status,
+      updated_at = excluded.updated_at,
+      archived = excluded.archived,
+      goal_json = excluded.goal_json
+  `).run(goal.id, goal.parent_id ?? null, goal.status, goal.updated_at, archived, JSON.stringify(goal));
+}
+
+function upsertGoalParentProjectionEdge(sqlite: SqliteDatabase, goalInput: Goal): void {
+  const goal = GoalSchema.parse(goalInput);
+  deleteGoalParentProjectionEdges(sqlite, goal.id);
+  if (!goal.parent_id) return;
+  insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+    schema_version: "runtime-graph-edge/v1",
+    edge_id: `runtime-graph:edge:goal-parent:${goal.parent_id}:${goal.id}`,
+    edge_kind: "parent_of",
+    from_node_id: goalProjectionRuntimeGraphNodeId(goal.parent_id),
+    to_node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+    created_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal", ref: goal.id }],
+  });
+}
+
+function deleteGoalParentProjectionEdges(sqlite: SqliteDatabase, goalId: string): void {
+  sqlite.prepare(`
+    DELETE FROM personal_agent_runtime_graph_edges
+    WHERE edge_kind = 'parent_of'
+      AND to_node_id = ?
+  `).run(goalProjectionRuntimeGraphNodeId(goalId));
+}
+
+function deleteGoalProjection(sqlite: SqliteDatabase, goalId: string): void {
+  const taskRows = sqlite.prepare("SELECT task_id FROM task_records WHERE goal_id = ?").all(goalId) as Array<{ task_id: string }>;
+  sqlite.prepare("DELETE FROM goal_records WHERE goal_id = ?").run(goalId);
+  sqlite.prepare("DELETE FROM task_records WHERE goal_id = ?").run(goalId);
+  for (const row of taskRows) {
+    sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskProjectionRuntimeGraphNodeId(row.task_id));
+  }
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(milestoneProjectionRuntimeGraphNodeId(goalId));
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(goalProjectionRuntimeGraphNodeId(goalId));
+}
+
+function pruneGoalProjectionRows(sqlite: SqliteDatabase, eventBackedGoalIds: readonly string[]): void {
+  const rows = selectRowsMissingProjectionApplyIds(
+    sqlite,
+    "goal_records",
+    "goal_id",
+    "projection_apply_goal_keys",
+    eventBackedGoalIds,
+  );
+  for (const row of rows) {
+    deleteGoalProjection(sqlite, row.id);
+  }
+}
+
+function upsertTaskProjection(sqlite: SqliteDatabase, taskInput: Task): void {
+  const task = TaskSchema.parse(taskInput);
+  const updatedAt = validIsoOrNow(task.completed_at ?? task.started_at ?? task.created_at);
+  upsertProjectionRuntimeGraphNode(sqlite, buildTaskProjectionRuntimeGraphNode(task, updatedAt));
+  insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+    schema_version: "runtime-graph-edge/v1",
+    edge_id: `runtime-graph:edge:goal-task:${task.goal_id}:${task.id}`,
+    edge_kind: "parent_of",
+    from_node_id: goalProjectionRuntimeGraphNodeId(task.goal_id),
+    to_node_id: taskProjectionRuntimeGraphNodeId(task.id),
+    created_at: updatedAt,
+    provenance_refs: [
+      { kind: "goal", ref: task.goal_id },
+      { kind: "task", ref: task.id },
+    ],
+  });
+  sqlite.prepare(`
+    INSERT INTO task_records (
+      goal_id, task_id, status, primary_dimension, strategy_id,
+      created_at, started_at, completed_at, updated_at, task_json
+    )
+    VALUES (
+      @goal_id, @task_id, @status, @primary_dimension, @strategy_id,
+      @created_at, @started_at, @completed_at, @updated_at, json(@task_json)
+    )
+    ON CONFLICT(goal_id, task_id) DO UPDATE SET
+      status = excluded.status,
+      primary_dimension = excluded.primary_dimension,
+      strategy_id = excluded.strategy_id,
+      created_at = excluded.created_at,
+      started_at = excluded.started_at,
+      completed_at = excluded.completed_at,
+      updated_at = excluded.updated_at,
+      task_json = excluded.task_json
+  `).run({
+    goal_id: task.goal_id,
+    task_id: task.id,
+    status: task.status,
+    primary_dimension: task.primary_dimension,
+    strategy_id: task.strategy_id ?? null,
+    created_at: task.created_at,
+    started_at: task.started_at ?? null,
+    completed_at: task.completed_at ?? null,
+    updated_at: updatedAt,
+    task_json: JSON.stringify(task),
+  });
+}
+
+function deleteTaskProjection(sqlite: SqliteDatabase, goalId: string, taskId: string): void {
+  sqlite.prepare("DELETE FROM task_records WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskProjectionRuntimeGraphNodeId(taskId));
+}
+
+function pruneTaskProjectionRows(
+  sqlite: SqliteDatabase,
+  eventBackedTasks: readonly { goalId: string; taskId: string }[],
+): void {
+  sqlite.prepare("DROP TABLE IF EXISTS temp.projection_apply_task_keys").run();
+  sqlite.prepare(`
+    CREATE TEMP TABLE projection_apply_task_keys (
+      goal_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      PRIMARY KEY (goal_id, task_id)
+    )
+  `).run();
+  try {
+    const insertKey = sqlite.prepare(`
+      INSERT OR IGNORE INTO projection_apply_task_keys (goal_id, task_id)
+      VALUES (?, ?)
+    `);
+    for (const task of eventBackedTasks) {
+      insertKey.run(task.goalId, task.taskId);
+    }
+    const rows = sqlite.prepare(`
+      SELECT tr.goal_id, tr.task_id
+      FROM task_records tr
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM projection_apply_task_keys task_keys
+        WHERE task_keys.goal_id = tr.goal_id
+          AND task_keys.task_id = tr.task_id
+      )
+    `).all() as Array<{ goal_id: string; task_id: string }>;
+    for (const row of rows) {
+      deleteTaskProjection(sqlite, row.goal_id, row.task_id);
+    }
+  } finally {
+    sqlite.prepare("DROP TABLE IF EXISTS temp.projection_apply_task_keys").run();
+  }
+}
+
+function goalProjectionRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:goal:${goalId}`;
+}
+
+function milestoneProjectionRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:milestone:${goalId}`;
+}
+
+function taskProjectionRuntimeGraphNodeId(taskId: string): string {
+  return `runtime-graph:task:${taskId}`;
+}
+
+function buildGoalProjectionRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+    node_kind: "goal",
+    ref: { kind: "goal", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validIsoOrNow(goal.created_at),
+    updated_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "goal",
+      storage_projection: "goal_records",
+      archived: archived === 1,
+      goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+      child_refs: goal.children_ids.map((childId) => ({ kind: "goal", ref: childId })),
+    },
+  });
+}
+
+function buildMilestoneProjectionRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: milestoneProjectionRuntimeGraphNodeId(goal.id),
+    node_kind: "milestone",
+    ref: { kind: "milestone", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validIsoOrNow(goal.created_at),
+    updated_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "milestone",
+      storage_projection: "goal_records",
+      goal_ref: { kind: "goal", ref: goal.id },
+      archived: archived === 1,
+      milestone: goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+    },
+  });
+}
+
+function buildTaskProjectionRuntimeGraphNode(task: Task, updatedAt: string): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: taskProjectionRuntimeGraphNodeId(task.id),
+    node_kind: "task",
+    ref: { kind: "task", ref: task.id },
+    label: task.work_description || task.id,
+    created_at: validIsoOrNow(task.created_at),
+    updated_at: validIsoOrNow(updatedAt),
+    provenance_refs: [{ kind: "goal_state_store", ref: "task_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "task",
+      storage_projection: "task_records",
+      task,
+      parent_ref: { kind: "goal", ref: task.goal_id },
+      strategy_ref: task.strategy_id ? { kind: "strategy", ref: task.strategy_id } : null,
+    },
+  });
+}
+
+function upsertProjectionRuntimeGraphNode(sqlite: SqliteDatabase, node: RuntimeGraphNode): void {
+  const parsed = RuntimeGraphNodeSchema.parse(node);
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_nodes (
+      node_id, node_kind, ref, created_at, updated_at, node_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(node_id) DO UPDATE SET
+      node_kind = excluded.node_kind,
+      ref = excluded.ref,
+      updated_at = excluded.updated_at,
+      node_json = excluded.node_json
+  `).run(
+    parsed.node_id,
+    parsed.node_kind,
+    parsed.ref.ref,
+    parsed.created_at,
+    parsed.updated_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite: SqliteDatabase, edge: RuntimeGraphEdge): void {
+  const parsed = RuntimeGraphEdgeSchema.parse(edge);
+  const nodesExist = sqlite.prepare(`
+    SELECT 1 AS ok
+    WHERE EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+      AND EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+  `).get(parsed.from_node_id, parsed.to_node_id) as { ok: number } | undefined;
+  if (!nodesExist) return;
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_edges (
+      edge_id, edge_kind, from_node_id, to_node_id, created_at, edge_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(edge_id) DO NOTHING
+  `).run(
+    parsed.edge_id,
+    parsed.edge_kind,
+    parsed.from_node_id,
+    parsed.to_node_id,
+    parsed.created_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function pruneInteractionAuthorityDecisionRows(sqlite: SqliteDatabase, eventBackedDecisionIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "interaction_authority_decisions", "decision_id", eventBackedDecisionIds);
+}
+
+function pruneRuntimeOperationRows(sqlite: SqliteDatabase, eventBackedOperationIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "runtime_operations", "operation_id", eventBackedOperationIds);
+}
+
+function pruneCommitmentCandidateRows(sqlite: SqliteDatabase, eventBackedCommitmentIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "attention_commitment_candidates", "commitment_id", eventBackedCommitmentIds);
+}
+
+function deleteRowsNotIn(
+  sqlite: SqliteDatabase,
+  tableName: "interaction_authority_decisions" | "runtime_operations" | "attention_commitment_candidates",
+  idColumn: "decision_id" | "operation_id" | "commitment_id",
+  eventBackedIds: readonly string[],
+): void {
+  const tempTableName = `${tableName}_projection_apply_keys`;
+  withProjectionApplyIdKeys(sqlite, tempTableName, eventBackedIds, (keyTableName) => {
+    sqlite.prepare(`
+      DELETE FROM ${tableName}
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ${keyTableName} projection_keys
+        WHERE projection_keys.id = ${tableName}.${idColumn}
+      )
+    `).run();
+  });
+}
+
+function selectRowsMissingProjectionApplyIds(
+  sqlite: SqliteDatabase,
+  tableName: "goal_records",
+  idColumn: "goal_id",
+  tempTableName: string,
+  eventBackedIds: readonly string[],
+): Array<{ id: string }> {
+  return withProjectionApplyIdKeys(sqlite, tempTableName, eventBackedIds, (keyTableName) =>
+    sqlite.prepare(`
+      SELECT ${idColumn} AS id
+      FROM ${tableName}
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ${keyTableName} projection_keys
+        WHERE projection_keys.id = ${tableName}.${idColumn}
+      )
+    `).all() as Array<{ id: string }>
+  );
+}
+
+function withProjectionApplyIdKeys<T>(
+  sqlite: SqliteDatabase,
+  tempTableName: string,
+  eventBackedIds: readonly string[],
+  fn: (tempTableName: string) => T,
+): T {
+  sqlite.prepare(`DROP TABLE IF EXISTS temp.${tempTableName}`).run();
+  sqlite.prepare(`
+    CREATE TEMP TABLE ${tempTableName} (
+      id TEXT PRIMARY KEY
+    )
+  `).run();
+  try {
+    const insertKey = sqlite.prepare(`
+      INSERT OR IGNORE INTO ${tempTableName} (id)
+      VALUES (?)
+    `);
+    for (const id of eventBackedIds) {
+      insertKey.run(id);
+    }
+    return fn(tempTableName);
+  } finally {
+    sqlite.prepare(`DROP TABLE IF EXISTS temp.${tempTableName}`).run();
+  }
+}
+
+function upsertInteractionAuthorityDecisionProjection(sqlite: SqliteDatabase, decisionInput: ExecutionAuthorityDecision): void {
+  const decision = ExecutionAuthorityDecisionSchema.parse(decisionInput);
+  sqlite.prepare(`
+    INSERT INTO interaction_authority_decisions (
+      decision_id,
+      decided_at,
+      source_kind,
+      outcome,
+      lifecycle,
+      surface,
+      surface_class,
+      target_binding_ref,
+      delivery_ref,
+      fail_closed,
+      stale_target_rejected,
+      suppressed,
+      decision_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(decision_id) DO UPDATE SET
+      decided_at = excluded.decided_at,
+      source_kind = excluded.source_kind,
+      outcome = excluded.outcome,
+      lifecycle = excluded.lifecycle,
+      surface = excluded.surface,
+      surface_class = excluded.surface_class,
+      target_binding_ref = excluded.target_binding_ref,
+      delivery_ref = excluded.delivery_ref,
+      fail_closed = excluded.fail_closed,
+      stale_target_rejected = excluded.stale_target_rejected,
+      suppressed = excluded.suppressed,
+      decision_json = excluded.decision_json
+  `).run(
+    decision.decision_id,
+    decision.decided_at,
+    decision.source.kind,
+    decision.outcome,
+    decision.lifecycle,
+    decision.surface ?? null,
+    decision.surface_class ?? null,
+    decision.bindings.target_binding_ref ?? null,
+    decision.bindings.delivery_ref ?? decision.outbound_conversation?.delivery_ref ?? null,
+    decision.fail_closed ? 1 : 0,
+    decision.stale_target_rejected ? 1 : 0,
+    decision.suppressed ? 1 : 0,
+    JSON.stringify(decision),
+  );
+}
+
+function upsertRuntimeOperationProjection(sqlite: SqliteDatabase, operationInput: RuntimeControlOperation): void {
+  const operation = RuntimeControlOperationSchema.parse(operationInput);
+  sqlite.prepare(`
+    INSERT INTO runtime_operations (
+      operation_id, kind, state, terminal, requested_at, updated_at, operation_json
+    ) VALUES (
+      @operation_id, @kind, @state, @terminal, @requested_at, @updated_at, json(@operation_json)
+    )
+    ON CONFLICT(operation_id) DO UPDATE SET
+      kind = excluded.kind,
+      state = excluded.state,
+      terminal = excluded.terminal,
+      requested_at = excluded.requested_at,
+      updated_at = excluded.updated_at,
+      operation_json = excluded.operation_json
+  `).run({
+    operation_id: operation.operation_id,
+    kind: operation.kind,
+    state: operation.state,
+    terminal: isTerminalRuntimeControlState(operation.state) ? 1 : 0,
+    requested_at: operation.requested_at,
+    updated_at: operation.updated_at,
+    operation_json: JSON.stringify(operation),
+  });
+}
+
+function upsertCommitmentCandidateProjection(sqlite: SqliteDatabase, candidateInput: CommitmentCandidate): void {
+  const candidate = CommitmentCandidateSchema.parse(candidateInput);
+  sqlite.prepare(`
+    INSERT INTO attention_commitment_candidates (
+      commitment_id,
+      source_ref,
+      target_ref,
+      replay_key,
+      source_epoch,
+      source_high_watermark,
+      policy_epoch,
+      scope_key,
+      lifecycle,
+      nudge_policy,
+      materialization_id,
+      next_revisit_at,
+      due_start,
+      due_end,
+      priority_score,
+      suppression_ref_count,
+      feedback_ref_count,
+      created_at,
+      updated_at,
+      candidate_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(commitment_id) DO UPDATE SET
+      source_ref = excluded.source_ref,
+      target_ref = excluded.target_ref,
+      replay_key = excluded.replay_key,
+      source_epoch = excluded.source_epoch,
+      source_high_watermark = excluded.source_high_watermark,
+      policy_epoch = excluded.policy_epoch,
+      scope_key = excluded.scope_key,
+      lifecycle = excluded.lifecycle,
+      nudge_policy = excluded.nudge_policy,
+      materialization_id = excluded.materialization_id,
+      next_revisit_at = excluded.next_revisit_at,
+      due_start = excluded.due_start,
+      due_end = excluded.due_end,
+      priority_score = excluded.priority_score,
+      suppression_ref_count = excluded.suppression_ref_count,
+      feedback_ref_count = excluded.feedback_ref_count,
+      updated_at = excluded.updated_at,
+      candidate_json = excluded.candidate_json
+  `).run(
+    candidate.commitment_id,
+    commitmentRefKey(candidate.source_ref),
+    commitmentRefKey(candidate.target_ref),
+    candidate.replay_key,
+    candidate.source_epoch,
+    candidate.source_high_watermark,
+    candidate.policy_epoch,
+    attentionScopeKey(candidate.scope),
+    candidate.materialization_state,
+    candidate.nudge_policy,
+    candidate.materialization_id,
+    candidate.next_revisit_at,
+    candidate.due.window_start,
+    candidate.due.window_end,
+    candidate.priority_evidence.total_score ?? null,
+    candidate.suppression_refs.length,
+    candidate.feedback_refs.length,
+    candidate.created_at,
+    candidate.updated_at,
+    JSON.stringify(candidate),
+  );
+}
+
+function commitmentRefKey(ref: CommitmentCandidate["source_ref"] | CommitmentCandidate["target_ref"]): string {
+  return `${ref.kind}:${ref.id}`;
+}
+
+function upsertProjectionSnapshot(sqlite: SqliteDatabase, snapshot: RuntimeEventProjectionSnapshot): void {
+  sqlite.prepare(`
+    INSERT INTO runtime_event_projection_snapshots (
+      projection_name,
+      scope_kind,
+      scope_ref,
+      rebuilt_at,
+      source_event_count,
+      source_event_refs_json,
+      snapshot_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?), json(?))
+    ON CONFLICT(projection_name, scope_kind, scope_ref) DO UPDATE SET
+      rebuilt_at = excluded.rebuilt_at,
+      source_event_count = excluded.source_event_count,
+      source_event_refs_json = excluded.source_event_refs_json,
+      snapshot_json = excluded.snapshot_json
+  `).run(
+    snapshot.projection_name,
+    snapshot.scope.kind,
+    snapshot.scope.ref,
+    snapshot.rebuilt_at,
+    snapshot.source_event_count,
+    JSON.stringify(snapshot.source_event_refs),
+    JSON.stringify(snapshot),
+  );
+}
+
+function parseProjectionSnapshot(value: string): RuntimeEventProjectionSnapshot[] {
+  try {
+    const raw = JSON.parse(value) as Partial<RuntimeEventProjectionSnapshot>;
+    if (
+      raw.schema_version === "runtime-event-projection-snapshot/v1"
+      && typeof raw.projection_name === "string"
+      && raw.scope
+      && (raw.scope.kind === "trace" || raw.scope.kind === "control_db")
+      && typeof raw.scope.ref === "string"
+      && typeof raw.rebuilt_at === "string"
+      && typeof raw.source_event_count === "number"
+      && Array.isArray(raw.source_event_refs)
+    ) {
+      return [raw as RuntimeEventProjectionSnapshot];
+    }
+  } catch {
+    return [];
+  }
+  return [];
 }
 
 function upsertRuntimeGraphForEvent(sqlite: SqliteDatabase, event: RuntimeEventEnvelope): void {
@@ -817,9 +1867,11 @@ function rebuildRuntimeEventProjections(
   traceId: string | null,
   graph: RuntimeGraphExplainResult["runtime_graph"],
 ): RuntimeEventProjectionRebuild {
-  const graphEvidence = runtimeGraphEvidence(graph);
+  const sourceEvents = projectionSourceEvents(events);
+  const sourceGraph = graphForProjectionSources(graph, sourceEvents);
+  const graphEvidence = runtimeGraphEvidence(sourceGraph);
   const graphEventIds = new Set(graphEvidence.source_event_refs);
-  const graphBackedEvents = events.filter((event) => graphEventIds.has(event.event_id));
+  const graphBackedEvents = sourceEvents.filter((event) => graphEventIds.has(event.event_id));
   const authorityDecisions = graphBackedEvents.flatMap((event) =>
     event.payload.schema_version === "runtime-event-payload/authority-decision/v1" ? [event.payload.decision] : []
   );
@@ -846,7 +1898,7 @@ function rebuildRuntimeEventProjections(
         approval_ref: decision.bindings.approval_ref ?? null,
         target_binding_ref: decision.bindings.target_binding_ref ?? null,
         idempotency_key: graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.idempotency_key ?? null,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
       })),
     notification_outbox_dedupe_state: graphBackedEvents
       .filter((event) => event.event_type === "notification.dispatch.recorded" || event.event_type === "outbox.enqueue.recorded")
@@ -857,7 +1909,7 @@ function rebuildRuntimeEventProjections(
         correlation_id: event.correlation_id,
         replay_policy: event.replay_policy,
         target_refs: event.target_refs,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
       })),
     peer_delivery_state: authorityDecisions
       .filter((decision) => decision.source.kind === "peer_initiative" || decision.source.kind === "outbound_conversation" || decision.source.kind === "telegram_callback")
@@ -870,7 +1922,7 @@ function rebuildRuntimeEventProjections(
         feedback_ref: decision.bindings.feedback_ref ?? null,
         can_send: decision.can_send,
         can_execute: decision.can_execute,
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
       })),
     memory_correction_invalidation_summary: [
       ...authorityDecisions
@@ -879,7 +1931,7 @@ function rebuildRuntimeEventProjections(
           decision_id: decision.decision_id,
           target_refs: decision.bindings.target_refs,
           memory_withheld: decision.memory_withheld,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) => authorityEventMatches(event, decision))?.event_id),
         })),
       ...traces.flatMap((trace) => trace.memory_audits
         .filter((audit) => audit.invalidated || audit.action === "correct" || audit.action === "invalidate")
@@ -890,7 +1942,7 @@ function rebuildRuntimeEventProjections(
           action: audit.action,
           correction_state: audit.correction_state,
           invalidated: audit.invalidated,
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
             event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
             && event.payload.trace.trace_id === trace.trace_id
           )?.event_id),
@@ -915,7 +1967,7 @@ function rebuildRuntimeEventProjections(
           conflict_set_ids: payload?.conflict_set_ids ?? [],
           projection_ids: payload?.projection_ids ?? [],
           recall_ids: payload?.recall_ids ?? [],
-          runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, event.event_id),
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
         };
       }),
     schedule_wake_execution_summary: traces
@@ -926,7 +1978,7 @@ function rebuildRuntimeEventProjections(
         decision: trace.intervention_decisions.at(-1)?.decision ?? null,
         target_effect: trace.intervention_decisions.at(-1)?.target_effect ?? null,
         outcome_events: trace.initiative_events.filter((event) => event.event_type === "action_outcome").map((event) => event.summary),
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
           event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
           && event.payload.trace.trace_id === trace.trace_id
         )?.event_id),
@@ -939,11 +1991,69 @@ function rebuildRuntimeEventProjections(
         tool_refs: trace.task_candidates.filter((candidate) => candidate.target_kind === "tool_call").map((candidate) => candidate.target_ref.ref),
         decision: trace.intervention_decisions.at(-1)?.decision ?? null,
         outcome_events: trace.initiative_events.filter((event) => event.event_type === "action_outcome").map((event) => event.summary),
-        runtime_graph_edge_kinds: graphEdgeKindsForEvent(graph, graphBackedEvents.find((event) =>
+        runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, graphBackedEvents.find((event) =>
           event.payload.schema_version === "runtime-event-payload/personal-agent-trace/v1"
           && event.payload.trace.trace_id === trace.trace_id
         )?.event_id),
       })),
+    runtime_control_operation_summary: graphBackedEvents
+      .filter((event) => event.event_type === "runtime_control.operation.recorded")
+      .flatMap((event) => {
+        if (event.payload.schema_version !== "runtime-event-payload/runtime-control-operation/v1") return [];
+        return [{
+          event_id: event.event_id,
+          trace_id: event.trace_id,
+          operation_id: event.payload.operation.operation_id,
+          kind: event.payload.operation.kind,
+          previous_state: event.payload.previous_operation?.state ?? null,
+          state: event.payload.operation.state,
+          terminal: ["verified", "blocked", "failed", "cancelled"].includes(event.payload.operation.state),
+          goal_id: event.payload.operation.target?.goal_id ?? null,
+          session_id: event.payload.operation.target?.session_id ?? null,
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
+        }];
+      }),
+    attention_commitment_lifecycle_summary: graphBackedEvents
+      .filter((event) => event.event_type === "attention.commitment.recorded")
+      .flatMap((event) => {
+        if (event.payload.schema_version !== "runtime-event-payload/attention-commitment/v1") return [];
+        return [{
+          event_id: event.event_id,
+          trace_id: event.trace_id,
+          operation: event.payload.operation,
+          commitment_id: event.payload.commitment_id,
+          previous_materialization_state: event.payload.previous_materialization_state,
+          materialization_state: event.payload.candidate.materialization_state,
+          materialization_ref: event.payload.materialization_ref,
+          control: event.payload.control,
+          feedback_ref: event.payload.feedback_ref,
+          feedback_refs: event.payload.candidate.feedback_refs,
+          suppression_refs: event.payload.suppression_refs,
+          source_epoch: event.payload.candidate.source_epoch,
+          source_high_watermark: event.payload.candidate.source_high_watermark,
+          replay_key: event.payload.candidate.replay_key,
+          runtime_graph_edge_kinds: graphEdgeKindsForEvent(sourceGraph, event.event_id),
+        }];
+      }),
+  };
+}
+
+function projectionSourceEvents(events: readonly RuntimeEventEnvelope[]): RuntimeEventEnvelope[] {
+  return events.filter((event) => event.event_type !== "projection.rebuild.recorded");
+}
+
+function graphForProjectionSources(
+  graph: RuntimeGraphExplainResult["runtime_graph"],
+  events: readonly RuntimeEventEnvelope[],
+): RuntimeGraphExplainResult["runtime_graph"] {
+  const sourceEventIds = new Set(events.map((event) => event.event_id));
+  const edges = graph.edges.filter((edge) =>
+    edge.provenance_refs.some((ref) => ref.kind === "runtime_event" && sourceEventIds.has(ref.ref))
+  );
+  const nodeIds = new Set(edges.flatMap((edge) => [edge.from_node_id, edge.to_node_id]));
+  return {
+    nodes: graph.nodes.filter((node) => nodeIds.has(node.node_id)),
+    edges,
   };
 }
 
@@ -1240,6 +2350,9 @@ function nodeKindForRef(ref: RuntimeGraphRef): RuntimeGraphNode["node_kind"] {
       return "goal";
     case "task":
       return "task";
+    case "commitment":
+    case "commitment_materialization":
+      return "commitment";
     case "run":
       return "run";
     case "session":
@@ -1316,6 +2429,14 @@ function refFromAuthorityTarget(value: string): RuntimeGraphRef {
   return kind && ref ? { kind, ref } : { kind: "authority_target", ref: value };
 }
 
+function graphRefFromCommitmentSource(ref: CommitmentCandidate["source_ref"]): RuntimeGraphRef {
+  return { kind: ref.kind, ref: ref.id };
+}
+
+function graphRefFromCommitmentTarget(ref: CommitmentCandidate["target_ref"]): RuntimeGraphRef {
+  return { kind: ref.kind, ref: ref.id };
+}
+
 function refKey(ref: RuntimeGraphRef): string {
   return `${ref.kind}:${ref.ref}`;
 }
@@ -1372,12 +2493,68 @@ function validIsoOrNow(value: string): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }
 
+function compareIsoTimestamps(left: string, right: string): number {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+    return leftMs - rightMs;
+  }
+  return left.localeCompare(right);
+}
+
 function authorityEventMatches(event: RuntimeEventEnvelope, decision: ExecutionAuthorityDecision): boolean {
   return event.payload.schema_version === "runtime-event-payload/authority-decision/v1"
     && event.payload.decision.decision_id === decision.decision_id;
 }
 
-function projectionNames(_rebuild: RuntimeEventProjectionRebuild): string[] {
+function projectionSnapshots(
+  rebuild: RuntimeEventProjectionRebuild,
+  appliedAt: string,
+): RuntimeEventProjectionSnapshot[] {
+  const scope = {
+    kind: rebuild.trace_id ? "trace" as const : "control_db" as const,
+    ref: rebuild.trace_id ?? "default",
+  };
+  return projectionNames(rebuild).map((name) => ({
+    schema_version: "runtime-event-projection-snapshot/v1",
+    projection_name: name,
+    scope,
+    rebuilt_at: appliedAt,
+    source_event_count: rebuild.source_event_count,
+    source_event_refs: rebuild.runtime_graph_evidence.source_event_refs,
+    snapshot: projectionValue(rebuild, name),
+  }));
+}
+
+function projectionValue(
+  rebuild: RuntimeEventProjectionRebuild,
+  name: RuntimeEventProjectionName,
+): unknown {
+  switch (name) {
+    case "interaction_authority_summary":
+      return rebuild.interaction_authority_summary;
+    case "approval_resume_outcomes":
+      return rebuild.approval_resume_outcomes;
+    case "notification_outbox_dedupe_state":
+      return rebuild.notification_outbox_dedupe_state;
+    case "peer_delivery_state":
+      return rebuild.peer_delivery_state;
+    case "memory_correction_invalidation_summary":
+      return rebuild.memory_correction_invalidation_summary;
+    case "memory_truth_maintenance_summary":
+      return rebuild.memory_truth_maintenance_summary;
+    case "schedule_wake_execution_summary":
+      return rebuild.schedule_wake_execution_summary;
+    case "tool_execution_outcome_summary":
+      return rebuild.tool_execution_outcome_summary;
+    case "runtime_control_operation_summary":
+      return rebuild.runtime_control_operation_summary;
+    case "attention_commitment_lifecycle_summary":
+      return rebuild.attention_commitment_lifecycle_summary;
+  }
+}
+
+function projectionNames(_rebuild: RuntimeEventProjectionRebuild): RuntimeEventProjectionName[] {
   return [
     "interaction_authority_summary",
     "approval_resume_outcomes",
@@ -1387,5 +2564,7 @@ function projectionNames(_rebuild: RuntimeEventProjectionRebuild): string[] {
     "memory_truth_maintenance_summary",
     "schedule_wake_execution_summary",
     "tool_execution_outcome_summary",
+    "runtime_control_operation_summary",
+    "attention_commitment_lifecycle_summary",
   ];
 }

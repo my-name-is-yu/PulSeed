@@ -495,6 +495,85 @@ describe("database-first legacy store check", () => {
     ]));
   });
 
+  it("does not allow event-sourced projection writes just because RuntimeEventLogStore is referenced", () => {
+    writeFile(tmpDir, "src/runtime/bad-projection-writer.ts", `
+      import { RuntimeEventLogStore } from "../store/runtime-event-log";
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }) {
+        void RuntimeEventLogStore;
+        sqlite.prepare("INSERT INTO runtime_operations (operation_id) VALUES (?)").run("operation:bypass");
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/bad-projection-writer.ts");
+    expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
+  });
+
+  it("does not allow event-sourced projection writes just because an append API is imported", () => {
+    writeFile(tmpDir, "src/runtime/bad-import-only-projection-writer.ts", `
+      import { appendRuntimeEventEnvelopeInTransaction } from "../store/runtime-event-log";
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }) {
+        void appendRuntimeEventEnvelopeInTransaction;
+        sqlite.prepare("INSERT INTO runtime_operations (operation_id) VALUES (?)").run("operation:import-only-bypass");
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/bad-import-only-projection-writer.ts");
+    expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
+  });
+
+  it("does not allow event-sourced projection writes just because an append API appears in text", () => {
+    writeFile(tmpDir, "src/runtime/bad-text-only-projection-writer.ts", `
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }) {
+        const fakeEvidence = "appendRuntimeEventEnvelopeInTransaction(sqlite, event)";
+        sqlite.prepare("INSERT INTO runtime_operations (operation_id) VALUES (?)").run(fakeEvidence);
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/bad-text-only-projection-writer.ts");
+    expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
+  });
+
+  it("detects multiline event-sourced projection writes without append evidence", () => {
+    writeFile(tmpDir, "src/runtime/bad-multiline-projection-writer.ts", `
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }) {
+        sqlite.prepare(\`
+          INSERT
+          INTO runtime_operations (operation_id)
+          VALUES (?)
+        \`).run("operation:multiline-bypass");
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/runtime/bad-multiline-projection-writer.ts");
+    expect(result.stderr).toContain("[event-sourced-projection-write] RuntimeEventLogStore event append plus RuntimeGraph linkage before projection/current-state writes");
+  });
+
+  it("allows event-sourced projection writes only with a concrete append API in the same module", () => {
+    writeFile(tmpDir, "src/runtime/good-projection-writer.ts", `
+      import { appendRuntimeEventEnvelopeInTransaction } from "../store/runtime-event-log";
+      export function persist(sqlite: { prepare(sql: string): { run(...args: unknown[]): void } }, event: never) {
+        appendRuntimeEventEnvelopeInTransaction(sqlite as never, event);
+        sqlite.prepare("INSERT INTO runtime_operations (operation_id) VALUES (?)").run("operation:event-backed");
+      }
+    `);
+
+    const result = runCheck(tmpDir);
+
+    expect(result.status).toBe(0);
+  });
+
   it("keeps the final direct file owner inventory closed with no follow-up debt", () => {
     const result = runCheck(tmpDir, ["--json"]);
 

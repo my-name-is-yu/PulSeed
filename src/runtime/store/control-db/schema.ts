@@ -7,7 +7,7 @@ export interface ControlDbMigration {
   checksum: string;
 }
 
-export const CONTROL_DB_SCHEMA_VERSION = 41;
+export const CONTROL_DB_SCHEMA_VERSION = 44;
 
 export const CONTROL_DB_INITIAL_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS control_schema_migrations (
@@ -2612,6 +2612,38 @@ CREATE INDEX IF NOT EXISTS runtime_events_scope_idx
   ON runtime_events(goal_id, task_id, run_id, session_id, occurred_at, event_id);
 `.trim();
 
+export const CONTROL_DB_RUNTIME_EVENT_SEQUENCE_SCHEMA_SQL = `
+ALTER TABLE runtime_events ADD COLUMN event_sequence INTEGER;
+
+UPDATE runtime_events
+SET event_sequence = rowid
+WHERE event_sequence IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_event_sequence_unique_idx
+  ON runtime_events(event_sequence);
+
+CREATE INDEX IF NOT EXISTS runtime_events_occurred_sequence_idx
+  ON runtime_events(occurred_at, event_sequence);
+`.trim();
+
+export const CONTROL_DB_RUNTIME_EVENT_SEQUENCE_COUNTER_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_event_sequence_counter (
+  scope TEXT PRIMARY KEY CHECK (scope = 'runtime_events'),
+  next_sequence INTEGER NOT NULL CHECK (next_sequence > 0)
+);
+
+INSERT INTO runtime_event_sequence_counter (scope, next_sequence)
+SELECT 'runtime_events', COALESCE(MAX(event_sequence), 0) + 1
+FROM runtime_events
+WHERE true
+ON CONFLICT(scope) DO UPDATE SET
+  next_sequence = CASE
+    WHEN excluded.next_sequence > runtime_event_sequence_counter.next_sequence
+      THEN excluded.next_sequence
+    ELSE runtime_event_sequence_counter.next_sequence
+  END;
+`.trim();
+
 export const CONTROL_DB_RUNTIME_EVENT_LOG_IDEMPOTENCY_SCHEMA_SQL = `
 DELETE FROM runtime_events
 WHERE rowid NOT IN (
@@ -2654,6 +2686,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_idempotency_unique_idx
     replay_policy,
     COALESCE(side_effect_ref, 'pending')
   );
+`.trim();
+
+export const CONTROL_DB_RUNTIME_EVENT_PROJECTION_SNAPSHOT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS runtime_event_projection_snapshots (
+  projection_name TEXT NOT NULL,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('trace', 'control_db')),
+  scope_ref TEXT NOT NULL,
+  rebuilt_at TEXT NOT NULL,
+  source_event_count INTEGER NOT NULL CHECK (source_event_count >= 0),
+  source_event_refs_json TEXT NOT NULL CHECK (json_valid(source_event_refs_json)),
+  snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+  PRIMARY KEY (projection_name, scope_kind, scope_ref)
+);
+
+CREATE INDEX IF NOT EXISTS runtime_event_projection_snapshots_scope_idx
+  ON runtime_event_projection_snapshots(scope_kind, scope_ref, rebuilt_at);
 `.trim();
 
 export const CONTROL_DB_MEMORY_TRUTH_MAINTENANCE_SCHEMA_SQL = `
@@ -3038,5 +3086,20 @@ export const CONTROL_DB_MIGRATIONS: readonly ControlDbMigration[] = [
     41,
     "commitment-attention-runtime-state",
     CONTROL_DB_COMMITMENT_ATTENTION_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    42,
+    "runtime-event-projection-snapshots",
+    CONTROL_DB_RUNTIME_EVENT_PROJECTION_SNAPSHOT_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    43,
+    "runtime-event-stable-sequence",
+    CONTROL_DB_RUNTIME_EVENT_SEQUENCE_SCHEMA_SQL
+  ),
+  createControlDbMigration(
+    44,
+    "runtime-event-sequence-counter",
+    CONTROL_DB_RUNTIME_EVENT_SEQUENCE_COUNTER_SCHEMA_SQL
   ),
 ];
