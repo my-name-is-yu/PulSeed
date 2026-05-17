@@ -1,5 +1,6 @@
 import type { LoopIterationResult, LoopResult, NextIterationDirective } from "../loop-result-types.js";
 import type { KnowledgeRefreshEvidence, ReplanningOptions } from "./phase-specs.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 
 export interface CoreLoopRunCounters {
   consecutiveErrors: number;
@@ -134,6 +135,7 @@ export class CoreDecisionEngine {
   }
 
   buildNextIterationDirective(input: {
+    learningProjection?: Extract<LearningPriorPhaseProjection, { phase: "next_iteration_directive" }>;
     knowledgeRefreshPhase?: {
       status: "skipped" | "completed" | "low_confidence" | "failed";
       output?: KnowledgeRefreshEvidence;
@@ -145,6 +147,20 @@ export class CoreDecisionEngine {
     goalDimensions: string[];
     fallbackFocusDimension?: string;
   }): NextIterationDirective | undefined {
+    if (input.learningProjection) {
+      return {
+        sourcePhase: "learning_prior",
+        reason: "learning_prior_phase_projection",
+        focusDimension: input.learningProjection.preferredFocusDimension ?? input.fallbackFocusDimension,
+        requestedPhase: "normal",
+        learning_prior_consumption_ref: input.learningProjection.consumptionRecordId,
+        phase_projection_ref: `learning-prior-projection:${input.learningProjection.consumptionRecordId}`,
+        reason_code: input.learningProjection.projectionKind,
+        focus_refs: input.learningProjection.focusRefs,
+        inhibition_refs: input.learningProjection.inhibitionRefs,
+      };
+    }
+
     const knowledgeOutput = input.knowledgeRefreshPhase?.output;
     if (
       knowledgeOutput &&

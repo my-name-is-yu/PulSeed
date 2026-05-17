@@ -256,4 +256,34 @@ describe("CoreDecisionEngine", () => {
       })
     );
   });
+
+  it("builds learning-prior directives through typed refs without raw prior text transport", () => {
+    const engine = new CoreDecisionEngine();
+    const directive = engine.buildNextIterationDirective({
+      learningProjection: {
+        phase: "next_iteration_directive",
+        projectionKind: "next_directive_mode_bias",
+        consumptionRecordId: "consumption-1",
+        preferredFocusDimension: "dim-prior",
+        focusRefs: ["evidence-1"],
+        inhibitionRefs: [],
+        directiveModeBiasRefs: ["artifact-1"],
+        interactionPolicyBiases: [],
+        suppressedSuggestionIds: [],
+      },
+      knowledgeRefreshPhase: null,
+      replanningPhase: null,
+      goalDimensions: ["dim1", "dim-prior"],
+      fallbackFocusDimension: "dim1",
+    });
+
+    expect(directive).toEqual(expect.objectContaining({
+      sourcePhase: "learning_prior",
+      reason: "learning_prior_phase_projection",
+      focusDimension: "dim-prior",
+      learning_prior_consumption_ref: "consumption-1",
+      focus_refs: ["evidence-1"],
+    }));
+    expect(directive?.reason).not.toContain("artifact-1");
+  });
 });

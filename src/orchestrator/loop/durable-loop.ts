@@ -22,8 +22,10 @@ import type { PacingResult } from "../../base/types/time-horizon.js";
 import { CoreLoopLearning } from "./durable-loop/learning.js";
 import { StaticCorePhasePolicyRegistry } from "./durable-loop/phase-policy.js";
 import { CoreDecisionEngine } from "./durable-loop/decision-engine.js";
+import { ExperienceLearningBridge } from "./durable-loop/experience-learning-bridge.js";
 import type { CorePhasePolicyRegistry } from "./durable-loop/phase-policy.js";
 import { CoreIterationKernel } from "./durable-loop/iteration-kernel.js";
+import { ExperienceLearningStateStore } from "../../runtime/store/experience-learning-state-store.js";
 import type { GoalRunActivationContext } from "../../base/types/goal-activation.js";
 import { resolveLoopConfig, resolveLoopRunPolicy } from "./run-policy.js";
 import type {
@@ -130,6 +132,15 @@ export class CoreLoop {
     // Wire optional StrategyTemplateRegistry into StrategyManager for auto-templating
     if (deps.strategyTemplateRegistry) {
       deps.strategyManager.setStrategyTemplateRegistry(deps.strategyTemplateRegistry);
+    }
+    const baseDir = typeof deps.stateManager.getBaseDir === "function"
+      ? deps.stateManager.getBaseDir()
+      : null;
+    if (!deps.experienceLearningStore && baseDir) {
+      deps.experienceLearningStore = new ExperienceLearningStateStore(baseDir, { controlBaseDir: baseDir });
+    }
+    if (!deps.experienceLearningBridge && deps.experienceLearningStore) {
+      deps.experienceLearningBridge = new ExperienceLearningBridge(deps.experienceLearningStore);
     }
   }
   // ─── Public API ───

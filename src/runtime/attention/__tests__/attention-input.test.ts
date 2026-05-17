@@ -4,6 +4,7 @@ import {
   buildSchedulerWakeAttentionInputs,
   buildSignalContextFromAttentionInputs,
   createAttentionInput,
+  createExperienceLearningDiagnosticAttentionInput,
   createAttentionInputIntakePort,
   dedupeAttentionInputs,
   ref,
@@ -166,6 +167,69 @@ describe("AttentionInput intake", () => {
         },
       })
     ).toThrow();
+  });
+
+  it("keeps experience-learning runtime-event attention diagnostic-only", () => {
+    const input = createExperienceLearningDiagnosticAttentionInput({
+      runtime_event_id: "runtime-event:experience-learning:1",
+      emitted_at: NOW,
+      summary: "Experience learning produced diagnostic salience.",
+      learning_ref: ref("runtime_event", "experience-learning:prior-1"),
+      current_goal_refs: [ref("goal", "goal-1")],
+    });
+
+    expect(input).toEqual(expect.objectContaining({
+      admission_eligibility: "diagnostic_only",
+      may_mature: false,
+      active_surface_ref: null,
+      relationship_permission_refs: [],
+      effect_policy: {
+        wake: false,
+        notify: false,
+        speak: false,
+        act: false,
+      },
+    }));
+
+    const normalRuntime = createAttentionInput({
+      source_kind: "runtime_event",
+      source_id: "runtime-event:normal:1",
+      emitted_at: NOW,
+      payload_class: "runtime.event",
+      summary: "Normal runtime event can contribute an active signal.",
+    });
+    const context = buildSignalContextFromAttentionInputs({
+      signal_context_id: "signal:learning-diagnostic",
+      assembled_at: NOW,
+      inputs: [normalRuntime, input],
+    });
+    expect(context.signal_sources).toEqual(["runtime_event"]);
+    expect(context.active_surface_ref).toBeNull();
+    expect(context.current_goal_refs).toEqual([]);
+    expect(context.runtime_state_refs).toEqual([
+      ref("runtime_event", "runtime-event:normal:1"),
+      ref("runtime_event", "runtime-event:experience-learning:1"),
+      ref("runtime_event", "experience-learning:prior-1"),
+    ]);
+
+    expect(() =>
+      AttentionInputSchema.parse({
+        ...input,
+        effect_policy: { wake: true, notify: false, speak: false, act: false },
+      })
+    ).toThrow(/cannot wake/);
+    expect(() =>
+      AttentionInputSchema.parse({
+        ...input,
+        may_mature: true,
+      })
+    ).toThrow(/may not mature/);
+    expect(() =>
+      AttentionInputSchema.parse({
+        ...input,
+        active_surface_ref: ref("surface", "surface:normal"),
+      })
+    ).toThrow(/active surface/);
   });
 
   it("rejects signal source overrides that do not match the source kind", () => {

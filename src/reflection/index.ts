@@ -17,6 +17,10 @@ export {
   decideCognitionWritebackQueueEntry,
   ownerForWritebackProposal,
 } from "./cognition-writeback-queue.js";
+export {
+  createExperienceLearningWritebackProposal,
+  createExperienceLearningWritebackQueueEntry,
+} from "./experience-learning-writeback.js";
 export type {
   GoalSummary,
   PlanningReport,

@@ -1,4 +1,5 @@
 export {
+  AttentionInputAdmissionEligibilitySchema,
   AttentionInputEffectPolicySchema,
   AttentionInputSchema,
   AttentionInputSourceKindSchema,
@@ -7,11 +8,13 @@ export {
   buildSchedulerWakeAttentionInputs,
   buildSignalContextFromAttentionInputs,
   createAttentionInput,
+  createExperienceLearningDiagnosticAttentionInput,
   createAttentionInputIntakePort,
   dedupeAttentionInputs,
 } from "./attention-input.js";
 export type {
   AttentionInput,
+  AttentionInputAdmissionEligibility,
   AttentionInputEffectPolicy,
   AttentionInputFactoryInput,
   AttentionInputIntakeDisposition,

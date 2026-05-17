@@ -69,6 +69,7 @@ import type { TaskAgentLoopRunner } from "../agent-loop/task-agent-loop-runner.j
 import { taskAgentLoopResultToAgentResult } from "../agent-loop/task-agent-loop-result.js";
 import type { IPromptGateway } from "../../../prompt/gateway.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 import type {
   RuntimeOperatorHandoffStore,
   RuntimeOperatorHandoffTrigger,
@@ -155,6 +156,8 @@ export interface TaskLifecycleOptions {
 export interface TaskCycleRunOptions {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  learningProjection?: Extract<LearningPriorPhaseProjection, { phase: "task_generation" }>;
+  learningPriorConsumptionRef?: string;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
   abortSignal?: AbortSignal;

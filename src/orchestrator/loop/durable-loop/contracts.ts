@@ -36,6 +36,9 @@ import type { CorePhasePolicyRegistry } from "./phase-policy.js";
 import type { CoreDecisionEngine } from "./decision-engine.js";
 import type { GoalRunActivationContext } from "../../../base/types/goal-activation.js";
 import type { RuntimeEvidenceLedgerPort } from "../../../runtime/store/evidence-ledger.js";
+import type { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
+import type { AttentionLearningBridgePort } from "./attention-learning-bridge.js";
+import type { ExperienceLearningBridgePort } from "./experience-learning-bridge.js";
 import type {
   RuntimeBudgetLimitInput,
   RuntimeBudgetStore,
@@ -329,6 +332,12 @@ export interface CoreLoopDeps extends ObservationDeps, TreeDeps, StallDeps, Task
   toolRegistry?: ToolRegistry;
   /** Optional durable evidence ledger for long-running autonomous work review/resume. */
   evidenceLedger?: RuntimeEvidenceLedgerPort;
+  /** Optional durable experience-learning store under the existing control DB. */
+  experienceLearningStore?: ExperienceLearningStateStore;
+  /** Optional Experience-to-Structure bridge for exact-evidence DurableLoop learning. */
+  experienceLearningBridge?: ExperienceLearningBridgePort;
+  /** Optional attention-to-learning adapter; contributes refs/salience only. */
+  attentionLearningBridge?: AttentionLearningBridgePort;
   /** Optional durable budget store for long-running goal/run budget governance. */
   runtimeBudgetStore?: RuntimeBudgetStore;
   /** Optional durable operator handoff store for deadline, budget, and approval gates. */

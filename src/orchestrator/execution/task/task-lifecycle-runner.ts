@@ -24,6 +24,7 @@ import { reloadTaskFromDisk, verifyExecutionWithGitDiff } from "./task-execution
 import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 import { applyVerdictHandlingContextGuards } from "./task-verifier.js";
 
 export interface TaskGenerationResult {
@@ -36,6 +37,8 @@ export interface TaskGenerationResult {
 export interface TaskCycleRunOptionsShape {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  learningProjection?: Extract<LearningPriorPhaseProjection, { phase: "task_generation" }>;
+  learningPriorConsumptionRef?: string;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
   abortSignal?: AbortSignal;
@@ -184,12 +187,19 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   }
 
   const dimensionSelectionOptions = await context.buildDimensionSelectionBackoff(goalId);
-  const targetDimension = options?.targetDimensionOverride
+  const targetDimension = options?.learningProjection?.preferredTargetDimension
+    ?? options?.targetDimensionOverride
     ?? await runPhase("select-target-dimension", async () =>
       context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
     );
 
-  if (options?.targetDimensionOverride) {
+  if (options?.learningProjection?.preferredTargetDimension) {
+    logger?.info("TaskLifecycle: using learning-prior target dimension projection", {
+      goalId,
+      targetDimension,
+      consumptionRecordId: options.learningProjection.consumptionRecordId,
+    });
+  } else if (options?.targetDimensionOverride) {
     logger?.info("TaskLifecycle: using target dimension override", { goalId, targetDimension });
   }
 

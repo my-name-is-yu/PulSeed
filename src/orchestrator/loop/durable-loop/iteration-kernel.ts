@@ -77,6 +77,7 @@ import type { GoalRunActivationContext } from "../../../base/types/goal-activati
 import type {
   RuntimeEvidenceEntryInput,
   RuntimeEvidenceEntryKind,
+  RuntimeEvidenceEntry,
   RuntimeEvidenceSummary,
 } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
@@ -90,6 +91,18 @@ import {
   truncateOneLine,
   verificationToOutcome,
 } from "./iteration-kernel-evidence-helpers.js";
+import { recordExperienceLearningCheckpoint } from "./experience-learning-bridge.js";
+import type {
+  ExperienceLearningRuntimeEventPayload,
+  LearningPriorPhaseProjection,
+  LearningScope,
+} from "../../../runtime/learning/index.js";
+import {
+  ExperimentRecordSchema,
+  ExperimentValueOutcomeSchema,
+  defaultRuntimeEvidenceTrust,
+  stableLearningId,
+} from "../../../runtime/learning/index.js";
 
 export interface CoreIterationKernelDeps {
   deps: CoreLoopDeps;
@@ -163,21 +176,98 @@ export class CoreIterationKernel {
         : {}),
       loop_index: loopIndex,
     };
-    const appendRuntimeEvidence = async (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => {
-      if (config.dryRun || !this.deps.deps.evidenceLedger) return;
+    const iterationEvidence: RuntimeEvidenceEntry[] = [];
+    let goalForExperienceLearning: Goal | null = null;
+    const appendRuntimeEvidence = async (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }): Promise<RuntimeEvidenceEntry[]> => {
+      if (config.dryRun || !this.deps.deps.evidenceLedger) return [];
       try {
-        await this.deps.deps.evidenceLedger.append({
+        const appended = await this.deps.deps.evidenceLedger.append({
           ...entry,
           scope: {
             ...runtimeEvidenceScope,
             ...entry.scope,
           },
         });
+        iterationEvidence.push(...appended);
+        result.iterationEvidenceRefs = iterationEvidence.map((evidence) => evidence.id);
+        return appended;
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: failed to append runtime evidence ledger entry", {
           goalId,
           loopIndex,
           kind: entry.kind,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return [];
+      }
+    };
+    const finalizeExperienceLearning = async (): Promise<LoopIterationResult> => {
+      await recordExperienceLearningCheckpoint({
+        bridge: this.deps.deps.experienceLearningBridge,
+        goal: goalForExperienceLearning,
+        goalId,
+        ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+        loopIndex,
+        result,
+        iterationEvidence,
+        dryRun: config.dryRun,
+        hasEvidenceLedger: Boolean(this.deps.deps.evidenceLedger),
+        logger: this.deps.logger,
+      });
+      return result;
+    };
+    const consumerScope = (phase: string): LearningScope => ({
+      refs: {
+        goalId,
+        ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+      },
+      semantic: {
+        taskKind: phase,
+        environmentKind: "pulseed_runtime",
+        classifierVersion: "deterministic/learning-prior-consumer/v1",
+        confidence: 1,
+      },
+    });
+    const resolveLearningProjection = async (
+      consumerPhase: "task_generation" | "next_iteration_directive",
+      consumerDecisionRef: string,
+    ) => {
+      if (config.dryRun || !this.deps.deps.experienceLearningStore) return null;
+      try {
+        return await this.deps.deps.experienceLearningStore.resolvePriorForPhase({
+          goalId,
+          ...(runtimeEvidenceScope.run_id ? { runId: runtimeEvidenceScope.run_id } : {}),
+          consumerPhase,
+          consumerScope: consumerScope(consumerPhase),
+          loopIndex,
+          consumerAttemptId: `${consumerPhase}:${goalId}:${loopIndex}`,
+          consumerDecisionRef,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to resolve experience-learning prior", {
+          goalId,
+          loopIndex,
+          consumerPhase,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }
+    };
+    const markLearningProjectionApplied = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      generatedDecisionRefs: readonly string[],
+    ): Promise<void> => {
+      if (!projection || !this.deps.deps.experienceLearningStore) return;
+      try {
+        await this.deps.deps.experienceLearningStore.markPriorConsumptionApplied({
+          consumptionId: projection.consumptionRecordId,
+          generatedDecisionRefs,
+        });
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to mark experience-learning prior applied", {
+          goalId,
+          loopIndex,
+          consumptionRecordId: projection.consumptionRecordId,
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -272,8 +362,9 @@ export class CoreIterationKernel {
     const loadedGoal = await runPhase("load-goal", () =>
       loadGoalWithAggregation(ctx, goalId, result, startTime)
     );
-    if (!loadedGoal) return result;
+    if (!loadedGoal) return await finalizeExperienceLearning();
     let goal = loadedGoal;
+    goalForExperienceLearning = goal;
 
     await runPhase("auto-decompose", () =>
       phaseAutoDecompose(
@@ -300,6 +391,7 @@ export class CoreIterationKernel {
             childrenCount: goal.children_ids.length,
           });
         }
+        goalForExperienceLearning = goal;
       }
     }
 
@@ -337,13 +429,13 @@ export class CoreIterationKernel {
         startTime,
         this.deps.logger
       );
-      if (shouldSkip) return result;
+      if (shouldSkip) return await finalizeExperienceLearning();
     }
 
     const gapResult = await runPhase("gap-analysis", () =>
       calculateGapOrComplete(ctx, goalId, goal, loopIndex, result, startTime)
     );
-    if (!gapResult) return result;
+    if (!gapResult) return await finalizeExperienceLearning();
     const { gapVector, gapAggregate, skipTaskGeneration } = gapResult;
 
     this.deps.logger?.info(
@@ -401,7 +493,7 @@ export class CoreIterationKernel {
       });
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
     const activeWait = await findActiveWaitObservationInput(
@@ -444,7 +536,7 @@ export class CoreIterationKernel {
           : "wait_observe_only";
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
     let driveScores: DriveScore[] = [];
@@ -462,7 +554,7 @@ export class CoreIterationKernel {
           (id, idx, r, g) => generateLoopReport(id, idx, r, g, this.deps.deps.reportingEngine, this.deps.logger)
         )
       );
-      if (!driveResult) return result;
+      if (!driveResult) return await finalizeExperienceLearning();
       driveScores = driveResult.driveScores;
       highDissatisfactionDimensions = driveResult.highDissatisfactionDimensions;
     }
@@ -524,7 +616,7 @@ export class CoreIterationKernel {
     await runPhase("completion-check", () =>
       checkCompletionAndMilestones(ctx, goalId, goal, result, startTime)
     );
-    if (result.error) return result;
+    if (result.error) return await finalizeExperienceLearning();
 
     const stallActionHints = this.deps.coreDecisionEngine.buildStallActionHints({
       phase: replanningOptions,
@@ -672,7 +764,7 @@ export class CoreIterationKernel {
           result.skipped = true;
           result.skipReason = "knowledge_refresh_auto_acquire";
           result.elapsedMs = Date.now() - startTime;
-          return result;
+          return await finalizeExperienceLearning();
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: knowledge_refresh auto acquisition failed (non-fatal)", {
@@ -700,7 +792,7 @@ export class CoreIterationKernel {
           result.skipped = true;
           result.skipReason = "dream_auto_acquire_knowledge";
           result.elapsedMs = Date.now() - startTime;
-          return result;
+          return await finalizeExperienceLearning();
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: autoAcquireKnowledge failed (non-fatal)", {
@@ -711,19 +803,32 @@ export class CoreIterationKernel {
     }
 
     if (skipTaskGeneration) {
+      const learningDirectiveResolution = await resolveLearningProjection(
+        "next_iteration_directive",
+        `next-directive:${goalId}:${loopIndex}:skip`,
+      );
+      const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
+        ? learningDirectiveResolution.projection
+        : undefined;
       result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
+        learningProjection: learningDirectiveProjection,
         knowledgeRefreshPhase: knowledgeRefresh,
         replanningPhase: replanningOptions,
         goalDimensions: goal.dimensions.map((dimension) => dimension.name),
         fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
       });
+      if (learningDirectiveProjection && result.nextIterationDirective) {
+        await markLearningProjectionApplied(learningDirectiveProjection, [
+          result.nextIterationDirective.phase_projection_ref ?? `next-directive:${goalId}:${loopIndex}:skip`,
+        ]);
+      }
       await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "skip_task_generation");
       await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
       result.elapsedMs = Date.now() - startTime;
-      return result;
+      return await finalizeExperienceLearning();
     }
 
-    if (checkDependencyBlock(ctx, goalId, result)) return result;
+    if (checkDependencyBlock(ctx, goalId, result)) return await finalizeExperienceLearning();
 
     const tookParallelPath = await tryParallelExecution(
       goalId,
@@ -735,7 +840,7 @@ export class CoreIterationKernel {
       loopIndex,
       this.deps.logger
     );
-    if (tookParallelPath) return result;
+    if (tookParallelPath) return await finalizeExperienceLearning();
 
     const shouldPreferReplanningContext = this.deps.coreDecisionEngine.shouldPreferReplanningContext({
       phase: replanningOptions,
@@ -752,9 +857,24 @@ export class CoreIterationKernel {
       });
       return undefined;
     });
+    const taskLearningResolution = await resolveLearningProjection(
+      "task_generation",
+      `task-generation:${goalId}:${loopIndex}`,
+    );
+    const taskLearningProjection = taskLearningResolution?.projection?.phase === "task_generation"
+      ? taskLearningResolution.projection
+      : undefined;
     const mergedTaskGenerationHints = {
-      targetDimensionOverride: taskGenerationHints.targetDimensionOverride ?? pendingDirective?.focusDimension,
+      targetDimensionOverride: taskLearningProjection?.preferredTargetDimension
+        ?? taskGenerationHints.targetDimensionOverride
+        ?? pendingDirective?.focusDimension,
       knowledgeContextPrefix: taskGenerationHints.knowledgeContextPrefix,
+      ...(taskLearningProjection
+        ? {
+            learningProjection: taskLearningProjection,
+            learningPriorConsumptionRef: taskLearningProjection.consumptionRecordId,
+          }
+        : {}),
       budgetContext: runtimeBudgetContext,
       executionMode,
       runControlRecommendationContext: dreamRunControlRecommendationContext,
@@ -798,11 +918,48 @@ export class CoreIterationKernel {
       mergedTaskGenerationHints,
       abortSignal,
     );
-    if (!taskCycleOk) return result;
+    if (!taskCycleOk) return await finalizeExperienceLearning();
 
     const completedTaskResult = result.taskResult;
+    if (completedTaskResult && taskLearningProjection) {
+      await markLearningProjectionApplied(taskLearningProjection, [
+        `task:${completedTaskResult.task.id}`,
+      ]);
+    }
     if (completedTaskResult) {
       await appendTaskCycleEvidence(appendRuntimeEvidence, completedTaskResult);
+    }
+    if (
+      completedTaskResult
+      && taskLearningProjection?.requiredExperimentPlanIds.length
+      && this.deps.deps.experienceLearningStore
+      && iterationEvidence.length > 0
+    ) {
+      try {
+        await this.deps.deps.experienceLearningStore.appendLifecycleEvent(
+          buildExperimentRecordClosedPayload({
+            goalId,
+            runId: runtimeEvidenceScope.run_id,
+            loopIndex,
+            taskResult: completedTaskResult,
+            planId: taskLearningProjection.requiredExperimentPlanIds[0]!,
+            evidenceRefs: iterationEvidence.map((entry) => entry.id),
+            eventRefs: iterationEvidence.flatMap((entry) =>
+              entry.raw_refs
+                .filter((ref) => ref.kind === "runtime_event")
+                .map((ref) => ref.id)
+                .filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+            ),
+          })
+        );
+      } catch (err) {
+        this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
+          goalId,
+          loopIndex,
+          planId: taskLearningProjection.requiredExperimentPlanIds[0],
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     if (this.deps.coreDecisionEngine.shouldRunVerificationEvidence(result) && completedTaskResult) {
       const verificationPhase = await runPhase("verification-evidence", () =>
@@ -830,23 +987,134 @@ export class CoreIterationKernel {
       });
     }
 
+    const learningDirectiveResolution = await resolveLearningProjection(
+      "next_iteration_directive",
+      `next-directive:${goalId}:${loopIndex}`,
+    );
+    const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
+      ? learningDirectiveResolution.projection
+      : undefined;
     result.nextIterationDirective = this.deps.coreDecisionEngine.buildNextIterationDirective({
+      learningProjection: learningDirectiveProjection,
       knowledgeRefreshPhase: knowledgeRefresh,
       replanningPhase: replanningOptions,
       goalDimensions: goal.dimensions.map((dimension) => dimension.name),
       fallbackFocusDimension: driveScores[0]?.dimension_name ?? pendingDirective?.focusDimension,
     });
+    if (learningDirectiveProjection && result.nextIterationDirective) {
+      await markLearningProjectionApplied(learningDirectiveProjection, [
+        result.nextIterationDirective.phase_projection_ref ?? `next-directive:${goalId}:${loopIndex}`,
+      ]);
+    }
     await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "next_iteration_directive");
 
     await generateLoopReport(goalId, loopIndex, result, goal, this.deps.deps.reportingEngine, this.deps.logger);
 
     result.elapsedMs = Date.now() - startTime;
-    return result;
+    return await finalizeExperienceLearning();
   }
 }
 
+function buildExperimentRecordClosedPayload(input: {
+  goalId: string;
+  runId?: string;
+  loopIndex: number;
+  taskResult: TaskCycleResult;
+  planId: string;
+  evidenceRefs: readonly string[];
+  eventRefs: readonly string[];
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> {
+  const now = new Date().toISOString();
+  const recordId = stableLearningId("learning-experiment-record", [
+    input.planId,
+    input.taskResult.task.id,
+    input.loopIndex,
+  ]);
+  const valueOutcomeId = stableLearningId("learning-experiment-value-outcome", [recordId]);
+  const outcome = input.taskResult.action === "completed" && input.taskResult.verificationResult.verdict === "pass"
+    ? "supported"
+    : input.taskResult.verificationResult.verdict === "fail"
+      ? "falsified"
+      : "inconclusive";
+  const trust = defaultRuntimeEvidenceTrust({
+    targetRef: {
+      kind: "experiment_record",
+      id: recordId,
+      scope: {
+        goal_id: input.goalId,
+        ...(input.runId ? { run_id: input.runId } : {}),
+      },
+    },
+    provenanceRefs: input.evidenceRefs,
+    sourceAuthority: "verified_execution",
+  });
+  const record = ExperimentRecordSchema.parse({
+    id: recordId,
+    planId: input.planId,
+    goalId: input.goalId,
+    ...(input.runId ? { runId: input.runId } : {}),
+    loopIndex: input.loopIndex,
+    taskId: input.taskResult.task.id,
+    actionRefs: [`task:${input.taskResult.task.id}`],
+    executedAt: now,
+    outcome,
+    outcomeEvidenceRefs: [...input.evidenceRefs],
+    outcomeEventRefs: [...input.eventRefs],
+    outcomeRuntimeGraphRefs: [],
+    eliminatedHypothesisIds: [],
+    testedGeneralizationCandidateIds: [],
+    narrowedGeneralizationCandidateIds: [],
+    negativeTransferRefs: outcome === "falsified" ? [...input.evidenceRefs] : [],
+    followUpFrameIds: [],
+    trust,
+  });
+  const valueOutcome = ExperimentValueOutcomeSchema.parse({
+    id: valueOutcomeId,
+    planId: input.planId,
+    recordId,
+    realizedInformationGain: outcome === "inconclusive" ? 0.2 : 0.7,
+    eliminatedHypothesisIds: [],
+    eliminatedHypothesisCount: 0,
+    actualCost: "low",
+    actualRisk: "low",
+    actualTimeToSignal: "same_iteration",
+    transferOutcome: outcome === "supported" ? "exact_success" : outcome === "falsified" ? "negative_transfer" : "inconclusive",
+    calibrationError: outcome === "inconclusive" ? 0.3 : 0.1,
+    outcomeEvidenceRefs: [...input.evidenceRefs],
+  });
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    event_kind: "experiment_record_closed",
+    idempotency_key: `experience-learning:experiment-record:${recordId}`,
+    goal_id: input.goalId,
+    ...(input.runId ? { run_id: input.runId } : {}),
+    loop_index: input.loopIndex,
+    source_refs: {
+      evidence_refs: [...input.evidenceRefs],
+      event_refs: [...input.eventRefs],
+      runtime_graph_refs: [],
+    },
+    trust,
+    correction_state: trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: [
+        { kind: "learning_experiment_record", ref: recordId },
+        { kind: "learning_experiment_plan", ref: input.planId },
+      ],
+      edge_refs: [],
+    },
+    record_id: recordId,
+    plan_id: input.planId,
+    outcome,
+    value_outcome_id: valueOutcomeId,
+    record,
+    value_outcome: valueOutcome,
+  };
+}
+
 async function appendPublicResearchEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -898,7 +1166,7 @@ async function appendPublicResearchEvidence(
 }
 
 async function appendDreamReviewCheckpointEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -1020,7 +1288,7 @@ async function loadReadyFinalizationManifestId(input: {
 }
 
 async function appendPhaseEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   execution: {
     phase: CorePhaseKind;
     status: "skipped" | "completed" | "low_confidence" | "failed";
@@ -1053,7 +1321,7 @@ async function appendPhaseEvidence(
 }
 
 async function appendDecisionEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   directive: LoopIterationResult["nextIterationDirective"],
   fallbackReason: string,
 ): Promise<void> {
@@ -1073,7 +1341,7 @@ async function appendDecisionEvidence(
 }
 
 async function appendTaskCycleEvidence(
-  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<void>,
+  appendRuntimeEvidence: (entry: Omit<RuntimeEvidenceEntryInput, "scope"> & { scope?: RuntimeEvidenceEntryInput["scope"] }) => Promise<RuntimeEvidenceEntry[]>,
   taskResult: TaskCycleResult,
 ): Promise<void> {
   const task = taskResult.task;

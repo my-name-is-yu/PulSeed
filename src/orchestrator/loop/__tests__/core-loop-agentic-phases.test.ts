@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { CoreLoop, type CoreLoopDeps } from "../durable-loop.js";
 import type { ObservationEngine } from "../../../platform/observation/observation-engine.js";
@@ -13,7 +14,7 @@ import type { GapCalculatorModule, DriveScorerModule, ReportingEngine } from "..
 import type { GapVector } from "../../../base/types/gap.js";
 import type { CompletionJudgment } from "../../../base/types/satisficing.js";
 import type { DriveScore } from "../../../base/types/drive.js";
-import { makeGoal } from "../../../../tests/helpers/fixtures.js";
+import { makeDimension, makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { StaticCorePhasePolicyRegistry } from "../durable-loop/phase-policy.js";
 import { ToolRegistry } from "../../../tools/registry.js";
@@ -25,6 +26,11 @@ import {
 } from "../../../tools/system/ProcessSessionTool/ProcessSessionTool.js";
 import { ProcessStatusTool } from "../../../tools/system/ProcessStatusTool/ProcessStatusTool.js";
 import { InteractiveAutomationRegistry } from "../../../runtime/interactive-automation/index.js";
+import {
+  RuntimeEvidenceEntrySchema,
+  type RuntimeEvidenceEntryInput,
+} from "../../../runtime/store/evidence-ledger.js";
+import { ExperienceLearningStateStore } from "../../../runtime/store/experience-learning-state-store.js";
 
 function makeGapVector(goalId = "goal-1"): GapVector {
   return {
@@ -63,10 +69,17 @@ function makeCompletionJudgment(overrides: Partial<CompletionJudgment> = {}): Co
   };
 }
 
-function makeTaskCycleResult(): TaskCycleResult {
+function makeTaskCycleResult(overrides: {
+  taskId?: string;
+  action?: TaskCycleResult["action"];
+  verdict?: TaskCycleResult["verificationResult"]["verdict"];
+} = {}): TaskCycleResult {
+  const taskId = overrides.taskId ?? "task-1";
+  const action = overrides.action ?? "completed";
+  const verdict = overrides.verdict ?? "pass";
   return {
     task: {
-      id: "task-1",
+      id: taskId,
       goal_id: "goal-1",
       strategy_id: null,
       target_dimensions: ["dim1"],
@@ -82,7 +95,7 @@ function makeTaskCycleResult(): TaskCycleResult {
       consecutive_failure_count: 0,
       reversibility: "reversible",
       task_category: "normal",
-      status: "completed",
+      status: action === "completed" ? "completed" : "error",
       started_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
       timeout_at: null,
@@ -90,14 +103,14 @@ function makeTaskCycleResult(): TaskCycleResult {
       created_at: new Date().toISOString(),
     },
     verificationResult: {
-      task_id: "task-1",
-      verdict: "pass",
+      task_id: taskId,
+      verdict,
       confidence: 0.9,
       evidence: [],
       dimension_updates: [],
       timestamp: new Date().toISOString(),
     },
-    action: "completed",
+    action,
   };
 }
 
@@ -438,6 +451,156 @@ describe("CoreLoop agentic phase hooks", () => {
       outcome: "improved",
       scope: expect.objectContaining({ goal_id: "goal-1", task_id: "task-1", loop_index: 0 }),
     }));
+  });
+
+  it("passes learning priors to task generation as typed projections instead of prompt context", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-1" },
+        record: { id: "consumption-1", stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: {
+          phase: "task_generation",
+          projectionKind: "task_generation_bias",
+          consumptionRecordId: "consumption-1",
+          preferredTargetDimension: "dim-prior",
+          taskBiasRefs: ["evidence-1"],
+          avoidTaskPatternRefs: [],
+          requiredExperimentPlanIds: ["experiment-plan-1"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-prior", label: "Prior Dimension", current_value: 0 }),
+    ] }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    const taskCycleArgs = (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(taskCycleArgs[7]).toEqual(expect.objectContaining({
+      targetDimensionOverride: "dim-prior",
+      learningPriorConsumptionRef: "consumption-1",
+      learningProjection: expect.objectContaining({
+        phase: "task_generation",
+        preferredTargetDimension: "dim-prior",
+        requiredExperimentPlanIds: ["experiment-plan-1"],
+      }),
+    }));
+    expect(taskCycleArgs[7]?.knowledgeContextPrefix).not.toContain("prior-1");
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-1",
+      generatedDecisionRefs: ["task:task-1"],
+    });
+  });
+
+  it("runs an N+1 trial-reuse learning prior through the public DurableLoop iteration path", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    const experienceStore = new ExperienceLearningStateStore(path.join(tmpDir, "runtime"), { controlBaseDir: tmpDir });
+    deps.experienceLearningStore = experienceStore;
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `experience-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:experience-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    let taskCall = 0;
+    (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      taskCall += 1;
+      return makeTaskCycleResult({
+        taskId: `task-${taskCall}`,
+        action: taskCall < 3 ? "discard" : "completed",
+        verdict: taskCall < 3 ? "fail" : "pass",
+      });
+    });
+    await mocks.stateManager.saveGoal(makeGoal({ dimensions: [
+      makeDimension({ name: "dim1", current_value: 0 }),
+      makeDimension({ name: "dim-other", label: "Other Dimension", current_value: 0 }),
+    ] }));
+
+    try {
+      const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+
+      const first = await loop.runOneIteration("goal-1", 0);
+      const second = await loop.runOneIteration("goal-1", 1);
+
+      expect(first.experienceLearning?.status).toBe("processed");
+      expect(second.experienceLearning?.status).toBe("processed");
+      const priors = await experienceStore.listPriorSnapshots("goal-1");
+      expect(priors).toEqual([
+        expect.objectContaining({
+          eligibleFromIteration: 2,
+          suggestions: [expect.objectContaining({
+            kind: "trial_reuse_experiment",
+            consumerPhase: "task_generation",
+            experimentPlanIds: [expect.stringContaining("learning-experiment-plan:")],
+          })],
+        }),
+      ]);
+      expect((mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0]?.[7]?.learningProjection).toBeUndefined();
+
+      await loop.runOneIteration("goal-1", 2);
+
+      const thirdTaskCycleOptions = (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[2]?.[7];
+      expect(thirdTaskCycleOptions).toEqual(expect.objectContaining({
+        targetDimensionOverride: "dim1",
+        learningPriorConsumptionRef: expect.stringContaining("learning-prior-consumption:"),
+        learningProjection: expect.objectContaining({
+          phase: "task_generation",
+          preferredTargetDimension: "dim1",
+          requiredExperimentPlanIds: [expect.stringContaining("learning-experiment-plan:")],
+          taskBiasRefs: [],
+        }),
+      }));
+      expect(thirdTaskCycleOptions?.knowledgeContextPrefix ?? "").not.toContain("learning-prior");
+
+      const consumptions = await experienceStore.listPriorConsumptionRecords(priors[0]!.id);
+      expect(consumptions).toEqual([
+        expect.objectContaining({
+          stage: "applied",
+          generatedDecisionRefs: ["task:task-3"],
+        }),
+      ]);
+      const experimentRecords = await experienceStore.listExperimentRecords("goal-1");
+      expect(experimentRecords).toEqual([
+        expect.objectContaining({
+          planId: priors[0]!.suggestions[0]!.experimentPlanIds[0],
+          taskId: "task-3",
+          outcome: "supported",
+        }),
+      ]);
+    } finally {
+      await experienceStore.close();
+    }
   });
 
   it("runs stall investigation when stall is detected", async () => {

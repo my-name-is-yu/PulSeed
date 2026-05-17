@@ -34,6 +34,9 @@ export const AttentionInputEffectPolicySchema = z.object({
 }).strict();
 export type AttentionInputEffectPolicy = z.infer<typeof AttentionInputEffectPolicySchema>;
 
+export const AttentionInputAdmissionEligibilitySchema = z.enum(["normal", "diagnostic_only"]);
+export type AttentionInputAdmissionEligibility = z.infer<typeof AttentionInputAdmissionEligibilitySchema>;
+
 export const AttentionInputSourceSchema = z.object({
   source_kind: AttentionInputSourceKindSchema,
   source_id: z.string().min(1),
@@ -50,6 +53,8 @@ const AttentionInputBaseSchema = z.object({
   source: AttentionInputSourceSchema,
   signal_source: SignalSourceSchema,
   signal_ref: CompanionAutonomySourceRefSchema,
+  admission_eligibility: AttentionInputAdmissionEligibilitySchema.default("normal"),
+  may_mature: z.boolean().default(true),
   effect_policy: AttentionInputEffectPolicySchema.default({ wake: true }),
   payload_class: z.string().min(1),
   summary: z.string().min(1),
@@ -81,6 +86,44 @@ export const AttentionInputSchema = AttentionInputBaseSchema.superRefine((input,
       message: `signal_ref kind "${input.signal_ref.ref.kind}" is not allowed for attention input signal_source "${input.signal_source}"`,
     });
   }
+
+  if (input.admission_eligibility === "diagnostic_only") {
+    if (input.source.source_kind !== "runtime_event" || input.signal_source !== "runtime_event") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["admission_eligibility"],
+        message: "diagnostic_only attention inputs must originate from runtime_event signals",
+      });
+    }
+    if (!input.payload_class.startsWith("experience_learning.")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payload_class"],
+        message: "diagnostic_only learning attention inputs require an experience_learning payload class",
+      });
+    }
+    if (input.may_mature) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["may_mature"],
+        message: "diagnostic_only learning attention inputs may not mature",
+      });
+    }
+    if (input.effect_policy.wake || input.effect_policy.notify || input.effect_policy.speak || input.effect_policy.act) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effect_policy"],
+        message: "diagnostic_only learning attention inputs cannot wake, notify, speak, or act",
+      });
+    }
+    if (input.active_surface_ref !== null || input.relationship_permission_refs.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["active_surface_ref"],
+        message: "diagnostic_only learning attention inputs cannot carry active surface or permission refs",
+      });
+    }
+  }
 });
 export type AttentionInput = z.infer<typeof AttentionInputSchema>;
 
@@ -93,6 +136,8 @@ export type AttentionInputFactoryInput = {
   signal_ref?: CompanionAutonomyRef;
   signal_ref_lifecycle?: CompanionAutonomyContentLifecycle;
   signal_source?: AllowedSignalSourceForAttentionInputKind;
+  admission_eligibility?: AttentionInputAdmissionEligibility;
+  may_mature?: boolean;
   source_epoch?: string;
   high_watermark?: string;
   replay_key?: string;
@@ -175,6 +220,8 @@ export function createAttentionInput(input: AttentionInputFactoryInput): Attenti
     source,
     signal_source: signalSource,
     signal_ref: signalRef,
+    admission_eligibility: input.admission_eligibility ?? "normal",
+    may_mature: input.may_mature ?? true,
     effect_policy: AttentionInputEffectPolicySchema.parse({
       wake: input.effect_policy?.wake ?? true,
       notify: input.effect_policy?.notify ?? false,
@@ -194,6 +241,40 @@ export function createAttentionInput(input: AttentionInputFactoryInput): Attenti
     stale_refs: input.stale_refs ?? [],
     invalidation_refs: input.invalidation_refs ?? [],
     audit_refs: input.audit_refs ?? [],
+  });
+}
+
+export function createExperienceLearningDiagnosticAttentionInput(input: {
+  runtime_event_id: string;
+  emitted_at: string;
+  summary: string;
+  learning_ref: CompanionAutonomyRef;
+  replay_key?: string;
+  current_goal_refs?: CompanionAutonomyRef[];
+  audit_refs?: CompanionAutonomyRef[];
+}): AttentionInput {
+  return createAttentionInput({
+    source_kind: "runtime_event",
+    source_id: input.runtime_event_id,
+    emitted_at: input.emitted_at,
+    payload_class: "experience_learning.diagnostic",
+    summary: input.summary,
+    signal_source: "runtime_event",
+    signal_ref: ref("runtime_event", input.runtime_event_id),
+    admission_eligibility: "diagnostic_only",
+    may_mature: false,
+    effect_policy: { wake: false, notify: false, speak: false, act: false },
+    active_surface_ref: null,
+    current_goal_refs: input.current_goal_refs ?? [],
+    runtime_state_refs: uniqueRefs([
+      ref("runtime_event", input.runtime_event_id),
+      ...(input.learning_ref.kind === "runtime_event" ? [input.learning_ref] : []),
+    ]),
+    audit_refs: [
+      ref("audit_trace", `experience-learning:${stableId(input.runtime_event_id)}`),
+      ...(input.audit_refs ?? []),
+    ],
+    ...(input.replay_key ? { replay_key: input.replay_key } : {}),
   });
 }
 
@@ -280,21 +361,24 @@ export function dedupeAttentionInputs(
 }
 
 export function buildSignalContextFromAttentionInputs(input: AttentionInputSignalContextInput): SignalContext {
+  const activeInputs = input.inputs.filter((candidate) =>
+    candidate.admission_eligibility !== "diagnostic_only" && candidate.may_mature
+  );
   const activeSurfaceRef = input.active_surface_ref
-    ?? input.inputs.find((candidate) => candidate.active_surface_ref)?.active_surface_ref
+    ?? activeInputs.find((candidate) => candidate.active_surface_ref)?.active_surface_ref
     ?? null;
 
   return assembleSignalContext({
     ...input,
-    signals: uniqueSignalInputs(input.inputs.flatMap(signalInputsForAttentionInput)),
+    signals: uniqueSignalInputs(activeInputs.flatMap(signalInputsForAttentionInput)),
     active_surface_ref: activeSurfaceRef,
     current_session_refs: uniqueRefs([
       ...(input.current_session_refs ?? []),
-      ...input.inputs.flatMap((candidate) => candidate.current_session_refs),
+      ...activeInputs.flatMap((candidate) => candidate.current_session_refs),
     ]),
     current_goal_refs: uniqueRefs([
       ...(input.current_goal_refs ?? []),
-      ...input.inputs.flatMap((candidate) => candidate.current_goal_refs),
+      ...activeInputs.flatMap((candidate) => candidate.current_goal_refs),
     ]),
     runtime_state_refs: uniqueRefs([
       ...(input.runtime_state_refs ?? []),

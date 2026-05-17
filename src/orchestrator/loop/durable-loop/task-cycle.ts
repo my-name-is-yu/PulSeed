@@ -33,6 +33,7 @@ import {
 import type { CapabilityAcquisitionOutcome } from "./capability.js";
 import type { CoreLoopEvidenceLedger } from "./evidence-ledger.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
+import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
 export {
   detectStallsAndRebalance,
   type StallActionHints,
@@ -160,6 +161,8 @@ export interface LoopCallbacks {
 export interface TaskGenerationHints {
   targetDimensionOverride?: string;
   knowledgeContextPrefix?: string;
+  learningProjection?: Extract<LearningPriorPhaseProjection, { phase: "task_generation" }>;
+  learningPriorConsumptionRef?: string;
   budgetContext?: Record<string, unknown>;
   executionMode?: ExecutionModeState;
   runControlRecommendationContext?: string;
