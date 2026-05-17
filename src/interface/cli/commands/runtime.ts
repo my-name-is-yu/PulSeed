@@ -1396,6 +1396,14 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
 }
 
 function syntheticCapabilityDescriptorForRuntimeExplain(capabilityId: string): CapabilityDescriptor | null {
+  const runtimeControlPrefix = "capability:runtime_control_action:";
+  if (capabilityId.startsWith(runtimeControlPrefix)) {
+    const action = capabilityId.slice(runtimeControlPrefix.length);
+    if (action) {
+      return descriptorFromRuntimeControlAction(action);
+    }
+  }
+
   const gatewayPrefix = "capability:gateway_channel_action:";
   if (capabilityId.startsWith(gatewayPrefix)) {
     const rest = capabilityId.slice(gatewayPrefix.length);

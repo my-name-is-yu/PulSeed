@@ -19,10 +19,12 @@ import {
 import { PluginLoader } from "../../src/runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../src/runtime/notifier-registry.js";
 import { PluginManifestSchema } from "../../src/base/types/plugin.js";
+import { StateManager } from "../../src/base/state/state-manager.js";
 import type { AgentResult, IAdapter } from "../../src/orchestrator/execution/adapter-layer.js";
 import { executeTask, type TaskExecutorDeps } from "../../src/orchestrator/execution/task/task-executor.js";
 import type { SessionManager } from "../../src/orchestrator/execution/session-manager.js";
 import type { Task } from "../../src/base/types/task.js";
+import { cmdRuntime } from "../../src/interface/cli/commands/runtime.js";
 import { runProductGauntletScenario } from "../harness/product-gauntlet-runner.js";
 
 describe("capability plane product gauntlet", () => {
@@ -215,6 +217,26 @@ describe("capability plane product gauntlet", () => {
       expect(permissionAuditDescriptor.operation_kind).toBe("read");
       expect(permissionAuditDescriptor.side_effect_profile).toBe("read");
       expect(permissionAuditDescriptor.authority_requirements.approval_required).toBe(false);
+      const explainLog = vi.spyOn(console, "log").mockImplementation(() => {});
+      const explainError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const exitCode = await cmdRuntime(
+          new StateManager(context.rootDir),
+          ["capability", "explain", "capability:runtime_control_action:automation:backpressure:reset", "--json"],
+        );
+        expect(exitCode).toBe(0);
+        const explainedDescriptor = JSON.parse(String(explainLog.mock.calls[0]?.[0])) as {
+          capability_id: string;
+          provider_kind: string;
+          metadata?: { action?: string };
+        };
+        expect(explainedDescriptor.capability_id).toBe("capability:runtime_control_action:automation:backpressure:reset");
+        expect(explainedDescriptor.provider_kind).toBe("runtime_control_action");
+        expect(explainedDescriptor.metadata?.action).toBe("automation:backpressure:reset");
+      } finally {
+        explainLog.mockRestore();
+        explainError.mockRestore();
+      }
 
       const normalProjection = projectCapabilityNormalSurface(runtimeControlDescriptor);
       const normalProjectionJson = JSON.stringify(normalProjection);
