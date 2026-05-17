@@ -1,5 +1,9 @@
 import { z } from "zod/v3";
 import { PeerInitiativeKindSchema } from "../peer-initiative/kinds.js";
+import {
+  SurfaceActionBindingSchema,
+  SurfaceProjectionSchema,
+} from "../surface-projection-protocol.js";
 
 export const OutboundConversationSurfaceSchema = z.enum([
   "telegram",
@@ -72,6 +76,8 @@ export const OutboundConversationMessageSchema = z.object({
   visibility_policy_ref: z.string().min(1),
   trigger_actions: z.array(PeerInitiativeTriggerActionSchema).default([]),
   feedback_actions: z.array(PeerInitiativeFeedbackActionSchema).default([]),
+  action_bindings: z.array(SurfaceActionBindingSchema).optional(),
+  surface_projection: SurfaceProjectionSchema.optional(),
 }).strict();
 export type OutboundConversationMessage = z.infer<typeof OutboundConversationMessageSchema>;
 

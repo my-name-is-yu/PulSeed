@@ -20,6 +20,10 @@ const GoalStartRequestSchema = z.object({
 const ApprovalResponseRequestSchema = z.object({
   requestId: z.string().min(1),
   approved: z.boolean(),
+  surface_action_binding_id: z.string().min(1).optional(),
+  surface_action_binding_token: z.string().min(1).optional(),
+  surfaceActionBindingId: z.string().min(1).optional(),
+  surfaceActionBindingToken: z.string().min(1).optional(),
 }).passthrough();
 
 const ChatMessageRequestSchema = z.object({
@@ -40,8 +44,16 @@ export class EventServerCommandHandler {
   constructor(
     private readonly broadcast: (eventType: string, data: unknown) => Promise<void>,
     private readonly getCommandEnvelopeHook: () => ((envelope: Envelope) => void | Promise<void>) | undefined,
-    private readonly canResolveApproval: (requestId: string) => Promise<boolean>,
-    private readonly resolveApproval: (requestId: string, approved: boolean) => Promise<boolean>,
+    private readonly canResolveApproval: (
+      requestId: string,
+      approved: boolean,
+      binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string }
+    ) => Promise<boolean>,
+    private readonly resolveApproval: (
+      requestId: string,
+      approved: boolean,
+      binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string }
+    ) => Promise<boolean>,
     private readonly getSlackChannelAdapter: () => SlackChannelAdapter | undefined
   ) {}
 
@@ -137,8 +149,10 @@ export class EventServerCommandHandler {
     if (action === "approve") {
       try {
         const body = await readBody(req);
-        const { requestId, approved } = ApprovalResponseRequestSchema.parse(parseJsonObjectBody(body));
-        if (!(await this.canResolveApproval(requestId))) {
+        const parsed = ApprovalResponseRequestSchema.parse(parseJsonObjectBody(body));
+        const { requestId, approved } = parsed;
+        const binding = approvalResponseBinding(parsed);
+        if (!(await this.canResolveApproval(requestId, approved, binding))) {
           writeJson(res, 404, { ok: false });
           return;
         }
@@ -147,9 +161,9 @@ export class EventServerCommandHandler {
           goalId,
           priority: "high",
           dedupeKey: `approval_response:${requestId}`,
-          payload: { goalId, requestId, approved },
+          payload: { goalId, requestId, approved, ...binding },
       });
-        const resolved = await this.resolveApproval(requestId, approved);
+        const resolved = await this.resolveApproval(requestId, approved, binding);
         writeJson(res, resolved ? 200 : 404, { ok: resolved });
       } catch (err) {
         if (isPayloadTooLargeError(err)) {
@@ -294,6 +308,20 @@ export class EventServerCommandHandler {
 
 function parseJsonObjectBody(body: string): unknown {
   return body.trim() ? JSON.parse(body) : {};
+}
+
+function approvalResponseBinding(input: z.infer<typeof ApprovalResponseRequestSchema>): {
+  surfaceActionBindingId?: string;
+  surfaceActionBindingToken?: string;
+} {
+  return {
+    ...(input.surfaceActionBindingId ?? input.surface_action_binding_id
+      ? { surfaceActionBindingId: input.surfaceActionBindingId ?? input.surface_action_binding_id }
+      : {}),
+    ...(input.surfaceActionBindingToken ?? input.surface_action_binding_token
+      ? { surfaceActionBindingToken: input.surfaceActionBindingToken ?? input.surface_action_binding_token }
+      : {}),
+  };
 }
 
 function isCommandBodyValidationError(error: unknown): boolean {

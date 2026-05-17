@@ -5,6 +5,7 @@ import { EventServer } from "../event-server.js";
 import { ApprovalBroker } from "../approval-broker.js";
 import { ApprovalStore } from "../store/approval-store.js";
 import { RuntimeOperatorHandoffStore } from "../store/operator-handoff-store.js";
+import { projectOperatorHandoffSurfaceEvent } from "../operator-handoff-surface.js";
 import { makeTempDir, cleanupTempDir } from "../../../tests/helpers/temp-dir.js";
 
 function createMockDriveSystem() {
@@ -143,6 +144,58 @@ async function waitForPendingApproval(
   throw new Error(`Timed out waiting for pending approval: ${approvalId}`);
 }
 
+function surfaceApprovalBindingId(
+  broker: ApprovalBroker,
+  approvalId: string,
+  approved: boolean,
+): string {
+  const event = broker.getPendingApprovalEvents().find((pending) => pending.requestId === approvalId);
+  const bindingId = event?.surface_projection?.actions.find((action) =>
+    action.kind === (approved ? "approve" : "reject")
+  )?.binding_id;
+  if (!bindingId) {
+    throw new Error(`Missing surface approval binding for ${approvalId}`);
+  }
+  return bindingId;
+}
+
+function surfaceApprovalBindingIdFromEvent(event: unknown, approved: boolean): string {
+  const surfaceProjection = (event as {
+    surface_projection?: {
+      actions?: Array<{ kind?: string; binding_id?: string }>;
+    };
+  }).surface_projection;
+  const bindingId = surfaceProjection?.actions?.find((action) =>
+    action.kind === (approved ? "approve" : "reject")
+  )?.binding_id;
+  if (!bindingId) {
+    throw new Error("Missing surface approval binding in SSE event");
+  }
+  return bindingId;
+}
+
+async function waitForBroadcastedApproval(
+  broadcasts: Array<{ eventType: string; data: unknown }>,
+  requestId: string,
+  count: number,
+): Promise<unknown> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const matches = broadcasts.filter(({ eventType, data }) =>
+      eventType === "approval_required" &&
+      typeof data === "object" &&
+      data !== null &&
+      "requestId" in data &&
+      data.requestId === requestId
+    );
+    if (matches.length >= count) {
+      return matches[count - 1]?.data;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for approval_required broadcast: ${requestId}`);
+}
+
 describe("EventServer durable approval integration", () => {
   let tmpDir: string;
 
@@ -177,10 +230,12 @@ describe("EventServer durable approval integration", () => {
         action: "merge",
       });
       await waitForPendingApproval(store, "approval-http");
+      const approveBindingId = surfaceApprovalBindingId(broker, "approval-http", true);
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "approval-http",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);
@@ -192,10 +247,81 @@ describe("EventServer durable approval integration", () => {
     }
   }, 15_000);
 
+  it("rejects stale direct approval bindings when caller-supplied request ids are reused", async () => {
+    const server = new EventServer(
+      createMockDriveSystem() as never,
+      {
+        port: 0,
+        eventsDir: path.join(tmpDir, "events"),
+        now: () => Date.parse("2026-05-17T00:00:00.000Z"),
+      }
+    );
+    const broadcasts: Array<{ eventType: string; data: unknown }> = [];
+    const originalBroadcast = server.broadcast.bind(server);
+    server.broadcast = async (eventType: string, data: unknown): Promise<void> => {
+      broadcasts.push({ eventType, data });
+      await originalBroadcast(eventType, data);
+    };
+
+    try {
+      await server.start();
+      const firstApproval = server.requestApproval("goal-1", {
+        id: "task-direct-1",
+        description: "Approve first direct request",
+        action: "deploy",
+      }, { requestId: "approval-reused" });
+      const staleApproveBindingId = surfaceApprovalBindingIdFromEvent(
+        await waitForBroadcastedApproval(broadcasts, "approval-reused", 1),
+        true,
+      );
+
+      const firstResult = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "approval-reused",
+        approved: true,
+        surface_action_binding_id: staleApproveBindingId,
+      }, server.getAuthToken());
+
+      expect(firstResult.status).toBe(200);
+      await expect(firstApproval).resolves.toBe(true);
+
+      const secondApproval = server.requestApproval("goal-1", {
+        id: "task-direct-2",
+        description: "Approve second direct request",
+        action: "deploy",
+      }, { requestId: "approval-reused" });
+      const currentApproveBindingId = surfaceApprovalBindingIdFromEvent(
+        await waitForBroadcastedApproval(broadcasts, "approval-reused", 2),
+        true,
+      );
+      expect(currentApproveBindingId).not.toBe(staleApproveBindingId);
+
+      const staleResult = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "approval-reused",
+        approved: true,
+        surface_action_binding_id: staleApproveBindingId,
+      }, server.getAuthToken());
+
+      expect(staleResult.status).toBe(404);
+
+      const currentResult = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "approval-reused",
+        approved: true,
+        surface_action_binding_id: currentApproveBindingId,
+      }, server.getAuthToken());
+
+      expect(currentResult.status).toBe(200);
+      await expect(secondApproval).resolves.toBe(true);
+    } finally {
+      await server.stop();
+    }
+  }, 15_000);
+
   it("resolves durable operator handoffs through the goal approval endpoint", async () => {
     const runtimeRoot = path.join(tmpDir, "runtime");
     const handoffStore = new RuntimeOperatorHandoffStore(runtimeRoot);
-    await handoffStore.create({
+    const initialCreatedAt = new Date(Date.now() - 60_000).toISOString();
+    const currentUpdatedAt = new Date().toISOString();
+    const initialHandoff = await handoffStore.create({
       handoff_id: "handoff-http",
       goal_id: "goal-1",
       triggers: ["deadline", "finalization"],
@@ -207,7 +333,25 @@ describe("EventServer durable approval integration", () => {
         label: "Approve finalization",
         approval_required: true,
       },
+      created_at: initialCreatedAt,
     });
+    const staleApproveBindingId = projectOperatorHandoffSurfaceEvent(initialHandoff).approval_prompt.approve_binding_id;
+    const currentHandoff = await handoffStore.create({
+      handoff_id: "handoff-http",
+      goal_id: "goal-1",
+      triggers: ["deadline", "finalization"],
+      title: "Deadline handoff",
+      summary: "Deadline finalization requires review.",
+      current_status: "mode=finalization; retry=1",
+      recommended_action: "Approve updated finalization.",
+      next_action: {
+        label: "Approve updated finalization",
+        approval_required: true,
+      },
+      created_at: currentUpdatedAt,
+    });
+    const approveBindingId = projectOperatorHandoffSurfaceEvent(currentHandoff).approval_prompt.approve_binding_id;
+    expect(approveBindingId).not.toBe(staleApproveBindingId);
     const server = new EventServer(
       createMockDriveSystem() as never,
       {
@@ -219,9 +363,27 @@ describe("EventServer durable approval integration", () => {
 
     try {
       await server.start();
+      const staleBinding = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-http",
+        approved: true,
+        surface_action_binding_id: staleApproveBindingId,
+      }, server.getAuthToken());
+
+      expect(staleBinding.status).toBe(404);
+      await expect(handoffStore.load("handoff-http")).resolves.toMatchObject({ status: "open" });
+
+      const missingBinding = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
+        requestId: "handoff-http",
+        approved: true,
+      }, server.getAuthToken());
+
+      expect(missingBinding.status).toBe(404);
+      await expect(handoffStore.load("handoff-http")).resolves.toMatchObject({ status: "open" });
+
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "handoff-http",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);
@@ -273,10 +435,13 @@ describe("EventServer durable approval integration", () => {
         description: "Approve external action",
         action: "submit",
       }, { requestId: "handoff-shared" });
+      await waitForPendingApproval(new ApprovalStore(runtimeRoot), "handoff-shared");
+      const approveBindingId = surfaceApprovalBindingId(broker, "handoff-shared", true);
 
       const result = await request(server.getPort(), "POST", "/goals/goal-1/approve", {
         requestId: "handoff-shared",
         approved: true,
+        surface_action_binding_id: approveBindingId,
       }, server.getAuthToken());
 
       expect(result.status).toBe(200);
@@ -324,7 +489,7 @@ describe("EventServer durable approval integration", () => {
     try {
       await server.start();
       const event = await waitForSseEvent(server.getPort(), "approval_required", server.getAuthToken());
-      expect(event).toEqual({
+      expect(event).toEqual(expect.objectContaining({
         requestId: "approval-sse",
         goalId: "goal-sse",
         task: {
@@ -334,7 +499,22 @@ describe("EventServer durable approval integration", () => {
         },
         expiresAt,
         restored: true,
-      });
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-sse",
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+          normal_view: expect.objectContaining({
+            redaction: expect.objectContaining({
+              raw_trace_ids_visible: false,
+              operator_refs_visible: false,
+            }),
+          }),
+        }),
+      }));
     } finally {
       await server.stop();
     }
@@ -374,7 +554,7 @@ describe("EventServer durable approval integration", () => {
       server.setApprovalBroker(broker);
 
       const event = await waitForSseEvent(server.getPort(), "approval_required", server.getAuthToken());
-      expect(event).toEqual({
+      expect(event).toEqual(expect.objectContaining({
         requestId: "approval-late-broker",
         goalId: "goal-sse",
         task: {
@@ -384,7 +564,22 @@ describe("EventServer durable approval integration", () => {
         },
         expiresAt,
         restored: true,
-      });
+        approval_prompt: expect.objectContaining({
+          approval_id: "approval-late-broker",
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+          normal_view: expect.objectContaining({
+            redaction: expect.objectContaining({
+              raw_trace_ids_visible: false,
+              operator_refs_visible: false,
+            }),
+          }),
+        }),
+      }));
     } finally {
       await server.stop();
     }

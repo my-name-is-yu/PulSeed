@@ -807,12 +807,13 @@ export async function handleApprovalResponseCommand(
   goalId: string | undefined,
   requestId: string,
   approved: boolean,
+  binding: { surfaceActionBindingId?: string; surfaceActionBindingToken?: string } = {},
 ): Promise<void> {
   if (context.approvalBroker) {
-    await context.approvalBroker.resolveApproval(requestId, approved, "dispatcher");
+    await context.approvalBroker.resolveApproval(requestId, approved, "dispatcher", binding);
     return;
   }
   if (goalId && context.eventServer) {
-    await context.eventServer.resolveApproval(requestId, approved);
+    await context.eventServer.resolveApproval(requestId, approved, binding);
   }
 }

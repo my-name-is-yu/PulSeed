@@ -270,9 +270,9 @@ export async function startDaemonRunner(
           context.runCommandWithHealth("goal_resume", () => context.handleGoalResumeCommand(goalId)),
         onChatMessage: async (goalId, message) =>
           context.runCommandWithHealth("chat_message", () => context.handleChatMessageCommand(goalId, message)),
-        onApprovalResponse: async (goalId, requestId, approved) =>
+        onApprovalResponse: async (goalId, requestId, approved, binding) =>
           context.runCommandWithHealth("approval_response", () =>
-            context.handleApprovalResponseCommand(goalId, requestId, approved)),
+            context.handleApprovalResponseCommand(goalId, requestId, approved, binding)),
         onRuntimeControl: async (operationId, kind) =>
           context.runCommandWithHealth("runtime_control", () => context.handleRuntimeControlCommand(operationId, kind)),
         onScheduleRunNow: async (scheduleId, allowEscalation) =>

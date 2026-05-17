@@ -95,6 +95,13 @@ import {
   type PeerInitiativeCalibrationReport,
   type PeerInitiativeCurrentCapabilityProjection,
 } from "../../../runtime/peer-initiative/index.js";
+import {
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  projectStatusSummarySurface,
+  type SurfaceProjection,
+  type SurfaceStatusSummary,
+} from "../../../runtime/surface-projection-protocol.js";
 
 const ID_WIDTH = 34;
 const KIND_WIDTH = 12;
@@ -476,6 +483,53 @@ function printAttentionContinuitySummary(inspection: AttentionContinuityInspecti
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function projectRuntimeRegistryCliStatus(input: {
+  generatedAt: string;
+  subjectKind: "runtime_sessions" | "runtime_runs";
+  subjectLabel: string;
+  activeCount: number;
+  totalCount: number;
+  warningCount: number;
+  attentionCount: number;
+  refs: readonly string[];
+}): SurfaceProjection {
+  const lifecycle = input.activeCount > 0 ? "active" : input.totalCount > 0 ? "inactive" : "empty";
+  const statusSummary: SurfaceStatusSummary = {
+    summary_id: `cli-status:${input.subjectKind}:${input.generatedAt}`,
+    subject_kind: input.subjectKind,
+    subject_label: input.subjectLabel,
+    lifecycle,
+    liveness: `${input.activeCount} active / ${input.totalCount} total`,
+    updated_at: input.generatedAt,
+    attention_required: input.warningCount > 0 || input.attentionCount > 0,
+    blockers: [
+      ...(input.warningCount > 0 ? [`${input.warningCount} registry warning(s)`] : []),
+      ...(input.attentionCount > 0 ? [`${input.attentionCount} attention item(s)`] : []),
+    ],
+  };
+  return projectStatusSummarySurface({
+    surface: "cli_status",
+    view: "operator_debug",
+    summary: statusSummary,
+    purpose: "CLI runtime status/report projection",
+    projectedAt: input.generatedAt,
+    replayKey: `cli-status:${input.subjectKind}:${input.generatedAt}`,
+    sourceEventRefs: [
+      normalSourceEventRef({
+        kind: "runtime_registry_snapshot",
+        ref: `${input.subjectKind}:${input.generatedAt}`,
+        event_type: "cli_status",
+        replay_key: `cli-status:${input.subjectKind}:${input.generatedAt}`,
+      }),
+    ],
+    runtimeGraphRefs: input.refs.slice(0, 20).map((ref) => normalRuntimeGraphRef({
+      kind: input.subjectKind,
+      ref,
+      role: "source",
+    })),
+  });
 }
 
 function personalAgentStore(stateManager: StateManager): PersonalAgentRuntimeStore {
@@ -868,11 +922,22 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     const values = parseListArgs(args.slice(1), "sessions");
     const snapshot = await registry.snapshot();
     const sessions = filterSessions(snapshot, values.active === true);
+    const surfaceProjection = projectRuntimeRegistryCliStatus({
+      generatedAt: snapshot.generated_at,
+      subjectKind: "runtime_sessions",
+      subjectLabel: "Runtime sessions",
+      activeCount: sessions.filter(activeSession).length,
+      totalCount: sessions.length,
+      warningCount: snapshot.warnings.length,
+      attentionCount: sessions.filter((session) => session.status === "lost" || session.status === "unknown").length,
+      refs: sessions.map((session) => session.id),
+    });
     if (values.json) {
       printJson({
         schema_version: snapshot.schema_version,
         generated_at: snapshot.generated_at,
         warnings: snapshot.warnings,
+        surface_projection: surfaceProjection,
         sessions,
       });
     } else {
@@ -885,11 +950,22 @@ export async function cmdRuntime(stateManager: StateManager, args: string[]): Pr
     const values = parseListArgs(args.slice(1), "runs");
     const snapshot = await registry.snapshot();
     const runs = filterRuns(snapshot, values.active === true, values.attention === true);
+    const surfaceProjection = projectRuntimeRegistryCliStatus({
+      generatedAt: snapshot.generated_at,
+      subjectKind: "runtime_runs",
+      subjectLabel: "Runtime runs",
+      activeCount: runs.filter(activeRun).length,
+      totalCount: runs.length,
+      warningCount: snapshot.warnings.length,
+      attentionCount: runs.filter((run) => attentionRun(run)).length,
+      refs: runs.map((run) => run.id),
+    });
     if (values.json) {
       printJson({
         schema_version: snapshot.schema_version,
         generated_at: snapshot.generated_at,
         warnings: snapshot.warnings,
+        surface_projection: surfaceProjection,
         background_runs: runs,
       });
     } else {

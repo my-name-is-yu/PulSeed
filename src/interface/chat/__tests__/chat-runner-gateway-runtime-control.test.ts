@@ -8,6 +8,7 @@ import type { StateManager } from "../../../base/state/state-manager.js";
 import type { IAdapter, AgentResult } from "../../../orchestrator/execution/adapter-layer.js";
 import { RuntimeControlService } from "../../../runtime/control/index.js";
 import { RuntimeOperationStore } from "../../../runtime/store/runtime-operation-store.js";
+import type { ChatEvent } from "../chat-events.js";
 import type { SelectedChatRoute } from "../ingress-router.js";
 import { createMockLLMClient, createSingleMockLLMClient } from "../../../../tests/helpers/mock-llm.js";
 // Mock context-provider so tests don't walk the real filesystem
@@ -78,6 +79,7 @@ describe("ChatRunner gateway runtime-control routes", () => {
           executor,
         });
         const approvalFn = vi.fn().mockResolvedValue(true);
+        const events: ChatEvent[] = [];
         const runner = new ChatRunner(makeDeps({
           adapter,
           llmClient: createSingleMockLLMClient(JSON.stringify({
@@ -94,6 +96,7 @@ describe("ChatRunner gateway runtime-control routes", () => {
             identity_key: "owner",
             user_id: "user-1",
           },
+          onEvent: (event) => { events.push(event); },
         }));
 
         const result = await runner.execute("PulSeed を再起動して", "/repo", undefined, {
@@ -105,11 +108,25 @@ describe("ChatRunner gateway runtime-control routes", () => {
 
         expect(result.success).toBe(true);
         expect(result.output).toBe("restart queued");
+        expect(result.surface_projection).toMatchObject({
+          surface: "gateway",
+          view: "normal",
+          purpose: "chat/runtime-control assistant output",
+        });
         expect(adapter.execute).not.toHaveBeenCalled();
         expect(approvalFn).toHaveBeenCalledWith(
           expect.stringContaining("restart_daemon")
         );
         expect(executor).toHaveBeenCalledOnce();
+        const finalEvent = [...events].reverse().find((event) => event.type === "assistant_final");
+        expect(finalEvent).toMatchObject({
+          type: "assistant_final",
+          surface_projection: {
+            surface: "gateway",
+            view: "normal",
+          },
+        });
+        expect(finalEvent?.surface_projection).not.toHaveProperty("operator_debug_view");
 
         const pending = await operationStore.listPending();
         expect(pending).toHaveLength(1);

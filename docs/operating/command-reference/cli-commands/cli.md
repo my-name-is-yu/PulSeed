@@ -114,6 +114,10 @@ stored plugin proposals, MCP tool mappings, runtime-control actions, and
 synthetic gateway-channel sends. Normal surfaces must use redacted affordances
 instead of exposing credential scopes, approval fingerprints, raw catalog
 internals, or policy internals.
+`runtime sessions --json` and `runtime runs --json` include a
+`surface_projection` field that follows the shared
+[Surface Projection Protocol](../operator-systems/surface-projection-protocol.md) contract for
+status/report projection metadata.
 
 ## Schedules
 

@@ -29,6 +29,13 @@ import {
   type OutboundConversationSurface,
   type OutboundConversationTarget,
 } from "../../src/runtime/gateway/index.js";
+import {
+  createSurfaceActionBinding,
+  createSurfaceProjection,
+  normalRuntimeGraphRef,
+  normalSourceEventRef,
+  surfaceActionBindingToken,
+} from "../../src/runtime/surface-projection-protocol.js";
 import { TelegramGatewayAdapter } from "../../src/runtime/gateway/telegram-gateway-adapter.js";
 import { ChatRunner } from "../../src/interface/chat/chat-runner.js";
 import type { ChatRunnerDeps } from "../../src/interface/chat/chat-runner-contracts.js";
@@ -154,6 +161,38 @@ describe("interaction authority product gauntlet", () => {
         expect.objectContaining({ action: "less_like_this" }),
         expect.objectContaining({ action: "wrong_read" }),
       ]));
+      expect(scenario.gatewayPort.messages[0]!.action_bindings).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          action_kind: "less_like_this",
+          surface: "telegram_peer_delivery",
+          surface_instance_ref: "gateway:telegram:home_chat:12345",
+          target: expect.objectContaining({
+            kind: "peer_initiative_candidate",
+            ref: records[0]!.candidate_id,
+            conversation_id: "gateway:telegram:home_chat:12345",
+          }),
+        }),
+        expect.objectContaining({
+          action_kind: "wrong_read",
+          surface: "telegram_peer_delivery",
+        }),
+      ]));
+      expect(scenario.gatewayPort.messages[0]!.surface_projection).toMatchObject({
+        surface: "telegram_peer_delivery",
+        view: "normal",
+        delivery: expect.objectContaining({
+          surface: "telegram_peer_delivery",
+          action_binding_ids: expect.arrayContaining([
+            scenario.gatewayPort.messages[0]!.action_bindings![0]!.binding_id,
+          ]),
+        }),
+        normal_view: expect.objectContaining({
+          redaction: expect.objectContaining({
+            raw_trace_ids_visible: false,
+            operator_refs_visible: false,
+          }),
+        }),
+      });
       expect(JSON.stringify(scenario.gatewayPort.messages[0])).not.toContain("raw_content_allowed");
       return {
         authorityDecision: sendDecision,
@@ -169,7 +208,7 @@ describe("interaction authority product gauntlet", () => {
 
   it("2. Telegram callback from stale or wrong message is fail-closed without feedback mutation", async () => {
     await runProductGauntletScenario("telegram_callback_stale_wrong_message_rejected", async (context) => {
-      const { candidate, peerStore, feedbackStore, authorityStore } = await seedTelegramPeerDelivery(context);
+      const { candidate, peerStore, feedbackStore, authorityStore, lessLikeBinding } = await seedTelegramPeerDelivery(context);
       const callbackAckIds: string[] = [];
       vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const method = String(url).split("/").at(-1);
@@ -188,7 +227,7 @@ describe("interaction authority product gauntlet", () => {
         id: "callback-stale-message",
         from: { id: 42 },
         message: { message_id: 78, chat: { id: 12345 } },
-        data: `psp1:lt:${candidate.candidate_id}`,
+        data: `psb1:${surfaceActionBindingToken(lessLikeBinding)}`,
       });
 
       const decisions = await authorityStore.listDecisions({ sourceKind: "telegram_callback" });
@@ -223,7 +262,7 @@ describe("interaction authority product gauntlet", () => {
           id: "callback-fail",
           from: { id: 42 },
           message: { message_id: 77, chat: { id: 12345 } },
-          data: "psp1:lt:peer-candidate:throws",
+          data: "psb1:surface-binding-throws",
         },
       }, {
         update_id: 11,
@@ -247,7 +286,7 @@ describe("interaction authority product gauntlet", () => {
         runtimeBaseDir: context.runtimeRoot,
         controlBaseDir: context.controlBaseDir,
         peerInitiativeStore: {
-          getLatestDeliveryForCandidate: vi.fn(async () => {
+          getLatestDeliveryForActionBinding: vi.fn(async () => {
             throw new Error("fixture callback failure");
           }),
           appendFeedbackProjection: vi.fn(),
@@ -1518,6 +1557,48 @@ async function seedTelegramPeerDelivery(context: { runtimeRoot: string; controlB
     outcomeDecisionId: "outcome:telegram:peer-feedback",
     feedbackEpoch: "2026-05-16T00:00:01.000Z",
   });
+  const sourceEventRefs = [normalSourceEventRef({
+    kind: "peer_delivery",
+    ref: `peer-delivery:${candidate.candidate_id}:telegram`,
+    event_type: "gateway.telegram.delivery.recorded",
+    occurred_at: "2026-05-16T00:00:02.000Z",
+    replay_key: `peer-delivery:${candidate.candidate_id}:telegram`,
+  })];
+  const runtimeGraphRefs = [normalRuntimeGraphRef({
+    kind: "peer_candidate",
+    ref: candidate.candidate_id,
+    role: "target",
+  })];
+  const surfaceProjection = createSurfaceProjection({
+    projection_id: `normal-surface:peer-initiative:${candidate.candidate_id}:telegram`,
+    surface: "telegram_peer_delivery",
+    view: "normal",
+    purpose: "Project a Telegram peer initiative delivery.",
+    redaction_class: "normal_safe",
+    projected_at: "2026-05-16T00:00:02.000Z",
+    replay_key: `peer-delivery:${candidate.candidate_id}:telegram`,
+    source_event_refs: sourceEventRefs,
+    runtime_graph_refs: runtimeGraphRefs,
+    panels: [{ panel_id: "body", body: "今日も頑張ってね。" }],
+  });
+  const lessLikeBinding = createSurfaceActionBinding({
+    action_kind: "less_like_this",
+    surface: "telegram_peer_delivery",
+    surface_instance_ref: "gateway:telegram:home_chat:12345",
+    target: {
+      kind: "peer_initiative_candidate",
+      ref: candidate.candidate_id,
+      conversation_id: "gateway:telegram:home_chat:12345",
+      transport_message_ref: "77",
+    },
+    source_projection_id: surfaceProjection.projection_id,
+    source_event_refs: sourceEventRefs,
+    runtime_graph_refs: runtimeGraphRefs,
+    replay_key: `${surfaceProjection.replay_key}:less_like_this`,
+    redaction_class: "normal_safe",
+    created_at: "2026-05-16T00:00:02.000Z",
+    expires_at: "2026-05-23T00:00:02.000Z",
+  });
   const outbound = {
     message_id: `peer-message:${candidate.candidate_id}`,
     surface: "telegram" as const,
@@ -1537,6 +1618,11 @@ async function seedTelegramPeerDelivery(context: { runtimeRoot: string; controlB
       const parsed = PeerInitiativeFeedbackActionSchema.safeParse(action);
       return parsed.success ? [parsed.data] : [];
     }),
+    action_bindings: [lessLikeBinding],
+    surface_projection: {
+      ...surfaceProjection,
+      action_bindings: [lessLikeBinding],
+    },
   };
   await peerStore.upsertCandidate({ candidate, selectedState: "suggested" });
   await peerStore.recordDelivery({
@@ -1552,7 +1638,7 @@ async function seedTelegramPeerDelivery(context: { runtimeRoot: string; controlB
     visibility_policy_ref: outbound.visibility_policy_ref,
     outbound_message: outbound,
   });
-  return { candidate, peerStore, feedbackStore, authorityStore };
+  return { candidate, peerStore, feedbackStore, authorityStore, lessLikeBinding };
 }
 
 async function runResidentPeerInitiative(

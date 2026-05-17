@@ -758,6 +758,37 @@ describe("goal action commands", () => {
     expect(hook).not.toHaveBeenCalled();
   });
 
+  it("requires a surface binding to resolve direct event-server approvals", async () => {
+    const broadcasts: Array<{ eventType: string; data: Record<string, unknown> }> = [];
+    vi.spyOn(server, "broadcast").mockImplementation(async (eventType, data) => {
+      broadcasts.push({ eventType, data: data as Record<string, unknown> });
+    });
+
+    const approval = server.requestApproval("goal-1", {
+      id: "task-direct-approval",
+      description: "Approve direct event-server action",
+      action: "direct_approval",
+    }, { requestId: "approval-direct-surface" });
+
+    const approvalRequired = broadcasts.find((event) => event.eventType === "approval_required")?.data;
+    const approvalPrompt = approvalRequired?.["approval_prompt"] as { approve_binding_id?: string } | undefined;
+    expect(approvalPrompt?.approve_binding_id).toMatch(/^sab:/);
+
+    const missingBinding = await makeRequest(port, "POST", "/goals/goal-1/approve", {
+      requestId: "approval-direct-surface",
+      approved: true,
+    });
+    expect(missingBinding.status).toBe(404);
+
+    const result = await makeRequest(port, "POST", "/goals/goal-1/approve", {
+      requestId: "approval-direct-surface",
+      approved: true,
+      surface_action_binding_id: approvalPrompt!.approve_binding_id,
+    });
+    expect(result.status).toBe(200);
+    await expect(approval).resolves.toBe(true);
+  });
+
   it("rejects malformed command request bodies before command accept", async () => {
     const cases: Array<{ name: string; path: string; body: unknown }> = [
       {
@@ -1391,8 +1422,19 @@ describe("snapshot and outbox replay", () => {
         goal_id: "goal-1",
         status: "open",
         triggers: ["deadline", "finalization"],
+        approval_prompt: expect.objectContaining({
+          approve_binding_id: expect.stringMatching(/^sab:/),
+          reject_binding_id: expect.stringMatching(/^sab:/),
+        }),
+        surface_projection: expect.objectContaining({
+          surface: "approval",
+          view: "normal",
+        }),
       }),
     ]);
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("summary");
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("current_status");
+    expect(snapshot.operator_handoffs?.[0]).not.toHaveProperty("evidence_refs");
   });
 
   it("replays outbox events after the requested sequence", async () => {
