@@ -948,6 +948,90 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
+  it("prunes high-volume scalar projection rows without host-parameter-limited predicates", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const operationCount = 1_105;
+
+      await mutateRuntimeControlDatabase(runtimeRoot, root, (sqlite) => {
+        for (let index = 0; index < operationCount; index += 1) {
+          const operation = RuntimeControlOperationSchema.parse({
+            operation_id: `runtime-operation:scalar-prune-${index}`,
+            kind: "inspect_run",
+            state: "pending",
+            requested_at: NOW,
+            updated_at: NOW,
+            requested_by: { surface: "cli" },
+            reply_target: { channel: "cli" },
+            reason: `Scalar prune retained operation ${index}.`,
+            expected_health: {
+              daemon_ping: false,
+              gateway_acceptance: false,
+            },
+            target: {
+              session_id: `session:scalar-prune-${index}`,
+            },
+          });
+          insertRuntimeEventRowForTest(
+            sqlite,
+            RuntimeEventEnvelopeSchema.parse(runtimeEventFromRuntimeControlOperationTransition(operation, null)),
+            index + 1,
+          );
+        }
+        const staleOperation = RuntimeControlOperationSchema.parse({
+          operation_id: "runtime-operation:scalar-prune-stale",
+          kind: "inspect_run",
+          state: "pending",
+          requested_at: NOW,
+          updated_at: NOW,
+          requested_by: { surface: "cli" },
+          reply_target: { channel: "cli" },
+          reason: "Stale scalar projection row.",
+          expected_health: {
+            daemon_ping: false,
+            gateway_acceptance: false,
+          },
+          target: {
+            session_id: "session:scalar-prune-stale",
+          },
+        });
+        sqlite.prepare(`
+          INSERT INTO runtime_operations (
+            operation_id, kind, state, terminal, requested_at, updated_at, operation_json
+          ) VALUES (?, ?, ?, ?, ?, ?, json(?))
+        `).run(
+          staleOperation.operation_id,
+          staleOperation.kind,
+          staleOperation.state,
+          0,
+          staleOperation.requested_at,
+          staleOperation.updated_at,
+          JSON.stringify(staleOperation),
+        );
+      });
+
+      await eventLog.applyProjectionRebuild();
+
+      const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir: root });
+      try {
+        const row = db.read((sqlite) => sqlite.prepare(`
+          SELECT
+            COUNT(*) AS row_count,
+            SUM(CASE WHEN operation_id = 'runtime-operation:scalar-prune-stale' THEN 1 ELSE 0 END) AS stale_count
+          FROM runtime_operations
+        `).get() as { row_count: number; stale_count: number | null });
+        expect(row.row_count).toBe(operationCount);
+        expect(row.stale_count ?? 0).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies broader event-backed current-state projections without replaying side effects", async () => {
     const root = fixtureRoot();
     try {

@@ -110,6 +110,17 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:docs`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `86be5267` found:
+  - P2: scalar projection stale-row pruning still used `NOT IN (?, ...)`, which can exceed SQLite host-parameter limits for long-running deployments with many retained authority decisions, runtime operations, or commitment candidates.
+- Follow-up fixes route goal, interaction-authority, runtime-operation, and commitment-candidate stale-row pruning through temp key tables plus `NOT EXISTS`, matching the task-prune shape and avoiding host-parameter limits. Focused verification passed:
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run typecheck`
+  - `npm run test:contracts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run check:docs`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`
+  - `npm run check:database-first-legacy-stores`
 - GitHub Codex review on `5421761a` found:
   - P1: runtime operation no-op suppression compared only state/updated_at and could skip event append for same-timestamp content changes.
   - P2: projection apply ordered same-timestamp runtime events by hash-like `event_id` instead of append order.

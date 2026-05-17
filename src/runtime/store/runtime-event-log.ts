@@ -1214,15 +1214,15 @@ function deleteGoalProjection(sqlite: SqliteDatabase, goalId: string): void {
 }
 
 function pruneGoalProjectionRows(sqlite: SqliteDatabase, eventBackedGoalIds: readonly string[]): void {
-  const rows = eventBackedGoalIds.length === 0
-    ? sqlite.prepare("SELECT goal_id FROM goal_records").all() as Array<{ goal_id: string }>
-    : sqlite.prepare(`
-        SELECT goal_id
-        FROM goal_records
-        WHERE goal_id NOT IN (${eventBackedGoalIds.map(() => "?").join(", ")})
-      `).all(...eventBackedGoalIds) as Array<{ goal_id: string }>;
+  const rows = selectRowsMissingProjectionApplyIds(
+    sqlite,
+    "goal_records",
+    "goal_id",
+    "projection_apply_goal_keys",
+    eventBackedGoalIds,
+  );
   for (const row of rows) {
-    deleteGoalProjection(sqlite, row.goal_id);
+    deleteGoalProjection(sqlite, row.id);
   }
 }
 
@@ -1458,14 +1458,63 @@ function deleteRowsNotIn(
   idColumn: "decision_id" | "operation_id" | "commitment_id",
   eventBackedIds: readonly string[],
 ): void {
-  if (eventBackedIds.length === 0) {
-    sqlite.prepare(`DELETE FROM ${tableName}`).run();
-    return;
-  }
+  const tempTableName = `${tableName}_projection_apply_keys`;
+  withProjectionApplyIdKeys(sqlite, tempTableName, eventBackedIds, (keyTableName) => {
+    sqlite.prepare(`
+      DELETE FROM ${tableName}
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ${keyTableName} projection_keys
+        WHERE projection_keys.id = ${tableName}.${idColumn}
+      )
+    `).run();
+  });
+}
+
+function selectRowsMissingProjectionApplyIds(
+  sqlite: SqliteDatabase,
+  tableName: "goal_records",
+  idColumn: "goal_id",
+  tempTableName: string,
+  eventBackedIds: readonly string[],
+): Array<{ id: string }> {
+  return withProjectionApplyIdKeys(sqlite, tempTableName, eventBackedIds, (keyTableName) =>
+    sqlite.prepare(`
+      SELECT ${idColumn} AS id
+      FROM ${tableName}
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ${keyTableName} projection_keys
+        WHERE projection_keys.id = ${tableName}.${idColumn}
+      )
+    `).all() as Array<{ id: string }>
+  );
+}
+
+function withProjectionApplyIdKeys<T>(
+  sqlite: SqliteDatabase,
+  tempTableName: string,
+  eventBackedIds: readonly string[],
+  fn: (tempTableName: string) => T,
+): T {
+  sqlite.prepare(`DROP TABLE IF EXISTS temp.${tempTableName}`).run();
   sqlite.prepare(`
-    DELETE FROM ${tableName}
-    WHERE ${idColumn} NOT IN (${eventBackedIds.map(() => "?").join(", ")})
-  `).run(...eventBackedIds);
+    CREATE TEMP TABLE ${tempTableName} (
+      id TEXT PRIMARY KEY
+    )
+  `).run();
+  try {
+    const insertKey = sqlite.prepare(`
+      INSERT OR IGNORE INTO ${tempTableName} (id)
+      VALUES (?)
+    `);
+    for (const id of eventBackedIds) {
+      insertKey.run(id);
+    }
+    return fn(tempTableName);
+  } finally {
+    sqlite.prepare(`DROP TABLE IF EXISTS temp.${tempTableName}`).run();
+  }
 }
 
 function upsertInteractionAuthorityDecisionProjection(sqlite: SqliteDatabase, decisionInput: ExecutionAuthorityDecision): void {

@@ -109,6 +109,11 @@ not current-state row apply targets:
   stale task rows with a temp-key table instead of a large OR predicate, so
   rebuild apply does not hit SQLite expression-depth limits around large task
   histories.
+- High-volume scalar projection coverage now proves current-state apply prunes
+  stale runtime-operation rows with a temp-key table instead of
+  host-parameter-limited `NOT IN (?, ...)` predicates; the same helper is used
+  for goal, interaction-authority, runtime-operation, and commitment-candidate
+  stale-row pruning.
 - The database-first guard now requires a concrete event append API in the same
   production module before event-sourced projection writes are accepted. The
   guard parses real call expressions, so an import/reference, comment, or
