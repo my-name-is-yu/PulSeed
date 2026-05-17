@@ -391,12 +391,16 @@ export async function dispatchCommand(
       return await cmdDaemonPing(argv.slice(2));
     }
 
+    if (daemonSubcommand === "logs") {
+      return await cmdLogs(argv.slice(2));
+    }
+
     if (daemonSubcommand === "cron") {
       return await cmdCron(argv.slice(2));
     }
 
     logger.error(`Unknown daemon subcommand: "${daemonSubcommand ?? ""}"`);
-    logger.error("Available: daemon start, daemon stop, daemon restart, daemon status, daemon ping, daemon cron");
+    logger.error("Available: daemon start, daemon stop, daemon restart, daemon status, daemon ping, daemon logs, daemon cron");
     return 1;
   }
 

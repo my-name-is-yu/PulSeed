@@ -59,6 +59,7 @@ const STATELESS_USAGE_HELP_ROUTES = [
   ["daemon", "restart"],
   ["daemon", "status"],
   ["daemon", "ping"],
+  ["daemon", "logs"],
   ["daemon", "cron"],
   ["datasource"],
   ["datasource", "add"],

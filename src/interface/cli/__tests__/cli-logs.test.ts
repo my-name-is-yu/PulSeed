@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { StateManager } from "../../../base/state/state-manager.js";
+import { CharacterConfigManager } from "../../../platform/traits/character-config.js";
+import type { DurableLoop } from "../../../orchestrator/loop/durable-loop.js";
 import { makeTempDir, cleanupTempDir } from "../../../../tests/helpers/temp-dir.js";
 
 // ─── cmdLogs tests ───
@@ -14,6 +17,7 @@ vi.mock("../../../base/utils/paths.js", async (importOriginal) => {
 });
 
 import { getLogsDir } from "../../../base/utils/paths.js";
+import { dispatchCommand } from "../cli-command-registry.js";
 import { cmdLogs } from "../commands/logs.js";
 
 // Helper to build a sample log line
@@ -101,6 +105,46 @@ describe("cmdLogs", () => {
     expect(output).toContain("dbg 8");
     expect(output).toContain("dbg 10");
     expect(output).not.toContain("dbg 7\n");
+  });
+
+  it("respects --tail as an operator-friendly alias for --lines", async () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 12; i++) {
+      lines.push(logLine("INFO", `tail ${i}`));
+    }
+    fs.writeFileSync(logFile, lines.join("\n") + "\n");
+
+    const code = await cmdLogs(["--tail", "4"]);
+    expect(code).toBe(0);
+
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
+    expect(output).toContain("tail 9");
+    expect(output).toContain("tail 12");
+    expect(output).not.toContain("tail 8\n");
+  });
+
+  it("routes daemon logs through the same log reader", async () => {
+    fs.writeFileSync(logFile, [
+      logLine("INFO", "daemon one"),
+      logLine("INFO", "daemon two"),
+      logLine("INFO", "daemon three"),
+    ].join("\n") + "\n");
+    const stateManager = new StateManager(tmpDir, undefined, { walEnabled: false });
+    await stateManager.init();
+
+    const code = await dispatchCommand(
+      ["daemon", "logs", "--tail", "2"],
+      false,
+      stateManager,
+      new CharacterConfigManager(stateManager),
+      { value: null as DurableLoop | null },
+    );
+
+    expect(code).toBe(0);
+    const output = stdoutSpy.mock.calls.map((c: [string | Uint8Array]) => String(c[0])).join("");
+    expect(output).toContain("daemon two");
+    expect(output).toContain("daemon three");
+    expect(output).not.toContain("daemon one\n");
   });
 
   it.each([

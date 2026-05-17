@@ -103,8 +103,10 @@ Usage:
   pulseed plugin update <name>         Update an installed npm-backed plugin
   pulseed plugin search <keyword>      Search @pulseed-plugins packages
   pulseed plugin remove <name>         Remove an installed plugin
-  pulseed logs                          View daemon logs (last 50 lines)
-  pulseed logs --follow                Tail daemon logs in real-time
+  pulseed logs                         View daemon logs (last 50 lines)
+  pulseed logs --lines 100             View the last N daemon log lines
+  pulseed daemon logs --tail 100       Alias for daemon log tail inspection
+  pulseed logs --follow                Tail daemon logs in real time
   pulseed logs --level ERROR           Filter logs by level (ERROR > WARN > INFO > DEBUG)
   pulseed doctor                       Run health checks on PulSeed installation
   pulseed install --goal <id>          Install as macOS launchd service (auto-start on boot)
