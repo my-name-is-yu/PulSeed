@@ -1308,6 +1308,7 @@ function providerKindForTool(metadata: ToolMetadata): CapabilityProviderKind {
   if (metadata.name === "run-adapter") return "run_adapter";
   if (metadata.name === "mcp_call_tool" || metadata.name === "mcp_list_tools" || metadata.tags.includes("mcp")) return "mcp_tool";
   if (metadata.tags.includes("schedule")) return "schedule_tool";
+  if (isRuntimeControlTool(metadata)) return "runtime_control_action";
   if (
     metadata.permissionLevel === "write_local"
     || metadata.tags.includes("file")
@@ -1316,14 +1317,18 @@ function providerKindForTool(metadata: ToolMetadata): CapabilityProviderKind {
     || metadata.name === "grep"
     || metadata.name === "glob"
   ) return "file_tool";
-  if (metadata.tags.includes("runtime") || metadata.tags.includes("runtime-control") || metadata.name.includes("runtime_control")) {
-    return "runtime_control_action";
-  }
   if (metadata.tags.includes("gateway") || metadata.name.includes("notification") || metadata.name.includes("notify")) {
     return "gateway_channel_action";
   }
   if (metadata.tags.includes("plugin") || metadata.name.includes("plugin")) return "native_plugin";
   return "builtin_tool";
+}
+
+function isRuntimeControlTool(metadata: ToolMetadata): boolean {
+  return metadata.tags.includes("runtime")
+    || metadata.tags.includes("runtime-control")
+    || metadata.tags.includes("runtime_control")
+    || metadata.name.includes("runtime_control");
 }
 
 function providerRefForTool(metadata: ToolMetadata, providerKind: CapabilityProviderKind): string {
