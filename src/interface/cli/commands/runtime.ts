@@ -1,6 +1,7 @@
 // ─── pulseed runtime commands ───
 
 import { parseArgs } from "node:util";
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import type { StateManager } from "../../../base/state/state-manager.js";
@@ -57,7 +58,7 @@ import { formatOperationError } from "../utils.js";
 import { resolveConfiguredDaemonRuntimeRoot } from "../../../runtime/daemon/runtime-root.js";
 import { collectOperatorBindingStatus, printOperatorBindingStatus } from "./operator-binding-status.js";
 import { cmdRuntimeCognitionReplay } from "./cognition-replay.js";
-import { MCPServersConfigSchema } from "../../../base/types/mcp.js";
+import { MCPServersConfigSchema, type MCPServerConfig } from "../../../base/types/mcp.js";
 import { createBuiltinTools } from "../../../tools/builtin/factory.js";
 import {
   CapabilityRegistry,
@@ -101,6 +102,7 @@ const STATUS_WIDTH = 10;
 const UPDATED_WIDTH = 24;
 const WORKSPACE_WIDTH = 26;
 const TITLE_WIDTH = 32;
+const MCP_CAPABILITY_EXPLAIN_CONFIG_FILES = ["mcp-servers.json", "mcpServers.json"] as const;
 
 type RuntimeListValues = {
   json?: boolean;
@@ -505,14 +507,30 @@ async function capabilityRegistryForRuntimeExplain(stateManager: StateManager): 
   return registry;
 }
 
-async function loadMcpServersForCapabilityExplain(stateManager: StateManager) {
-  for (const fileName of ["mcp-servers.json", "mcpServers.json"]) {
-    const raw = await stateManager.readRaw(fileName);
+async function loadMcpServersForCapabilityExplain(stateManager: StateManager): Promise<MCPServerConfig[]> {
+  for (const fileName of MCP_CAPABILITY_EXPLAIN_CONFIG_FILES) {
+    const raw = await readCapabilityExplainConfigFile(stateManager, fileName);
     if (raw === null) continue;
     const parsed = MCPServersConfigSchema.safeParse(raw);
     return parsed.success ? parsed.data.servers : [];
   }
   return [];
+}
+
+async function readCapabilityExplainConfigFile(
+  stateManager: StateManager,
+  fileName: "mcp-servers.json" | "mcpServers.json"
+): Promise<unknown | null> {
+  try {
+    return JSON.parse(
+      await readFile(path.join(stateManager.getBaseDir(), fileName), "utf8")
+    ) as unknown;
+  } catch (err) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
 }
 
 function printCapabilityDescriptor(descriptor: CapabilityDescriptor): void {
