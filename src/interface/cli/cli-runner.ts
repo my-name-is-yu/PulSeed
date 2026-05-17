@@ -40,22 +40,45 @@ import { getPulseedVersion } from "../../base/utils/pulseed-meta.js";
 const logger = getCliLogger();
 
 const STATELESS_GLOBAL_FLAGS = new Set(["--yes", "-y", "--dev"]);
-const GLOBAL_USAGE_HELP_PARENTS = new Set([
+const GLOBAL_USAGE_HELP_COMMANDS = new Set([
   "approval",
   "capability",
+  "cleanup",
   "config",
+  "cron",
   "daemon",
   "datasource",
+  "doctor",
+  "gateway",
   "goal",
+  "improve",
+  "install",
   "knowledge",
+  "log",
   "logs",
+  "mcp-server",
+  "memory",
   "notify",
   "playbook",
   "playbooks",
   "plugin",
+  "profile",
   "provider",
+  "report",
+  "run",
   "runtime",
   "schedule",
+  "setup",
+  "skill",
+  "skills",
+  "start",
+  "status",
+  "stop",
+  "suggest",
+  "task",
+  "telegram",
+  "tui",
+  "uninstall",
   "usage",
 ]);
 
@@ -109,8 +132,10 @@ function getStatelessSetupHelpRequest(
 function isStatelessUsageHelpRequest(argv: readonly string[]): boolean {
   const args = stripStatelessGlobalFlags(argv);
   if (args.length < 2) return false;
+  const command = args[0] ?? "";
+  if (!GLOBAL_USAGE_HELP_COMMANDS.has(command)) return false;
   return includesHelpOption(args.slice(1))
-    || (args.length === 2 && args[1] === "help" && GLOBAL_USAGE_HELP_PARENTS.has(args[0] ?? ""));
+    || (args.length === 2 && args[1] === "help");
 }
 
 function isDefaultTuiLaunchRequest(argv: readonly string[]): boolean {

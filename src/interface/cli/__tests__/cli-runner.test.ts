@@ -437,6 +437,20 @@ describe("unknown subcommand", async () => {
     expect(code).toBe(1);
   });
 
+  it("does not mask unknown subcommand help as global help", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const code = await runCLI("unknown-command", "--help");
+
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(code).toBe(1);
+    expect(errorOutput).toContain("Unknown subcommand");
+    expect(initSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
   // No-argument case now launches TUI (feat/default-tui), cannot test in vitest
 
   it("exits with code 0 for --help", async () => {
