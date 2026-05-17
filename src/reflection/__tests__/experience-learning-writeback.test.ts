@@ -69,6 +69,9 @@ describe("experience learning owner-review writeback", () => {
       if (result.status !== "enqueued") throw new Error("expected promoted artifact to enqueue");
       expect(result.queueEntry).toEqual(expect.objectContaining({
         queue_entry_id: `queue:experience-learning:${artifact.id}`,
+        proposal: expect.objectContaining({
+          proposal_id: result.proposal.id,
+        }),
         owner_write_performed: false,
         runtime_authority: false,
         state: "queued",
@@ -81,6 +84,36 @@ describe("experience learning owner-review writeback", () => {
           ownerReviewQueueRef: result.queueEntry.queue_entry_id,
           status: "queued",
           correctionLineageRefs: [],
+        }),
+      ]);
+    } finally {
+      await learningStore.close();
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it("uses one proposal id for queue review and projection records", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "pulseed-experience-learning-writeback-"));
+    const learningStore = new ExperienceLearningStateStore(join(tempDir, "runtime"), { controlBaseDir: tempDir });
+    const queueStore = new FileCognitionWritebackQueueStore(tempDir);
+    try {
+      const artifact = makeArtifact();
+      const result = await enqueueExperienceLearningProjectionForOwnerReview({
+        artifact,
+        learningStore,
+        queueStore,
+        createdAt: "2026-05-17T00:01:00.000Z",
+        proposalId: "learning-projection-proposal:explicit",
+      });
+
+      expect(result.status).toBe("enqueued");
+      if (result.status !== "enqueued") throw new Error("expected promoted artifact to enqueue");
+      expect(result.proposal.id).toBe("learning-projection-proposal:explicit");
+      expect(result.queueEntry.proposal.proposal_id).toBe(result.proposal.id);
+      await expect(learningStore.listProjectionProposals(artifact.id)).resolves.toEqual([
+        expect.objectContaining({
+          id: result.queueEntry.proposal.proposal_id,
+          ownerReviewQueueRef: result.queueEntry.queue_entry_id,
         }),
       ]);
     } finally {
@@ -113,7 +146,12 @@ describe("experience learning owner-review writeback", () => {
       },
     })).rejects.toThrow("projection write failed");
 
-    expect(enqueue).toHaveBeenCalledWith(queueEntry);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      queue_entry_id: queueEntry.queue_entry_id,
+      proposal: expect.objectContaining({
+        proposal_id: expect.stringMatching(/^learning-projection-proposal:/),
+      }),
+    }));
     expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "projection_enqueued",
       owner_review_queue_ref: `queue:experience-learning:${artifact.id}`,

@@ -35,11 +35,13 @@ export function createExperienceLearningWritebackProposal(input: {
 export function createExperienceLearningWritebackQueueEntry(input: {
   artifact: LearningArtifact;
   queueEntryId?: string;
+  proposalId?: string;
   createdAt: string;
   target?: MemoryWritebackProposal["proposed_target"];
 }): CognitionWritebackQueueEntry {
   const proposal = createExperienceLearningWritebackProposal({
     artifact: input.artifact,
+    ...(input.proposalId ? { proposalId: input.proposalId } : {}),
     ...(input.target ? { target: input.target } : {}),
   });
   return createCognitionWritebackQueueEntry({
@@ -73,15 +75,18 @@ export async function enqueueExperienceLearningProjectionForOwnerReview(input: {
   if (input.artifact.status !== "promoted") {
     return { status: "skipped", reasonCode: "artifact_not_promoted" };
   }
+  const queueEntryId = input.queueEntryId ?? `queue:experience-learning:${input.artifact.id}`;
+  const proposalId = input.proposalId ?? stableLearningId("learning-projection-proposal", [input.artifact.id, queueEntryId]);
   const queueEntry = createExperienceLearningWritebackQueueEntry({
     artifact: input.artifact,
-    queueEntryId: input.queueEntryId,
+    queueEntryId,
+    proposalId,
     createdAt: input.createdAt,
     ...(input.target ? { target: input.target } : {}),
   });
   const correctionLineageRefs = correctionLineageRefsForArtifact(input.artifact);
   const proposal = ExperienceLearningProjectionProposalSchema.parse({
-    id: input.proposalId ?? stableLearningId("learning-projection-proposal", [input.artifact.id, queueEntry.queue_entry_id]),
+    id: proposalId,
     sourceArtifactIds: [input.artifact.id],
     ownerReviewQueueRef: queueEntry.queue_entry_id,
     status: "queued",
