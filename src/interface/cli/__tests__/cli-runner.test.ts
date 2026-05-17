@@ -481,6 +481,9 @@ describe("unknown subcommand", async () => {
     expect(output).toContain("pulseed approval list");
     expect(output).toContain('pulseed goal add "<description>" --no-refine          Register a goal without refinement');
     expect(output).toContain("--no-refine                         Skip GoalRefiner and use the negotiation path directly");
+    expect(output).toContain("--iterations-per-cycle <n>          Bounded worker iteration cap for this start");
+    expect(output).toContain("--max-concurrent-goals <n>          Max concurrent daemon goal workers");
+    expect(output).toContain("--resident                          Treat --iterations-per-cycle as telemetry, not a lifecycle cap");
     expect(output).not.toContain("legacy LLM negotiation");
     expect(output).not.toContain("legacy negotiate()");
     expect(initSpy).not.toHaveBeenCalled();

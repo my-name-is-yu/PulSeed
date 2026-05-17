@@ -130,6 +130,10 @@ Options (pulseed run):
 Options (pulseed start):
   --goal <id>                         Goal ID to run (repeatable, required)
   --detach, -d                        Run daemon in background (detached process)
+  --iterations-per-cycle <n>          Bounded worker iteration cap for this start
+  --max-concurrent-goals <n>          Max concurrent daemon goal workers
+  --resident                          Treat --iterations-per-cycle as telemetry, not a lifecycle cap
+  --config <path>                     Use a daemon config file for this start
 
 Options (pulseed improve):
   --auto                              Full auto mode (select best suggestion, run loop)
