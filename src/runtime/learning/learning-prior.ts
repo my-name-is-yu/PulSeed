@@ -176,6 +176,7 @@ export const LearningPriorSnapshotSchema = z.object({
       "suppressed_by_trust",
       "suppressed_by_correction",
       "suppressed_by_quarantine",
+      "invalidated",
       "max_uses_exhausted",
       "not_yet_eligible",
     ])).min(1),

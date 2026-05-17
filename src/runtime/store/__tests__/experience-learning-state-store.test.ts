@@ -329,6 +329,34 @@ describe("ExperienceLearningStateStore", () => {
     expect(exhausted?.projection).toBeNull();
   });
 
+  it("removes invalidated priors from future resolution", async () => {
+    const generated = makePriorGeneratedPayload();
+    await store.appendLifecycleEvent(generated);
+    await store.appendLifecycleEvent(makePriorInvalidatedPayload({
+      priorId: generated.prior_id,
+    }));
+
+    await expect(store.listPriorSnapshots("goal-learning")).resolves.toEqual([
+      expect.objectContaining({
+        id: generated.prior_id,
+        filterDecision: expect.objectContaining({
+          decision: "suppressed",
+          reasonCodes: ["invalidated"],
+        }),
+      }),
+    ]);
+    await expect(store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "task_generation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "attempt-invalidated",
+      consumerDecisionRef: "task-generation:goal-learning:invalidated",
+      now: "2026-05-17T00:08:00.000Z",
+    })).resolves.toBeNull();
+  });
+
   it("continues past suppressed older priors to reserve a newer eligible prior", async () => {
     const older = makePriorGeneratedPayload();
     await store.appendLifecycleEvent(older);
@@ -769,6 +797,47 @@ function makePriorGeneratedPayload(input: {
     artifact_ids: [artifactId],
     eligible_from_iteration: 2,
     prior,
+  };
+}
+
+function makePriorInvalidatedPayload(input: {
+  priorId: string;
+  goalId?: string;
+  runId?: string;
+  idempotencyKey?: string;
+}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_invalidated" }> {
+  const goalId = input.goalId ?? "goal-learning";
+  const runId = input.runId ?? "run-learning";
+  const trust = defaultRuntimeEvidenceTrust({
+    targetRef: {
+      kind: "learning_prior",
+      id: input.priorId,
+      scope: { goal_id: goalId, run_id: runId },
+    },
+    provenanceRefs: ["evidence-invalidation"],
+  });
+  return {
+    schema_version: "runtime-event-payload/experience-learning/v1",
+    event_kind: "prior_invalidated",
+    idempotency_key: input.idempotencyKey ?? `experience-learning:test:prior-invalidated:${input.priorId}`,
+    goal_id: goalId,
+    run_id: runId,
+    loop_index: 2,
+    source_refs: {
+      evidence_refs: ["evidence-invalidation"],
+      event_refs: [],
+      runtime_graph_refs: [],
+    },
+    trust,
+    correction_state: trust.correctionState,
+    redaction_class: "refs_only",
+    graph: {
+      node_refs: [{ kind: "learning_prior", ref: input.priorId }],
+      edge_refs: [],
+    },
+    prior_id: input.priorId,
+    invalidation_refs: ["correction:prior-invalidated"],
+    reason_code: "owner_correction",
   };
 }
 

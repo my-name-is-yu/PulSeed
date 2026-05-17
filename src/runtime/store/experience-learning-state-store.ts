@@ -847,6 +847,7 @@ export function applyExperienceLearningPayloadProjection(
       if (payload.consumption) upsertPriorConsumption(sqlite, payload.consumption);
       return;
     case "prior_invalidated":
+      suppressPriorSnapshotForInvalidation(sqlite, payload, occurredAt);
       insertJsonEvent(sqlite, "experience_learning_prior_events", ["event_id", "prior_id", "event_kind", "occurred_at", "event_json"], [
         runtimeEventId,
         payload.prior_id,
@@ -1104,6 +1105,28 @@ function upsertPriorSnapshot(sqlite: SqliteDatabase, priorInput: LearningPriorSn
       filter_decision = excluded.filter_decision,
       prior_json = excluded.prior_json
   `).run(prior.id, prior.goalId, prior.runId ?? null, prior.sourceLoopIndex, prior.eligibleFromIteration, prior.filterDecision.decision, prior.generatedAt, JSON.stringify(prior));
+}
+
+function suppressPriorSnapshotForInvalidation(
+  sqlite: SqliteDatabase,
+  payload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_invalidated" }>,
+  occurredAt: string,
+): void {
+  const row = sqlite.prepare(`
+    SELECT prior_json
+    FROM experience_learning_prior_snapshots
+    WHERE prior_id = ?
+  `).get(payload.prior_id) as { prior_json: string } | undefined;
+  if (!row) return;
+  const prior = LearningPriorSnapshotSchema.parse(JSON.parse(row.prior_json) as unknown);
+  upsertPriorSnapshot(sqlite, {
+    ...prior,
+    filterDecision: {
+      decision: "suppressed",
+      reasonCodes: ["invalidated"],
+      evaluatedAt: occurredAt,
+    },
+  });
 }
 
 function upsertPriorConsumption(sqlite: SqliteDatabase, consumptionInput: LearningPriorConsumptionRecord): void {
