@@ -85,3 +85,13 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
   - `npm run check:database-first-legacy-stores`
   - `git diff --check`
+- GitHub Codex review on `5a508fd8` found:
+  - P1: pre-delete task events could be restored after a goal id was deleted and recreated.
+  - P2: non-event-backed runtime operation rows survived whole-control apply.
+  - P2: `AttentionStateStore.saveCommitmentCandidates()` used raw string timestamp comparison before event append.
+- Follow-up fixes track goal delete generations during apply, prune stale whole-control current-state projection rows, and use parsed timestamp comparison before suppressing commitment candidate writes. Focused verification passed:
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `git diff --check`

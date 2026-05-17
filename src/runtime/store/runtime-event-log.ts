@@ -396,6 +396,7 @@ export class RuntimeEventLogStore {
       const currentStateProjectionRows = applyEventBackedCurrentStateProjections(
         sqlite,
         sourceEvents,
+        { pruneStaleRows: !options.traceId },
       );
       for (const snapshot of snapshots) {
         upsertProjectionSnapshot(sqlite, snapshot);
@@ -981,6 +982,7 @@ function readProjectionApplySourceEvents(
 function applyEventBackedCurrentStateProjections(
   sqlite: SqliteDatabase,
   events: readonly RuntimeEventEnvelope[],
+  options: { pruneStaleRows?: boolean } = {},
 ): RuntimeEventProjectionCurrentStateApplySummary {
   const goals = new Map<string, {
     action: "save" | "archive" | "delete";
@@ -991,23 +993,31 @@ function applyEventBackedCurrentStateProjections(
     goalId: string;
     taskId: string;
     task: Task | null;
+    goalGeneration: number;
   }>();
   const authorityDecisions = new Map<string, ExecutionAuthorityDecision>();
   const runtimeOperations = new Map<string, RuntimeControlOperation>();
   const commitmentCandidates = new Map<string, CommitmentCandidate>();
+  const goalGenerations = new Map<string, number>();
   for (const event of events) {
     if (event.payload.schema_version === "runtime-event-payload/goal-task-mutation/v1") {
       if (event.payload.mutation.entity_kind === "goal") {
-        goals.set(event.payload.mutation.goal.id, {
+        const goalId = event.payload.mutation.goal.id;
+        if (event.payload.mutation.action === "delete") {
+          goalGenerations.set(goalId, (goalGenerations.get(goalId) ?? 0) + 1);
+        }
+        goals.set(goalId, {
           action: event.payload.mutation.action,
           goal: GoalSchema.parse(event.payload.mutation.goal),
         });
       } else {
+        const goalGeneration = goalGenerations.get(event.payload.mutation.goal_id) ?? 0;
         tasks.set(`${event.payload.mutation.goal_id}:${event.payload.mutation.task_id}`, {
           action: event.payload.mutation.action,
           goalId: event.payload.mutation.goal_id,
           taskId: event.payload.mutation.task_id,
           task: event.payload.mutation.task ? TaskSchema.parse(event.payload.mutation.task) : null,
+          goalGeneration,
         });
       }
     }
@@ -1030,6 +1040,16 @@ function applyEventBackedCurrentStateProjections(
     }
   }
   const deletedGoalIds = new Set<string>();
+  const shouldApplyTask = (mutation: {
+    action: "save" | "delete";
+    goalId: string;
+    task: Task | null;
+    goalGeneration: number;
+  }): boolean =>
+    mutation.action !== "delete"
+    && mutation.task !== null
+    && !deletedGoalIds.has(mutation.goalId)
+    && mutation.goalGeneration === (goalGenerations.get(mutation.goalId) ?? 0);
   for (const [goalId, mutation] of goals) {
     if (mutation.action === "delete") {
       deletedGoalIds.add(goalId);
@@ -1043,12 +1063,21 @@ function applyEventBackedCurrentStateProjections(
       upsertGoalParentProjectionEdge(sqlite, mutation.goal);
     }
   }
+  if (options.pruneStaleRows === true) {
+    pruneGoalProjectionRows(sqlite, [...goals.entries()]
+      .filter(([, mutation]) => mutation.action !== "delete")
+      .map(([goalId]) => goalId));
+    pruneTaskProjectionRows(sqlite, [...tasks.values()].filter(shouldApplyTask));
+    pruneInteractionAuthorityDecisionRows(sqlite, [...authorityDecisions.keys()]);
+    pruneRuntimeOperationRows(sqlite, [...runtimeOperations.keys()]);
+    pruneCommitmentCandidateRows(sqlite, [...commitmentCandidates.keys()]);
+  }
   for (const mutation of tasks.values()) {
-    if (mutation.action === "delete" || !mutation.task || deletedGoalIds.has(mutation.goalId)) {
+    if (!shouldApplyTask(mutation)) {
       deleteTaskProjection(sqlite, mutation.goalId, mutation.taskId);
       continue;
     }
-    upsertTaskProjection(sqlite, mutation.task);
+    upsertTaskProjection(sqlite, mutation.task as Task);
   }
   for (const decision of authorityDecisions.values()) {
     upsertInteractionAuthorityDecisionProjection(sqlite, decision);
@@ -1061,11 +1090,7 @@ function applyEventBackedCurrentStateProjections(
   }
   return {
     goal_records: [...goals.values()].filter((mutation) => mutation.action !== "delete").length,
-    task_records: [...tasks.values()].filter((mutation) =>
-      mutation.action !== "delete"
-      && mutation.task
-      && !deletedGoalIds.has(mutation.goalId)
-    ).length,
+    task_records: [...tasks.values()].filter(shouldApplyTask).length,
     interaction_authority_decisions: authorityDecisions.size,
     runtime_operations: runtimeOperations.size,
     attention_commitment_candidates: commitmentCandidates.size,
@@ -1124,6 +1149,19 @@ function deleteGoalProjection(sqlite: SqliteDatabase, goalId: string): void {
   sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(goalProjectionRuntimeGraphNodeId(goalId));
 }
 
+function pruneGoalProjectionRows(sqlite: SqliteDatabase, eventBackedGoalIds: readonly string[]): void {
+  const rows = eventBackedGoalIds.length === 0
+    ? sqlite.prepare("SELECT goal_id FROM goal_records").all() as Array<{ goal_id: string }>
+    : sqlite.prepare(`
+        SELECT goal_id
+        FROM goal_records
+        WHERE goal_id NOT IN (${eventBackedGoalIds.map(() => "?").join(", ")})
+      `).all(...eventBackedGoalIds) as Array<{ goal_id: string }>;
+  for (const row of rows) {
+    deleteGoalProjection(sqlite, row.goal_id);
+  }
+}
+
 function upsertTaskProjection(sqlite: SqliteDatabase, taskInput: Task): void {
   const task = TaskSchema.parse(taskInput);
   const updatedAt = validIsoOrNow(task.completed_at ?? task.started_at ?? task.created_at);
@@ -1175,6 +1213,22 @@ function upsertTaskProjection(sqlite: SqliteDatabase, taskInput: Task): void {
 function deleteTaskProjection(sqlite: SqliteDatabase, goalId: string, taskId: string): void {
   sqlite.prepare("DELETE FROM task_records WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
   sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskProjectionRuntimeGraphNodeId(taskId));
+}
+
+function pruneTaskProjectionRows(
+  sqlite: SqliteDatabase,
+  eventBackedTasks: readonly { goalId: string; taskId: string }[],
+): void {
+  const rows = eventBackedTasks.length === 0
+    ? sqlite.prepare("SELECT goal_id, task_id FROM task_records").all() as Array<{ goal_id: string; task_id: string }>
+    : sqlite.prepare(`
+        SELECT goal_id, task_id
+        FROM task_records
+        WHERE NOT (${eventBackedTasks.map(() => "(goal_id = ? AND task_id = ?)").join(" OR ")})
+      `).all(...eventBackedTasks.flatMap((task) => [task.goalId, task.taskId])) as Array<{ goal_id: string; task_id: string }>;
+  for (const row of rows) {
+    deleteTaskProjection(sqlite, row.goal_id, row.task_id);
+  }
 }
 
 function goalProjectionRuntimeGraphNodeId(goalId: string): string {
@@ -1298,6 +1352,34 @@ function insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite: SqliteDatabase, ed
     parsed.created_at,
     JSON.stringify(parsed),
   );
+}
+
+function pruneInteractionAuthorityDecisionRows(sqlite: SqliteDatabase, eventBackedDecisionIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "interaction_authority_decisions", "decision_id", eventBackedDecisionIds);
+}
+
+function pruneRuntimeOperationRows(sqlite: SqliteDatabase, eventBackedOperationIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "runtime_operations", "operation_id", eventBackedOperationIds);
+}
+
+function pruneCommitmentCandidateRows(sqlite: SqliteDatabase, eventBackedCommitmentIds: readonly string[]): void {
+  deleteRowsNotIn(sqlite, "attention_commitment_candidates", "commitment_id", eventBackedCommitmentIds);
+}
+
+function deleteRowsNotIn(
+  sqlite: SqliteDatabase,
+  tableName: "interaction_authority_decisions" | "runtime_operations" | "attention_commitment_candidates",
+  idColumn: "decision_id" | "operation_id" | "commitment_id",
+  eventBackedIds: readonly string[],
+): void {
+  if (eventBackedIds.length === 0) {
+    sqlite.prepare(`DELETE FROM ${tableName}`).run();
+    return;
+  }
+  sqlite.prepare(`
+    DELETE FROM ${tableName}
+    WHERE ${idColumn} NOT IN (${eventBackedIds.map(() => "?").join(", ")})
+  `).run(...eventBackedIds);
 }
 
 function upsertInteractionAuthorityDecisionProjection(sqlite: SqliteDatabase, decisionInput: ExecutionAuthorityDecision): void {

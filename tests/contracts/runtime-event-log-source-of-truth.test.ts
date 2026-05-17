@@ -30,7 +30,10 @@ import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
 import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait-plan-store.js";
 import { RuntimeOperationStore } from "../../src/runtime/store/runtime-operation-store.js";
 import { RuntimeControlOperationSchema } from "../../src/runtime/store/runtime-operation-schemas.js";
-import { openRuntimeControlDatabase } from "../../src/runtime/store/control-db/index.js";
+import {
+  openRuntimeControlDatabase,
+  type SqliteDatabase,
+} from "../../src/runtime/store/control-db/index.js";
 import {
   CommitmentCandidateExtractionSchema,
   createCommitmentCandidate,
@@ -926,6 +929,201 @@ describe("runtime event log source-of-truth contract", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("does not resurrect pre-delete tasks when a goal id is recreated", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const goalStore = new GoalTaskStateStore(root, { controlBaseDir: root });
+      const goal = makeGoal({
+        id: "goal:recreated-from-events",
+        title: "Original goal",
+        updated_at: "2026-05-15T16:00:00.000Z",
+      });
+      const task = makeTask({
+        id: "task:pre-delete",
+        goal_id: goal.id,
+        work_description: "This task belongs to the deleted generation.",
+        created_at: "2026-05-15T16:05:00.000Z",
+      });
+      const deletedGoal = makeGoal({
+        ...goal,
+        updated_at: "2026-06-01T00:00:00.000Z",
+      });
+      const recreatedGoal = makeGoal({
+        ...goal,
+        title: "Recreated goal",
+        updated_at: "2026-06-01T01:00:00.000Z",
+      });
+
+      await eventLog.appendGoalTaskMutation({ entityKind: "goal", action: "save", goal });
+      await eventLog.appendGoalTaskMutation({
+        entityKind: "task",
+        action: "save",
+        goalId: goal.id,
+        taskId: task.id,
+        task,
+      });
+      await eventLog.appendGoalTaskMutation({ entityKind: "goal", action: "delete", goal: deletedGoal });
+      await eventLog.appendGoalTaskMutation({ entityKind: "goal", action: "save", goal: recreatedGoal });
+
+      await eventLog.applyProjectionRebuild();
+
+      await expect(goalStore.loadGoal(goal.id)).resolves.toMatchObject({
+        id: goal.id,
+        title: "Recreated goal",
+      });
+      await expect(goalStore.loadTask(goal.id, task.id)).resolves.toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes non-event-backed current-state projection rows during whole-control apply", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+      const phantomOperation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:phantom",
+        kind: "inspect_run",
+        state: "verified",
+        requested_at: NOW,
+        updated_at: NOW,
+        completed_at: NOW,
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "This row has no runtime event backing.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        result: {
+          ok: true,
+          message: "phantom",
+        },
+      });
+      const phantomCandidate = {
+        ...commitmentCandidate(),
+        commitment_id: "commitment:phantom",
+        replay_key: "commitment-replay:phantom",
+      };
+      await mutateRuntimeControlDatabase(runtimeRoot, root, (sqlite) => {
+        sqlite.prepare(`
+          INSERT INTO runtime_operations (
+            operation_id, kind, state, terminal, requested_at, updated_at, operation_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, json(?))
+        `).run(
+          phantomOperation.operation_id,
+          phantomOperation.kind,
+          phantomOperation.state,
+          1,
+          phantomOperation.requested_at,
+          phantomOperation.updated_at,
+          JSON.stringify(phantomOperation),
+        );
+        sqlite.prepare(`
+          INSERT INTO attention_commitment_candidates (
+            commitment_id,
+            source_ref,
+            target_ref,
+            replay_key,
+            source_epoch,
+            source_high_watermark,
+            policy_epoch,
+            scope_key,
+            lifecycle,
+            nudge_policy,
+            materialization_id,
+            next_revisit_at,
+            due_start,
+            due_end,
+            priority_score,
+            suppression_ref_count,
+            feedback_ref_count,
+            created_at,
+            updated_at,
+            candidate_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+        `).run(
+          phantomCandidate.commitment_id,
+          JSON.stringify(phantomCandidate.source_ref),
+          JSON.stringify(phantomCandidate.target_ref),
+          phantomCandidate.replay_key,
+          phantomCandidate.source_epoch,
+          phantomCandidate.source_high_watermark,
+          phantomCandidate.policy_epoch,
+          "phantom-scope",
+          phantomCandidate.materialization_state,
+          phantomCandidate.nudge_policy,
+          phantomCandidate.materialization_id,
+          phantomCandidate.next_revisit_at,
+          phantomCandidate.due.window_start,
+          phantomCandidate.due.window_end,
+          phantomCandidate.priority_evidence.total_score ?? null,
+          phantomCandidate.suppression_refs.length,
+          phantomCandidate.feedback_refs.length,
+          phantomCandidate.created_at,
+          phantomCandidate.updated_at,
+          JSON.stringify(phantomCandidate),
+        );
+      });
+      await expect(operationStore.load(phantomOperation.operation_id)).resolves.toMatchObject({
+        operation_id: phantomOperation.operation_id,
+      });
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({ commitment_id: phantomCandidate.commitment_id }),
+      ]);
+
+      await eventLog.applyProjectionRebuild();
+
+      await expect(operationStore.load(phantomOperation.operation_id)).resolves.toBeNull();
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("updates commitment candidates by parsed timestamp instants before appending events", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const baseCandidate = {
+        ...commitmentCandidate(),
+        commitment_id: "commitment:fractional-update",
+        replay_key: "commitment-replay:fractional-update",
+        updated_at: "2026-05-15T17:00:00Z",
+        materialization_state: "watching" as const,
+      };
+      const laterCandidate = {
+        ...baseCandidate,
+        updated_at: "2026-05-15T17:00:00.100Z",
+        materialization_state: "active_care" as const,
+      };
+
+      await attentionStore.saveCommitmentCandidates([baseCandidate]);
+      await attentionStore.saveCommitmentCandidates([laterCandidate]);
+
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          commitment_id: laterCandidate.commitment_id,
+          materialization_state: "active_care",
+          updated_at: "2026-05-15T17:00:00.100Z",
+        }),
+      ]);
+      const events = await eventLog.listEvents({ eventType: "attention.commitment.recorded", limit: null });
+      expect(events.filter((event) => event.correlation_id === laterCandidate.commitment_id)).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fixtureRoot(): string {
@@ -944,6 +1142,19 @@ async function clearProjectionTables(
         sqlite.prepare(statement).run();
       }
     });
+  } finally {
+    db.close();
+  }
+}
+
+async function mutateRuntimeControlDatabase(
+  runtimeRoot: string,
+  controlBaseDir: string,
+  mutate: (sqlite: SqliteDatabase) => void,
+): Promise<void> {
+  const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir });
+  try {
+    db.transaction(mutate);
   } finally {
     db.close();
   }

@@ -312,7 +312,7 @@ export class AttentionStateStore {
           duplicates.push(existing);
           continue;
         }
-        if (existing && candidate.updated_at <= existing.updated_at) {
+        if (existing && compareIsoTimestamps(candidate.updated_at, existing.updated_at) <= 0) {
           accepted.push(existing);
           continue;
         }
@@ -1841,6 +1841,15 @@ function shouldPreferLegacyAgendaMutation(
 function compareAgendaItems(left: AgentAgendaItem, right: AgentAgendaItem): number {
   return left.updated_at.localeCompare(right.updated_at)
     || left.agenda_item_id.localeCompare(right.agenda_item_id);
+}
+
+function compareIsoTimestamps(left: string, right: string): number {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+    return leftMs - rightMs;
+  }
+  return left.localeCompare(right);
 }
 
 function listCurrentAgendaItems(
