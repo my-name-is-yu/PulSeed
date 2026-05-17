@@ -482,7 +482,7 @@ describe("CoreLoop agentic phase hooks", () => {
           preferredTargetDimension: "dim-prior",
           taskBiasRefs: ["evidence-1"],
           avoidTaskPatternRefs: [],
-          requiredExperimentPlanIds: ["experiment-plan-1"],
+          requiredExperimentPlanIds: [],
           generalizationBodies: [],
           suppressedSuggestionIds: [],
         },
@@ -508,7 +508,7 @@ describe("CoreLoop agentic phase hooks", () => {
       learningProjection: expect.objectContaining({
         phase: "task_generation",
         preferredTargetDimension: "dim-prior",
-        requiredExperimentPlanIds: ["experiment-plan-1"],
+        requiredExperimentPlanIds: [],
       }),
     }));
     expect(taskCycleArgs[7]?.knowledgeContextPrefix).not.toContain("prior-1");
@@ -673,11 +673,12 @@ describe("CoreLoop agentic phase hooks", () => {
       };
     });
     const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
     const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
     deps.experienceLearningStore = {
       resolvePriorForPhase,
       markPriorConsumptionApplied,
-      markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
+      markPriorConsumptionSuppressed,
       listExperimentPlans: vi.fn().mockResolvedValue([]),
       appendLifecycleEvent,
     } as never;
@@ -686,9 +687,10 @@ describe("CoreLoop agentic phase hooks", () => {
     const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
     await loop.runOneIteration("goal-1", 0);
 
-    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalled();
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
       consumptionId: "consumption-task-experiment",
-      generatedDecisionRefs: ["task:task-1"],
+      reasonCodes: ["consumer_no_op"],
     });
     expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "experiment_record_closed",
@@ -740,10 +742,11 @@ describe("CoreLoop agentic phase hooks", () => {
         },
       };
     });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
     const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
     deps.experienceLearningStore = {
       resolvePriorForPhase,
-      markPriorConsumptionApplied: vi.fn().mockResolvedValue(null),
+      markPriorConsumptionApplied,
       markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
       listExperimentPlans: vi.fn().mockResolvedValue([
         {
@@ -779,6 +782,98 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "experiment_record_closed",
       plan_id: "wrong-experiment-plan",
+    }));
+    expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
+      consumptionId: "consumption-task-experiment",
+      generatedDecisionRefs: [
+        "task:task-1",
+        expect.stringMatching(/^learning_experiment_record:learning-experiment-record:/),
+      ],
+    });
+  });
+
+  it("records non-completed failed experiment tasks as inconclusive instead of falsified", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `task-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:task-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `task evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    (mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mockResolvedValue(makeTaskCycleResult({
+      action: "approval_denied",
+      verdict: "fail",
+    }));
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-task-experiment" },
+        record: { id: "consumption-task-experiment", stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: {
+          phase: "task_generation",
+          projectionKind: "task_generation_bias",
+          consumptionRecordId: "consumption-task-experiment",
+          preferredTargetDimension: "dim1",
+          taskBiasRefs: [],
+          avoidTaskPatternRefs: [],
+          requiredExperimentPlanIds: ["matching-experiment-plan"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const appendLifecycleEvent = vi.fn().mockResolvedValue({ runtimeEvent: null, appliedProjection: false });
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied: vi.fn().mockResolvedValue(null),
+      markPriorConsumptionSuppressed: vi.fn().mockResolvedValue(null),
+      listExperimentPlans: vi.fn().mockResolvedValue([
+        {
+          id: "matching-experiment-plan",
+          plannedConsumerPhase: "task_generation",
+          plannedTaskId: "task-1",
+          hypothesisIds: ["hypothesis-match"],
+          generalizationCandidateIds: [],
+        },
+      ]),
+      appendLifecycleEvent,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "experiment_record_closed",
+      outcome: "inconclusive",
+      record: expect.objectContaining({
+        outcome: "inconclusive",
+        eliminatedHypothesisIds: [],
+        narrowedGeneralizationCandidateIds: [],
+        negativeTransferRefs: [],
+      }),
+      value_outcome: expect.objectContaining({
+        transferOutcome: "inconclusive",
+      }),
     }));
   });
 
@@ -1334,19 +1429,22 @@ describe("CoreLoop agentic phase hooks", () => {
         priors[0]!.suggestions[0]!.experimentPlanIds[0],
       ]);
 
-      const consumptions = await experienceStore.listPriorConsumptionRecords(priors[0]!.id);
-      expect(consumptions).toEqual([
-        expect.objectContaining({
-          stage: "applied",
-          generatedDecisionRefs: ["task:task-3"],
-        }),
-      ]);
       const experimentRecords = await experienceStore.listExperimentRecords("goal-1");
       expect(experimentRecords).toEqual([
         expect.objectContaining({
           planId: priors[0]!.suggestions[0]!.experimentPlanIds[0],
           taskId: "task-3",
           outcome: "supported",
+        }),
+      ]);
+      const consumptions = await experienceStore.listPriorConsumptionRecords(priors[0]!.id);
+      expect(consumptions).toEqual([
+        expect.objectContaining({
+          stage: "applied",
+          generatedDecisionRefs: [
+            "task:task-3",
+            `learning_experiment_record:${experimentRecords[0]!.id}`,
+          ],
         }),
       ]);
       const promotedArtifacts = (await experienceStore.listArtifacts("goal-1"))
@@ -1449,7 +1547,7 @@ describe("CoreLoop agentic phase hooks", () => {
       taskCall += 1;
       return makeTaskCycleResult({
         taskId: `negative-task-${taskCall}`,
-        action: "discard",
+        action: "completed",
         verdict: "fail",
       });
     });

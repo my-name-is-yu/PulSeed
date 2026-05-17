@@ -1067,8 +1067,13 @@ export class CoreIterationKernel {
       abortSignal,
     );
     const completedTaskResult = result.taskResult;
+    const taskExperimentProjection = taskLearningProjection?.requiredExperimentPlanIds.length
+      ? taskLearningProjection
+      : undefined;
     if (!taskCycleOk) {
-      if (completedTaskResult && taskLearningProjection) {
+      if (taskExperimentProjection) {
+        await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
+      } else if (completedTaskResult && taskLearningProjection) {
         await markLearningProjectionApplied(taskLearningProjection, [
           `task:${completedTaskResult.task.id}`,
         ]);
@@ -1078,17 +1083,14 @@ export class CoreIterationKernel {
       return await finalizeExperienceLearning();
     }
 
-    if (completedTaskResult && taskLearningProjection) {
-      await markLearningProjectionApplied(taskLearningProjection, [
-        `task:${completedTaskResult.task.id}`,
-      ]);
-    }
     if (completedTaskResult) {
       await appendTaskCycleEvidence(appendRuntimeEvidence, completedTaskResult);
     }
+    let closedTaskExperimentPayload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> | null = null;
+    let taskLearningExperimentNoMatch = false;
     if (
       completedTaskResult
-      && taskLearningProjection?.requiredExperimentPlanIds.length
+      && taskExperimentProjection
       && this.deps.deps.experienceLearningStore
       && iterationEvidence.length > 0
     ) {
@@ -1097,11 +1099,11 @@ export class CoreIterationKernel {
         const experimentPlansById = new Map(experimentPlans.map((plan) => [plan.id, plan]));
         let matchedExperimentPlanId: string | null = null;
         let matchedExperimentPlan: LearningExperimentPlan | null = null;
-        for (const experimentPlanId of taskLearningProjection.requiredExperimentPlanIds) {
+        for (const experimentPlanId of taskExperimentProjection.requiredExperimentPlanIds) {
           const experimentPlan = experimentPlansById.get(experimentPlanId) ?? null;
           if (taskMatchesExperimentPlan({
             taskResult: completedTaskResult,
-            projection: taskLearningProjection,
+            projection: taskExperimentProjection,
             plan: experimentPlan,
             planId: experimentPlanId,
           })) {
@@ -1127,6 +1129,7 @@ export class CoreIterationKernel {
             ),
           });
           await this.deps.deps.experienceLearningStore.appendLifecycleEvent(experimentClosedPayload);
+          closedTaskExperimentPayload = experimentClosedPayload;
           const postOutcomePayloads = await buildPostExperimentOutcomePayloads({
             store: this.deps.deps.experienceLearningStore,
             experimentClosedPayload,
@@ -1146,14 +1149,34 @@ export class CoreIterationKernel {
               });
             }
           }
+        } else {
+          taskLearningExperimentNoMatch = true;
         }
       } catch (err) {
         this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
           goalId,
           loopIndex,
-          planIds: taskLearningProjection.requiredExperimentPlanIds,
+          planIds: taskExperimentProjection.requiredExperimentPlanIds,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+    } else if (completedTaskResult && taskExperimentProjection) {
+      taskLearningExperimentNoMatch = true;
+    }
+    if (completedTaskResult && taskLearningProjection) {
+      if (taskExperimentProjection) {
+        if (closedTaskExperimentPayload) {
+          await markLearningProjectionApplied(taskExperimentProjection, [
+            `task:${completedTaskResult.task.id}`,
+            `learning_experiment_record:${closedTaskExperimentPayload.record_id}`,
+          ]);
+        } else if (taskLearningExperimentNoMatch) {
+          await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_no_op"]);
+        }
+      } else {
+        await markLearningProjectionApplied(taskLearningProjection, [
+          `task:${completedTaskResult.task.id}`,
+        ]);
       }
     }
     if (this.deps.coreDecisionEngine.shouldRunVerificationEvidence(result) && completedTaskResult) {
@@ -1244,11 +1267,13 @@ function buildExperimentRecordClosedPayload(input: {
     input.loopIndex,
   ]);
   const valueOutcomeId = stableLearningId("learning-experiment-value-outcome", [recordId]);
-  const outcome = input.taskResult.action === "completed" && input.taskResult.verificationResult.verdict === "pass"
-    ? "supported"
-    : input.taskResult.verificationResult.verdict === "fail"
-      ? "falsified"
-      : "inconclusive";
+  const outcome = input.taskResult.action === "completed"
+    ? input.taskResult.verificationResult.verdict === "pass"
+      ? "supported"
+      : input.taskResult.verificationResult.verdict === "fail"
+        ? "falsified"
+        : "inconclusive"
+    : "inconclusive";
   const testedGeneralizationCandidateIds = input.plan?.generalizationCandidateIds ?? [];
   const eliminatedHypothesisIds = outcome === "falsified" ? input.plan?.hypothesisIds ?? [] : [];
   const trust = defaultRuntimeEvidenceTrust({
