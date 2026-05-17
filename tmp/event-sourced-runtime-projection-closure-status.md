@@ -52,3 +52,4 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:public-contracts`
   - `git diff --check`
 - A prior `npm run test:integration` attempt observed a one-off first-visible-latency assertion above 2s. The focused rerun passed, and the later full integration rerun passed.
+- First sub-agent review found material gaps in projection apply ordering, apply-to-current-state completeness, and resident commitment caller-path evidence. Follow-up fixes now append the rebuild event before projection writes, restore event-backed rows for `runtime_operations` and `attention_commitment_candidates`, and tag resident commitment writes with `caller_path: resident_proactive`.

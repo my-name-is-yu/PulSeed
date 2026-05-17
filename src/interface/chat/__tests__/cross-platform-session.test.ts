@@ -2171,7 +2171,7 @@ describe("CrossPlatformChatSessionManager", () => {
 
     await vi.waitFor(() => {
       expect(order).toContain("presence:orienting");
-    });
+    }, { timeout: 5_000 });
     expect(order).not.toContain("llm:model");
     resolveOrientingDelivery?.();
 

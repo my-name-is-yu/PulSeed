@@ -228,6 +228,10 @@ describe("runtime event log restart/replay invariants", () => {
         "tool.call.recorded",
         "attention.commitment.recorded",
       ]));
+      expect(events
+        .filter((event) => event.event_type === "attention.commitment.recorded")
+        .map((event) => event.caller_path)
+      ).toEqual(expect.arrayContaining(["resident_proactive"]));
       expect(events.every((event) =>
         event.trace_id.length > 0
         && event.correlation_id.length > 0

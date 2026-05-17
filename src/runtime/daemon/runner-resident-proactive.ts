@@ -230,7 +230,7 @@ export async function runResidentCommitmentAttentionCycle(
     now,
   });
   const materializedCount = countChangedCommitments(dueCandidates, storedCandidates);
-  await store.saveCommitmentCandidates(storedCandidates);
+  await store.saveCommitmentCandidates(storedCandidates, { callerPath: "resident_proactive" });
   if (provider.attentionInputs.length === 0 && provider.urgeCandidates.length === 0) {
     if (materializedCount > 0) {
       await persistResidentActivity(context, {

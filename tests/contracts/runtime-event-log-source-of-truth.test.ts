@@ -29,6 +29,7 @@ import { GoalTaskStateStore } from "../../src/runtime/store/goal-task-state-stor
 import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait-plan-store.js";
 import { RuntimeOperationStore } from "../../src/runtime/store/runtime-operation-store.js";
 import { RuntimeControlOperationSchema } from "../../src/runtime/store/runtime-operation-schemas.js";
+import { openRuntimeControlDatabase } from "../../src/runtime/store/control-db/index.js";
 import {
   CommitmentCandidateExtractionSchema,
   createCommitmentCandidate,
@@ -568,6 +569,9 @@ describe("runtime event log source-of-truth contract", () => {
         }),
       ]);
 
+      await clearProjectionTables(runtimeRoot, root, ["DELETE FROM attention_commitment_candidates"]);
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
+
       const applied = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
       expect(applied.snapshots).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -575,6 +579,14 @@ describe("runtime event log source-of-truth contract", () => {
           scope: { kind: "trace", ref: events[0]!.trace_id },
         }),
       ]));
+      expect(applied.current_state_projection_rows.attention_commitment_candidates).toBe(1);
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          commitment_id: firstCandidate.commitment_id,
+          materialization_state: "resolved",
+          feedback_refs: ["feedback:commitment-done"],
+        }),
+      ]);
       await expect(eventLog.listProjectionSnapshots()).resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({
           projection_name: "attention_commitment_lifecycle_summary",
@@ -644,6 +656,16 @@ describe("runtime event log source-of-truth contract", () => {
         caused_by: expect.any(Number),
         projected_to: expect.any(Number),
       }));
+
+      await clearProjectionTables(runtimeRoot, root, ["DELETE FROM runtime_operations"]);
+      await expect(store.load(operation.operation_id)).resolves.toBeNull();
+      const applied = await eventLog.applyProjectionRebuild({ traceId: events[0]!.trace_id });
+      expect(applied.current_state_projection_rows.runtime_operations).toBe(1);
+      await expect(store.load(operation.operation_id)).resolves.toMatchObject({
+        operation_id: operation.operation_id,
+        state: "verified",
+        completed_at: "2026-05-16T00:01:00.000Z",
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -652,6 +674,23 @@ describe("runtime event log source-of-truth contract", () => {
 
 function fixtureRoot(): string {
   return mkdtempSync(path.join(os.tmpdir(), "pulseed-runtime-event-contract-"));
+}
+
+async function clearProjectionTables(
+  runtimeRoot: string,
+  controlBaseDir: string,
+  statements: readonly string[],
+): Promise<void> {
+  const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir });
+  try {
+    db.transaction((sqlite) => {
+      for (const statement of statements) {
+        sqlite.prepare(statement).run();
+      }
+    });
+  } finally {
+    db.close();
+  }
 }
 
 function commitmentScope(): AttentionScope {

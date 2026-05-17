@@ -56,6 +56,7 @@ import {
   appendRuntimeEventEnvelopeInTransaction,
   runtimeEventFromAttentionCommitment,
 } from "./runtime-event-log.js";
+import type { PersonalAgentCallerPath } from "../personal-agent/contracts.js";
 import type { CompanionWideControl } from "../types/companion-state.js";
 
 export const AttentionStoreLifecycleSchema = z.enum([
@@ -297,7 +298,8 @@ export class AttentionStateStore {
   }
 
   async saveCommitmentCandidates(
-    candidates: readonly CommitmentCandidate[]
+    candidates: readonly CommitmentCandidate[],
+    options: { callerPath?: PersonalAgentCallerPath } = {},
   ): Promise<CommitmentCandidateWriteResult> {
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -318,6 +320,7 @@ export class AttentionStateStore {
           operation: "candidate_saved",
           candidate,
           previousCandidate: existing,
+          callerPath: options.callerPath,
         }));
         upsertCommitmentCandidate(sqlite, candidate);
         accepted.push(candidate);
@@ -340,6 +343,7 @@ export class AttentionStateStore {
     feedbackRef?: string | null;
     snoozeUntil?: string | null;
     reason?: string;
+    callerPath?: PersonalAgentCallerPath;
   }): Promise<CommitmentCandidate | null> {
     const db = await this.database();
     return db.transaction((sqlite) => {
@@ -360,6 +364,7 @@ export class AttentionStateStore {
         control: input.control,
         feedbackRef: input.feedbackRef,
         occurredAt: input.now,
+        callerPath: input.callerPath,
       }));
       upsertCommitmentCandidate(sqlite, updated);
       return updated;

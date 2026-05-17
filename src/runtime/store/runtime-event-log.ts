@@ -11,6 +11,7 @@ import {
   PersonalAgentDecisionTraceSchema,
   RuntimeGraphEdgeSchema,
   RuntimeGraphNodeSchema,
+  type PersonalAgentCallerPath,
   type PersonalAgentDecisionTrace,
   type RuntimeGraphEdge,
   type RuntimeGraphNode,
@@ -22,7 +23,9 @@ import {
   type CommitmentCandidate,
   type CommitmentLifecycleControl,
 } from "../attention/commitment-candidate.js";
+import { attentionScopeKey } from "../attention/attention-scope.js";
 import {
+  isTerminalRuntimeControlState,
   RuntimeControlOperationSchema,
   type RuntimeControlOperation,
 } from "./runtime-operation-schemas.js";
@@ -211,6 +214,7 @@ export interface RuntimeAttentionCommitmentEventInput {
   control?: CommitmentLifecycleControl | null;
   feedbackRef?: string | null;
   occurredAt?: string;
+  callerPath?: PersonalAgentCallerPath;
 }
 
 export interface RuntimeEventProjectionRebuild {
@@ -272,7 +276,13 @@ export interface RuntimeEventProjectionApplyResult {
   dry_run: false;
   rebuild: RuntimeEventProjectionRebuild;
   snapshots: RuntimeEventProjectionSnapshot[];
+  current_state_projection_rows: RuntimeEventProjectionCurrentStateApplySummary;
   event: RuntimeEventEnvelope;
+}
+
+export interface RuntimeEventProjectionCurrentStateApplySummary {
+  runtime_operations: number;
+  attention_commitment_candidates: number;
 }
 
 export interface RuntimeGraphExplainResult {
@@ -372,15 +382,23 @@ export class RuntimeEventLogStore {
     const appliedAt = new Date().toISOString();
     const snapshots = projectionSnapshots(rebuild, appliedAt);
     const db = await this.database();
-    const event = db.transaction((sqlite) => {
-      for (const snapshot of snapshots) {
-        upsertProjectionSnapshot(sqlite, snapshot);
-      }
-      return appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromProjectionRebuild({
+    const applied = db.transaction((sqlite) => {
+      const append = appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromProjectionRebuild({
         rebuild,
         dryRun: false,
         occurredAt: appliedAt,
-      })).event;
+      }));
+      const currentStateProjectionRows = applyEventBackedCurrentStateProjections(
+        sqlite,
+        readProjectionApplySourceEvents(sqlite, options),
+      );
+      for (const snapshot of snapshots) {
+        upsertProjectionSnapshot(sqlite, snapshot);
+      }
+      return {
+        event: append.event,
+        currentStateProjectionRows,
+      };
     });
     return {
       schema_version: "runtime-event-projection-apply/v1",
@@ -388,7 +406,8 @@ export class RuntimeEventLogStore {
       dry_run: false,
       rebuild,
       snapshots,
-      event,
+      current_state_projection_rows: applied.currentStateProjectionRows,
+      event: applied.event,
     };
   }
 
@@ -748,6 +767,7 @@ export function runtimeEventFromAttentionCommitment(input: RuntimeAttentionCommi
   const candidate = CommitmentCandidateSchema.parse(input.candidate);
   const occurredAt = validIsoOrNow(input.occurredAt ?? candidate.updated_at);
   const operation = input.operation;
+  const callerPath = input.callerPath ?? "chat_gateway_turn";
   const commitmentRef = { kind: "commitment", ref: candidate.commitment_id };
   const sourceRef = graphRefFromCommitmentSource(candidate.source_ref);
   const materializationRef = candidate.materialization_id
@@ -790,7 +810,7 @@ export function runtimeEventFromAttentionCommitment(input: RuntimeAttentionCommi
       input.feedbackRef ?? "",
     ].join(":"),
     actor: { kind: "runtime", ref: "attention-state-store" },
-    caller_path: "chat_gateway_turn",
+    caller_path: callerPath,
     surface: candidate.scope.surfaceClass,
     session_id: candidate.scope.sessionId ?? null,
     source_ref: sourceRef,
@@ -928,6 +948,154 @@ function readRuntimeEventByIdempotency(sqlite: SqliteDatabase, event: RuntimeEve
     event.side_effect_ref ? refKey(event.side_effect_ref) : "pending",
   ) as { event_json: string } | undefined;
   return row ? parseRuntimeEvent(row.event_json)[0] ?? null : null;
+}
+
+function readProjectionApplySourceEvents(
+  sqlite: SqliteDatabase,
+  options: { traceId?: string },
+): RuntimeEventEnvelope[] {
+  const rows = sqlite.prepare(`
+    SELECT event_json
+    FROM runtime_events
+    WHERE (? IS NULL OR trace_id = ?)
+    ORDER BY occurred_at ASC, event_id ASC
+  `).all(
+    options.traceId ?? null,
+    options.traceId ?? null,
+  ) as Array<{ event_json: string }>;
+  return rows.flatMap((row) => parseRuntimeEvent(row.event_json));
+}
+
+function applyEventBackedCurrentStateProjections(
+  sqlite: SqliteDatabase,
+  events: readonly RuntimeEventEnvelope[],
+): RuntimeEventProjectionCurrentStateApplySummary {
+  const runtimeOperations = new Map<string, RuntimeControlOperation>();
+  const commitmentCandidates = new Map<string, CommitmentCandidate>();
+  for (const event of events) {
+    if (event.payload.schema_version === "runtime-event-payload/runtime-control-operation/v1") {
+      const operation = RuntimeControlOperationSchema.parse(event.payload.operation);
+      const current = runtimeOperations.get(operation.operation_id);
+      if (!current || operation.updated_at.localeCompare(current.updated_at) >= 0) {
+        runtimeOperations.set(operation.operation_id, operation);
+      }
+    }
+    if (event.payload.schema_version === "runtime-event-payload/attention-commitment/v1") {
+      const candidate = CommitmentCandidateSchema.parse(event.payload.candidate);
+      const current = commitmentCandidates.get(candidate.commitment_id);
+      if (!current || candidate.updated_at.localeCompare(current.updated_at) >= 0) {
+        commitmentCandidates.set(candidate.commitment_id, candidate);
+      }
+    }
+  }
+  for (const operation of runtimeOperations.values()) {
+    upsertRuntimeOperationProjection(sqlite, operation);
+  }
+  for (const candidate of commitmentCandidates.values()) {
+    upsertCommitmentCandidateProjection(sqlite, candidate);
+  }
+  return {
+    runtime_operations: runtimeOperations.size,
+    attention_commitment_candidates: commitmentCandidates.size,
+  };
+}
+
+function upsertRuntimeOperationProjection(sqlite: SqliteDatabase, operationInput: RuntimeControlOperation): void {
+  const operation = RuntimeControlOperationSchema.parse(operationInput);
+  sqlite.prepare(`
+    INSERT INTO runtime_operations (
+      operation_id, kind, state, terminal, requested_at, updated_at, operation_json
+    ) VALUES (
+      @operation_id, @kind, @state, @terminal, @requested_at, @updated_at, json(@operation_json)
+    )
+    ON CONFLICT(operation_id) DO UPDATE SET
+      kind = excluded.kind,
+      state = excluded.state,
+      terminal = excluded.terminal,
+      requested_at = excluded.requested_at,
+      updated_at = excluded.updated_at,
+      operation_json = excluded.operation_json
+  `).run({
+    operation_id: operation.operation_id,
+    kind: operation.kind,
+    state: operation.state,
+    terminal: isTerminalRuntimeControlState(operation.state) ? 1 : 0,
+    requested_at: operation.requested_at,
+    updated_at: operation.updated_at,
+    operation_json: JSON.stringify(operation),
+  });
+}
+
+function upsertCommitmentCandidateProjection(sqlite: SqliteDatabase, candidateInput: CommitmentCandidate): void {
+  const candidate = CommitmentCandidateSchema.parse(candidateInput);
+  sqlite.prepare(`
+    INSERT INTO attention_commitment_candidates (
+      commitment_id,
+      source_ref,
+      target_ref,
+      replay_key,
+      source_epoch,
+      source_high_watermark,
+      policy_epoch,
+      scope_key,
+      lifecycle,
+      nudge_policy,
+      materialization_id,
+      next_revisit_at,
+      due_start,
+      due_end,
+      priority_score,
+      suppression_ref_count,
+      feedback_ref_count,
+      created_at,
+      updated_at,
+      candidate_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(commitment_id) DO UPDATE SET
+      source_ref = excluded.source_ref,
+      target_ref = excluded.target_ref,
+      replay_key = excluded.replay_key,
+      source_epoch = excluded.source_epoch,
+      source_high_watermark = excluded.source_high_watermark,
+      policy_epoch = excluded.policy_epoch,
+      scope_key = excluded.scope_key,
+      lifecycle = excluded.lifecycle,
+      nudge_policy = excluded.nudge_policy,
+      materialization_id = excluded.materialization_id,
+      next_revisit_at = excluded.next_revisit_at,
+      due_start = excluded.due_start,
+      due_end = excluded.due_end,
+      priority_score = excluded.priority_score,
+      suppression_ref_count = excluded.suppression_ref_count,
+      feedback_ref_count = excluded.feedback_ref_count,
+      updated_at = excluded.updated_at,
+      candidate_json = excluded.candidate_json
+  `).run(
+    candidate.commitment_id,
+    commitmentRefKey(candidate.source_ref),
+    commitmentRefKey(candidate.target_ref),
+    candidate.replay_key,
+    candidate.source_epoch,
+    candidate.source_high_watermark,
+    candidate.policy_epoch,
+    attentionScopeKey(candidate.scope),
+    candidate.materialization_state,
+    candidate.nudge_policy,
+    candidate.materialization_id,
+    candidate.next_revisit_at,
+    candidate.due.window_start,
+    candidate.due.window_end,
+    candidate.priority_evidence.total_score ?? null,
+    candidate.suppression_refs.length,
+    candidate.feedback_refs.length,
+    candidate.created_at,
+    candidate.updated_at,
+    JSON.stringify(candidate),
+  );
+}
+
+function commitmentRefKey(ref: CommitmentCandidate["source_ref"] | CommitmentCandidate["target_ref"]): string {
+  return `${ref.kind}:${ref.id}`;
 }
 
 function upsertProjectionSnapshot(sqlite: SqliteDatabase, snapshot: RuntimeEventProjectionSnapshot): void {

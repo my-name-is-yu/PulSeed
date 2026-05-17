@@ -34,7 +34,7 @@ This inventory is the working classification for the event-sourced runtime proje
 
 ## Rebuild / Apply Coverage
 
-`pulseed runtime event-log rebuild` supports both trace-scoped rebuilds and whole-control-DB rebuilds. Without `--dry-run`, it writes deterministic projection snapshots into `runtime_event_projection_snapshots` and records the rebuild event.
+`pulseed runtime event-log rebuild` supports both trace-scoped rebuilds and whole-control-DB rebuilds. Without `--dry-run`, it records the rebuild event first, restores event-backed current-state rows for `runtime_operations` and `attention_commitment_candidates` from typed runtime event payloads, and writes deterministic projection snapshots into `runtime_event_projection_snapshots`.
 
 Applied projection names:
 
