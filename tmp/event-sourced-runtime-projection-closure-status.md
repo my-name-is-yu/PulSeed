@@ -76,3 +76,12 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `npm run test:unit -- --run src/interface/cli/__tests__/runtime-command.test.ts`
 - `npm run test:changed` was not used as a completion gate after this pass: its related-unit expansion pulled in a broad unrelated unit lane and produced many failures outside the touched runtime projection scope before it was stopped. The directly touched CLI/runtime paths were verified through focused unit/contract tests plus the standard full contract/replay/product/integration/smoke lanes above.
+- GitHub Codex review on `7029a6f3` found:
+  - P1: rebuild summary/snapshot and current-state apply could read different event snapshots.
+  - P2: apply latest-row selection used lexicographic timestamp comparison.
+- Follow-up fixes compute rebuild, snapshots, and current-state apply from one transaction-local source event snapshot and compare apply timestamps by parsed instants. Focused verification passed:
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `git diff --check`

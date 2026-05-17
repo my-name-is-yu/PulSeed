@@ -840,6 +840,92 @@ describe("runtime event log source-of-truth contract", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("selects current-state apply rows by parsed timestamp instants", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+
+      const earlierOperation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:offset-current-state",
+        kind: "inspect_run",
+        state: "running",
+        requested_at: "2026-05-15T15:30:00.000Z",
+        updated_at: "2026-05-16T01:00:00+09:00",
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "Earlier instant with lexicographically larger offset timestamp.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          session_id: "session:offset-current-state",
+        },
+      });
+      const laterOperation = RuntimeControlOperationSchema.parse({
+        ...earlierOperation,
+        state: "verified",
+        updated_at: "2026-05-15T17:00:00.000Z",
+        completed_at: "2026-05-15T17:00:00.000Z",
+        reason: "Later instant that must win apply even though the string sorts earlier.",
+        result: {
+          ok: true,
+          message: "Later parsed timestamp selected.",
+        },
+      });
+      const earlierCandidate = {
+        ...commitmentCandidate(),
+        commitment_id: "commitment:timestamp-current-state",
+        replay_key: "commitment-replay:timestamp-current-state",
+        updated_at: "2026-05-15T16:00:00.000Z",
+        materialization_state: "watching" as const,
+      };
+      const laterCandidate = {
+        ...earlierCandidate,
+        updated_at: "2026-05-15T17:00:00.000Z",
+        materialization_state: "active_care" as const,
+      };
+
+      await eventLog.appendRuntimeControlOperation({ operation: earlierOperation });
+      await eventLog.appendRuntimeControlOperation({
+        operation: laterOperation,
+        previousOperation: earlierOperation,
+      });
+      await eventLog.appendAttentionCommitment({
+        operation: "candidate_saved",
+        candidate: earlierCandidate,
+      });
+      await eventLog.appendAttentionCommitment({
+        operation: "candidate_saved",
+        candidate: laterCandidate,
+        previousCandidate: earlierCandidate,
+      });
+
+      await expect(operationStore.load(earlierOperation.operation_id)).resolves.toBeNull();
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
+
+      await eventLog.applyProjectionRebuild();
+
+      await expect(operationStore.load(earlierOperation.operation_id)).resolves.toMatchObject({
+        operation_id: earlierOperation.operation_id,
+        state: "verified",
+        updated_at: "2026-05-15T17:00:00.000Z",
+      });
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          commitment_id: laterCandidate.commitment_id,
+          materialization_state: "active_care",
+          updated_at: "2026-05-15T17:00:00.000Z",
+        }),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fixtureRoot(): string {

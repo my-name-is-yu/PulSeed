@@ -381,11 +381,13 @@ export class RuntimeEventLogStore {
   }
 
   async applyProjectionRebuild(options: { traceId?: string } = {}): Promise<RuntimeEventProjectionApplyResult> {
-    const rebuild = await this.rebuildProjections(options);
     const appliedAt = new Date().toISOString();
-    const snapshots = projectionSnapshots(rebuild, appliedAt);
     const db = await this.database();
     const applied = db.transaction((sqlite) => {
+      const sourceEvents = readProjectionApplySourceEvents(sqlite, options);
+      const graph = readRuntimeGraphForEvents(sqlite, sourceEvents);
+      const rebuild = rebuildRuntimeEventProjections(sourceEvents, options.traceId ?? null, graph);
+      const snapshots = projectionSnapshots(rebuild, appliedAt);
       const append = appendRuntimeEventEnvelopeInTransaction(sqlite, runtimeEventFromProjectionRebuild({
         rebuild,
         dryRun: false,
@@ -393,7 +395,7 @@ export class RuntimeEventLogStore {
       }));
       const currentStateProjectionRows = applyEventBackedCurrentStateProjections(
         sqlite,
-        readProjectionApplySourceEvents(sqlite, options),
+        sourceEvents,
       );
       for (const snapshot of snapshots) {
         upsertProjectionSnapshot(sqlite, snapshot);
@@ -401,14 +403,16 @@ export class RuntimeEventLogStore {
       return {
         event: append.event,
         currentStateProjectionRows,
+        rebuild,
+        snapshots,
       };
     });
     return {
       schema_version: "runtime-event-projection-apply/v1",
       applied_at: appliedAt,
       dry_run: false,
-      rebuild,
-      snapshots,
+      rebuild: applied.rebuild,
+      snapshots: applied.snapshots,
       current_state_projection_rows: applied.currentStateProjectionRows,
       event: applied.event,
     };
@@ -1013,14 +1017,14 @@ function applyEventBackedCurrentStateProjections(
     if (event.payload.schema_version === "runtime-event-payload/runtime-control-operation/v1") {
       const operation = RuntimeControlOperationSchema.parse(event.payload.operation);
       const current = runtimeOperations.get(operation.operation_id);
-      if (!current || operation.updated_at.localeCompare(current.updated_at) >= 0) {
+      if (!current || compareIsoTimestamps(operation.updated_at, current.updated_at) >= 0) {
         runtimeOperations.set(operation.operation_id, operation);
       }
     }
     if (event.payload.schema_version === "runtime-event-payload/attention-commitment/v1") {
       const candidate = CommitmentCandidateSchema.parse(event.payload.candidate);
       const current = commitmentCandidates.get(candidate.commitment_id);
-      if (!current || candidate.updated_at.localeCompare(current.updated_at) >= 0) {
+      if (!current || compareIsoTimestamps(candidate.updated_at, current.updated_at) >= 0) {
         commitmentCandidates.set(candidate.commitment_id, candidate);
       }
     }
@@ -2270,6 +2274,15 @@ function sortJson(value: unknown): unknown {
 function validIsoOrNow(value: string): string {
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+}
+
+function compareIsoTimestamps(left: string, right: string): number {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) {
+    return leftMs - rightMs;
+  }
+  return left.localeCompare(right);
 }
 
 function authorityEventMatches(event: RuntimeEventEnvelope, decision: ExecutionAuthorityDecision): boolean {
