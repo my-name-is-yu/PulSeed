@@ -65,6 +65,7 @@
     "test:golden-traces": "vitest run --config vitest.golden-traces.config.ts",
     "test:replay": "vitest run --config vitest.replay.config.ts",
     "test:product-gauntlet": "vitest run --config vitest.product-gauntlet.config.ts",
+    "test:eval-lab": "vitest run --config vitest.eval-lab.config.ts",
     "test:slow": "vitest run --config vitest.slow.config.ts",
     "test:smoke": "vitest run --config vitest.smoke.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",

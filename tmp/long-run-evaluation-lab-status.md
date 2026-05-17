@@ -32,8 +32,8 @@ where practical.
 - [x] Synced worktree to latest `origin/main`.
 - [x] Created `yu/long-run-evaluation-lab`.
 - [ ] Open draft PR before broad implementation.
-- [ ] Inventory existing harness/replay/gauntlet/runtime pieces.
-- [ ] Implement eval lab runtime, scenarios, artifacts, metrics, and docs.
+- [x] Inventory existing harness/replay/gauntlet/runtime pieces.
+- [x] Implement eval lab runtime, scenarios, artifacts, metrics, and docs.
 - [ ] Run local verification.
 - [ ] Run sub-agent completeness review and fix material findings.
 - [ ] Mark PR ready and request/fix GitHub Codex review.
