@@ -185,6 +185,25 @@ function isDetachedDaemonProbePort(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
 }
 
+async function ensureEventServerPortAvailable(baseDir: string, config: DaemonConfig): Promise<void> {
+  const port = config.event_server_port;
+  if (port <= 0) return;
+
+  const probe = await probeDaemonHealth({
+    host: "127.0.0.1",
+    port,
+    timeoutMs: DETACHED_DAEMON_READY_POLL_MS,
+  });
+  if (!probe.ok) return;
+
+  getCliLogger().error(
+    `Daemon event server port ${port} already has a PulSeed health endpoint on 127.0.0.1. ` +
+    `Set event_server_port to 0 in ${path.join(baseDir, "daemon.json")} for an OS-assigned port, ` +
+    "choose a free port, or stop the process using that port."
+  );
+  process.exit(1);
+}
+
 function resolveStatusArtifactExpectation(params: {
   activeGoalIds: string[];
   activeWorkerCount: number;
@@ -343,6 +362,8 @@ export async function cmdStart(
     logger.error(`Daemon already running (PID: ${info?.pid})`);
     process.exit(1);
   }
+
+  await ensureEventServerPortAvailable(baseDir, resolvedDaemonConfig);
 
   // --detach: spawn a background watchdog and only report success after the
   // daemon command surface is actually ready for follow-up commands.

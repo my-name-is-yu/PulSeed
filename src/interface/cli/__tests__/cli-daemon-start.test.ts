@@ -62,10 +62,10 @@ const {
   spawnUnrefMock: vi.fn(),
   isDaemonRunningMock: vi.fn().mockResolvedValue({ running: true, port: 41700 }),
   probeDaemonHealthMock: vi.fn().mockResolvedValue({
-    ok: true,
+    ok: false,
     port: 41700,
     latency_ms: 0,
-    health: { status: "ok" },
+    error: "connect ECONNREFUSED 127.0.0.1:41700",
   }),
   readDaemonAuthTokenMetadataMock: vi.fn().mockReturnValue(null),
   cliLoggerMock: {
@@ -252,10 +252,10 @@ describe("cmdStart", () => {
     isDaemonRunningMock.mockResolvedValue({ running: true, port: 41700 });
     probeDaemonHealthMock.mockReset();
     probeDaemonHealthMock.mockResolvedValue({
-      ok: true,
+      ok: false,
       port: 41700,
       latency_ms: 0,
-      health: { status: "ok" },
+      error: "connect ECONNREFUSED 127.0.0.1:41700",
     });
     readDaemonAuthTokenMetadataMock.mockReset();
     readDaemonAuthTokenMetadataMock.mockReturnValue(null);
@@ -707,6 +707,12 @@ describe("cmdStart", () => {
         error: "connect ECONNREFUSED 127.0.0.1:41700",
       })
       .mockResolvedValueOnce({
+        ok: false,
+        port: 41700,
+        latency_ms: 1,
+        error: "connect ECONNREFUSED 127.0.0.1:41700",
+      })
+      .mockResolvedValueOnce({
         ok: true,
         port: 41700,
         latency_ms: 1,
@@ -744,6 +750,41 @@ describe("cmdStart", () => {
     } finally {
       exitSpy.mockRestore();
       logSpy.mockRestore();
+    }
+  });
+
+  it("fails before spawning when a configured event server port already hosts PulSeed", async () => {
+    fs.mkdirSync("/tmp/pulseed-daemon-start-base", { recursive: true });
+    fs.writeFileSync(
+      path.join("/tmp/pulseed-daemon-start-base", "daemon.json"),
+      JSON.stringify({ event_server_port: 43123 }),
+      "utf-8"
+    );
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 43123,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        { childCommandArgs: ["daemon", "start", "--detach"] },
+      )).rejects.toThrow("process.exit:1");
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(cliLoggerMock.error).toHaveBeenCalledWith(expect.stringContaining(
+        "Daemon event server port 43123 already has a PulSeed health endpoint"
+      ));
+      expect(cliLoggerMock.error).toHaveBeenCalledWith(expect.stringContaining("event_server_port to 0"));
+    } finally {
+      exitSpy.mockRestore();
     }
   });
 
@@ -823,6 +864,12 @@ describe("cmdStart", () => {
         pid: 23456,
         created_at: new Date(Date.now() + 1_000).toISOString(),
       });
+    probeDaemonHealthMock.mockResolvedValueOnce({
+      ok: true,
+      port: 45678,
+      latency_ms: 1,
+      health: { status: "ok" },
+    });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
       throw new Error(`process.exit:${code ?? ""}`);
     }) as typeof process.exit);
@@ -958,6 +1005,13 @@ describe("cmdRestart", () => {
     pidReadPIDMock.mockReset();
     pidReadPIDMock.mockResolvedValue(null);
     pidStopRuntimeMock.mockReset();
+    probeDaemonHealthMock.mockReset();
+    probeDaemonHealthMock.mockResolvedValue({
+      ok: false,
+      port: 41700,
+      latency_ms: 0,
+      error: "connect ECONNREFUSED 127.0.0.1:41700",
+    });
     delete process.env.PULSEED_WATCHDOG_CHILD;
     fs.rmSync("/tmp/pulseed-daemon-start-base", { recursive: true, force: true });
   });
