@@ -61,6 +61,18 @@ describe("ExperienceLearningBridge", () => {
         readinessGateIds: [expect.stringContaining("trial-reuse-gate:")],
       }),
     ]);
+    const probeRecords = await store.listMicroProbeRecords(goal.id);
+    expect(probeRecords).toEqual([
+      expect.objectContaining({
+        outcome: "inconclusive",
+        usedIndependentSupport: false,
+      }),
+      expect.objectContaining({
+        outcome: "supported",
+        supportEvidenceRefs: ["evidence-2"],
+        usedIndependentSupport: true,
+      }),
+    ]);
     const priors = await store.listPriorSnapshots(goal.id);
     expect(priors).toEqual([
       expect.objectContaining({

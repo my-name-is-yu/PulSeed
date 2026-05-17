@@ -404,6 +404,20 @@ export class ExperienceLearningStateStore {
     return this.listJsonRows("experience_learning_generalization_candidates", "candidate_json", GeneralizationCandidateSchema, "goal_id = ?", [goalId]);
   }
 
+  async listMicroProbeRecords(goalId: string): Promise<MicroProbeRecord[]> {
+    const db = await this.database();
+    return db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT r.record_json AS payload_json
+        FROM experience_learning_micro_probe_records r
+        JOIN experience_learning_micro_probe_plans p ON p.plan_id = r.plan_id
+        WHERE p.goal_id = ?
+        ORDER BY r.rowid ASC
+      `).all(goalId) as Array<{ payload_json: string }>;
+      return rows.map((row) => MicroProbeRecordSchema.parse(JSON.parse(row.payload_json) as unknown));
+    });
+  }
+
   async listPriorSnapshots(goalId: string): Promise<LearningPriorSnapshot[]> {
     return this.listJsonRows("experience_learning_prior_snapshots", "prior_json", LearningPriorSnapshotSchema, "goal_id = ?", [goalId]);
   }

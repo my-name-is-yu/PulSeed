@@ -12,11 +12,11 @@ import {
   LearningHypothesisSchema,
   LearningPriorSnapshotSchema,
   MicroProbePlanSchema,
-  MicroProbeRecordSchema,
   TrialReuseReadinessGateSchema,
   defaultRuntimeEvidenceTrust,
   learningPriorSuggestion,
   redactedLearningLabel,
+  runNoOutwardEffectMicroProbe,
   stableLearningId,
   type CandidateTransition,
   type ExperienceFrame,
@@ -282,6 +282,10 @@ function buildDerivedLifecyclePayloads(
     competingHypothesisIds: [mainHypothesis.id],
   });
   const hasIndependentSupport = sourceFrames.length >= 2 && sourceEvidenceRefs.length >= 2;
+  const probeSourceEvidenceRefs = hasIndependentSupport
+    ? unique(sourceFrames.slice(0, -1).flatMap((candidate) => candidate.evidenceRefs))
+    : sourceEvidenceRefs;
+  const probeSupportEvidenceRefs = hasIndependentSupport ? frame.evidenceRefs : [];
   const candidate = buildGeneralizationCandidate(input, {
     trigger,
     now,
@@ -293,7 +297,7 @@ function buildDerivedLifecyclePayloads(
     scope,
     status: hasIndependentSupport ? "trial_reuse_ready" : "candidate",
   });
-  const readSet = sourceEvidenceRefs.map((ref) => microProbeReadRef(ref, sourceEvidenceRefs));
+  const readSet = probeSourceEvidenceRefs.map((ref) => microProbeReadRef(ref, probeSourceEvidenceRefs));
   const microProbePlan = MicroProbePlanSchema.parse({
     id: stableLearningId("micro-probe-plan", [candidate.id, sourceEvidenceRefs]),
     goalId: input.goalId,
@@ -303,7 +307,7 @@ function buildDerivedLifecyclePayloads(
     hypothesisIds: [mainHypothesis.id, competingHypothesis.id],
     plannedAt: now,
     mode: "runtime_event_replay",
-    sourceEvidenceRefs,
+    sourceEvidenceRefs: probeSourceEvidenceRefs,
     sourceEventRefs,
     sourceRuntimeGraphRefs: [],
     readSet,
@@ -315,21 +319,17 @@ function buildDerivedLifecyclePayloads(
       diagnosticLabel: "independent support for reusable runtime structure",
     }],
   }) satisfies MicroProbePlan;
-  const microProbeRecord = MicroProbeRecordSchema.parse({
-    id: stableLearningId("micro-probe-record", [microProbePlan.id, sourceEvidenceRefs]),
-    planId: microProbePlan.id,
-    ranAt: now,
-    outcome: hasIndependentSupport ? "supported" : "inconclusive",
-    supportEvidenceRefs: hasIndependentSupport ? sourceEvidenceRefs : [],
-    contradictionEvidenceRefs: [],
-    supportEventRefs: sourceEventRefs,
-    supportRuntimeGraphRefs: [],
-    usedIndependentSupport: hasIndependentSupport,
-    replayFingerprint: stableLearningId("micro-probe-replay", [microProbePlan.id, sourceEvidenceRefs]),
-    correctionFilterDecision: "current",
-    readSetFingerprint: stableLearningId("micro-probe-read-set", [readSet]),
+  const microProbeRecord = runNoOutwardEffectMicroProbe({
+    plan: microProbePlan,
     trust: candidate.trust,
-  }) satisfies MicroProbeRecord;
+    now,
+    readResults: readSet.map((readRef) => ({
+      readRef,
+      payloadHash: readRef.snapshotPayloadHash,
+    })),
+    supportEvidenceRefs: probeSupportEvidenceRefs,
+    supportEventRefs: sourceEventRefs,
+  });
   const readinessGate = hasIndependentSupport
     ? TrialReuseReadinessGateSchema.parse({
         id: stableLearningId("trial-reuse-gate", [candidate.id, input.loopIndex + 1]),
