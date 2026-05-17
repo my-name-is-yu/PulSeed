@@ -203,6 +203,18 @@ describe("ToolExecutor", () => {
     });
 
     describe("Capability verification/audit persistence", () => {
+      it("admits tools registered after ToolExecutor construction through the current registry", async () => {
+        const lateTool = createMockTool({ name: "late-registered-tool" });
+        const { executor, registry } = createExecutor();
+
+        registry.register(lateTool);
+
+        const result = await executor.execute("late-registered-tool", { value: "x" }, createMockContext());
+
+        expect(result.success).toBe(true);
+        expect(lateTool.call).toHaveBeenCalledOnce();
+      });
+
       it("records durable personal-agent tool admission before tool.call side effects", async () => {
         const order: string[] = [];
         const recordTrace = vi.fn(async () => {

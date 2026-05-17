@@ -76,7 +76,7 @@ export class ToolExecutor {
   private readonly personalAgentRuntime?: Pick<PersonalAgentRuntimeStore, "recordTrace">;
   private readonly interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   private readonly traceBaseDir?: string | null;
-  private readonly capabilityPlane: CapabilityPlane;
+  private readonly staticCapabilityPlane?: CapabilityPlane;
 
   constructor(deps: ToolExecutorDeps) {
     this.registry = deps.registry;
@@ -85,7 +85,7 @@ export class ToolExecutor {
     this.personalAgentRuntime = deps.personalAgentRuntime;
     this.interactionAuthorityStore = deps.interactionAuthorityStore;
     this.traceBaseDir = deps.traceBaseDir ?? null;
-    this.capabilityPlane = deps.capabilityPlane ?? CapabilityPlane.fromToolRegistry(deps.registry);
+    this.staticCapabilityPlane = deps.capabilityPlane;
   }
 
   async execute(
@@ -416,7 +416,7 @@ export class ToolExecutor {
     context: ToolCallContext,
     startTime: number,
   ): Promise<{ context: ToolCallContext; result?: ToolResult }> {
-    const admission = this.capabilityPlane.admitToolExecution({ tool, rawInput: input, context });
+    const admission = this.resolveCapabilityPlane().admitToolExecution({ tool, rawInput: input, context });
     const descriptorContext = this.withCapabilityDescriptorContext(context, tool, admission);
 
     if (admission.status === "blocked") {
@@ -442,6 +442,10 @@ export class ToolExecutor {
     }
 
     return { context: descriptorContext };
+  }
+
+  private resolveCapabilityPlane(): CapabilityPlane {
+    return this.staticCapabilityPlane ?? CapabilityPlane.fromToolRegistry(this.registry);
   }
 
   private withCapabilityDescriptorContext(
