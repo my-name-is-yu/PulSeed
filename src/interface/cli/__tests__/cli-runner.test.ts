@@ -451,6 +451,23 @@ describe("unknown subcommand", async () => {
     initSpy.mockRestore();
   });
 
+  it("does not mask unknown child subcommands when help flags are present", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const initSpy = vi.spyOn(StateManager.prototype, "init");
+
+    const goalCode = await runCLI("goal", "typo", "--help");
+    const daemonCode = await runCLI("daemon", "typo", "--help");
+
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(goalCode).toBe(1);
+    expect(daemonCode).toBe(1);
+    expect(errorOutput).toContain('Unknown goal subcommand: "typo"');
+    expect(errorOutput).toContain('Unknown daemon subcommand: "typo"');
+    expect(initSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    initSpy.mockRestore();
+  });
+
   // No-argument case now launches TUI (feat/default-tui), cannot test in vitest
 
   it("exits with code 0 for --help", async () => {
