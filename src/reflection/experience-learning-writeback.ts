@@ -73,12 +73,12 @@ export async function enqueueExperienceLearningProjectionForOwnerReview(input: {
   if (input.artifact.status !== "promoted") {
     return { status: "skipped", reasonCode: "artifact_not_promoted" };
   }
-  const queueEntry = await input.queueStore.enqueue(createExperienceLearningWritebackQueueEntry({
+  const queueEntry = createExperienceLearningWritebackQueueEntry({
     artifact: input.artifact,
     queueEntryId: input.queueEntryId,
     createdAt: input.createdAt,
     ...(input.target ? { target: input.target } : {}),
-  }));
+  });
   const correctionLineageRefs = correctionLineageRefsForArtifact(input.artifact);
   const proposal = ExperienceLearningProjectionProposalSchema.parse({
     id: input.proposalId ?? stableLearningId("learning-projection-proposal", [input.artifact.id, queueEntry.queue_entry_id]),
@@ -95,10 +95,11 @@ export async function enqueueExperienceLearningProjectionForOwnerReview(input: {
     proposal,
     correctionLineageRefs,
   }));
+  const enqueuedQueueEntry = await input.queueStore.enqueue(queueEntry);
   return {
     status: "enqueued",
     proposal,
-    queueEntry,
+    queueEntry: enqueuedQueueEntry,
     runtimeEventId: append.runtimeEvent.event.event_id,
   };
 }

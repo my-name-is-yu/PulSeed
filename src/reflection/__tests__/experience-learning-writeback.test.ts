@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,6 +87,34 @@ describe("experience learning owner-review writeback", () => {
       await learningStore.close();
       rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
+  });
+
+  it("records projection events before enqueueing owner-review items", async () => {
+    const artifact = makeArtifact();
+    const appendLifecycleEvent = vi.fn().mockRejectedValue(new Error("projection write failed"));
+    const enqueue = vi.fn().mockResolvedValue(createExperienceLearningWritebackQueueEntry({
+      artifact,
+      createdAt: "2026-05-17T00:01:00.000Z",
+    }));
+
+    await expect(enqueueExperienceLearningProjectionForOwnerReview({
+      artifact,
+      createdAt: "2026-05-17T00:01:00.000Z",
+      queueStore: {
+        enqueue,
+        update: vi.fn(),
+        list: vi.fn().mockResolvedValue([]),
+      },
+      learningStore: {
+        appendLifecycleEvent,
+      },
+    })).rejects.toThrow("projection write failed");
+
+    expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "projection_enqueued",
+      owner_review_queue_ref: `queue:experience-learning:${artifact.id}`,
+    }));
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("does not enqueue tentative artifacts for owner review", async () => {

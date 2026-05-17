@@ -418,6 +418,17 @@ function phaseSummary(
   return result.corePhaseResults?.find((entry) => entry.phase === phase)?.summary;
 }
 
+async function phaseRunnerOutput(runMock: ReturnType<typeof vi.fn>, phase: string): Promise<unknown> {
+  const callIndex = runMock.mock.calls.findIndex(([spec]) =>
+    typeof spec === "object" && spec !== null && (spec as { phase?: string }).phase === phase
+  );
+  if (callIndex < 0) return undefined;
+  const result = runMock.mock.results[callIndex];
+  if (!result || result.type !== "return") return undefined;
+  const execution = (await result.value) as { output?: unknown };
+  return execution.output;
+}
+
 describe("CoreLoop agentic phase hooks", () => {
   let tmpDir: string;
 
@@ -695,6 +706,85 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(appendLifecycleEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       event_kind: "experiment_record_closed",
     }));
+  });
+
+  it("suppresses task-generation experiment priors when experiment close persistence fails", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    let evidenceSeq = 0;
+    deps.evidenceLedger = {
+      append: vi.fn().mockImplementation(async (entry: RuntimeEvidenceEntryInput) => {
+        evidenceSeq += 1;
+        return [RuntimeEvidenceEntrySchema.parse({
+          schema_version: "runtime-evidence-entry-v1",
+          id: `task-evidence-${evidenceSeq}`,
+          occurred_at: "2026-05-17T00:00:00.000Z",
+          kind: entry.kind,
+          scope: entry.scope,
+          task: entry.task,
+          verification: entry.verification,
+          metrics: entry.metrics ?? [],
+          evaluators: entry.evaluators ?? [],
+          research: entry.research ?? [],
+          dream_checkpoints: entry.dream_checkpoints ?? [],
+          divergent_exploration: entry.divergent_exploration ?? [],
+          artifacts: entry.artifacts ?? [],
+          outcome: entry.outcome,
+          raw_refs: [{ kind: "runtime_event", id: `runtime-event:task-evidence-${evidenceSeq}` }],
+          summary: entry.summary ?? `task evidence ${evidenceSeq}`,
+        })];
+      }),
+    };
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "task_generation") return null;
+      return {
+        prior: { id: "prior-task-experiment" },
+        record: { id: "consumption-task-experiment", stage: "reserved" },
+        runtimeEventId: "runtime-event:prior-reserved",
+        projection: {
+          phase: "task_generation",
+          projectionKind: "task_generation_bias",
+          consumptionRecordId: "consumption-task-experiment",
+          preferredTargetDimension: "dim1",
+          taskBiasRefs: [],
+          avoidTaskPatternRefs: [],
+          requiredExperimentPlanIds: ["matching-experiment-plan"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    const appendLifecycleEvent = vi.fn().mockRejectedValue(new Error("experiment close write failed"));
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+      listExperimentPlans: vi.fn().mockResolvedValue([
+        {
+          id: "matching-experiment-plan",
+          plannedConsumerPhase: "task_generation",
+          plannedTaskId: "task-1",
+          hypothesisIds: ["hypothesis-match"],
+          generalizationCandidateIds: [],
+        },
+      ]),
+      appendLifecycleEvent,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(appendLifecycleEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_kind: "experiment_record_closed",
+      plan_id: "matching-experiment-plan",
+    }));
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalled();
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-task-experiment",
+      reasonCodes: ["consumer_execution_failed"],
+    });
   });
 
   it("closes experiment records against the matching required plan instead of only the first one", async () => {
@@ -1223,12 +1313,28 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(phaseInput(controlMocks.corePhaseRunner.run, "knowledge_refresh")?.learningProjection).toBeUndefined();
     expect(phaseSummary(priorResult, "knowledge_refresh")).toBe("knowledge-prior-summary");
     expect(phaseSummary(controlResult, "knowledge_refresh")).toBe("knowledge-summary");
+    await expect(phaseRunnerOutput(priorPhaseRunner, "knowledge_refresh")).resolves.toEqual(expect.objectContaining({
+      required_knowledge: ["prior evidence target"],
+      acquisition_candidates: ["prior query bias"],
+    }));
+    await expect(phaseRunnerOutput(controlPhaseRunner, "knowledge_refresh")).resolves.toEqual(expect.objectContaining({
+      required_knowledge: ["recent architectural note"],
+      acquisition_candidates: ["soil lookup"],
+    }));
     expect(phaseInput(mocks.corePhaseRunner.run, "replanning_options")).toEqual(expect.objectContaining({
       learningProjection: projections.replanning_options,
     }));
     expect(phaseInput(controlMocks.corePhaseRunner.run, "replanning_options")?.learningProjection).toBeUndefined();
     expect(phaseSummary(priorResult, "replanning_options")).toBe("replan-prior-summary");
     expect(phaseSummary(controlResult, "replanning_options")).toBe("replan-summary");
+    await expect(phaseRunnerOutput(priorPhaseRunner, "replanning_options")).resolves.toEqual(expect.objectContaining({
+      recommended_action: "refine",
+      candidates: [expect.objectContaining({ title: "Prior-biased task", target_dimensions: ["dim-prior"] })],
+    }));
+    await expect(phaseRunnerOutput(controlPhaseRunner, "replanning_options")).resolves.toEqual(expect.objectContaining({
+      recommended_action: "continue",
+      candidates: [expect.objectContaining({ title: "Task A", target_dimensions: ["dim1"] })],
+    }));
     expect((mocks.taskLifecycle.runTaskCycle as ReturnType<typeof vi.fn>).mock.calls[0]?.[7]).toEqual(expect.objectContaining({
       targetDimensionOverride: "dim-prior",
     }));
@@ -1241,6 +1347,16 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(phaseInput(controlMocks.corePhaseRunner.run, "stall_investigation")?.learningProjection).toBeUndefined();
     expect(phaseSummary(priorResult, "stall_investigation")).toBe("stall-prior-summary");
     expect(phaseSummary(controlResult, "stall_investigation")).toBe("stall-summary");
+    await expect(phaseRunnerOutput(priorPhaseRunner, "stall_investigation")).resolves.toEqual(expect.objectContaining({
+      suspected_causes: ["prior-loop-pattern"],
+      recommended_next_evidence: ["experiment-stall"],
+      relevant_actions: ["pivot"],
+    }));
+    await expect(phaseRunnerOutput(controlPhaseRunner, "stall_investigation")).resolves.toEqual(expect.objectContaining({
+      suspected_causes: ["approach_failure"],
+      recommended_next_evidence: ["inspect files"],
+      relevant_actions: ["refine"],
+    }));
     expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
       consumptionId: "consumption-knowledge",
       generatedDecisionRefs: ["trace-knowledge_refresh"],

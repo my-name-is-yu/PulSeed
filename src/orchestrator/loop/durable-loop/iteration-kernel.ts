@@ -1100,6 +1100,7 @@ export class CoreIterationKernel {
     }
     let closedTaskExperimentPayload: Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "experiment_record_closed" }> | null = null;
     let taskLearningExperimentNoMatch = false;
+    let taskLearningExperimentCloseFailed = false;
     if (
       completedTaskResult
       && taskExperimentProjection
@@ -1165,6 +1166,9 @@ export class CoreIterationKernel {
           taskLearningExperimentNoMatch = true;
         }
       } catch (err) {
+        if (!closedTaskExperimentPayload) {
+          taskLearningExperimentCloseFailed = true;
+        }
         this.deps.logger?.warn("CoreLoop: failed to close experience-learning experiment record", {
           goalId,
           loopIndex,
@@ -1184,6 +1188,8 @@ export class CoreIterationKernel {
           ]);
         } else if (taskLearningExperimentNoMatch) {
           await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_no_op"]);
+        } else if (taskLearningExperimentCloseFailed) {
+          await markLearningProjectionSuppressed(taskExperimentProjection, ["consumer_execution_failed"]);
         }
       } else {
         await markLearningProjectionApplied(taskLearningProjection, [
