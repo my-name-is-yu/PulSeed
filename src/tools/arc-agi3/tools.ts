@@ -32,6 +32,7 @@ import {
 
 export interface ArcAgi3ToolDeps {
   client?: ArcAgi3RestClient;
+  clientFactory?: () => ArcAgi3RestClient;
   artifactStore?: ArcAgi3ArtifactStore;
   pulseedCommit?: string | null;
   providerConfigLoader?: typeof loadProviderConfig;
@@ -41,13 +42,15 @@ abstract class ArcAgi3ToolBase<TInput> implements ITool<TInput> {
   abstract readonly metadata: ToolMetadata;
   abstract readonly inputSchema: ITool<TInput>["inputSchema"];
   protected readonly artifactStore: ArcAgi3ArtifactStore;
+  private cachedClient?: ArcAgi3RestClient;
 
   constructor(protected readonly deps: ArcAgi3ToolDeps = {}) {
     this.artifactStore = deps.artifactStore ?? new ArcAgi3ArtifactStore();
   }
 
   protected client(): ArcAgi3RestClient {
-    return this.deps.client ?? new ArcAgi3HttpClient();
+    this.cachedClient ??= this.deps.client ?? this.deps.clientFactory?.() ?? new ArcAgi3HttpClient();
+    return this.cachedClient;
   }
 
   protected ok(data: unknown, summary: string, startTime: number, artifacts?: string[]): ToolResult {
@@ -437,14 +440,19 @@ export class ArcAgi3PolicyTool extends ArcAgi3ToolBase<ArcAgi3PolicyInput> {
 }
 
 export function createArcAgi3Tools(deps?: ArcAgi3ToolDeps): ITool[] {
+  const sharedClient = deps?.client ?? deps?.clientFactory?.() ?? new ArcAgi3HttpClient();
+  const sharedDeps: ArcAgi3ToolDeps = {
+    ...(deps ?? {}),
+    client: sharedClient,
+  };
   return [
-    new ArcAgi3ListGamesTool(deps),
-    new ArcAgi3StartTool(deps),
-    new ArcAgi3ObserveTool(deps),
-    new ArcAgi3ActTool(deps),
-    new ArcAgi3FinishTool(deps),
-    new ArcAgi3ScorecardTool(deps),
-    new ArcAgi3PolicyTool(deps),
+    new ArcAgi3ListGamesTool(sharedDeps),
+    new ArcAgi3StartTool(sharedDeps),
+    new ArcAgi3ObserveTool(sharedDeps),
+    new ArcAgi3ActTool(sharedDeps),
+    new ArcAgi3FinishTool(sharedDeps),
+    new ArcAgi3ScorecardTool(sharedDeps),
+    new ArcAgi3PolicyTool(sharedDeps),
   ];
 }
 

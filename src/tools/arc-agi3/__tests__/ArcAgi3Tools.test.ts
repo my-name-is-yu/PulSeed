@@ -13,6 +13,7 @@ import {
   ArcAgi3ListGamesTool,
   ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
+  createArcAgi3Tools,
   type ArcAgi3Snapshot,
 } from "../index.js";
 
@@ -255,6 +256,50 @@ describe("ARC-AGI-3 tools", () => {
       model_provider: "anthropic",
       model_id: "claude-opus-arc",
     });
+  });
+
+  it("shares one ARC REST client across the first-party tool set for sticky ARC sessions", async () => {
+    const clients: ReturnType<typeof makeMockClient>[] = [];
+    const tools = createArcAgi3Tools({
+      artifactStore,
+      pulseedCommit: "commit-1",
+      clientFactory: () => {
+        const client = makeMockClient();
+        clients.push(client);
+        return client;
+      },
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.4",
+        adapter: "openai_codex_cli" as const,
+      }),
+    });
+    const findTool = (name: string) => {
+      const tool = tools.find((candidate) => candidate.metadata.name === name);
+      if (!tool) throw new Error(`missing tool ${name}`);
+      return tool;
+    };
+
+    await findTool("arc_agi3_start").call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-shared-client",
+    }, makeContext());
+    await findTool("arc_agi3_act").call({
+      run_id: "run-shared-client",
+      action: "ACTION1",
+    }, makeContext());
+    await findTool("arc_agi3_finish").call({
+      run_id: "run-shared-client",
+      close_scorecard: true,
+    }, makeContext());
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0]?.calls.map((call) => call.method)).toEqual([
+      "openScorecard",
+      "reset",
+      "action",
+      "closeScorecard",
+    ]);
   });
 });
 
