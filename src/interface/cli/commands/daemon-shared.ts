@@ -136,6 +136,9 @@ function formatLongRunSummaryLabel(
   if (expectation?.state === "unknown" && isArtifactFreshnessProblem(health)) {
     return LONG_RUN_SUMMARY_LABELS.unknown;
   }
+  if (expectation?.state === "recently_expected" && isArtifactFreshnessProblem(health)) {
+    return "artifact stream warming up";
+  }
   return LONG_RUN_SUMMARY_LABELS[health.summary];
 }
 

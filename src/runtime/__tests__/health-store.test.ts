@@ -287,6 +287,22 @@ describe("RuntimeHealthStore", () => {
     expect(health.summary).toBe("unknown");
   });
 
+  it("does not classify recently expected missing artifacts as stalled", () => {
+    const health = buildLongRunHealth(longRunSignals({
+      child_activity: { status: "active", checked_at: 2_000, observed_at: 2_000, active_count: 1 },
+      artifact_freshness: { status: "missing", checked_at: 2_000 },
+      metric_freshness: { status: "missing", checked_at: 2_000 },
+      metric_progress: { status: "missing", checked_at: 2_000 },
+      artifact_expectation: {
+        state: "recently_expected",
+        reason: "recent_goal_or_worker",
+        stale_after_ms: 300_000,
+      },
+    }));
+
+    expect(health.summary).toBe("alive_and_progressing");
+  });
+
   it("classifies alive runs with a new artifact but no metric improvement as metric-stalled", () => {
     const health = buildLongRunHealth(longRunSignals({
       artifact_freshness: { status: "fresh", checked_at: 2_000, observed_at: 2_000, path: "result.json" },

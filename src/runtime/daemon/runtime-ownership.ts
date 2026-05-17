@@ -7,6 +7,7 @@ import type { ApprovalStore, OutboxStore, RuntimeHealthStore } from "../store/in
 import type { LeaderLockManager } from "../leader-lock-manager.js";
 import { summarizeTaskOutcomeLedgers } from "../../orchestrator/execution/task/task-outcome-ledger.js";
 import {
+  RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
   buildLongRunHealth,
   evolveRuntimeHealthKpi,
   type ApprovalRecord,
@@ -69,6 +70,7 @@ interface SupervisorActivity {
   status: RuntimeLongRunHealthSignals["child_activity"]["status"];
   activeCount?: number;
   observedAt?: number;
+  activeStartedAt?: number;
   activeGoalIds: string[];
 }
 
@@ -314,16 +316,22 @@ export class RuntimeOwnershipCoordinator {
         ? raw.updatedAt
         : checkedAt;
       const workers = raw.workers;
-      const activeCount = workers.filter((worker) => typeof worker["goalId"] === "string").length;
+      const activeWorkers = workers.filter((worker) => typeof worker["goalId"] === "string");
+      const activeCount = activeWorkers.length;
       const activeGoalIds = this.uniqueStrings(
-        workers
+        activeWorkers
           .map((worker) => worker["goalId"])
           .filter((goalId): goalId is string => typeof goalId === "string" && goalId.length > 0)
       );
+      const activeStartedAt = activeWorkers
+        .map((worker) => worker["startedAt"])
+        .filter((startedAt): startedAt is number => typeof startedAt === "number" && Number.isFinite(startedAt))
+        .sort((a, b) => a - b)[0];
       return {
         status: activeCount > 0 ? "active" : "idle",
         activeCount,
         observedAt: updatedAt,
+        ...(activeStartedAt !== undefined ? { activeStartedAt } : {}),
         activeGoalIds,
       };
     } catch (err) {
@@ -354,7 +362,18 @@ export class RuntimeOwnershipCoordinator {
   private resolveArtifactExpectation(
     activeGoalIds: string[],
     supervisorActivity: SupervisorActivity,
+    checkedAt: number,
   ): RuntimeArtifactExpectation {
+    if (
+      supervisorActivity.activeStartedAt !== undefined &&
+      checkedAt - supervisorActivity.activeStartedAt < RECENT_ARTIFACT_EXPECTATION_GRACE_MS
+    ) {
+      return {
+        state: "recently_expected",
+        reason: "recent_goal_or_worker",
+        stale_after_ms: RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
+      };
+    }
     if (activeGoalIds.length > 0) {
       return { state: "expected", reason: "active_goal" };
     }
@@ -491,7 +510,7 @@ export class RuntimeOwnershipCoordinator {
       this.deps.approvalStore?.listPending().catch(() => []),
     ]);
     const activeGoalIds = this.uniqueStrings([...supervisorActivity.activeGoalIds, ...daemonActiveGoalIds]);
-    const artifactExpectation = this.resolveArtifactExpectation(activeGoalIds, supervisorActivity);
+    const artifactExpectation = this.resolveArtifactExpectation(activeGoalIds, supervisorActivity, checkedAt);
     const approvalScope = this.summarizeApprovalScope(pendingApprovals ?? [], activeGoalIds);
     const taskBlocker = await this.readActiveGoalTaskBlocker(activeGoalIds);
     const previousMetric = previous?.long_running?.signals.metric_progress.current_value;

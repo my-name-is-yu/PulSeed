@@ -308,6 +308,7 @@ export {
   RuntimeLongRunMetricProgressStatusSchema,
   RuntimeLongRunBlockerStatusSchema,
   RuntimeArtifactExpectationSchema,
+  RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
   RuntimeLongRunHealthSummarySchema,
   RuntimeLongRunHealthSignalsSchema,
   RuntimeLongRunHealthSchema,

@@ -180,6 +180,41 @@ describe("RuntimeOwnershipCoordinator", () => {
     });
   });
 
+  it("treats newly active workers as warming up before artifact-stalled", async () => {
+    await writeSupervisorState(["goal-fresh-worker"], Date.now());
+    const coordinator = new RuntimeOwnershipCoordinator({
+      baseDir: tmpDir,
+      runtimeRoot: tmpDir,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as never,
+      approvalStore: null,
+      outboxStore: null,
+      runtimeHealthStore: store,
+      leaderLockManager: null,
+      onLeadershipLost: vi.fn(),
+    });
+
+    await coordinator.saveRuntimeHealthSnapshot("daemon_health_snapshot", {
+      gateway: "ok",
+      queue: "ok",
+      leases: "ok",
+      approval: "ok",
+      outbox: "ok",
+      supervisor: "ok",
+    });
+
+    const snapshot = await store.loadSnapshot();
+    expect(snapshot?.long_running?.summary).toBe("alive_and_progressing");
+    expect(snapshot?.long_running?.signals.artifact_expectation).toEqual({
+      state: "recently_expected",
+      reason: "recent_goal_or_worker",
+      stale_after_ms: 300_000,
+    });
+  });
+
   it("treats lower values as improvement for minimize metrics", async () => {
     await fsp.mkdir(path.join(tmpDir, "artifacts", "run-a"), { recursive: true });
     const coordinator = new RuntimeOwnershipCoordinator({

@@ -27,6 +27,7 @@ import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import {
   DaemonStateStore,
   ProactiveInterventionStore,
+  RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
   RuntimeHealthStore,
 } from "../../../runtime/store/index.js";
 import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
@@ -187,12 +188,23 @@ function isDetachedDaemonProbePort(value: unknown): value is number {
 function resolveStatusArtifactExpectation(params: {
   activeGoalIds: string[];
   activeWorkerCount: number;
+  activeWorkerStartedAt?: number;
   daemonStatus: DaemonState["status"];
   liveRuntimeStopped: boolean;
   workerSnapshotAvailable: boolean;
 }): RuntimeArtifactExpectation {
   if (params.liveRuntimeStopped) {
     return { state: "unknown", reason: "historical_runtime_snapshot" };
+  }
+  if (
+    params.activeWorkerStartedAt !== undefined &&
+    Date.now() - params.activeWorkerStartedAt < RECENT_ARTIFACT_EXPECTATION_GRACE_MS
+  ) {
+    return {
+      state: "recently_expected",
+      reason: "recent_goal_or_worker",
+      stale_after_ms: RECENT_ARTIFACT_EXPECTATION_GRACE_MS,
+    };
   }
   if (params.activeGoalIds.length > 0) {
     return { state: "expected", reason: "active_goal" };
@@ -765,9 +777,14 @@ export async function cmdDaemonStatus(_args: string[]): Promise<number> {
 
   const snapshotWorkers = (supervisorState?.workers ?? []).filter((worker) => worker.goalId !== null);
   const activeWorkers = resolvedRuntimeAlive ? snapshotWorkers : [];
+  const activeWorkerStartedAt = activeWorkers
+    .map((worker) => worker.startedAt)
+    .filter((startedAt): startedAt is number => typeof startedAt === "number" && Number.isFinite(startedAt))
+    .sort((a, b) => a - b)[0];
   const artifactExpectation = resolveStatusArtifactExpectation({
     activeGoalIds: data.active_goals,
     activeWorkerCount: activeWorkers.length,
+    ...(activeWorkerStartedAt !== undefined ? { activeWorkerStartedAt } : {}),
     daemonStatus: data.status,
     liveRuntimeStopped,
     workerSnapshotAvailable: supervisorState !== null,
