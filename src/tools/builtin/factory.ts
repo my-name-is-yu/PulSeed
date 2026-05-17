@@ -92,6 +92,7 @@ import {
 } from "../runtime/LongRunningRuntimeTools.js";
 import { createRunSpecHandoffTools } from "../runtime/RunSpecHandoffTools.js";
 import { createSetupRuntimeControlTools } from "../runtime/SetupRuntimeControlTools.js";
+import { createArcAgi3Tools } from "../arc-agi3/index.js";
 import { CreateScheduleTool } from "../schedule/CreateScheduleTool/CreateScheduleTool.js";
 import { GetScheduleTool } from "../schedule/GetScheduleTool/GetScheduleTool.js";
 import { ListSchedulesTool } from "../schedule/ListSchedulesTool/ListSchedulesTool.js";
@@ -235,6 +236,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new UpdatePlanTool(),
     new ViewImageTool(),
     new WorkspaceImportTool(),
+    ...createArcAgi3Tools(),
   ];
 
   if (deps?.stateManager) {

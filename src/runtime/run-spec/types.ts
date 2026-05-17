@@ -1,7 +1,7 @@
 import { z } from "zod/v3";
 import type { ILLMClient } from "../../base/llm/llm-client.js";
 
-export const RunSpecProfileSchema = z.enum(["generic", "kaggle"]);
+export const RunSpecProfileSchema = z.enum(["generic", "kaggle", "arc_agi_3"]);
 export type RunSpecProfile = z.infer<typeof RunSpecProfileSchema>;
 
 export const RunSpecIdSchema = z.string().regex(

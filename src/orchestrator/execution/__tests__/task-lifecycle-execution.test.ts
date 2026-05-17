@@ -766,6 +766,73 @@ describe("TaskLifecycle", async () => {
   });
 
   describe("executeTaskWithAgentLoop", () => {
+    it("applies ARC-AGI-3 tool policy from goal constraints on the native AgentLoop caller path", async () => {
+      const llm = createMockLLMClient([]);
+      await stateManager.saveGoal(GoalSchema.parse({
+        id: "goal-1",
+        parent_id: null,
+        node_type: "goal",
+        title: "ARC-AGI-3 GPT-5.5 community run",
+        description: "Run ARC-AGI-3 using the official online API.",
+        status: "active",
+        dimensions: [],
+        gap_aggregation: "max",
+        dimension_mapping: null,
+        constraints: [
+          "run_spec_profile:arc_agi_3",
+          "arc_agi3_public_research:disabled",
+          "arc_agi3_generic_network:disabled",
+        ],
+        children_ids: [],
+        target_date: null,
+        origin: "manual",
+        pace_snapshot: null,
+        deadline: null,
+        confidence_flag: "high",
+        user_override: false,
+        feasibility_note: null,
+        uncertainty_weight: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+      const agentLoopRunner = makeAgentLoopRunner(makeAgentLoopResult("completed"));
+      const lifecycle = createLifecycle(llm, { agentLoopRunner });
+      const task = makeTask({ task_category: "verification" });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      expect(agentLoopRunner.runTask).toHaveBeenCalledWith(expect.objectContaining({
+        toolPolicy: expect.objectContaining({
+          allowedTools: expect.arrayContaining([
+            "arc_agi3_start",
+            "arc_agi3_act",
+            "arc_agi3_scorecard",
+            "runtime_report_write",
+          ]),
+          deniedTools: expect.arrayContaining([
+            "research_web",
+            "research_answer_with_sources",
+            "http_fetch",
+            "web_search",
+            "browser_run_workflow",
+            "shell",
+            "shell_command",
+            "kaggle_submit",
+          ]),
+        }),
+      }));
+      const call = (agentLoopRunner.runTask as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+        toolPolicy: { allowedTools: string[]; deniedTools: string[] };
+      };
+      expect(call.toolPolicy.allowedTools).not.toEqual(expect.arrayContaining([
+        "research_web",
+        "http_fetch",
+        "shell",
+        "kaggle_submit",
+      ]));
+    });
+
     it("records dirty isolated worktree handoff as non-completed execution", async () => {
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm, {

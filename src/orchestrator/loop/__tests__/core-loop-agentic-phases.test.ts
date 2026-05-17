@@ -2019,6 +2019,38 @@ describe("CoreLoop agentic phase hooks", () => {
     expect(taskCycleArgs[4]).toContain("research-summary");
   });
 
+  it("suppresses stall-triggered public research for ARC-AGI-3 goals", async () => {
+    const { deps, mocks } = createDeps(tmpDir, { stall: true, publicResearch: true });
+    const evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    deps.evidenceLedger = evidenceLedger;
+    await mocks.stateManager.saveGoal(makeGoal({
+      title: "ARC-AGI-3 GPT-5.5 community run",
+      constraints: [
+        "run_spec_profile:arc_agi_3",
+        "arc_agi3_public_research:disabled",
+        "arc_agi3_generic_network:disabled",
+      ],
+    }));
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    const result = await loop.runOneIteration("goal-1", 0);
+
+    expect(result.corePhaseResults?.some((phase) => phase.phase === "public_research")).not.toBe(true);
+    expect(mocks.corePhaseRunner.run).not.toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "public_research" }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(evidenceLedger.append).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "decision",
+      strategy: "arc_agi3_public_research_suppressed",
+      outcome: "blocked",
+      result: expect.objectContaining({
+        status: "arc_agi3_public_research_suppressed",
+      }),
+    }));
+  });
+
   it("runs Dream review checkpoint on plateau and saves advisory guidance for task handoff", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true, dreamCheckpoint: true });
     const evidenceLedger = {

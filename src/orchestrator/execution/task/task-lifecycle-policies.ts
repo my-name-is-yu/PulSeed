@@ -4,12 +4,59 @@ import type { Goal } from "../../../base/types/goal.js";
 import { isDaemonShutdownAbortSignal } from "../../../base/utils/abort-reason.js";
 import type { AgentResult } from "../adapter-layer.js";
 import { defaultAgentLoopBudget, type AgentLoopBudget } from "../agent-loop/agent-loop-budget.js";
+import type { AgentLoopToolPolicy } from "../agent-loop/agent-loop-turn-context.js";
 import { durationToMs } from "./task-executor.js";
 import { isMechanicalVerificationMethod } from "./task-verifier-rules.js";
 
 export const NATIVE_CODE_TASK_NO_CHANGES_ERROR = "No files were modified";
 
 const PROFILED_TASK_BUDGET_PADDING_MS = 5 * 60 * 1000;
+
+export const ARC_AGI3_RUN_SPEC_PROFILE_CONSTRAINT = "run_spec_profile:arc_agi_3";
+
+export const ARC_AGI3_ALLOWED_AGENT_LOOP_TOOLS = [
+  "arc_agi3_list_games",
+  "arc_agi3_start",
+  "arc_agi3_observe",
+  "arc_agi3_act",
+  "arc_agi3_finish",
+  "arc_agi3_scorecard",
+  "arc_agi3_policy",
+  "runtime_report_write",
+  "runtime_result_normalize",
+  "read-pulseed-file",
+  "json_query",
+] as const;
+
+export const ARC_AGI3_DENIED_AGENT_LOOP_TOOLS = [
+  "research_web",
+  "research_answer_with_sources",
+  "web_search",
+  "http_fetch",
+  "browser_get_state",
+  "browser_run_workflow",
+  "desktop_click",
+  "desktop_get_app_state",
+  "desktop_list_apps",
+  "desktop_type_text",
+  "shell",
+  "shell_command",
+  "apply_patch",
+  "file_write",
+  "file_edit",
+  "write-pulseed-file",
+  "kaggle_compare_experiments",
+  "kaggle_experiment_list",
+  "kaggle_experiment_read",
+  "kaggle_experiment_start",
+  "kaggle_experiment_stop",
+  "kaggle_leaderboard_snapshot",
+  "kaggle_list_submissions",
+  "kaggle_metric_report",
+  "kaggle_submission_prepare",
+  "kaggle_submit",
+  "kaggle_workspace_prepare",
+] as const;
 
 export function nativeTaskRequiresCapturedFileChanges(task: Task): boolean {
   return task.task_category === "normal" || task.task_category === "capability_acquisition";
@@ -20,6 +67,28 @@ export function isProfiledLongRunningTask(task: Task, goal?: Pick<Goal, "constra
     const trimmed = constraint.trim();
     return trimmed.startsWith("run_spec_profile:") || trimmed.startsWith("profile:");
   });
+}
+
+export function hasArcAgi3ProfileConstraint(constraints: readonly string[] | undefined): boolean {
+  return constraints?.some((constraint) => {
+    const token = constraint.trim();
+    return token === ARC_AGI3_RUN_SPEC_PROFILE_CONSTRAINT || token === "profile:arc_agi_3";
+  }) ?? false;
+}
+
+export function isArcAgi3GoalOrTask(task: Task, goal?: Pick<Goal, "constraints"> | null): boolean {
+  return hasArcAgi3ProfileConstraint(task.constraints) || hasArcAgi3ProfileConstraint(goal?.constraints);
+}
+
+export function resolveArcAgi3AgentLoopToolPolicy(
+  task: Task,
+  goal?: Pick<Goal, "constraints"> | null,
+): AgentLoopToolPolicy | undefined {
+  if (!isArcAgi3GoalOrTask(task, goal)) return undefined;
+  return {
+    allowedTools: [...ARC_AGI3_ALLOWED_AGENT_LOOP_TOOLS],
+    deniedTools: [...ARC_AGI3_DENIED_AGENT_LOOP_TOOLS],
+  };
 }
 
 export function estimateTaskDurationMs(task: Task): number | null {
