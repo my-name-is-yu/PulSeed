@@ -518,6 +518,65 @@ describe("CoreLoop agentic phase hooks", () => {
     });
   });
 
+  it("includes background run context in prior-consumption attempt and decision refs", async () => {
+    const resolveForRun = async (runId: string) => {
+      const runDir = path.join(tmpDir, runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      const { deps, mocks } = createDeps(runDir);
+      deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+      deps.experienceLearningBridge = {
+        processIteration: vi.fn().mockResolvedValue({
+          status: "noop",
+          reasonCode: "no_iteration_evidence",
+          frameIds: [],
+          runtimeEventIds: [],
+        }),
+      } as never;
+      const resolvePriorForPhase = vi.fn().mockResolvedValue(null);
+      deps.experienceLearningStore = {
+        resolvePriorForPhase,
+      } as never;
+      await mocks.stateManager.saveGoal(makeGoal());
+
+      const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+      await loop.run("goal-1", {
+        maxIterations: 1,
+        activation: { backgroundRun: { backgroundRunId: runId } },
+      });
+
+      return resolvePriorForPhase.mock.calls.find(([input]) =>
+        (input as { consumerPhase?: string }).consumerPhase === "task_generation"
+      )?.[0] as {
+        consumerAttemptId: string;
+        consumerDecisionRef: string;
+        consumerScope: { refs: { runId?: string } };
+        runId?: string;
+      };
+    };
+
+    const first = await resolveForRun("run-prior-a");
+    const second = await resolveForRun("run-prior-b");
+
+    expect(first).toEqual(expect.objectContaining({
+      runId: "run-prior-a",
+      consumerAttemptId: "task_generation:run:run-prior-a:loop:0",
+      consumerDecisionRef: "task-generation:run:run-prior-a:loop:0",
+      consumerScope: expect.objectContaining({
+        refs: expect.objectContaining({ runId: "run-prior-a" }),
+      }),
+    }));
+    expect(second).toEqual(expect.objectContaining({
+      runId: "run-prior-b",
+      consumerAttemptId: "task_generation:run:run-prior-b:loop:0",
+      consumerDecisionRef: "task-generation:run:run-prior-b:loop:0",
+      consumerScope: expect.objectContaining({
+        refs: expect.objectContaining({ runId: "run-prior-b" }),
+      }),
+    }));
+    expect(first.consumerAttemptId).not.toBe(second.consumerAttemptId);
+    expect(first.consumerDecisionRef).not.toBe(second.consumerDecisionRef);
+  });
+
   it("suppresses task-generation priors when task cycle fails before producing a task", async () => {
     const { deps, mocks } = createDeps(tmpDir);
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
@@ -917,7 +976,7 @@ describe("CoreLoop agentic phase hooks", () => {
     });
     expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
       consumptionId: "consumption-stall-detection",
-      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+      generatedDecisionRefs: ["stall-detection:goal:goal-1:loop:0"],
     });
     expect(markPriorConsumptionApplied).toHaveBeenCalledWith({
       consumptionId: "consumption-stall-investigation",
@@ -965,7 +1024,7 @@ describe("CoreLoop agentic phase hooks", () => {
     }));
     expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
       consumptionId: "consumption-stall-detection",
-      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+      generatedDecisionRefs: ["stall-detection:goal:goal-1:loop:0"],
     });
     expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
       consumptionId: "consumption-stall-detection",
@@ -1009,7 +1068,7 @@ describe("CoreLoop agentic phase hooks", () => {
 
     expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
       consumptionId: "consumption-stall-noop",
-      generatedDecisionRefs: ["stall-detection:goal-1:0"],
+      generatedDecisionRefs: ["stall-detection:goal:goal-1:loop:0"],
     });
     expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
       consumptionId: "consumption-stall-noop",

@@ -122,7 +122,7 @@ function projectionForSuggestion(
         consumptionRecordId,
         focusEvidenceRefs: suggestion.evidenceRefs,
         blockedLoopPatternRefs: suggestion.kind === "planning_inhibition" ? suggestion.sourceArtifactIds : [],
-        experimentPlanIds: suggestion.kind === "hypothesis_to_test" ? suggestion.sourceArtifactIds : [],
+        experimentPlanIds: suggestion.kind === "hypothesis_to_test" ? suggestion.experimentPlanIds : [],
         generalizationBodies: [],
         suppressedSuggestionIds: [],
       };

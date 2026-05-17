@@ -252,6 +252,17 @@ export class CoreIterationKernel {
         confidence: 1,
       },
     });
+    const learningConsumerRef = (phase: string, suffix?: string): string => {
+      const scopedConsumerRef = runtimeEvidenceScope.run_id
+        ? `run:${runtimeEvidenceScope.run_id}`
+        : `goal:${goalId}`;
+      return [
+        phase,
+        scopedConsumerRef,
+        `loop:${loopIndex}`,
+        ...(suffix ? [suffix] : []),
+      ].join(":");
+    };
     const resolveLearningProjection = async (
       consumerPhase: LearningConsumerPhase,
       consumerDecisionRef: string,
@@ -264,7 +275,7 @@ export class CoreIterationKernel {
           consumerPhase,
           consumerScope: consumerScope(consumerPhase),
           loopIndex,
-          consumerAttemptId: `${consumerPhase}:${goalId}:${loopIndex}`,
+          consumerAttemptId: learningConsumerRef(consumerPhase),
           consumerDecisionRef,
         });
       } catch (err) {
@@ -621,7 +632,7 @@ export class CoreIterationKernel {
     const knowledgeRefreshResolution = !skipTaskGeneration
       ? await resolveLearningProjection(
           "knowledge_refresh",
-          `knowledge-refresh:${goalId}:${loopIndex}`,
+          learningConsumerRef("knowledge-refresh"),
         )
       : null;
     const knowledgeRefreshProjection = isLearningProjectionPhase(knowledgeRefreshResolution?.projection, "knowledge_refresh")
@@ -658,7 +669,7 @@ export class CoreIterationKernel {
     await markLearningProjectionForCorePhase(
       knowledgeRefreshProjection,
       knowledgeRefresh,
-      `knowledge-refresh:${goalId}:${loopIndex}`,
+      learningConsumerRef("knowledge-refresh"),
     );
     if (knowledgeRefresh) await appendPhaseEvidence(appendRuntimeEvidence, knowledgeRefresh, "strategy");
 
@@ -670,7 +681,7 @@ export class CoreIterationKernel {
     const replanningOptionsResolution = shouldRunReplanningOptions
       ? await resolveLearningProjection(
           "replanning_options",
-          `replanning-options:${goalId}:${loopIndex}`,
+          learningConsumerRef("replanning-options"),
         )
       : null;
     const replanningOptionsProjection = isLearningProjectionPhase(replanningOptionsResolution?.projection, "replanning_options")
@@ -699,7 +710,7 @@ export class CoreIterationKernel {
     await markLearningProjectionForCorePhase(
       replanningOptionsProjection,
       replanningOptions,
-      `replanning-options:${goalId}:${loopIndex}`,
+      learningConsumerRef("replanning-options"),
     );
     if (replanningOptions) await appendPhaseEvidence(appendRuntimeEvidence, replanningOptions, "strategy");
 
@@ -713,7 +724,7 @@ export class CoreIterationKernel {
     });
     const stallDetectionResolution = await resolveLearningProjection(
       "stall_detection",
-      `stall-detection:${goalId}:${loopIndex}`,
+      learningConsumerRef("stall-detection"),
     );
     const stallDetectionProjection = isLearningProjectionPhase(stallDetectionResolution?.projection, "stall_detection")
       ? stallDetectionResolution.projection
@@ -744,7 +755,7 @@ export class CoreIterationKernel {
     );
     if (stallDetectionProjection && result.stallDetected) {
       await markLearningProjectionApplied(stallDetectionProjection, [
-        `stall-detection:${goalId}:${loopIndex}`,
+        learningConsumerRef("stall-detection"),
       ]);
     } else if (stallDetectionProjection && stallDetection?.status === "failed" && !stallDetection.decisionProduced) {
       await markLearningProjectionSuppressed(stallDetectionProjection, ["consumer_execution_failed"]);
@@ -755,7 +766,7 @@ export class CoreIterationKernel {
     const stallInvestigationResolution = shouldRunStallInvestigation
       ? await resolveLearningProjection(
           "stall_investigation",
-          `stall-investigation:${goalId}:${loopIndex}`,
+          learningConsumerRef("stall-investigation"),
         )
       : null;
     const stallInvestigationProjection = isLearningProjectionPhase(stallInvestigationResolution?.projection, "stall_investigation")
@@ -792,7 +803,7 @@ export class CoreIterationKernel {
     await markLearningProjectionForCorePhase(
       stallInvestigationProjection,
       stallInvestigation,
-      `stall-investigation:${goalId}:${loopIndex}`,
+      learningConsumerRef("stall-investigation"),
     );
     if (stallInvestigation) await appendPhaseEvidence(appendRuntimeEvidence, stallInvestigation, "failure");
 
@@ -938,7 +949,7 @@ export class CoreIterationKernel {
     if (skipTaskGeneration) {
       const learningDirectiveResolution = await resolveLearningProjection(
         "next_iteration_directive",
-        `next-directive:${goalId}:${loopIndex}:skip`,
+        learningConsumerRef("next-directive", "skip"),
       );
       const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
         ? learningDirectiveResolution.projection
@@ -952,7 +963,7 @@ export class CoreIterationKernel {
       });
       if (learningDirectiveProjection && result.nextIterationDirective) {
         await markLearningProjectionApplied(learningDirectiveProjection, [
-          result.nextIterationDirective.phase_projection_ref ?? `next-directive:${goalId}:${loopIndex}:skip`,
+          result.nextIterationDirective.phase_projection_ref ?? learningConsumerRef("next-directive", "skip"),
         ]);
       }
       await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "skip_task_generation");
@@ -992,7 +1003,7 @@ export class CoreIterationKernel {
     });
     const taskLearningResolution = await resolveLearningProjection(
       "task_generation",
-      `task-generation:${goalId}:${loopIndex}`,
+      learningConsumerRef("task-generation"),
     );
     const taskLearningProjection = taskLearningResolution?.projection?.phase === "task_generation"
       ? taskLearningResolution.projection
@@ -1161,7 +1172,7 @@ export class CoreIterationKernel {
 
     const learningDirectiveResolution = await resolveLearningProjection(
       "next_iteration_directive",
-      `next-directive:${goalId}:${loopIndex}`,
+      learningConsumerRef("next-directive"),
     );
     const learningDirectiveProjection = learningDirectiveResolution?.projection?.phase === "next_iteration_directive"
       ? learningDirectiveResolution.projection
@@ -1175,7 +1186,7 @@ export class CoreIterationKernel {
     });
     if (learningDirectiveProjection && result.nextIterationDirective) {
       await markLearningProjectionApplied(learningDirectiveProjection, [
-        result.nextIterationDirective.phase_projection_ref ?? `next-directive:${goalId}:${loopIndex}`,
+        result.nextIterationDirective.phase_projection_ref ?? learningConsumerRef("next-directive"),
       ]);
     }
     await appendDecisionEvidence(appendRuntimeEvidence, result.nextIterationDirective, "next_iteration_directive");

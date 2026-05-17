@@ -17,7 +17,9 @@ import {
   type ExperienceLearningMetricBaselineRunKind,
   type ExperienceLearningMetricScenarioClass,
   type ExperienceLearningRuntimeEventPayload,
+  type LearningConsumerPhase,
   type LearningPriorSnapshot,
+  type LearningPriorSuggestionKind,
   type TrialReuseBudgetConsumptionRecord,
   type TrialReuseReadinessGate,
 } from "../../learning/index.js";
@@ -327,6 +329,38 @@ describe("ExperienceLearningStateStore", () => {
     expect(matched?.record.stage).toBe("reserved");
   });
 
+  it("projects stall hypotheses with experiment plan ids rather than source artifacts", async () => {
+    await store.appendLifecycleEvent(makePriorGeneratedPayload({
+      priorId: "prior-stall-hypothesis",
+      suggestionId: "suggestion-stall-hypothesis",
+      artifactId: "artifact-stall-hypothesis",
+      idempotencyKey: "experience-learning:test:stall-hypothesis-prior",
+      consumerPhase: "stall_investigation",
+      suggestionKind: "hypothesis_to_test",
+      experimentPlanIds: ["experiment-plan-stall-hypothesis"],
+    }));
+
+    const resolved = await store.resolvePriorForPhase({
+      goalId: "goal-learning",
+      runId: "run-learning",
+      consumerPhase: "stall_investigation",
+      consumerScope: { refs: { goalId: "goal-learning", runId: "run-learning" } },
+      loopIndex: 2,
+      consumerAttemptId: "stall-investigation:run:run-learning:loop:2",
+      consumerDecisionRef: "stall-investigation:run:run-learning:loop:2",
+      now: "2026-05-17T00:06:00.000Z",
+    });
+
+    expect(resolved?.projection).toEqual(expect.objectContaining({
+      phase: "stall_investigation",
+      projectionKind: "stall_focus_bias",
+      experimentPlanIds: ["experiment-plan-stall-hypothesis"],
+    }));
+    expect(resolved?.projection).not.toEqual(expect.objectContaining({
+      experimentPlanIds: ["artifact-stall-hypothesis"],
+    }));
+  });
+
   it("keeps goal-scoped metric snapshots from counting other goals' prior consumption", async () => {
     const otherGoalPrior = makePriorGeneratedPayload({
       goalId: "goal-other",
@@ -557,12 +591,17 @@ function makePriorGeneratedPayload(input: {
   idempotencyKey?: string;
   generatedAt?: string;
   targetDimension?: string;
+  consumerPhase?: LearningConsumerPhase;
+  suggestionKind?: LearningPriorSuggestionKind;
+  sourceArtifactIds?: string[];
+  experimentPlanIds?: string[];
 } = {}): Extract<ExperienceLearningRuntimeEventPayload, { event_kind: "prior_generated" }> {
   const goalId = input.goalId ?? "goal-learning";
   const runId = input.runId ?? "run-learning";
   const priorId = input.priorId ?? "prior-1";
   const suggestionId = input.suggestionId ?? "suggestion-task";
   const artifactId = input.artifactId ?? "artifact-1";
+  const sourceArtifactIds = input.sourceArtifactIds ?? [artifactId];
   const generatedAt = input.generatedAt ?? "2026-05-17T00:00:00.000Z";
   const targetDimension = input.targetDimension ?? "dim-prior";
   const trust = defaultRuntimeEvidenceTrust({
@@ -593,15 +632,15 @@ function makePriorGeneratedPayload(input: {
     suggestions: [
       learningPriorSuggestion({
         id: suggestionId,
-        kind: "strategy_preference",
-        consumerPhase: "task_generation",
+        kind: input.suggestionKind ?? "strategy_preference",
+        consumerPhase: input.consumerPhase ?? "task_generation",
         targetRef: { kind: "dimension", id: targetDimension },
         rationale: redactedLearningLabel({
           label: "Use typed prior dimension bias",
           sourceRefs: ["evidence-1", "evidence-2"],
         }),
-        sourceArtifactIds: [artifactId],
-        experimentPlanIds: ["experiment-plan-1"],
+        sourceArtifactIds,
+        experimentPlanIds: input.experimentPlanIds ?? ["experiment-plan-1"],
         evidenceRefs: ["evidence-1", "evidence-2"],
         strength: 0.6,
         risk: "low",
