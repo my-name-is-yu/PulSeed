@@ -123,3 +123,16 @@ runtime signal or mutation -> typed runtime event append -> RuntimeGraph linkage
   - `npm run check:docs`
   - `npm run lint:boundaries` (0 errors, existing warnings only)
   - `git diff --check`
+- GitHub Codex review on `5d5f0aaa` found:
+  - P1: task projection prune used a linearly growing OR predicate that could hit SQLite expression-depth limits.
+  - P2: the database-first event-sourced projection guard accepted a broad `RuntimeEventLogStore` token as bypass evidence.
+- Follow-up fixes use a temp task-key table plus `NOT EXISTS` for task prune, narrow the guard bypass to concrete event append APIs, and add focused regression coverage for both. Focused verification passed:
+  - `npm run typecheck`
+  - `npm run test:contracts -- --run tests/contracts/runtime-event-log-source-of-truth.test.ts`
+  - `npm run test:unit -- --run src/interface/cli/__tests__/database-first-legacy-store-check.test.ts`
+  - `npm run check:database-first-legacy-stores`
+  - `npm run test:contracts`
+  - `npm run test:replay -- --run tests/replay/runtime-event-log-source-of-truth-replay.test.ts`
+  - `npm run check:docs`
+  - `npm run lint:boundaries` (0 errors, existing warnings only)
+  - `git diff --check`

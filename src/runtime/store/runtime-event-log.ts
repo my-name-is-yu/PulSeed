@@ -1221,15 +1221,37 @@ function pruneTaskProjectionRows(
   sqlite: SqliteDatabase,
   eventBackedTasks: readonly { goalId: string; taskId: string }[],
 ): void {
-  const rows = eventBackedTasks.length === 0
-    ? sqlite.prepare("SELECT goal_id, task_id FROM task_records").all() as Array<{ goal_id: string; task_id: string }>
-    : sqlite.prepare(`
-        SELECT goal_id, task_id
-        FROM task_records
-        WHERE NOT (${eventBackedTasks.map(() => "(goal_id = ? AND task_id = ?)").join(" OR ")})
-      `).all(...eventBackedTasks.flatMap((task) => [task.goalId, task.taskId])) as Array<{ goal_id: string; task_id: string }>;
-  for (const row of rows) {
-    deleteTaskProjection(sqlite, row.goal_id, row.task_id);
+  sqlite.prepare("DROP TABLE IF EXISTS temp.projection_apply_task_keys").run();
+  sqlite.prepare(`
+    CREATE TEMP TABLE projection_apply_task_keys (
+      goal_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      PRIMARY KEY (goal_id, task_id)
+    )
+  `).run();
+  try {
+    const insertKey = sqlite.prepare(`
+      INSERT OR IGNORE INTO projection_apply_task_keys (goal_id, task_id)
+      VALUES (?, ?)
+    `);
+    for (const task of eventBackedTasks) {
+      insertKey.run(task.goalId, task.taskId);
+    }
+    const rows = sqlite.prepare(`
+      SELECT tr.goal_id, tr.task_id
+      FROM task_records tr
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM projection_apply_task_keys task_keys
+        WHERE task_keys.goal_id = tr.goal_id
+          AND task_keys.task_id = tr.task_id
+      )
+    `).all() as Array<{ goal_id: string; task_id: string }>;
+    for (const row of rows) {
+      deleteTaskProjection(sqlite, row.goal_id, row.task_id);
+    }
+  } finally {
+    sqlite.prepare("DROP TABLE IF EXISTS temp.projection_apply_task_keys").run();
   }
 }
 

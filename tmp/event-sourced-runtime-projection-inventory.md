@@ -95,6 +95,13 @@ not current-state row apply targets:
   revisions append distinct event-backed revisions, exact no-op retries do not
   append duplicate operation events, and same-timestamp projection apply chooses
   the later appended event rather than a lexicographic event ID.
+- High-volume task projection coverage now proves current-state apply prunes
+  stale task rows with a temp-key table instead of a large OR predicate, so
+  rebuild apply does not hit SQLite expression-depth limits around large task
+  histories.
+- The database-first guard now requires a concrete event append API in the same
+  production module before event-sourced projection writes are accepted; a mere
+  `RuntimeEventLogStore` import/reference no longer bypasses the guard.
 - `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
   does not duplicate outbox notifications, schedule runs, denied tool calls,
   peer deliveries, memory correction effects, or commitment operations while

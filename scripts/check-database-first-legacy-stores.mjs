@@ -318,7 +318,7 @@ const EVENT_SOURCED_PROJECTION_WRITE_PATTERN = new RegExp(
 );
 
 const EVENT_SOURCED_PROJECTION_EVENT_PATTERN =
-  /\b(?:appendRuntimeEventEnvelopeInTransaction|RuntimeEventLogStore|runtimeEventFromAttentionCommitment|runtimeEventFromRuntimeControlOperationTransition)\b/;
+  /\b(?:appendRuntimeEventEnvelopeInTransaction|appendAuthorityDecisionWithDisposition|appendGoalTaskMutation|appendRuntimeControlOperation|appendAttentionCommitment|runtimeEventFromAttentionCommitment|runtimeEventFromRuntimeControlOperationTransition)\b/;
 
 const EVENT_SOURCED_PROJECTION_SKIP_PATH = /(^|\/)(?:__tests__|tests|docs|tmp)\//;
 const EVENT_SOURCED_PROJECTION_SCHEMA_PATH = /(^|\/)src\/runtime\/store\/control-db\/schema\.ts$/;

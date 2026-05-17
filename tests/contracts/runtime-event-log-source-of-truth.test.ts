@@ -844,6 +844,47 @@ describe("runtime event log source-of-truth contract", () => {
     }
   });
 
+  it("prunes high-volume task projections without expression-depth-limited predicates", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const goal = makeGoal({
+        id: "high-volume-task-prune-goal",
+        title: "High-volume task prune goal",
+        updated_at: NOW,
+      });
+      await eventLog.appendGoalTaskMutation({
+        entityKind: "goal",
+        action: "save",
+        goal,
+      });
+      const taskCount = 1_005;
+      for (let index = 0; index < taskCount; index += 1) {
+        const taskId = `high-volume-task-${index}`;
+        await eventLog.appendGoalTaskMutation({
+          entityKind: "task",
+          action: "save",
+          goalId: goal.id,
+          taskId,
+          task: makeTask({
+            id: taskId,
+            goal_id: goal.id,
+            work_description: `High-volume task ${index}`,
+            created_at: NOW,
+            updated_at: NOW,
+          }),
+        });
+      }
+
+      await clearProjectionTables(runtimeRoot, root, ["DELETE FROM task_records"]);
+      const applied = await eventLog.applyProjectionRebuild();
+      expect(applied.current_state_projection_rows.task_records).toBe(taskCount);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("applies broader event-backed current-state projections without replaying side effects", async () => {
     const root = fixtureRoot();
     try {
