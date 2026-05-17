@@ -1,7 +1,13 @@
 import type { Logger } from "../../../runtime/logger.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import { SessionManager } from "../session-manager.js";
-import type { AgentTask, AgentResult, IAdapter } from "../adapter-layer.js";
+import {
+  adapterExecutionHasCapabilityPlaneAdmission,
+  blockedDirectAdapterExecutionResult,
+  type AgentTask,
+  type AgentResult,
+  type IAdapter,
+} from "../adapter-layer.js";
 import type { Task } from "../../../base/types/task.js";
 import { TaskSchema } from "../../../base/types/task.js";
 import type { Strategy } from "../../../base/types/strategy.js";
@@ -161,7 +167,11 @@ export async function executeTask(
         }
       } catch { /* non-fatal: proceed with execution if dedup check fails */ }
     }
-    result = await adapter.execute(agentTask);
+    if (!adapterExecutionHasCapabilityPlaneAdmission(agentTask, adapter)) {
+      result = blockedDirectAdapterExecutionResult(adapter.adapterType);
+    } else {
+      result = await adapter.execute(agentTask);
+    }
   } catch (err) {
     result = {
       success: false,

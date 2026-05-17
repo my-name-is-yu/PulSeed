@@ -99,6 +99,21 @@ export function buildPermissionWaitCanonicalPlan(input: PermissionWaitPlanInput)
       ...(input.tool.metadata.requiresNetwork !== undefined ? { tool_requires_network: input.tool.metadata.requiresNetwork } : {}),
       ...(input.tool.metadata.activityCategory ? { tool_activity_category: input.tool.metadata.activityCategory } : {}),
       tool_tags: [...input.tool.metadata.tags].sort(),
+      ...(input.context.capabilityDescriptor ? {
+        capability_id: input.context.capabilityDescriptor.capability_id,
+        capability_provider_kind: input.context.capabilityDescriptor.provider_kind,
+        capability_provider_ref: input.context.capabilityDescriptor.provider_ref,
+        capability_operation_kind: input.context.capabilityDescriptor.operation_kind,
+        capability_side_effect_profile: input.context.capabilityDescriptor.side_effect_profile,
+        capability_readiness_state: input.context.capabilityDescriptor.readiness_state,
+      } : {}),
+      ...(input.context.capabilityAdmissionDecision?.capability_fingerprint ? {
+        capability_approval_fingerprint: input.context.capabilityAdmissionDecision.capability_fingerprint,
+      } : {}),
+      ...(input.context.capabilityAdmissionDecision ? {
+        capability_admission_id: input.context.capabilityAdmissionDecision.admission_id,
+        capability_admission_status: input.context.capabilityAdmissionDecision.status,
+      } : {}),
       host_decision_status: hostDecision.status,
       host_decision_reason: hostDecision.reason,
       ...(permissionGrantSummary.status ? { permission_grant_status: permissionGrantSummary.status } : {}),

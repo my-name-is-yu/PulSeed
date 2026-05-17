@@ -25,6 +25,15 @@ export interface AgentTask {
   cwd?: string;
   /** System prompt to inject identity/context (used by chat grounding) */
   system_prompt?: string;
+  /** Capability Plane admission proving this adapter execution is not a direct production bypass. */
+  capability_plane_admission?: AdapterCapabilityPlaneAdmission;
+}
+
+export interface AdapterCapabilityPlaneAdmission {
+  schema_version: "adapter-capability-plane-admission/v1";
+  boundary: "run_adapter_tool" | "provider_adapter" | "descriptor_internal" | "test";
+  descriptor_id: string;
+  admission_id: string;
 }
 
 export interface AgentLoopExecutionInfo {
@@ -101,6 +110,7 @@ export interface IAdapter {
   execute(task: AgentTask): Promise<AgentResult>;
   readonly adapterType: string;
   readonly capabilities?: readonly string[];
+  readonly capabilityPlaneBoundary?: AdapterCapabilityPlaneAdmission["boundary"];
   /** Optional: return titles of existing tasks for dedup context injection into prompts. */
   listExistingTasks?(): Promise<string[]>;
   /** Optional: adapter-specific duplicate detection. Returns true if a duplicate exists. Fail-open: return false on error. */
@@ -111,6 +121,22 @@ export interface IAdapter {
    * Receives the raw Task (not AgentTask) so the adapter can access work_description etc.
    */
   formatPrompt?(task: import("../../base/types/task.js").Task, workspaceContext?: string): string;
+}
+
+export function adapterExecutionHasCapabilityPlaneAdmission(task: AgentTask, adapter: IAdapter): boolean {
+  if (adapter.capabilityPlaneBoundary !== undefined) return true;
+  return task.capability_plane_admission?.schema_version === "adapter-capability-plane-admission/v1";
+}
+
+export function blockedDirectAdapterExecutionResult(adapterType: string): AgentResult {
+  return {
+    success: false,
+    output: `Adapter ${adapterType} was blocked: direct adapter.execute() production bypass is disabled. Use the run-adapter ToolExecutor path or an explicit Capability Plane boundary.`,
+    error: "adapter_direct_execution_blocked",
+    exit_code: null,
+    elapsed_ms: 0,
+    stopped_reason: "policy_blocked",
+  };
 }
 
 // ─── Circuit Breaker ───
