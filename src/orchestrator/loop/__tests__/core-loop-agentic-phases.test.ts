@@ -636,6 +636,70 @@ describe("CoreLoop agentic phase hooks", () => {
     }));
   });
 
+  it("suppresses failed knowledge-refresh priors instead of marking them applied", async () => {
+    const { deps, mocks } = createDeps(tmpDir);
+    deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
+    const defaultPhaseRunner = mocks.corePhaseRunner.run.getMockImplementation()!;
+    mocks.corePhaseRunner.run.mockImplementation(async (spec: { phase: string }, input: unknown, context: unknown) => {
+      if (spec.phase === "knowledge_refresh") {
+        return {
+          success: false,
+          output: { summary: "knowledge failed", required_knowledge: [], acquisition_candidates: [], confidence: 0.9, worthwhile: false },
+          finalText: "",
+          stopReason: "failed",
+          elapsedMs: 1,
+          modelTurns: 1,
+          toolCalls: 0,
+          compactions: 0,
+          changedFiles: [],
+          commandResults: [],
+          traceId: "trace-knowledge-failed",
+          sessionId: "session-knowledge-failed",
+          turnId: "turn-knowledge-failed",
+        };
+      }
+      return defaultPhaseRunner(spec, input, context);
+    });
+    const resolvePriorForPhase = vi.fn().mockImplementation(async (input: { consumerPhase: string }) => {
+      if (input.consumerPhase !== "knowledge_refresh") return null;
+      return {
+        prior: { id: "prior-knowledge-failed" },
+        record: { id: "consumption-knowledge-failed", stage: "reserved" },
+        runtimeEventId: "runtime-event:knowledge-failed",
+        projection: {
+          phase: "knowledge_refresh",
+          projectionKind: "knowledge_refresh_evidence_target",
+          consumptionRecordId: "consumption-knowledge-failed",
+          evidenceTargetRefs: ["evidence-knowledge"],
+          questionFocusRefs: ["dimension:dim1"],
+          queryBiasRefs: ["artifact-knowledge"],
+          generalizationBodies: [],
+          suppressedSuggestionIds: [],
+        },
+      };
+    });
+    const markPriorConsumptionApplied = vi.fn().mockResolvedValue(null);
+    const markPriorConsumptionSuppressed = vi.fn().mockResolvedValue(null);
+    deps.experienceLearningStore = {
+      resolvePriorForPhase,
+      markPriorConsumptionApplied,
+      markPriorConsumptionSuppressed,
+    } as never;
+    await mocks.stateManager.saveGoal(makeGoal());
+
+    const loop = new CoreLoop(deps, { delayBetweenLoopsMs: 0 });
+    await loop.runOneIteration("goal-1", 0);
+
+    expect(markPriorConsumptionApplied).not.toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge-failed",
+      generatedDecisionRefs: ["trace-knowledge-failed"],
+    });
+    expect(markPriorConsumptionSuppressed).toHaveBeenCalledWith({
+      consumptionId: "consumption-knowledge-failed",
+      reasonCodes: ["consumer_execution_failed"],
+    });
+  });
+
   it("makes non-task learning priors observable against no-prior phase controls", async () => {
     const { deps, mocks } = createDeps(tmpDir, { stall: true });
     deps.evidenceLedger = { append: vi.fn().mockResolvedValue([]) };
@@ -1111,6 +1175,11 @@ describe("CoreLoop agentic phase hooks", () => {
         }),
       ]);
       expect(promotedArtifacts[0]!.evidence.runtimeEvidenceRefs).not.toContain(experimentRecords[0]!.id);
+      const promotedTaskSuggestion = promotedArtifacts[0]!.policyEffect.find((suggestion) =>
+        suggestion.consumerPhase === "task_generation"
+      );
+      expect(promotedTaskSuggestion?.experimentPlanIds).toContain(priors[0]!.suggestions[0]!.experimentPlanIds[0]);
+      expect(promotedTaskSuggestion?.experimentPlanIds).not.toContain(experimentRecords[0]!.id);
       expect(deps.cognitionWritebackQueue.enqueue).toHaveBeenCalledWith(expect.objectContaining({
         review_required: true,
         owner_write_performed: false,

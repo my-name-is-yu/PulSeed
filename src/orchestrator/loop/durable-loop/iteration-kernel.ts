@@ -315,6 +315,22 @@ export class CoreIterationKernel {
         });
       }
     };
+    const markLearningProjectionForCorePhase = async (
+      projection: LearningPriorPhaseProjection | null | undefined,
+      execution: { status: "skipped" | "completed" | "low_confidence" | "failed"; traceId?: string } | null | undefined,
+      fallbackDecisionRef: string,
+    ): Promise<void> => {
+      if (!projection || !execution || execution.status === "skipped") return;
+      if (execution.status === "completed") {
+        await markLearningProjectionApplied(projection, [
+          execution.traceId ?? fallbackDecisionRef,
+        ]);
+        return;
+      }
+      await markLearningProjectionSuppressed(projection, [
+        execution.status === "failed" ? "consumer_execution_failed" : "consumer_no_op",
+      ]);
+    };
     const corePhaseRuntime = new CorePhaseRuntime({
       phaseRunner: this.deps.deps.corePhaseRunner,
       policyRegistry: this.deps.corePhasePolicyRegistry,
@@ -639,11 +655,11 @@ export class CoreIterationKernel {
         )
       : null;
     if (knowledgeRefresh) rememberPhase(knowledgeRefresh);
-    if (knowledgeRefresh && knowledgeRefresh.status !== "skipped") {
-      await markLearningProjectionApplied(knowledgeRefreshProjection, [
-        knowledgeRefresh.traceId ?? `knowledge-refresh:${goalId}:${loopIndex}`,
-      ]);
-    }
+    await markLearningProjectionForCorePhase(
+      knowledgeRefreshProjection,
+      knowledgeRefresh,
+      `knowledge-refresh:${goalId}:${loopIndex}`,
+    );
     if (knowledgeRefresh) await appendPhaseEvidence(appendRuntimeEvidence, knowledgeRefresh, "strategy");
 
     const shouldRunReplanningOptions = this.deps.coreDecisionEngine.shouldRunReplanningOptions({
@@ -680,11 +696,11 @@ export class CoreIterationKernel {
         )
       : null;
     if (replanningOptions) rememberPhase(replanningOptions);
-    if (replanningOptions && replanningOptions.status !== "skipped") {
-      await markLearningProjectionApplied(replanningOptionsProjection, [
-        replanningOptions.traceId ?? `replanning-options:${goalId}:${loopIndex}`,
-      ]);
-    }
+    await markLearningProjectionForCorePhase(
+      replanningOptionsProjection,
+      replanningOptions,
+      `replanning-options:${goalId}:${loopIndex}`,
+    );
     if (replanningOptions) await appendPhaseEvidence(appendRuntimeEvidence, replanningOptions, "strategy");
 
     await runPhase("completion-check", () =>
@@ -773,11 +789,11 @@ export class CoreIterationKernel {
         )
       : null;
     if (stallInvestigation) rememberPhase(stallInvestigation);
-    if (stallInvestigation && stallInvestigation.status !== "skipped") {
-      await markLearningProjectionApplied(stallInvestigationProjection, [
-        stallInvestigation.traceId ?? `stall-investigation:${goalId}:${loopIndex}`,
-      ]);
-    }
+    await markLearningProjectionForCorePhase(
+      stallInvestigationProjection,
+      stallInvestigation,
+      `stall-investigation:${goalId}:${loopIndex}`,
+    );
     if (stallInvestigation) await appendPhaseEvidence(appendRuntimeEvidence, stallInvestigation, "failure");
 
     if (result.stallDetected && result.stallReport) {
@@ -1366,7 +1382,7 @@ function promoteCandidateFromExperiment(
       ...scope,
       status: scope.scopeRef === exactScopeRef && scope.status !== "blocked" ? "exact" : scope.status,
       attempts: scope.scopeRef === exactScopeRef ? Math.min(scope.maxTrials, scope.attempts + 1) : scope.attempts,
-      successRefs: scope.scopeRef === exactScopeRef ? uniqueStrings([...scope.successRefs, record.id]) : scope.successRefs,
+      successRefs: scope.scopeRef === exactScopeRef ? uniqueStrings([...scope.successRefs, record.planId]) : scope.successRefs,
     })),
     updatedAt: record.executedAt,
   });
