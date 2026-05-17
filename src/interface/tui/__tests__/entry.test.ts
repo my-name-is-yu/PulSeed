@@ -40,7 +40,7 @@ describe("attachDoubleCtrlCExit", () => {
     detach();
   });
 
-  it("keeps the first Ctrl-C pending across unrelated terminal bytes until timeout", () => {
+  it("resets the first Ctrl-C when unrelated input arrives", () => {
     vi.useFakeTimers();
     const input = new EventEmitter();
     const onExit = vi.fn();
@@ -50,6 +50,8 @@ describe("attachDoubleCtrlCExit", () => {
       input.emit("data", Buffer.from("\u001b[?2026l"));
       input.emit("data", Buffer.from([0x03]));
 
+      expect(onExit).not.toHaveBeenCalled();
+      input.emit("data", Buffer.from([0x03]));
       expect(onExit).toHaveBeenCalledOnce();
     } finally {
       detach();

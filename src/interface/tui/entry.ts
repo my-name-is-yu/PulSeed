@@ -33,13 +33,8 @@ type CtrlCInputStream = {
 
 const CTRL_C_EXIT_WINDOW_MS = 5_000;
 
-function countCtrlCBytes(chunk: Buffer | string): number {
-  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-  let count = 0;
-  for (const byte of bytes) {
-    if (byte === 0x03) count += 1;
-  }
-  return count;
+function getInputBytes(chunk: Buffer | string): Buffer {
+  return Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 }
 
 export function attachDoubleCtrlCExit(
@@ -83,9 +78,12 @@ export function attachDoubleCtrlCExit(
   };
 
   const onData = (chunk: Buffer | string) => {
-    const count = countCtrlCBytes(chunk);
-    for (let index = 0; index < count; index += 1) {
-      handleCtrlC();
+    for (const byte of getInputBytes(chunk)) {
+      if (byte === 0x03) {
+        handleCtrlC();
+        continue;
+      }
+      resetPending();
     }
   };
 
