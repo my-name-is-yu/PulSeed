@@ -1341,7 +1341,7 @@ function listCommitmentCandidates(
     where.push("lifecycle NOT IN ('resolved', 'rejected', 'tombstoned')");
   }
   if (options.dueBefore) {
-    where.push("(next_revisit_at IS NULL OR next_revisit_at <= ?)");
+    where.push("(next_revisit_at IS NOT NULL AND next_revisit_at <= ?)");
     params.push(options.dueBefore);
   }
   const rows = sqlite.prepare(`

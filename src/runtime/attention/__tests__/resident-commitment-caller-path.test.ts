@@ -47,6 +47,7 @@ function scope(): AttentionScope {
 function commitmentCandidate(input: {
   extraction?: Record<string, unknown>;
   state?: "shadow_held" | "ask_confirmation" | "watching" | "active_care" | "quieted" | "snoozed";
+  nextRevisitAt?: string | null;
 } = {}) {
   const candidate = createCommitmentCandidate({
     extraction: CommitmentCandidateExtractionSchema.parse({
@@ -78,7 +79,7 @@ function commitmentCandidate(input: {
   return {
     ...candidate!,
     materialization_state: input.state ?? "watching" as const,
-    next_revisit_at: NOW,
+    next_revisit_at: input.nextRevisitAt === undefined ? NOW : input.nextRevisitAt,
   };
 }
 
@@ -244,6 +245,27 @@ describe("resident commitment attention caller path", () => {
       expect.objectContaining({
         materialization_state: "ask_confirmation",
         nudge_policy: "ask_first",
+      }),
+    ]);
+    await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
+      .listRecentCandidates()).resolves.toHaveLength(0);
+  });
+
+  it("does not materialize unscheduled commitments during the due resident cycle", async () => {
+    const baseDir = tmpDir();
+    const store = new AttentionStateStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir });
+    await store.saveCommitmentCandidates([commitmentCandidate({
+      state: "watching",
+      nextRevisitAt: null,
+    })]);
+
+    const handled = await runResidentCommitmentAttentionCycle(context(baseDir, store), NOW);
+
+    expect(handled).toBe(false);
+    await expect(store.listCommitmentCandidates()).resolves.toMatchObject([
+      expect.objectContaining({
+        materialization_state: "watching",
+        next_revisit_at: null,
       }),
     ]);
     await expect(new PeerInitiativeStore(path.join(baseDir, "runtime"), { controlBaseDir: baseDir })
