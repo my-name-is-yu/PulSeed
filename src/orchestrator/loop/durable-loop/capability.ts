@@ -27,7 +27,7 @@ export interface CapabilityAcquisitionOutcome {
 
 export interface CapabilityAcquisitionExecutionOptions {
   toolExecutor?: ToolExecutor;
-  baseDir?: string;
+  baseDir: string;
 }
 
 /** Handle the "capability_acquiring" action from TaskLifecycle.
@@ -40,7 +40,7 @@ export async function handleCapabilityAcquisition(
   capabilityDetector: CapabilityDetector | undefined,
   capabilityAcquisitionFailures: Map<string, number>,
   logger: Logger | undefined,
-  options: CapabilityAcquisitionExecutionOptions = {},
+  options: CapabilityAcquisitionExecutionOptions,
 ): Promise<CapabilityAcquisitionOutcome> {
   const capName = acquisitionTask.gap.missing_capability.name;
   const capType = acquisitionTask.gap.missing_capability.type;
@@ -184,7 +184,7 @@ async function executeCapabilityAcquisitionAdapter(input: {
   options: CapabilityAcquisitionExecutionOptions;
 }): Promise<AgentResult> {
   const baseDir = input.options.baseDir;
-  if (!baseDir) {
+  if (baseDir.trim().length === 0) {
     throw new Error("capability acquisition requires an explicit baseDir");
   }
   const toolExecutor = input.options.toolExecutor ?? createRunAdapterToolExecutor(input.adapter, baseDir);
