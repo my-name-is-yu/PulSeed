@@ -643,7 +643,9 @@ function canReemitCommitment(
   if (["resolved", "rejected", "tombstoned"].includes(candidate.materialization_state)) return false;
   if (candidate.materialization_state === "quieted" && triggerKind !== "feedback_cooldown") return false;
   if (candidate.materialization_state === "snoozed" && candidate.next_revisit_at && candidate.next_revisit_at > now) return false;
-  if (triggerKind === "revisit_window") return !candidate.next_revisit_at || candidate.next_revisit_at <= now;
+  if (triggerKind === "revisit_window") {
+    return Boolean(candidate.next_revisit_at && candidate.next_revisit_at <= now);
+  }
   return true;
 }
 

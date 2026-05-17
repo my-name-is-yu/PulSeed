@@ -115,6 +115,22 @@ describe("commitment operation selection", () => {
     expect(provider.urgeCandidates).toHaveLength(0);
   });
 
+  it("does not re-emit commitments on revisit_window without an explicit revisit time", () => {
+    const candidate = {
+      ...commitmentCandidate({ state: "watching" }),
+      next_revisit_at: null,
+    };
+
+    const provider = buildCommitmentGuardAttentionFromCandidates({
+      candidates: [candidate],
+      now: NOW,
+      triggerKind: "revisit_window",
+    });
+
+    expect(provider.attentionInputs).toHaveLength(0);
+    expect(provider.urgeCandidates).toHaveLength(0);
+  });
+
   it("turns active watched commitments into commitment_guard agenda and boundary-gated followup plans", () => {
     const candidate = commitmentCandidate({ state: "active_care" });
     const provider = buildCommitmentGuardAttentionFromCandidates({
