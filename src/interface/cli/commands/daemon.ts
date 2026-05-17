@@ -22,7 +22,10 @@ import {
   loadBuiltinGatewayIntegrations,
 } from "../../../runtime/gateway/index.js";
 import { ScheduleEngine } from "../../../runtime/schedule/engine.js";
-import { RuntimeWatchdog } from "../../../runtime/watchdog.js";
+import {
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS,
+  RuntimeWatchdog,
+} from "../../../runtime/watchdog.js";
 import { LeaderLockManager } from "../../../runtime/leader-lock-manager.js";
 import {
   DaemonStateStore,
@@ -81,12 +84,18 @@ import {
 } from "./daemon-status-health.js";
 
 const WATCHDOG_CHILD_ENV = "PULSEED_WATCHDOG_CHILD";
-const DETACHED_DAEMON_READY_TIMEOUT_MS = 10_000;
+const DETACHED_DAEMON_READY_TIMEOUT_BUFFER_MS = 5_000;
+const DETACHED_DAEMON_READY_TIMEOUT_MS =
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS + DETACHED_DAEMON_READY_TIMEOUT_BUFFER_MS;
 const DETACHED_DAEMON_READY_POLL_MS = 250;
+const DETACHED_DAEMON_TIMEOUT_STOP_MS = 5_000;
+const DETACHED_DAEMON_TIMEOUT_STOP_POLL_MS = 100;
 const DETACHED_DAEMON_TOKEN_FRESHNESS_SKEW_MS = 1_000;
 
 interface CmdStartOptions {
   childCommandArgs?: string[];
+  detachedReadyPollMs?: number;
+  detachedReadyTimeoutMs?: number;
 }
 
 type StopDaemonOutcome =
@@ -98,13 +107,22 @@ async function waitForDetachedDaemonReady(params: {
   baseDir: string;
   eventServerPort: number;
   expectedWatchdogPid: number;
+  pollMs?: number;
   startedAtMs: number;
+  timeoutMs?: number;
 }): Promise<
   | { ready: true; port: number }
   | { ready: false; port: number; detail: string }
 > {
-  const { baseDir, eventServerPort, expectedWatchdogPid, startedAtMs } = params;
-  const deadline = Date.now() + DETACHED_DAEMON_READY_TIMEOUT_MS;
+  const {
+    baseDir,
+    eventServerPort,
+    expectedWatchdogPid,
+    pollMs = DETACHED_DAEMON_READY_POLL_MS,
+    startedAtMs,
+    timeoutMs = DETACHED_DAEMON_READY_TIMEOUT_MS,
+  } = params;
+  const deadline = Date.now() + timeoutMs;
   let lastPort = 0;
   let lastDetail = "daemon health endpoint was not checked";
 
@@ -129,7 +147,7 @@ async function waitForDetachedDaemonReady(params: {
         const probe = await probeDaemonHealth({
           host: "127.0.0.1",
           port: directProbePort,
-          timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline),
+          timeoutMs: detachedDaemonReadyProbeTimeoutMs(deadline, pollMs),
         });
         if (probe.ok) {
           return { ready: true, port: directProbePort };
@@ -139,14 +157,14 @@ async function waitForDetachedDaemonReady(params: {
           : `no healthy daemon response on port ${directProbePort}`;
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, DETACHED_DAEMON_READY_POLL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 
   return { ready: false, port: lastPort, detail: lastDetail };
 }
 
-function detachedDaemonReadyProbeTimeoutMs(deadline: number): number {
-  return Math.max(1, Math.min(DETACHED_DAEMON_READY_POLL_MS, deadline - Date.now()));
+function detachedDaemonReadyProbeTimeoutMs(deadline: number, pollMs = DETACHED_DAEMON_READY_POLL_MS): number {
+  return Math.max(1, Math.min(pollMs, deadline - Date.now()));
 }
 
 async function readDetachedDaemonOwnership(baseDir: string, expectedWatchdogPid: number): Promise<PIDInfo | null> {
@@ -183,6 +201,50 @@ function isFreshDetachedDaemonToken(token: DaemonAuthToken, startedAtMs: number)
 
 function isDetachedDaemonProbePort(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 65_535;
+}
+
+async function stopSpawnedDetachedDaemonAfterReadinessFailure(params: {
+  pidManager: PIDManager;
+  watchdogPid: number;
+}): Promise<string[]> {
+  const messages: string[] = [];
+  try {
+    const stopResult = await params.pidManager.stopRuntime({
+      timeoutMs: DETACHED_DAEMON_TIMEOUT_STOP_MS,
+      pollIntervalMs: DETACHED_DAEMON_TIMEOUT_STOP_POLL_MS,
+    });
+    if (stopResult.sentSignalsTo.length > 0) {
+      if (stopResult.stopped) {
+        messages.push("Stopped spawned daemon after readiness timeout.");
+      } else {
+        messages.push(`Signaled spawned daemon after readiness timeout, but PIDs are still alive: ${stopResult.alivePids.join(", ")}`);
+      }
+      return messages;
+    }
+  } catch (err) {
+    messages.push(`Could not stop spawned daemon through the PID file: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (signalDetachedProcessGroup(params.watchdogPid, "SIGTERM")) {
+    messages.push("Sent SIGTERM to the spawned detached daemon process group after readiness timeout.");
+  } else {
+    messages.push(`Could not confirm shutdown for spawned daemon PID ${params.watchdogPid}; inspect with \`pulseed daemon status\` or \`pulseed logs\`.`);
+  }
+  return messages;
+}
+
+function signalDetachedProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch {
+    try {
+      process.kill(pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 async function ensureEventServerPortAvailable(baseDir: string, config: DaemonConfig): Promise<void> {
@@ -386,16 +448,26 @@ export async function cmdStart(
       console.error("Failed to start daemon: no PID assigned");
       process.exit(1);
     }
+    const readinessTimeoutMs = options.detachedReadyTimeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS;
     const readiness = await waitForDetachedDaemonReady({
       baseDir,
       eventServerPort: resolvedDaemonConfig.event_server_port,
       expectedWatchdogPid: child.pid,
       startedAtMs,
+      timeoutMs: readinessTimeoutMs,
+      ...(options.detachedReadyPollMs !== undefined ? { pollMs: options.detachedReadyPollMs } : {}),
     });
     if (!readiness.ready) {
       console.error(
-        `Daemon process started in background (PID: ${child.pid}), but the command surface was not ready within ${DETACHED_DAEMON_READY_TIMEOUT_MS}ms: ${readiness.detail}.`
+        `Daemon process started in background (PID: ${child.pid}), but the command surface was not ready within ${readinessTimeoutMs}ms: ${readiness.detail}.`
       );
+      const stopMessages = await stopSpawnedDetachedDaemonAfterReadinessFailure({
+        pidManager,
+        watchdogPid: child.pid,
+      });
+      for (const message of stopMessages) {
+        console.error(message);
+      }
       console.error("Run `pulseed daemon status` or `pulseed logs` to inspect startup.");
       process.exit(1);
     }

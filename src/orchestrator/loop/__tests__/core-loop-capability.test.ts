@@ -467,6 +467,23 @@ describe("CoreLoop — capability_acquiring handler", () => {
     expect(mocks.capabilityDetector.escalateToUser).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects capability acquisition before side effects when baseDir is omitted", async () => {
+    const { mocks } = createMockDeps(tmpDir);
+
+    await expect(handleCapabilityAcquisition(
+      makeAcquisitionTask(),
+      "goal-1",
+      mocks.adapter,
+      mocks.capabilityDetector as unknown as CapabilityDetector,
+      new Map(),
+      undefined,
+      { baseDir: " " }
+    )).rejects.toThrow("capability acquisition requires an explicit baseDir");
+
+    expect(mocks.capabilityDetector.setCapabilityStatus).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
+
   it("includes a recommended plugin path in the acquisition prompt when available", async () => {
     const { mocks } = createMockDeps(tmpDir);
     mocks.capabilityDetector.recommendAcquisition.mockReturnValue([

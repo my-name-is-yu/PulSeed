@@ -111,6 +111,7 @@ vi.mock("../../../runtime/daemon/runner.js", () => ({
 }));
 
 vi.mock("../../../runtime/watchdog.js", () => ({
+  DEFAULT_RUNTIME_WATCHDOG_STARTUP_GRACE_MS: 20_000,
   RuntimeWatchdog: vi.fn().mockImplementation(function (args: unknown) {
     watchdogArgs.push(args);
     return {
@@ -750,6 +751,62 @@ describe("cmdStart", () => {
     } finally {
       exitSpy.mockRestore();
       logSpy.mockRestore();
+    }
+  });
+
+  it("stops the spawned detached daemon before failing a readiness timeout", async () => {
+    pidReadPIDMock.mockResolvedValue({
+      pid: 23456,
+      owner_pid: 12345,
+      watchdog_pid: 12345,
+      runtime_pid: 23456,
+      started_at: new Date().toISOString(),
+    });
+    pidStopRuntimeMock.mockResolvedValue({
+      info: {
+        pid: 23456,
+        owner_pid: 12345,
+        watchdog_pid: 12345,
+        runtime_pid: 23456,
+        started_at: new Date().toISOString(),
+      },
+      runtimePid: 23456,
+      ownerPid: 12345,
+      sentSignalsTo: [12345, 23456],
+      forced: false,
+      stopped: true,
+      alivePids: [],
+    });
+    readDaemonAuthTokenMetadataMock.mockReturnValue(null);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? ""}`);
+    }) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await expect(cmdStart(
+        { getBaseDir: vi.fn().mockReturnValue("/tmp/pulseed-daemon-start-base") } as never,
+        {} as never,
+        ["--detach"],
+        {
+          childCommandArgs: ["daemon", "start", "--detach"],
+          detachedReadyPollMs: 1,
+          detachedReadyTimeoutMs: 1,
+        },
+      )).rejects.toThrow("process.exit:1");
+
+      expect(spawnMock).toHaveBeenCalledOnce();
+      expect(pidStopRuntimeMock).toHaveBeenCalledWith({
+        timeoutMs: 5_000,
+        pollIntervalMs: 100,
+      });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(
+        "but the command surface was not ready within 1ms"
+      ));
+      expect(errorSpy).toHaveBeenCalledWith("Stopped spawned daemon after readiness timeout.");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 
