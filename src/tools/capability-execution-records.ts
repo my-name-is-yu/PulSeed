@@ -6,6 +6,7 @@ import type {
   CapabilitySideEffectProfile,
   CapabilityVerificationRef,
 } from "../runtime/store/capability-verification-schemas.js";
+import { descriptorCapabilityExecutionContext } from "../runtime/capability-plane.js";
 import type {
   CapabilityExecutionContext,
   CapabilityExecutionResolutionInput,
@@ -114,7 +115,7 @@ async function buildOperationRecord(
   const fallbackSideEffectProfile = inferSideEffectProfile(tool.metadata, fallbackOperationKind);
   const fallbackRiskClass = inferRiskClass(tool.metadata);
   const fallbackPayloadClass = `tool-input:${tool.metadata.name}`;
-  const execution = context.capabilityExecution ?? await resolveCapabilityExecution(context, {
+  const resolvedExecution = context.capabilityExecution ?? await resolveCapabilityExecution(context, {
     toolName: tool.metadata.name,
     toolMetadata: tool.metadata,
     rawInput,
@@ -123,6 +124,10 @@ async function buildOperationRecord(
     riskClass: fallbackRiskClass,
     sideEffectProfile: fallbackSideEffectProfile,
   });
+  const execution = resolvedExecution
+    ?? (context.capabilityDescriptor
+      ? descriptorCapabilityExecutionContext(context.capabilityDescriptor, tool.metadata.name, context.callId)
+      : null);
   const toolName = execution?.toolName ?? tool.metadata.name;
   const operationKind = execution?.operationKind ?? fallbackOperationKind;
   const sideEffectProfile = execution?.sideEffectProfile ?? fallbackSideEffectProfile;

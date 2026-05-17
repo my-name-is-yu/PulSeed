@@ -37,7 +37,6 @@ import {
 } from "./tool-result-envelope.js";
 import {
   CapabilityPlane,
-  descriptorCapabilityExecutionContext,
   type CapabilityAdmissionDecision,
   type CapabilityDescriptor,
 } from "../runtime/capability-plane.js";
@@ -261,6 +260,7 @@ export class ToolExecutor {
       input,
       executionContext,
       startTime,
+      permResult,
     );
     if (capabilityApprovalResult.status === "blocked") return capabilityApprovalResult.result;
     executionContext = capabilityApprovalResult.context;
@@ -437,23 +437,9 @@ export class ToolExecutor {
     }
 
     if (admission.status === "requires_approval") {
-      await this.recordToolPolicyDecision(tool, input, descriptorContext, {
-        decision: "confirm_required",
-        capabilityDecision: "permission_required",
-        decisionReason: admission.reason,
-        targetEffect: "execute_tool",
-        targetSummary: `${tool.metadata.name} tool execution requires descriptor-backed approval before side effects.`,
-      });
       return { context: descriptorContext };
     }
 
-    await this.recordToolPolicyDecision(tool, input, descriptorContext, {
-      decision: "allow",
-      capabilityDecision: "available",
-      decisionReason: admission.reason,
-      targetEffect: "execute_tool",
-      targetSummary: `${tool.metadata.name} tool execution passed Capability Plane descriptor admission.`,
-    });
     return { context: descriptorContext };
   }
 
@@ -469,8 +455,6 @@ export class ToolExecutor {
     }
     context.capabilityDescriptor = descriptor;
     context.capabilityAdmissionDecision = admission;
-    context.capabilityExecution = context.capabilityExecution
-      ?? descriptorCapabilityExecutionContext(descriptor, tool.metadata.name, context.callId);
     return context;
   }
 
@@ -479,9 +463,15 @@ export class ToolExecutor {
     input: unknown,
     context: ToolCallContext,
     startTime: number,
+    permissionResult: PermissionCheckResult | null,
   ): Promise<PermissionApprovalResult> {
     const admission = context.capabilityAdmissionDecision;
-    if (admission?.status !== "requires_approval" || context.preApproved === true) {
+    if (
+      admission?.status !== "requires_approval"
+      || context.preApproved === true
+      || (permissionResult !== null && this.isAllowedByPermissionGrant(permissionResult))
+      || (permissionResult !== null && this.isAllowedByHostPolicy(tool, input, context, permissionResult))
+    ) {
       return { status: "approved", context };
     }
     return this.requestPermissionApproval({
@@ -492,6 +482,16 @@ export class ToolExecutor {
       reason: admission.reason,
       reversibility: reversibilityForDescriptor(admission.descriptor),
     });
+  }
+
+  private isAllowedByHostPolicy(
+    tool: ITool,
+    input: unknown,
+    context: ToolCallContext,
+    permissionResult: PermissionCheckResult,
+  ): boolean {
+    if (permissionResult.status !== "allowed" || !context.executionPolicy) return false;
+    return decideHostToolExecution({ tool, input, context }).status === "allowed";
   }
 
   private async requestPermissionApproval(input: {
