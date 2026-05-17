@@ -20,8 +20,8 @@
 - [x] Sync/fetch `origin/main`.
 - [x] Inspect relevant recent PR state.
 - [x] Create implementation branch.
-- [ ] Create draft PR.
-- [ ] Current-state inventory.
+- [x] Create draft PR: https://github.com/my-name-is-yu/PulSeed/pull/2002
+- [x] Current-state inventory: `tmp/companion-cognition-kernel-inventory.md`
 - [ ] Kernel implementation.
 - [ ] Production caller migrations.
 - [ ] Guardrail.
@@ -29,4 +29,3 @@
 - [ ] Local verification.
 - [ ] Sub-agent review.
 - [ ] GitHub Codex review.
-
