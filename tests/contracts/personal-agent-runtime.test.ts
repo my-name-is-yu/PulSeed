@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -1370,34 +1370,33 @@ describe("durable personal-agent runtime production paths", () => {
         title: "MCP personal-agent goal",
         description: "Create through the real MCP tool surface.",
       });
-      const parsedMcp = JSON.parse(mcp.content[0].text) as { error: string };
-      expect(parsedMcp.error).toContain("capability:mcp_server:pulseed:pulseed_goal_create is disabled");
-      const blockedMcpGoalId = `goal_${stableId(stableTestJson({
-        command: "pulseed_goal_create",
+      const parsedMcp = JSON.parse(mcp.content[0].text) as { goal_id: string; error?: string };
+      expect(parsedMcp.error).toBeUndefined();
+      await expect(stateManager.loadGoal(parsedMcp.goal_id)).resolves.toMatchObject({
+        id: parsedMcp.goal_id,
         title: "MCP personal-agent goal",
-        description: "Create through the real MCP tool surface.",
-      })).slice(0, 16)}`;
-      const blockedMcpArgsFingerprint = stableId(stableTestJson({
+        status: "active",
+      });
+      const mcpArgsFingerprint = stableId(stableTestJson({
         title: "MCP personal-agent goal",
         description: "Create through the real MCP tool surface.",
       }));
-      const blockedMcpPendingRef = `pending:${blockedMcpArgsFingerprint}`;
-      await expect(stateManager.loadGoal(blockedMcpGoalId)).resolves.toBeNull();
+      const mcpPendingRef = `pending:${mcpArgsFingerprint}`;
       const mcpTrace = await store.loadTrace(stableTraceId([
         "explicit_command",
         "mcp",
         "pulseed_goal_create",
-        `pulseed_goal_create:${blockedMcpArgsFingerprint}`,
-        blockedMcpArgsFingerprint,
+        `pulseed_goal_create:${mcpArgsFingerprint}`,
+        mcpArgsFingerprint,
         "goal",
         "goal",
-        blockedMcpPendingRef,
+        mcpPendingRef,
       ].join(":")));
       expect(mcpTrace).toMatchObject({
         situation_frame: expect.objectContaining({ source_kind: "explicit_command" }),
         task_candidates: [expect.objectContaining({ target_kind: "goal", desired_effect: "create_goal" })],
-        capability_decisions: [expect.objectContaining({ decision: "blocked" })],
-        intervention_decisions: [expect.objectContaining({ decision: "block" })],
+        capability_decisions: [expect.objectContaining({ decision: "available" })],
+        intervention_decisions: [expect.objectContaining({ decision: "allow" })],
       });
 
       const triggerPayload = { goal_id: "goal-personal-agent", detail: "contract signal" };
@@ -1409,8 +1408,10 @@ describe("durable personal-agent runtime production paths", () => {
         event_type: "goal_signal",
         data: triggerPayload,
       });
-      const parsedTrigger = JSON.parse(mcpTrigger.content[0].text) as { error: string };
-      expect(parsedTrigger.error).toContain("capability:mcp_server:pulseed:pulseed_trigger is disabled");
+      const parsedTrigger = JSON.parse(mcpTrigger.content[0].text) as { event_id: string; status: string; error?: string };
+      expect(parsedTrigger.error).toBeUndefined();
+      expect(parsedTrigger.status).toBe("queued");
+      expect(readdirSync(path.join(baseDir, "events"))).toContain(`${parsedTrigger.event_id}.json`);
       const triggerSeed = stableId(stableTestJson({
         source: "contract-mcp",
         event_type: "goal_signal",
@@ -1420,8 +1421,8 @@ describe("durable personal-agent runtime production paths", () => {
       expect(triggerTrace).toMatchObject({
         situation_frame: expect.objectContaining({ source_kind: "explicit_command" }),
         task_candidates: [expect.objectContaining({ target_kind: "attention_only", desired_effect: "continue_route" })],
-        capability_decisions: [expect.objectContaining({ decision: "blocked" })],
-        intervention_decisions: [expect.objectContaining({ decision: "block" })],
+        capability_decisions: [expect.objectContaining({ decision: "available" })],
+        intervention_decisions: [expect.objectContaining({ decision: "allow" })],
       });
 
       const driveSystem = new DriveSystem(stateManager, {

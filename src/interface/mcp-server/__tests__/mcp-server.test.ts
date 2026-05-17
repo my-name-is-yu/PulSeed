@@ -190,14 +190,21 @@ describe("pulseed_goal_create", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("fails closed before mutating until the MCP capability descriptor is enabled and verified", async () => {
-    const loadGoal = vi.spyOn(deps.stateManager, "loadGoal");
+  it("admits the verified built-in MCP capability before creating a goal", async () => {
     const result = await toolGoalCreate(deps, { title: "My Goal", description: "Do something" });
-    const data = parseMCPText(result) as { error: string };
+    const data = parseMCPText(result) as { goal_id: string; title: string; status: string; error?: string };
 
-    expect(data.error).toContain("capability:mcp_server:pulseed:pulseed_goal_create is disabled");
-    expect(loadGoal).not.toHaveBeenCalled();
-    await expect(deps.stateManager.listGoalIds()).resolves.toEqual([]);
+    expect(data.error).toBeUndefined();
+    expect(data).toMatchObject({
+      goal_id: expect.stringMatching(/^goal_/),
+      title: "My Goal",
+      status: "active",
+    });
+    await expect(deps.stateManager.loadGoal(data.goal_id)).resolves.toMatchObject({
+      id: data.goal_id,
+      title: "My Goal",
+      status: "active",
+    });
   });
 });
 
@@ -237,15 +244,20 @@ describe("pulseed_trigger", () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("fails closed before writing an event until the MCP capability descriptor is enabled and verified", async () => {
+  it("admits the verified built-in MCP capability before writing a trigger event", async () => {
     const result = await toolTrigger(deps, {
       source: "test",
       event_type: "test.event",
       data: { key: "value" },
     });
-    const data = parseMCPText(result) as { error: string };
-    expect(data.error).toContain("capability:mcp_server:pulseed:pulseed_trigger is disabled");
+    const data = parseMCPText(result) as { event_id: string; status: string; error?: string };
+
+    expect(data.error).toBeUndefined();
+    expect(data).toMatchObject({
+      event_id: expect.stringMatching(/^mcp_trigger_/),
+      status: "queued",
+    });
     const eventEntries = await fsp.readdir(path.join(tmpDir, "events"));
-    expect(eventEntries.some((entry) => entry.startsWith("mcp_trigger_"))).toBe(false);
+    expect(eventEntries).toContain(`${data.event_id}.json`);
   });
 });

@@ -470,6 +470,7 @@ function admitMcpServerToolCapability(input: {
     toolName: input.toolName,
     operationKind: input.operationKind,
     sideEffectProfile: input.sideEffectProfile,
+    readinessState: "executable_verified",
   });
   const admission = admitCapabilityDescriptor({
     descriptor,
