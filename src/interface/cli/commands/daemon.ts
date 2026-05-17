@@ -30,7 +30,7 @@ import {
   RuntimeHealthStore,
 } from "../../../runtime/store/index.js";
 import type { RuntimeArtifactExpectation } from "../../../runtime/store/index.js";
-import { isDaemonRunning, probeDaemonHealth } from "../../../runtime/daemon/client.js";
+import { isDaemonRunning, probeDaemonHealth, readDaemonAuthTokenPort } from "../../../runtime/daemon/client.js";
 import { PluginLoader } from "../../../runtime/plugin-loader.js";
 import { NotifierRegistry } from "../../../runtime/notifier-registry.js";
 import { NotificationDispatcher } from "../../../runtime/notification-dispatcher.js";
@@ -102,20 +102,33 @@ async function waitForDetachedDaemonReady(baseDir: string, eventServerPort: numb
       return { ready: true, port: running.port };
     }
     lastDetail = `no healthy daemon response on port ${running.port}`;
-    if (eventServerPort > 0) {
-      const probe = await probeDaemonHealth({ host: "127.0.0.1", port: eventServerPort });
-      lastPort = eventServerPort;
+    const directProbePort = resolveDetachedDaemonProbePort(baseDir, eventServerPort, running.port);
+    if (directProbePort !== null) {
+      const probe = await probeDaemonHealth({ host: "127.0.0.1", port: directProbePort });
+      lastPort = directProbePort;
       if (probe.ok) {
-        return { ready: true, port: eventServerPort };
+        return { ready: true, port: directProbePort };
       }
       lastDetail = probe.error
-        ? `no healthy daemon response on port ${eventServerPort}: ${probe.error}`
-        : `no healthy daemon response on port ${eventServerPort}`;
+        ? `no healthy daemon response on port ${directProbePort}: ${probe.error}`
+        : `no healthy daemon response on port ${directProbePort}`;
     }
     await new Promise((resolve) => setTimeout(resolve, DETACHED_DAEMON_READY_POLL_MS));
   }
 
   return { ready: false, port: lastPort, detail: lastDetail };
+}
+
+function resolveDetachedDaemonProbePort(
+  baseDir: string,
+  eventServerPort: number,
+  runningProbePort: number,
+): number | null {
+  if (eventServerPort > 0) return eventServerPort;
+  if (eventServerPort === 0) {
+    return readDaemonAuthTokenPort(baseDir) ?? (runningProbePort > 0 ? runningProbePort : null);
+  }
+  return runningProbePort > 0 ? runningProbePort : null;
 }
 
 function resolveStatusArtifactExpectation(params: {

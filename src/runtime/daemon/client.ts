@@ -148,7 +148,7 @@ export function readDaemonAuthToken(baseDir?: string, expectedPort?: number): st
   return null;
 }
 
-function readDaemonAuthTokenPort(baseDir?: string): number | null {
+export function readDaemonAuthTokenPort(baseDir?: string): number | null {
   const tokenFile = readDaemonAuthTokenFile(baseDir);
   return tokenFile.status === "found" && isDaemonProbePort(tokenFile.token.port)
     ? tokenFile.token.port
