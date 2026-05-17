@@ -373,7 +373,7 @@ export function checkStateDirectoryPermissions(baseDir?: string): CheckResult {
       return {
         name: "State permissions",
         status: "warn",
-        detail: `${displayDir} is ${formatOctalMode(mode)}; recommended 0700`,
+        detail: `${displayDir} is ${formatOctalMode(mode)}; recommended 0700; run \`pulseed doctor --repair\` to fix`,
       };
     }
     return { name: "State permissions", status: "pass", detail: `${displayDir} is ${formatOctalMode(mode)}` };
@@ -474,7 +474,7 @@ export function checkProviderConfigPermissions(baseDir?: string): CheckResult {
       return {
         name: "Provider permissions",
         status: "warn",
-        detail: `${displayPath} is ${formatOctalMode(mode)}; recommended 0600 because it stores api_key`,
+        detail: `${displayPath} is ${formatOctalMode(mode)}; recommended 0600 because it stores api_key; run \`pulseed doctor --repair\` to fix`,
       };
     }
     return { name: "Provider permissions", status: "pass", detail: `${displayPath} is ${formatOctalMode(mode)}` };

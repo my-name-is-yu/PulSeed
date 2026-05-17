@@ -465,6 +465,7 @@ describe("checkStateDirectoryPermissions", () => {
     const result = checkStateDirectoryPermissions(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("recommended 0700");
+    expect(result.detail).toContain("pulseed doctor --repair");
   });
 
   it("repairs group/world accessible state directory permissions", () => {
@@ -516,6 +517,7 @@ describe("checkProviderConfigPermissions", () => {
     const result = checkProviderConfigPermissions(tmpDir);
     expect(result.status).toBe("warn");
     expect(result.detail).toContain("recommended 0600");
+    expect(result.detail).toContain("pulseed doctor --repair");
   });
 
   it("warns before parsing oversized provider.json", () => {
