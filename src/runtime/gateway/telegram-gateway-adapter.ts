@@ -46,11 +46,18 @@ import {
 import type { INotifier, NotificationEvent, NotificationEventType } from "../../base/types/plugin.js";
 import type { ChatEvent } from "../../interface/chat/chat-events.js";
 import { createUserVisibleSeedyTurnPresence } from "../../interface/chat/seedy-turn-presence.js";
+import {
+  findSurfaceActionBindingByToken,
+  surfaceActionBindingToken,
+  validateSurfaceActionBinding,
+  type SurfaceActionBinding,
+} from "../surface-projection-protocol.js";
 
 const TELEGRAM_INTEGER_ID_TOKEN = /^-?(?:0|[1-9]\d*)$/;
 const MIN_POLLING_TIMEOUT_SECONDS = 1;
 const MAX_POLLING_TIMEOUT_SECONDS = 60;
 const TELEGRAM_PEER_ACTION_CALLBACK_PREFIX = "psp1";
+const TELEGRAM_SURFACE_BINDING_CALLBACK_PREFIX = "psb1";
 
 const TELEGRAM_PEER_ACTION_CODE = {
   more_like_this: "mt",
@@ -91,13 +98,26 @@ function telegramOutboundChannelPolicyRef(channelName: string): string {
 }
 
 function telegramPeerReplyMarkup(message: OutboundConversationMessage): TelegramInlineKeyboardMarkup | undefined {
-  const buttons = [
-    ...message.trigger_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
-    ...message.feedback_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
-  ];
+  const actionBindings = message.action_bindings ?? [];
+  const buttons = actionBindings.length > 0
+    ? actionBindings.map(telegramPeerActionBindingButton)
+    : [
+      ...message.trigger_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
+      ...message.feedback_actions.map((action) => telegramPeerActionButton(action.action, action.candidate_id)),
+    ];
   if (buttons.length === 0) return undefined;
   return {
     inline_keyboard: chunkButtons(buttons, 2),
+  };
+}
+
+function telegramPeerActionBindingButton(binding: SurfaceActionBinding): { text: string; callback_data: string } {
+  return {
+    text: telegramPeerActionLabel(binding.action_kind),
+    callback_data: [
+      TELEGRAM_SURFACE_BINDING_CALLBACK_PREFIX,
+      surfaceActionBindingToken(binding),
+    ].join(":"),
   };
 }
 
@@ -115,16 +135,27 @@ function telegramPeerActionButton(
   };
 }
 
-function parseTelegramPeerActionCallbackData(data: string): {
-  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"];
-  candidateId: string;
-} | null {
+type ParsedTelegramPeerActionCallback =
+  | {
+    kind: "surface_binding";
+    bindingToken: string;
+  }
+  | {
+    kind: "legacy_peer_action";
+    action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"];
+    candidateId: string;
+  };
+
+function parseTelegramPeerActionCallbackData(data: string): ParsedTelegramPeerActionCallback | null {
   const [prefix, code, ...candidateParts] = data.split(":");
+  if (prefix === TELEGRAM_SURFACE_BINDING_CALLBACK_PREFIX && code && candidateParts.length === 0) {
+    return { kind: "surface_binding", bindingToken: code };
+  }
   if (prefix !== TELEGRAM_PEER_ACTION_CALLBACK_PREFIX || !code) return null;
   const action = TELEGRAM_PEER_ACTION_FROM_CODE[code];
   const candidateId = candidateParts.join(":");
   if (!action || candidateId.trim().length === 0) return null;
-  return { action, candidateId };
+  return { kind: "legacy_peer_action", action, candidateId };
 }
 
 function telegramPeerDeliveryMatchesCallback(
@@ -140,9 +171,13 @@ function telegramPeerDeliveryMatchesCallback(
 }
 
 function telegramPeerActionLabel(
-  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"],
+  action: PeerInitiativeFeedbackAction["action"] | PeerInitiativeTriggerAction["action"] | SurfaceActionBinding["action_kind"],
 ): string {
   switch (action) {
+    case "approve":
+      return "承認";
+    case "reject":
+      return "却下";
     case "show_prepared":
       return "見る";
     case "use_once":
@@ -159,6 +194,12 @@ function telegramPeerActionLabel(
       return "読み違い";
     case "mute_this_kind":
       return "この種類を止める";
+    case "open":
+      return "開く";
+    case "inspect":
+      return "確認";
+    case "dismiss":
+      return "閉じる";
   }
 }
 
@@ -223,7 +264,11 @@ interface TelegramGatewayRuntimeOptions {
   interactionAuthorityStore?: Pick<InteractionAuthorityStore, "recordDecision">;
   peerInitiativeStore?: Pick<
     PeerInitiativeStore,
-    "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+    | "appendFeedbackProjection"
+    | "getFeedbackProjectionForAction"
+    | "getLatestDeliveryForActionBinding"
+    | "getLatestDeliveryForCandidate"
+    | "getPreparedArtifact"
   >;
 }
 
@@ -360,7 +405,11 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
   private readonly interactionAuthorityStore: Pick<InteractionAuthorityStore, "recordDecision">;
   private readonly peerInitiativeStore: Pick<
     PeerInitiativeStore,
-    "appendFeedbackProjection" | "getFeedbackProjectionForAction" | "getLatestDeliveryForCandidate" | "getPreparedArtifact"
+    | "appendFeedbackProjection"
+    | "getFeedbackProjectionForAction"
+    | "getLatestDeliveryForActionBinding"
+    | "getLatestDeliveryForCandidate"
+    | "getPreparedArtifact"
   >;
   private running = false;
   private loopPromise: Promise<void> | null = null;
@@ -575,8 +624,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     ) {
       await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
         callbackId: query.id,
-        candidateId: parsedAction.candidateId,
-        action: parsedAction.action,
+        candidateId: parsedAction.kind === "legacy_peer_action" ? parsedAction.candidateId : undefined,
+        action: parsedAction.kind === "legacy_peer_action" ? parsedAction.action : undefined,
         deliveryMatches: false,
         actionMatches: false,
         reason: "Telegram callback was missing a valid sender, chat, or message binding.",
@@ -592,8 +641,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
     ) {
       await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
         callbackId: query.id,
-        candidateId: parsedAction.candidateId,
-        action: parsedAction.action,
+        candidateId: parsedAction.kind === "legacy_peer_action" ? parsedAction.candidateId : undefined,
+        action: parsedAction.kind === "legacy_peer_action" ? parsedAction.action : undefined,
         callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
         callbackTransportMessageRef: String(messageId),
         deliveryMatches: false,
@@ -606,20 +655,45 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
 
     this.timing.beginTurn({ updateId, messageId });
     await this.recordTiming();
-    const delivery = await this.peerInitiativeStore.getLatestDeliveryForCandidate({
-      candidateId: parsedAction.candidateId,
-      surface: "telegram",
-    });
-    const feedbackAction = delivery?.outbound_message?.feedback_actions.find((action) =>
-      action.action === parsedAction.action
+    const delivery = parsedAction.kind === "surface_binding"
+      ? await this.peerInitiativeStore.getLatestDeliveryForActionBinding({
+        bindingId: parsedAction.bindingToken,
+        surface: "telegram",
+      })
+      : await this.peerInitiativeStore.getLatestDeliveryForCandidate({
+        candidateId: parsedAction.candidateId,
+        surface: "telegram",
+      });
+    const actionBinding = parsedAction.kind === "surface_binding"
+      ? findSurfaceActionBindingByToken(delivery?.outbound_message?.action_bindings ?? [], parsedAction.bindingToken)
+      : null;
+    const bindingValidation = actionBinding
+      ? validateSurfaceActionBinding({
+        binding: actionBinding,
+        surface: "telegram_peer_delivery",
+        surfaceInstanceRef: telegramOutboundTargetBindingRef(chatId),
+        conversationId: telegramOutboundTargetBindingRef(chatId),
+        now: new Date().toISOString(),
+      })
+      : null;
+    const action = parsedAction.kind === "surface_binding"
+      ? actionBinding?.action_kind
+      : parsedAction.action;
+    const candidateId = parsedAction.kind === "surface_binding"
+      ? actionBinding?.target.ref
+      : parsedAction.candidateId;
+    const feedbackAction = delivery?.outbound_message?.feedback_actions.find((candidateAction) =>
+      candidateAction.action === action
     );
-    const triggerAction = delivery?.outbound_message?.trigger_actions.find((action) =>
-      action.action === parsedAction.action
+    const triggerAction = delivery?.outbound_message?.trigger_actions.find((candidateAction) =>
+      candidateAction.action === action
     );
+    const bindingAccepted = parsedAction.kind === "legacy_peer_action"
+      || bindingValidation?.status === "accepted";
     const callbackAuthorityDecision = await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
       callbackId: query.id,
-      candidateId: parsedAction.candidateId,
-      action: parsedAction.action,
+      candidateId,
+      action,
       deliveryId: delivery?.delivery_id,
       targetBindingRef: delivery?.target_binding_ref,
       channelPolicyRef: delivery?.outbound_message?.channel_policy_ref,
@@ -627,7 +701,10 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       callbackTargetBindingRef: telegramOutboundTargetBindingRef(chatId),
       callbackTransportMessageRef: String(messageId),
       deliveryMatches: telegramPeerDeliveryMatchesCallback(delivery, chatId, messageId),
-      actionMatches: Boolean(feedbackAction || triggerAction),
+      actionMatches: bindingAccepted && Boolean(feedbackAction || triggerAction),
+      reason: bindingValidation?.status === "rejected"
+        ? `SurfaceActionBinding rejected Telegram callback: ${bindingValidation.reason}`
+        : undefined,
     }));
     if (!callbackAuthorityDecision.can_execute) {
       await this.timing.recordOutbound("peer_initiative_callback_ack", () =>
@@ -670,8 +747,8 @@ export class TelegramGatewayAdapter implements ChannelAdapter {
       }));
       await this.interactionAuthorityStore.recordDecision(projectTelegramCallbackAuthority({
         callbackId: query.id,
-        candidateId: parsedAction.candidateId,
-        action: parsedAction.action,
+        candidateId,
+        action,
         deliveryId: delivery?.delivery_id,
         targetBindingRef: delivery?.target_binding_ref,
         channelPolicyRef: delivery?.outbound_message?.channel_policy_ref,
