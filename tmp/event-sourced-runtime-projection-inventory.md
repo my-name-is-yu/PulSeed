@@ -1,42 +1,62 @@
 # Event-Sourced Runtime Projection Inventory
 
-This inventory is the working classification for the event-sourced runtime projection closure.
+This inventory is the completeness audit for PR #2003. It is intentionally not
+a defense of the first diff: every required domain is classified by replay/apply
+behavior and by whether the current-state row is actually a rebuild target.
 
 ## Classification Legend
 
-- `event-sourced projection`: current state is derived from typed runtime events linked into RuntimeGraph.
-- `narrow owner table`: a table that owns durable state directly by design, with explicit rationale.
-- `compatibility/migration/debug/config/workspace boundary`: a direct write allowed because it is not runtime projection truth.
-- `blocker`: a production projection/current-state write that cannot be closed in this PR, with a filed follow-up.
+- `already event-sourced before this PR`: the production write path already
+  appended a typed runtime event and RuntimeGraph linkage before this PR.
+- `newly converted in this PR`: this PR added the typed event append and
+  RuntimeGraph linkage before the projection/current-state write.
+- `current-state apply-supported`: `pulseed runtime event-log rebuild` without
+  `--dry-run` deterministically restores the relevant current-state rows from
+  `runtime_events` and RuntimeGraph evidence.
+- `rebuild-summary-only`: rebuild emits deterministic operator/debug summary
+  snapshots, but does not rewrite current-state owner/queue/history rows.
+- `true narrow owner table`: the table owns live state directly by design and is
+  not hidden replay-derived projection truth.
+- `remaining blocker`: a production current-state projection that should be
+  event-rebuildable but is not closed.
 
-## Required Domains
+## Required Domain Classification
 
-| Domain | Classification | Notes |
-| --- | --- | --- |
-| Interaction authority decisions | event-sourced projection | `InteractionAuthorityStore.recordDecision()` appends `runtime-event-payload/authority-decision/v1` through `RuntimeEventLogStore` before writing `interaction_authority_decisions`. |
-| Approval resume outcomes | event-sourced projection | `ToolExecutor` approval resume emits authority decisions before wait-plan resume mutation. Replay suppresses duplicate approval resumes by typed event idempotency and resume state. |
-| Notification/outbox dedupe | event-sourced projection | `OutboxStore.append()` records a personal-agent notification trace before enqueue; `outbox_records` keeps the current queue/dedupe projection. |
-| Peer delivery state | event-sourced projection plus narrow transport receipt owner | Telegram peer delivery/callback authority appends typed authority events. `peer_deliveries` and transport receipts remain delivery current-state projections with side-effect refs. |
-| Memory correction and truth maintenance projection | narrow owner table with event-sourced projection records | `MemoryTruthMaintenanceStore` owns typed claims/corrections/tombstones/conflicts/recalls. Runtime Event Log summaries consume memory truth events and projection records; the claim tables are owner truth, not replay-derived projections. |
-| Schedule wake execution | event-sourced projection | Scheduled wake production paths record personal-agent traces and rebuild `schedule_wake_execution_summary`; `schedule_entries` is the scheduler owner table. |
-| Tool execution outcome | event-sourced projection | Tool admission/outcome traces and approval authority events rebuild `tool_execution_outcome_summary`; replay tests prove denied calls are not re-executed. |
-| Goal/task mutation | event-sourced projection | `GoalTaskStateStore` appends `runtime-event-payload/goal-task-mutation/v1` before `goal_records` and `task_records` writes. |
-| Runtime-control operation projection | event-sourced projection | `RuntimeOperationStore.save()` now appends `runtime-event-payload/runtime-control-operation/v1` and RuntimeGraph linkage before `runtime_operations` and operation audit writes. |
-| Session/run/daemon status projection | narrow owner table / compatibility boundary | `background_runs`, process-session snapshots, daemon health, supervisor snapshots, and locks remain owner/status tables. They are not replay-derived normal projections in this PR. |
-| Attention-led commitment candidate lifecycle | event-sourced projection | `AttentionStateStore.saveCommitmentCandidates()` now appends `runtime-event-payload/attention-commitment/v1` before `attention_commitment_candidates`. Duplicate replay keys return the existing candidate instead of overwriting newer lifecycle state. |
-| Shadow-held / ask-confirmation / watching / active-care commitment transitions | event-sourced projection | `AttentionStateStore.applyCommitmentControl()` appends typed commitment lifecycle events before projection updates; rebuild exposes previous/current materialization state. |
-| Commitment operation materialization refs | event-sourced projection | Commitment events include `materialization_ref` and RuntimeGraph commitment/materialization target refs; replay policy is projection-only and deduped by typed idempotency key. |
-| Commitment feedback/suppression refs | event-sourced projection | Commitment lifecycle events include typed `feedback_ref`, `feedback_refs`, and `suppression_refs` in the rebuild summary. |
-| Resident proactive commitment operation selection | event-sourced projection plus delivery owner tables | Replay coverage runs resident commitment selection through the production resident caller path and proves duplicate replay does not produce an extra peer operation. |
-| ChatRunner/gateway commitment shadow intake | event-sourced projection | Chat shadow intake writes commitment candidates through `AttentionStateStore`; the candidate write is now event-sourced and replay-key guarded. |
+| Domain / table | Event-source status | Rebuild/apply classification | Chain and rationale |
+| --- | --- | --- | --- |
+| `goal_records` | Already event-sourced before this PR through `GoalTaskStateStore.recordGoalTaskMutation()`. | Current-state apply-supported, newly broadened in this PR. | `GoalTaskStateStore.save/archive/delete` appends `runtime-event-payload/goal-task-mutation/v1`; the event linker writes RuntimeGraph event/target evidence; the store writes `goal_records` and goal/milestone RuntimeGraph source-of-truth nodes; apply now restores `goal_records` plus goal/milestone RuntimeGraph source-of-truth nodes from the final typed mutation event. No external side effect is replayed; repeated apply reuses the same projection rebuild event. |
+| `task_records` | Already event-sourced before this PR through `GoalTaskStateStore.recordGoalTaskMutation()`. | Current-state apply-supported, newly broadened in this PR. | Task save/delete appends `runtime-event-payload/goal-task-mutation/v1`; RuntimeGraph event/target evidence is linked; the store writes `task_records` and task RuntimeGraph source-of-truth nodes; apply now restores `task_records`, task nodes, and goal-task edges from typed task mutation events. No external side effect is replayed; repeated apply is idempotent. |
+| `interaction_authority_decisions` | Already event-sourced before this PR through `InteractionAuthorityStore.recordDecision()`. | Current-state apply-supported, newly broadened in this PR. | `recordDecision()` appends `runtime-event-payload/authority-decision/v1`; RuntimeGraph links authority and side-effect refs; the store writes `interaction_authority_decisions`; apply now restores the decision row from the typed authority payload. Duplicate side effects are suppressed by the authority store's side-effect-guard disposition and replay metadata. |
+| `runtime_operations` | Newly converted in this PR. | Current-state apply-supported. | `RuntimeOperationStore.save()` now appends `runtime-event-payload/runtime-control-operation/v1` before the `runtime_operations` write; RuntimeGraph links source/target/projection refs; apply restores the latest terminal/current operation row from typed events. Runtime-control operation rows are projection state only, and repeated rebuild apply reuses the same projection event. |
+| `attention_commitment_candidates` | Newly converted in this PR. | Current-state apply-supported. | `AttentionStateStore.saveCommitmentCandidates()` and commitment lifecycle control append `runtime-event-payload/attention-commitment/v1` before candidate projection writes; RuntimeGraph links commitment/materialization/feedback/suppression refs; apply restores the final candidate row from typed events. Replay is guarded by commitment replay keys and does not duplicate commitment materialization side effects. |
+| Shadow-held / ask-confirmation / watching / active-care commitment refs | Newly converted in this PR as part of the attention commitment lifecycle event. | Current-state apply-supported for the candidate row; lifecycle/materialization/feedback/suppression summaries are rebuild-summary-only. | The current candidate row is restored from the final commitment event. Operator lifecycle summaries expose materialization, feedback, and suppression refs without replaying transport or user-visible effects. |
+| Notification/outbox dedupe projection and `outbox_records` | Already event-sourced before this PR through outbox admission traces. | Rebuild-summary-only for `notification_outbox_dedupe_state`; `outbox_records` is a side-effect queue/dedupe owner, not apply-supported. | `OutboxStore.append()` records a personal-agent trace before enqueue and dedupes by correlation/payload. Rebuild derives notification/outbox dedupe state from events/RuntimeGraph. Apply intentionally does not recreate `outbox_records`; the broader apply test deletes the queue, rebuilds summaries, and proves the queue stays empty while dedupe evidence is present. Replay tests prove duplicate appends reuse the existing queue item and distinct side-effect refs stay distinct. |
+| Peer delivery projection and peer delivery tables | Already event-sourced before this PR through interaction authority and peer delivery traces. | Rebuild-summary-only for `peer_delivery_state`; `peer_initiatives`, `peer_deliveries`, feedback, and calibration tables are true narrow delivery owners. | Authority decisions append event evidence before send/notify authority is recorded; RuntimeGraph links delivery/transport refs. Rebuild summarizes peer delivery state. Apply does not rewrite peer delivery owner rows because doing so would resurrect transport receipts; replay tests prove duplicate peer delivery is suppressed while distinct delivery refs remain append-only evidence. |
+| Schedule wake execution projection | Already event-sourced before this PR through scheduled wake personal-agent traces. | Rebuild-summary-only for `schedule_wake_execution_summary`; `schedule_entries` and `schedule_run_history` are true scheduler owner/history tables. | Scheduled wake execution appends trace evidence with schedule refs and RuntimeGraph linkage. Rebuild summarizes wake executions. Apply does not rewrite scheduler rows because schedule ownership and due-time mutation belong to `ScheduleEngine`; replay tests prove restart/replay does not run an already-handled due wake again. |
+| Tool execution outcome projection | Already event-sourced before this PR through ToolExecutor admission/outcome traces and authority decisions. | Rebuild-summary-only for `tool_execution_outcome_summary`; tool call effects are not current-state apply targets. | Tool admission/outcome appends typed trace/authority evidence before or instead of execution. Rebuild summarizes admitted/blocked/executed outcomes from events/RuntimeGraph. Apply does not rerun tools or write a tool-effect table; replay tests prove denied calls are not executed again. |
+| Memory projection records and memory truth projection records | Already event-sourced before this PR through `MemoryTruthMaintenanceStore` runtime events and memory correction authority traces. | Rebuild-summary-only for `memory_correction_invalidation_summary` and `memory_truth_maintenance_summary`; memory truth tables and `memory_projection_records` are true narrow owner/projection records, not event-log apply targets. | `MemoryTruthMaintenanceStore` commits claims, correction refs, tombstones, conflict sets, recall records, and projection records transactionally, and appends `runtime-event-payload/memory-truth-maintenance/v1` evidence in that transaction. Rebuild summarizes correction invalidation and truth maintenance evidence. Apply does not rewrite memory truth rows because those owner rows are the canonical correction/tombstone state, and replaying event evidence as truth would risk reactivating stale or explicitly forgotten memory. Existing memory truth replay/product tests prove stale Soil/projection records do not override owner truth. |
+| Approval resume outcomes | Already event-sourced before this PR through authority decisions and approval resume events. | Rebuild-summary-only for `approval_resume_outcomes`; `permission_wait_plans` and `approval_records` are true wait/approval owner tables. | Approval resume appends authority/resume evidence and mutates wait-plan owner state through the canonical approval path. Rebuild summarizes outcomes. Apply does not rewrite wait plans because resume ownership is state-machine-controlled; replay tests prove already-resumed approvals are not resumed twice. |
+| Session/run/daemon status projections used by normal/operator surfaces | RuntimeGraph/session snapshots existed before this PR, but liveness/status rows are not event-log projections. | True narrow owner/status tables and compatibility/status boundary, not current-state apply-supported. | `background_runs`, process-session snapshots, daemon health, supervisor snapshots, leases, and locks represent live coordination and liveness. Applying them from historical events would resurrect stale liveness. Normal/operator surfaces should read the status owners or RuntimeGraph/session registry projections, not hidden event-log replay rows. Existing session-registry tests prove durable ledger records beat synthetic process projections for the same run id. |
 
-## Inventory Evidence
+## Current-State Apply Targets
 
-## Rebuild / Apply Coverage
+`pulseed runtime event-log rebuild` without `--dry-run` now records the rebuild
+event first, then restores these event-backed current-state rows:
 
-`pulseed runtime event-log rebuild` supports both trace-scoped rebuilds and whole-control-DB rebuilds. Without `--dry-run`, it records the rebuild event first, restores event-backed current-state rows for `runtime_operations` and `attention_commitment_candidates` from typed runtime event payloads, and writes deterministic projection snapshots into `runtime_event_projection_snapshots`.
+- `goal_records`
+- `task_records`
+- goal/task/milestone RuntimeGraph source-of-truth nodes and edges
+- `interaction_authority_decisions`
+- `runtime_operations`
+- `attention_commitment_candidates`
 
-Applied projection names:
+The apply path is deterministic over `runtime_events` and RuntimeGraph evidence.
+It does not read current-state projection tables as hidden truth.
+
+## Rebuild-Summary-Only Projections
+
+These projection snapshots are deterministic operator/debug summaries. They are
+not current-state row apply targets:
 
 - `interaction_authority_summary`
 - `approval_resume_outcomes`
@@ -49,24 +69,35 @@ Applied projection names:
 - `runtime_control_operation_summary`
 - `attention_commitment_lifecycle_summary`
 
-## Guard
+## Guard And Test Evidence
 
-`npm run check:database-first-legacy-stores` now includes an event-sourced projection write guard for:
+- `npm run check:database-first-legacy-stores` guards direct production writes
+  to event-sourced projection tables:
+  `attention_commitment_candidates`, `goal_records`,
+  `interaction_authority_decisions`, `memory_projection_records`,
+  `runtime_event_projection_snapshots`, `runtime_operations`, and
+  `task_records`.
+- `tests/contracts/runtime-event-log-source-of-truth.test.ts` now deletes
+  `goal_records`, `task_records`, `interaction_authority_decisions`,
+  `runtime_operations`, `attention_commitment_candidates`,
+  `outbox_records`, and goal/task RuntimeGraph nodes, runs rebuild apply, and
+  proves the five apply-supported current-state projections are restored while
+  the side-effect outbox queue is not recreated.
+- `tests/replay/runtime-event-log-source-of-truth-replay.test.ts` proves replay
+  does not duplicate outbox notifications, schedule runs, denied tool calls,
+  peer deliveries, memory correction effects, or commitment operations while
+  preserving distinct side-effect refs.
+- `tests/replay/memory-truth-maintenance-replay.test.ts` and
+  `tests/product-gauntlet/memory-truth-maintenance-gauntlet.test.ts` prove
+  memory owner truth beats stale projection/Soil compatibility data.
+- `src/runtime/session-registry/__tests__/runtime-session-registry.test.ts`
+  proves durable runtime ledger records beat synthetic process projections for
+  run status surfaces.
 
-- `attention_commitment_candidates`
-- `goal_records`
-- `interaction_authority_decisions`
-- `memory_projection_records`
-- `runtime_event_projection_snapshots`
-- `runtime_operations`
-- `task_records`
+## Remaining Blockers
 
-New production writes to those tables fail unless the same module uses the Runtime Event Log append path.
-
-## Remaining Narrow Owner Tables
-
-- `memory_claims`, `memory_correction_refs`, `memory_forget_tombstones`, `memory_conflict_sets`, and `memory_recall_records`: memory truth owner tables from #1998.
-- `schedule_entries` and `schedule_run_history`: scheduler owner/history tables; wake execution summaries are rebuildable from events.
-- `background_runs`, `runtime_health_records`, daemon/supervisor/process-session snapshots, leases, and locks: runtime status/coordination owners, not projection truth for visible side effects.
-- `permission_wait_plans` and `approval_records`: approval/wait owner tables; resume outcomes are event-sourced through authority decisions.
-- `peer_initiatives`, `peer_deliveries`, and peer feedback/calibration tables: delivery and feedback current-state owners; visible delivery authority is event-sourced.
+No domain is classified as an event-sourced current-state projection without
+either apply support or an explicit owner/summary-only rationale. The
+side-effect queues, transport receipts, scheduler rows, tool effects, memory
+truth rows, approval wait rows, and daemon/session liveness rows are intentionally
+not event-log apply targets in PR #2003.

@@ -281,6 +281,9 @@ export interface RuntimeEventProjectionApplyResult {
 }
 
 export interface RuntimeEventProjectionCurrentStateApplySummary {
+  goal_records: number;
+  task_records: number;
+  interaction_authority_decisions: number;
   runtime_operations: number;
   attention_commitment_candidates: number;
 }
@@ -975,9 +978,38 @@ function applyEventBackedCurrentStateProjections(
   sqlite: SqliteDatabase,
   events: readonly RuntimeEventEnvelope[],
 ): RuntimeEventProjectionCurrentStateApplySummary {
+  const goals = new Map<string, {
+    action: "save" | "archive" | "delete";
+    goal: Goal;
+  }>();
+  const tasks = new Map<string, {
+    action: "save" | "delete";
+    goalId: string;
+    taskId: string;
+    task: Task | null;
+  }>();
+  const authorityDecisions = new Map<string, ExecutionAuthorityDecision>();
   const runtimeOperations = new Map<string, RuntimeControlOperation>();
   const commitmentCandidates = new Map<string, CommitmentCandidate>();
   for (const event of events) {
+    if (event.payload.schema_version === "runtime-event-payload/goal-task-mutation/v1") {
+      if (event.payload.mutation.entity_kind === "goal") {
+        goals.set(event.payload.mutation.goal.id, {
+          action: event.payload.mutation.action,
+          goal: GoalSchema.parse(event.payload.mutation.goal),
+        });
+      } else {
+        tasks.set(`${event.payload.mutation.goal_id}:${event.payload.mutation.task_id}`, {
+          action: event.payload.mutation.action,
+          goalId: event.payload.mutation.goal_id,
+          taskId: event.payload.mutation.task_id,
+          task: event.payload.mutation.task ? TaskSchema.parse(event.payload.mutation.task) : null,
+        });
+      }
+    }
+    if (event.payload.schema_version === "runtime-event-payload/authority-decision/v1") {
+      authorityDecisions.set(event.payload.decision.decision_id, event.payload.decision);
+    }
     if (event.payload.schema_version === "runtime-event-payload/runtime-control-operation/v1") {
       const operation = RuntimeControlOperationSchema.parse(event.payload.operation);
       const current = runtimeOperations.get(operation.operation_id);
@@ -993,6 +1025,30 @@ function applyEventBackedCurrentStateProjections(
       }
     }
   }
+  const deletedGoalIds = new Set<string>();
+  for (const [goalId, mutation] of goals) {
+    if (mutation.action === "delete") {
+      deletedGoalIds.add(goalId);
+      deleteGoalProjection(sqlite, goalId);
+      continue;
+    }
+    upsertGoalProjection(sqlite, mutation.goal, mutation.action === "archive" ? 1 : 0);
+  }
+  for (const mutation of goals.values()) {
+    if (mutation.action !== "delete") {
+      upsertGoalParentProjectionEdge(sqlite, mutation.goal);
+    }
+  }
+  for (const mutation of tasks.values()) {
+    if (mutation.action === "delete" || !mutation.task || deletedGoalIds.has(mutation.goalId)) {
+      deleteTaskProjection(sqlite, mutation.goalId, mutation.taskId);
+      continue;
+    }
+    upsertTaskProjection(sqlite, mutation.task);
+  }
+  for (const decision of authorityDecisions.values()) {
+    upsertInteractionAuthorityDecisionProjection(sqlite, decision);
+  }
   for (const operation of runtimeOperations.values()) {
     upsertRuntimeOperationProjection(sqlite, operation);
   }
@@ -1000,9 +1056,293 @@ function applyEventBackedCurrentStateProjections(
     upsertCommitmentCandidateProjection(sqlite, candidate);
   }
   return {
+    goal_records: [...goals.values()].filter((mutation) => mutation.action !== "delete").length,
+    task_records: [...tasks.values()].filter((mutation) =>
+      mutation.action !== "delete"
+      && mutation.task
+      && !deletedGoalIds.has(mutation.goalId)
+    ).length,
+    interaction_authority_decisions: authorityDecisions.size,
     runtime_operations: runtimeOperations.size,
     attention_commitment_candidates: commitmentCandidates.size,
   };
+}
+
+function upsertGoalProjection(sqlite: SqliteDatabase, goalInput: Goal, archived: 0 | 1): void {
+  const goal = GoalSchema.parse(goalInput);
+  upsertProjectionRuntimeGraphNode(sqlite, buildGoalProjectionRuntimeGraphNode(goal, archived));
+  if (goal.node_type === "milestone") {
+    upsertProjectionRuntimeGraphNode(sqlite, buildMilestoneProjectionRuntimeGraphNode(goal, archived));
+    insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+      schema_version: "runtime-graph-edge/v1",
+      edge_id: `runtime-graph:edge:goal-milestone:${goal.id}`,
+      edge_kind: "produced",
+      from_node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+      to_node_id: milestoneProjectionRuntimeGraphNodeId(goal.id),
+      created_at: validIsoOrNow(goal.updated_at),
+      provenance_refs: [{ kind: "goal", ref: goal.id }],
+    });
+  }
+  sqlite.prepare(`
+    INSERT INTO goal_records (goal_id, parent_goal_id, status, updated_at, archived, goal_json)
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(goal_id) DO UPDATE SET
+      parent_goal_id = excluded.parent_goal_id,
+      status = excluded.status,
+      updated_at = excluded.updated_at,
+      archived = excluded.archived,
+      goal_json = excluded.goal_json
+  `).run(goal.id, goal.parent_id ?? null, goal.status, goal.updated_at, archived, JSON.stringify(goal));
+}
+
+function upsertGoalParentProjectionEdge(sqlite: SqliteDatabase, goalInput: Goal): void {
+  const goal = GoalSchema.parse(goalInput);
+  if (!goal.parent_id) return;
+  insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+    schema_version: "runtime-graph-edge/v1",
+    edge_id: `runtime-graph:edge:goal-parent:${goal.parent_id}:${goal.id}`,
+    edge_kind: "parent_of",
+    from_node_id: goalProjectionRuntimeGraphNodeId(goal.parent_id),
+    to_node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+    created_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal", ref: goal.id }],
+  });
+}
+
+function deleteGoalProjection(sqlite: SqliteDatabase, goalId: string): void {
+  const taskRows = sqlite.prepare("SELECT task_id FROM task_records WHERE goal_id = ?").all(goalId) as Array<{ task_id: string }>;
+  sqlite.prepare("DELETE FROM goal_records WHERE goal_id = ?").run(goalId);
+  sqlite.prepare("DELETE FROM task_records WHERE goal_id = ?").run(goalId);
+  for (const row of taskRows) {
+    sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskProjectionRuntimeGraphNodeId(row.task_id));
+  }
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(milestoneProjectionRuntimeGraphNodeId(goalId));
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(goalProjectionRuntimeGraphNodeId(goalId));
+}
+
+function upsertTaskProjection(sqlite: SqliteDatabase, taskInput: Task): void {
+  const task = TaskSchema.parse(taskInput);
+  const updatedAt = validIsoOrNow(task.completed_at ?? task.started_at ?? task.created_at);
+  upsertProjectionRuntimeGraphNode(sqlite, buildTaskProjectionRuntimeGraphNode(task, updatedAt));
+  insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite, {
+    schema_version: "runtime-graph-edge/v1",
+    edge_id: `runtime-graph:edge:goal-task:${task.goal_id}:${task.id}`,
+    edge_kind: "parent_of",
+    from_node_id: goalProjectionRuntimeGraphNodeId(task.goal_id),
+    to_node_id: taskProjectionRuntimeGraphNodeId(task.id),
+    created_at: updatedAt,
+    provenance_refs: [
+      { kind: "goal", ref: task.goal_id },
+      { kind: "task", ref: task.id },
+    ],
+  });
+  sqlite.prepare(`
+    INSERT INTO task_records (
+      goal_id, task_id, status, primary_dimension, strategy_id,
+      created_at, started_at, completed_at, updated_at, task_json
+    )
+    VALUES (
+      @goal_id, @task_id, @status, @primary_dimension, @strategy_id,
+      @created_at, @started_at, @completed_at, @updated_at, json(@task_json)
+    )
+    ON CONFLICT(goal_id, task_id) DO UPDATE SET
+      status = excluded.status,
+      primary_dimension = excluded.primary_dimension,
+      strategy_id = excluded.strategy_id,
+      created_at = excluded.created_at,
+      started_at = excluded.started_at,
+      completed_at = excluded.completed_at,
+      updated_at = excluded.updated_at,
+      task_json = excluded.task_json
+  `).run({
+    goal_id: task.goal_id,
+    task_id: task.id,
+    status: task.status,
+    primary_dimension: task.primary_dimension,
+    strategy_id: task.strategy_id ?? null,
+    created_at: task.created_at,
+    started_at: task.started_at ?? null,
+    completed_at: task.completed_at ?? null,
+    updated_at: updatedAt,
+    task_json: JSON.stringify(task),
+  });
+}
+
+function deleteTaskProjection(sqlite: SqliteDatabase, goalId: string, taskId: string): void {
+  sqlite.prepare("DELETE FROM task_records WHERE goal_id = ? AND task_id = ?").run(goalId, taskId);
+  sqlite.prepare("DELETE FROM personal_agent_runtime_graph_nodes WHERE node_id = ?").run(taskProjectionRuntimeGraphNodeId(taskId));
+}
+
+function goalProjectionRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:goal:${goalId}`;
+}
+
+function milestoneProjectionRuntimeGraphNodeId(goalId: string): string {
+  return `runtime-graph:milestone:${goalId}`;
+}
+
+function taskProjectionRuntimeGraphNodeId(taskId: string): string {
+  return `runtime-graph:task:${taskId}`;
+}
+
+function buildGoalProjectionRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: goalProjectionRuntimeGraphNodeId(goal.id),
+    node_kind: "goal",
+    ref: { kind: "goal", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validIsoOrNow(goal.created_at),
+    updated_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "goal",
+      storage_projection: "goal_records",
+      archived: archived === 1,
+      goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+      child_refs: goal.children_ids.map((childId) => ({ kind: "goal", ref: childId })),
+    },
+  });
+}
+
+function buildMilestoneProjectionRuntimeGraphNode(goal: Goal, archived: 0 | 1): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: milestoneProjectionRuntimeGraphNodeId(goal.id),
+    node_kind: "milestone",
+    ref: { kind: "milestone", ref: goal.id },
+    label: goal.title || goal.id,
+    created_at: validIsoOrNow(goal.created_at),
+    updated_at: validIsoOrNow(goal.updated_at),
+    provenance_refs: [{ kind: "goal_state_store", ref: "goal_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "milestone",
+      storage_projection: "goal_records",
+      goal_ref: { kind: "goal", ref: goal.id },
+      archived: archived === 1,
+      milestone: goal,
+      parent_ref: goal.parent_id ? { kind: "goal", ref: goal.parent_id } : null,
+    },
+  });
+}
+
+function buildTaskProjectionRuntimeGraphNode(task: Task, updatedAt: string): RuntimeGraphNode {
+  return RuntimeGraphNodeSchema.parse({
+    schema_version: "runtime-graph-node/v1",
+    node_id: taskProjectionRuntimeGraphNodeId(task.id),
+    node_kind: "task",
+    ref: { kind: "task", ref: task.id },
+    label: task.work_description || task.id,
+    created_at: validIsoOrNow(task.created_at),
+    updated_at: validIsoOrNow(updatedAt),
+    provenance_refs: [{ kind: "goal_state_store", ref: "task_records" }],
+    payload: {
+      runtime_graph_role: "source_of_truth",
+      entity_kind: "task",
+      storage_projection: "task_records",
+      task,
+      parent_ref: { kind: "goal", ref: task.goal_id },
+      strategy_ref: task.strategy_id ? { kind: "strategy", ref: task.strategy_id } : null,
+    },
+  });
+}
+
+function upsertProjectionRuntimeGraphNode(sqlite: SqliteDatabase, node: RuntimeGraphNode): void {
+  const parsed = RuntimeGraphNodeSchema.parse(node);
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_nodes (
+      node_id, node_kind, ref, created_at, updated_at, node_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(node_id) DO UPDATE SET
+      node_kind = excluded.node_kind,
+      ref = excluded.ref,
+      updated_at = excluded.updated_at,
+      node_json = excluded.node_json
+  `).run(
+    parsed.node_id,
+    parsed.node_kind,
+    parsed.ref.ref,
+    parsed.created_at,
+    parsed.updated_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function insertProjectionRuntimeGraphEdgeIfNodesExist(sqlite: SqliteDatabase, edge: RuntimeGraphEdge): void {
+  const parsed = RuntimeGraphEdgeSchema.parse(edge);
+  const nodesExist = sqlite.prepare(`
+    SELECT 1 AS ok
+    WHERE EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+      AND EXISTS (SELECT 1 FROM personal_agent_runtime_graph_nodes WHERE node_id = ?)
+  `).get(parsed.from_node_id, parsed.to_node_id) as { ok: number } | undefined;
+  if (!nodesExist) return;
+  sqlite.prepare(`
+    INSERT INTO personal_agent_runtime_graph_edges (
+      edge_id, edge_kind, from_node_id, to_node_id, created_at, edge_json
+    )
+    VALUES (?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(edge_id) DO NOTHING
+  `).run(
+    parsed.edge_id,
+    parsed.edge_kind,
+    parsed.from_node_id,
+    parsed.to_node_id,
+    parsed.created_at,
+    JSON.stringify(parsed),
+  );
+}
+
+function upsertInteractionAuthorityDecisionProjection(sqlite: SqliteDatabase, decisionInput: ExecutionAuthorityDecision): void {
+  const decision = ExecutionAuthorityDecisionSchema.parse(decisionInput);
+  sqlite.prepare(`
+    INSERT INTO interaction_authority_decisions (
+      decision_id,
+      decided_at,
+      source_kind,
+      outcome,
+      lifecycle,
+      surface,
+      surface_class,
+      target_binding_ref,
+      delivery_ref,
+      fail_closed,
+      stale_target_rejected,
+      suppressed,
+      decision_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, json(?))
+    ON CONFLICT(decision_id) DO UPDATE SET
+      decided_at = excluded.decided_at,
+      source_kind = excluded.source_kind,
+      outcome = excluded.outcome,
+      lifecycle = excluded.lifecycle,
+      surface = excluded.surface,
+      surface_class = excluded.surface_class,
+      target_binding_ref = excluded.target_binding_ref,
+      delivery_ref = excluded.delivery_ref,
+      fail_closed = excluded.fail_closed,
+      stale_target_rejected = excluded.stale_target_rejected,
+      suppressed = excluded.suppressed,
+      decision_json = excluded.decision_json
+  `).run(
+    decision.decision_id,
+    decision.decided_at,
+    decision.source.kind,
+    decision.outcome,
+    decision.lifecycle,
+    decision.surface ?? null,
+    decision.surface_class ?? null,
+    decision.bindings.target_binding_ref ?? null,
+    decision.bindings.delivery_ref ?? decision.outbound_conversation?.delivery_ref ?? null,
+    decision.fail_closed ? 1 : 0,
+    decision.stale_target_rejected ? 1 : 0,
+    decision.suppressed ? 1 : 0,
+    JSON.stringify(decision),
+  );
 }
 
 function upsertRuntimeOperationProjection(sqlite: SqliteDatabase, operationInput: RuntimeControlOperation): void {

@@ -184,9 +184,11 @@ schedule-wake, tool-outcome, runtime-control operation, and attention
 commitment summaries from events plus RuntimeGraph evidence without writing a
 rebuild event; without `--dry-run`, the rebuild itself is recorded as a
 projection event before event-backed current-state rows are restored for
-runtime-control operations and attention commitments, and the summaries are then
-applied as typed projection snapshots. It does not rewrite every legacy
-current-state table yet.
+goals, tasks, interaction authority decisions, runtime-control operations, and
+attention commitments, and the summaries are then applied as typed projection
+snapshots. It does not rewrite side-effect queues, transport receipts, scheduler
+owner/history rows, memory truth owner rows, approval wait rows, tool effects,
+or live daemon/session status rows.
 Goal/task mutations routed through `GoalTaskStateStore` append typed mutation
 events before their current-state projection writes. Runtime-control operations
 and attention-led commitment candidate lifecycle transitions use the same event

@@ -98,12 +98,16 @@ The current source-of-truth path for major runtime event evidence is the
 append-only `runtime_events` control-DB table plus RuntimeGraph linkage in
 `personal_agent_runtime_graph_nodes` and
 `personal_agent_runtime_graph_edges`. Existing current-state tables remain
-their production write projections, indexes, or compatibility views unless this
-page names them as a write owner for a narrower domain. The rebuild operator
-path records the rebuild event before applying event-backed current-state rows
-for `runtime_operations` and `attention_commitment_candidates`, then writes
-deterministic projection snapshots into `runtime_event_projection_snapshots`;
-it still does not rewrite every legacy projection table from replay.
+their production write projections, indexes, side-effect queues, or compatibility
+views unless this page names them as a write owner for a narrower domain. The
+rebuild operator path records the rebuild event before applying event-backed
+current-state rows for `goal_records`, `task_records`,
+`interaction_authority_decisions`, `runtime_operations`, and
+`attention_commitment_candidates`, including goal/task RuntimeGraph
+source-of-truth nodes and edges, then writes deterministic projection snapshots
+into `runtime_event_projection_snapshots`; it still does not rewrite
+side-effect queues, transport receipts, scheduler owner rows, memory truth
+owner rows, or live daemon/session status rows from replay.
 
 Each runtime event uses the typed `runtime-event-envelope/v1` contract. The
 envelope records event ID, event type, schema version, occurrence time, trace
@@ -163,11 +167,15 @@ Rebuildable projections currently include:
 - attention commitment lifecycle summary
 
 Without `--dry-run`, `pulseed runtime event-log rebuild` applies event-backed
-current-state rows for runtime-control operations and attention commitments,
-then stores those rebuildable summaries as typed projection snapshots scoped
-either to the requested trace or to the whole control DB. The apply recipe is
-deterministic over `runtime_events` and RuntimeGraph evidence; it does not read
-current-state projection tables as hidden truth.
+current-state rows for goals, tasks, interaction authority decisions,
+runtime-control operations, and attention commitments, then stores those
+rebuildable summaries as typed projection snapshots scoped either to the
+requested trace or to the whole control DB. The apply recipe is deterministic
+over `runtime_events` and RuntimeGraph evidence; it does not read current-state
+projection tables as hidden truth. Outbox queues, peer delivery receipts,
+schedule owner/history rows, tool effects, memory truth owner rows, approval
+wait rows, and daemon/session liveness rows are summary-only or owner-table
+boundaries rather than current-state apply targets.
 
 Operator/debug inspection commands:
 

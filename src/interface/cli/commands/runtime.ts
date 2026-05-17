@@ -565,7 +565,7 @@ function printRuntimeEventProjectionRebuild(rebuild: RuntimeEventProjectionRebui
 function printRuntimeEventProjectionApply(applied: RuntimeEventProjectionApplyResult): void {
   printRuntimeEventProjectionRebuild(applied.rebuild);
   console.log(`  Applied:      ${applied.snapshots.length} projection snapshot(s)`);
-  console.log(`  Current rows: runtime ops ${applied.current_state_projection_rows.runtime_operations}, commitments ${applied.current_state_projection_rows.attention_commitment_candidates}`);
+  console.log(`  Current rows: goals ${applied.current_state_projection_rows.goal_records}, tasks ${applied.current_state_projection_rows.task_records}, authority ${applied.current_state_projection_rows.interaction_authority_decisions}, runtime ops ${applied.current_state_projection_rows.runtime_operations}, commitments ${applied.current_state_projection_rows.attention_commitment_candidates}`);
   console.log(`  Event:        ${applied.event.event_id}`);
 }
 

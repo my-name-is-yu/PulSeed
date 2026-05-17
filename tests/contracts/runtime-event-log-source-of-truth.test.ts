@@ -26,6 +26,7 @@ import {
 } from "../../src/runtime/store/runtime-event-log.js";
 import { AttentionStateStore } from "../../src/runtime/store/attention-state-store.js";
 import { GoalTaskStateStore } from "../../src/runtime/store/goal-task-state-store.js";
+import { OutboxStore } from "../../src/runtime/store/outbox-store.js";
 import { PermissionWaitPlanStore } from "../../src/runtime/store/permission-wait-plan-store.js";
 import { RuntimeOperationStore } from "../../src/runtime/store/runtime-operation-store.js";
 import { RuntimeControlOperationSchema } from "../../src/runtime/store/runtime-operation-schemas.js";
@@ -686,6 +687,159 @@ describe("runtime event log source-of-truth contract", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("applies broader event-backed current-state projections without replaying side effects", async () => {
+    const root = fixtureRoot();
+    try {
+      const runtimeRoot = path.join(root, "runtime");
+      const goalStore = new GoalTaskStateStore(root, { controlBaseDir: root });
+      const authorityStore = new InteractionAuthorityStore(runtimeRoot, { controlBaseDir: root });
+      const outboxStore = new OutboxStore(runtimeRoot, { controlBaseDir: root });
+      const operationStore = new RuntimeOperationStore(runtimeRoot, { controlBaseDir: root });
+      const attentionStore = new AttentionStateStore(runtimeRoot, { controlBaseDir: root });
+
+      const goal = makeGoal({
+        id: "event-backed-apply-goal",
+        title: "Event-backed apply goal",
+        updated_at: NOW,
+      });
+      const task = makeTask({
+        id: "event-backed-apply-task",
+        goal_id: goal.id,
+        work_description: "Restore this task from the runtime event log.",
+        created_at: NOW,
+      });
+      const authorityDecision = await authorityStore.recordDecision(projectPeerInitiativeDeliveryAuthority({
+        candidateId: "peer-candidate:event-backed-apply",
+        deliveryId: "peer-delivery:event-backed-apply",
+        surface: "telegram",
+        reason: "Authority decision current-state projection apply coverage.",
+        decidedAt: NOW,
+        canSend: true,
+        canNotify: true,
+        targetBindingRef: "gateway:telegram:event-backed-apply",
+        channelPolicyRef: "gateway:telegram:policy",
+        transportMessageRef: "telegram-message:event-backed-apply",
+        normalSurfaceProjectionRef: "normal-projection:event-backed-apply",
+      }));
+      const operation = RuntimeControlOperationSchema.parse({
+        operation_id: "runtime-operation:event-backed-apply",
+        kind: "inspect_run",
+        state: "verified",
+        requested_at: NOW,
+        updated_at: "2026-05-16T00:01:00.000Z",
+        completed_at: "2026-05-16T00:01:00.000Z",
+        requested_by: { surface: "cli" },
+        reply_target: { channel: "cli" },
+        reason: "Event-backed broader apply coverage.",
+        expected_health: {
+          daemon_ping: false,
+          gateway_acceptance: false,
+        },
+        target: {
+          goal_id: goal.id,
+          session_id: "session:event-backed-apply",
+        },
+      });
+      const candidate = commitmentCandidate();
+
+      await goalStore.saveGoal(goal);
+      await goalStore.saveTask(task);
+      await outboxStore.append({
+        event_type: "goal_activated",
+        goal_id: goal.id,
+        correlation_id: "outbox:event-backed-apply",
+        created_at: Date.parse(NOW),
+        payload: { kind: "event-backed-apply" },
+      });
+      await operationStore.save(operation);
+      await attentionStore.saveCommitmentCandidates([candidate]);
+
+      const eventLog = new RuntimeEventLogStore(runtimeRoot, { controlBaseDir: root });
+      const sourceEvents = await eventLog.listEvents({ limit: null });
+      const sourceEventCount = sourceEvents.length;
+      expect(sourceEvents.map((event) => event.event_type)).toEqual(expect.arrayContaining([
+        "goal.mutation.recorded",
+        "task.mutation.recorded",
+        "outbox.enqueue.recorded",
+        "gateway.telegram.delivery.recorded",
+        "runtime_control.operation.recorded",
+        "attention.commitment.recorded",
+      ]));
+
+      await clearProjectionTables(runtimeRoot, root, [
+        "DELETE FROM goal_records",
+        "DELETE FROM task_records",
+        "DELETE FROM interaction_authority_decisions",
+        "DELETE FROM outbox_records",
+        "DELETE FROM runtime_operations",
+        "DELETE FROM attention_commitment_candidates",
+        "DELETE FROM personal_agent_runtime_graph_nodes WHERE node_kind IN ('goal', 'task', 'milestone')",
+      ]);
+      await expect(goalStore.loadGoal(goal.id)).resolves.toBeNull();
+      await expect(goalStore.loadTask(goal.id, task.id)).resolves.toBeNull();
+      await expect(authorityStore.getDecision(authorityDecision.decision_id)).resolves.toBeNull();
+      await expect(outboxStore.list()).resolves.toEqual([]);
+      await expect(operationStore.load(operation.operation_id)).resolves.toBeNull();
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([]);
+
+      const applied = await eventLog.applyProjectionRebuild();
+      expect(applied.current_state_projection_rows).toEqual(expect.objectContaining({
+        goal_records: 1,
+        task_records: 1,
+        interaction_authority_decisions: 1,
+        runtime_operations: 1,
+        attention_commitment_candidates: 1,
+      }));
+      expect(applied.rebuild.notification_outbox_dedupe_state).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          correlation_id: expect.stringContaining("outbox:event-backed-apply"),
+          replay_policy: expect.objectContaining({
+            duplicate_side_effect_policy: "never_repeat",
+          }),
+        }),
+      ]));
+      await expect(goalStore.loadGoal(goal.id)).resolves.toMatchObject({
+        id: goal.id,
+        title: "Event-backed apply goal",
+      });
+      await expect(readRuntimeGraphNodeIds(runtimeRoot, root, [
+        `runtime-graph:goal:${goal.id}`,
+        `runtime-graph:task:${task.id}`,
+      ])).resolves.toEqual([
+        `runtime-graph:goal:${goal.id}`,
+        `runtime-graph:task:${task.id}`,
+      ]);
+      await expect(goalStore.loadTask(goal.id, task.id)).resolves.toMatchObject({
+        id: task.id,
+        goal_id: goal.id,
+        work_description: "Restore this task from the runtime event log.",
+      });
+      await expect(authorityStore.getDecision(authorityDecision.decision_id)).resolves.toMatchObject({
+        decision_id: authorityDecision.decision_id,
+        bindings: expect.objectContaining({
+          delivery_ref: "peer-delivery:event-backed-apply",
+        }),
+      });
+      await expect(operationStore.load(operation.operation_id)).resolves.toMatchObject({
+        operation_id: operation.operation_id,
+        state: "verified",
+      });
+      await expect(attentionStore.listCommitmentCandidates({ includeTerminal: true })).resolves.toEqual([
+        expect.objectContaining({
+          commitment_id: candidate.commitment_id,
+          replay_key: candidate.replay_key,
+        }),
+      ]);
+      await expect(outboxStore.list()).resolves.toEqual([]);
+
+      const appliedAgain = await eventLog.applyProjectionRebuild();
+      expect(appliedAgain.event.event_id).toBe(applied.event.event_id);
+      await expect(eventLog.listEvents({ limit: null })).resolves.toHaveLength(sourceEventCount + 1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function fixtureRoot(): string {
@@ -704,6 +858,26 @@ async function clearProjectionTables(
         sqlite.prepare(statement).run();
       }
     });
+  } finally {
+    db.close();
+  }
+}
+
+async function readRuntimeGraphNodeIds(
+  runtimeRoot: string,
+  controlBaseDir: string,
+  nodeIds: readonly string[],
+): Promise<string[]> {
+  const db = await openRuntimeControlDatabase({ rootDir: runtimeRoot }, { controlBaseDir });
+  try {
+    const placeholders = nodeIds.map(() => "?").join(", ");
+    const rows = db.read((sqlite) => sqlite.prepare(`
+        SELECT node_id
+        FROM personal_agent_runtime_graph_nodes
+        WHERE node_id IN (${placeholders})
+        ORDER BY node_id ASC
+      `).all(...nodeIds) as Array<{ node_id: string }>);
+    return rows.map((row) => row.node_id);
   } finally {
     db.close();
   }
