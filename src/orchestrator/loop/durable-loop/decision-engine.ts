@@ -147,12 +147,15 @@ export class CoreDecisionEngine {
     goalDimensions: string[];
     fallbackFocusDimension?: string;
   }): NextIterationDirective | undefined {
-    if (input.learningProjection) {
+    const mergeLearningProjection = (directive: NextIterationDirective): NextIterationDirective => {
+      if (!input.learningProjection) return directive;
+      const projectedFocusDimension = input.learningProjection.preferredFocusDimension
+        && input.goalDimensions.includes(input.learningProjection.preferredFocusDimension)
+        ? input.learningProjection.preferredFocusDimension
+        : undefined;
       return {
-        sourcePhase: "learning_prior",
-        reason: "learning_prior_phase_projection",
-        focusDimension: input.learningProjection.preferredFocusDimension ?? input.fallbackFocusDimension,
-        requestedPhase: "normal",
+        ...directive,
+        focusDimension: projectedFocusDimension ?? directive.focusDimension,
         learning_prior_consumption_ref: input.learningProjection.consumptionRecordId,
         phase_projection_ref: `learning-prior-projection:${input.learningProjection.consumptionRecordId}`,
         reason_code: input.learningProjection.projectionKind,
@@ -160,7 +163,7 @@ export class CoreDecisionEngine {
         inhibition_refs: input.learningProjection.inhibitionRefs,
         interaction_policy_biases: input.learningProjection.interactionPolicyBiases,
       };
-    }
+    };
 
     const knowledgeOutput = input.knowledgeRefreshPhase?.output;
     if (
@@ -169,12 +172,12 @@ export class CoreDecisionEngine {
       knowledgeOutput.worthwhile &&
       knowledgeOutput.confidence >= 0.7
     ) {
-      return {
+      return mergeLearningProjection({
         sourcePhase: "knowledge_refresh",
         reason: knowledgeOutput.summary,
         focusDimension: input.fallbackFocusDimension,
         requestedPhase: "knowledge_refresh",
-      };
+      });
     }
 
     if (this.shouldPreferReplanningContext({ phase: input.replanningPhase })) {
@@ -183,13 +186,22 @@ export class CoreDecisionEngine {
       const focusDimension = topCandidate?.target_dimensions.find((dimension) =>
         input.goalDimensions.includes(dimension)
       ) ?? input.fallbackFocusDimension;
-      return {
+      return mergeLearningProjection({
         sourcePhase: "replanning_options",
         reason: replanningOutput?.summary ?? "replanning directive",
         focusDimension,
         preferredAction: replanningOutput?.recommended_action,
         requestedPhase: "normal",
-      };
+      });
+    }
+
+    if (input.learningProjection) {
+      return mergeLearningProjection({
+        sourcePhase: "learning_prior",
+        reason: "learning_prior_phase_projection",
+        focusDimension: input.fallbackFocusDimension,
+        requestedPhase: "normal",
+      });
     }
 
     return undefined;

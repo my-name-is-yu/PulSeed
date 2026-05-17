@@ -309,4 +309,45 @@ describe("CoreDecisionEngine", () => {
     }));
     expect(directive?.reason).not.toContain("artifact-1");
   });
+
+  it("preserves worthwhile knowledge-refresh directives when attaching learning-prior projection refs", () => {
+    const engine = new CoreDecisionEngine();
+    const directive = engine.buildNextIterationDirective({
+      learningProjection: {
+        phase: "next_iteration_directive",
+        projectionKind: "next_directive_mode_bias",
+        consumptionRecordId: "consumption-knowledge-prior",
+        preferredFocusDimension: "dim-prior",
+        focusRefs: ["evidence-prior"],
+        inhibitionRefs: ["inhibition-prior"],
+        directiveModeBiasRefs: ["artifact-prior"],
+        interactionPolicyBiases: [],
+        suppressedSuggestionIds: [],
+      },
+      knowledgeRefreshPhase: {
+        status: "completed",
+        output: {
+          summary: "Acquire current missing API evidence",
+          required_knowledge: ["current API contract"],
+          acquisition_candidates: ["official docs"],
+          confidence: 0.92,
+          worthwhile: true,
+        },
+      },
+      replanningPhase: null,
+      goalDimensions: ["dim1", "dim-prior"],
+      fallbackFocusDimension: "dim1",
+    });
+
+    expect(directive).toEqual(expect.objectContaining({
+      sourcePhase: "knowledge_refresh",
+      requestedPhase: "knowledge_refresh",
+      reason: "Acquire current missing API evidence",
+      focusDimension: "dim-prior",
+      learning_prior_consumption_ref: "consumption-knowledge-prior",
+      phase_projection_ref: "learning-prior-projection:consumption-knowledge-prior",
+      focus_refs: ["evidence-prior"],
+      inhibition_refs: ["inhibition-prior"],
+    }));
+  });
 });

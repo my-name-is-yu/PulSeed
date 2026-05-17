@@ -187,17 +187,29 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   }
 
   const dimensionSelectionOptions = await context.buildDimensionSelectionBackoff(goalId);
-  const targetDimension = options?.learningProjection?.preferredTargetDimension
-    ?? options?.targetDimensionOverride
-    ?? await runPhase("select-target-dimension", async () =>
-      context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
-    );
+  const projectedTargetDimension = options?.learningProjection?.preferredTargetDimension;
+  const projectedTargetDimensionIsCurrent = !!projectedTargetDimension
+    && !!goalDimensions?.some((dimension) => dimension.name === projectedTargetDimension);
+  const targetDimension = projectedTargetDimensionIsCurrent
+    ? projectedTargetDimension
+    : options?.targetDimensionOverride
+      ?? await runPhase("select-target-dimension", async () =>
+        context.selectTargetDimension(gapVector, driveContext, goalDimensions, dimensionSelectionOptions)
+      );
 
-  if (options?.learningProjection?.preferredTargetDimension) {
+  if (projectedTargetDimension && !projectedTargetDimensionIsCurrent) {
+    logger?.warn("TaskLifecycle: ignored stale learning-prior target dimension projection", {
+      goalId,
+      projectedTargetDimension,
+      consumptionRecordId: options.learningProjection?.consumptionRecordId,
+    });
+  }
+
+  if (projectedTargetDimensionIsCurrent) {
     logger?.info("TaskLifecycle: using learning-prior target dimension projection", {
       goalId,
       targetDimension,
-      consumptionRecordId: options.learningProjection.consumptionRecordId,
+      consumptionRecordId: options?.learningProjection?.consumptionRecordId,
     });
   } else if (options?.targetDimensionOverride) {
     logger?.info("TaskLifecycle: using target dimension override", { goalId, targetDimension });
