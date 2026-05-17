@@ -1024,13 +1024,20 @@ async function runStateDaemonTrace(
       blocked = true;
       message = error instanceof Error ? error.message : String(error);
     }
+    const messageContainsNewerSchema = message.includes("newer than supported version");
     const assertions: JsonObject = {
       fail_closed: blocked,
-      message_contains_newer_schema: message.includes("newer than supported version"),
+      message_contains_newer_schema: messageContainsNewerSchema,
     };
     return buildRealGoldenResult(fixture, stateRoot, {
       kind: "attention_schema_ahead_fail_closed",
-      exportedState: { assertions, error_message: message },
+      exportedState: {
+        assertions,
+        error: {
+          kind: messageContainsNewerSchema ? "control_db_schema_ahead" : "unexpected_error",
+          outcome: blocked ? "blocked" : "ready",
+        },
+      },
       assertions,
     });
   }
