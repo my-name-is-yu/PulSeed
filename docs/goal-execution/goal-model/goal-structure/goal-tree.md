@@ -1,0 +1,331 @@
+# Goal Tree Design
+
+> Status: Public design reference. This page explains PulSeed design intent and architecture rationale; exact runtime behavior is owned by current source code, tests, and operating docs.
+
+Primary map: [Goal Structure](./goal-structure-map.md).
+
+> Related: `portfolio-management.md`, `gap-calculation.md`, `satisficing.md`, `drive-scoring.md`, `session-and-context.md`
+
+> Implementation alignment: the goal tree is now scheduled by DurableLoop together with next-iteration directives emitted from bounded agentic phases. Tree nodes are not just passive decomposition artifacts; the scheduler can prefer nodes that carry pending knowledge-refresh or replanning intent.
+
+---
+
+## 1. Overview
+
+The goal tree is an **N-layer automatic goal decomposition system**. It recursively decomposes ambiguous top-level goals into concrete sub-goals, while DurableLoop schedules which node should receive the next bounded iteration.
+
+```
+User goal (root)
+  │
+  ├── Sub-goal A (depth 1)
+  │     ├── Sub-goal A-1 (depth 2 / leaf)
+  │     └── Sub-goal A-2 (depth 2 / leaf)
+  │
+  └── Sub-goal B (depth 1)
+        └── Sub-goal B-1 (depth 2 / leaf)
+```
+
+**Purpose of decomposition**: Passing an abstract top-level goal directly to bounded task execution makes task generation too vague. The goal tree resolves goal ambiguity into nodes that DurableLoop can schedule, verify, and aggregate over time.
+
+---
+
+## 2. Data Model
+
+### 2.1 Goal Node
+
+```
+GoalNode {
+  id: string                        // Unique identifier
+  parent_id: string | null          // Parent goal ID (null for root)
+  root_id: string                   // Root goal ID
+  depth: number                     // Depth in the tree (root is 0)
+
+  goal_definition: GoalDefinition   // Dimensions, thresholds, constraints
+  specificity_score: number         // Specificity score (0.0–1.0)
+  is_leaf: boolean                  // Whether child nodes exist
+
+  state: GoalNodeState              // Current state (§2.2)
+  pruned_reason: PrunedReason | null // Reason for pruning (§4)
+
+  created_at: DateTime
+  decomposed_at: DateTime | null
+  completed_at: DateTime | null
+
+  children: string[]                // List of child goal IDs
+  loop_state: LoopState | null      // Loop state for leaf nodes (§5)
+}
+```
+
+### 2.2 Node State Transitions
+
+```
+pending → decomposing → active → completed
+                     → pruned
+```
+
+| State | Meaning |
+|-------|---------|
+| `pending` | Created, but specificity evaluation and decomposition not yet done |
+| `decomposing` | Being decomposed by LLM |
+| `active` | Being tracked (leaf: running its own loop; non-leaf: aggregating child goal states) |
+| `completed` | Completion judgment finalized |
+| `pruned` | Pruned (see §4) |
+
+---
+
+## 3. Decomposition Logic (default behavior / goal-tree decomposition)
+
+### 3.1 Decomposition Flow
+
+```
+Goal node (pending)
+    │
+    ↓
+Specificity score evaluation (LLM)
+    │
+    ├── specificity_score >= min_specificity (0.7)
+    │     → Finalized as leaf node. Loop starts.
+    │
+    └── specificity_score < min_specificity (0.7)
+          │
+          ↓
+    depth < max_depth (5) ?
+          │
+          ├── Yes → Generate sub-goals via LLM (§3.2)
+          │
+          └── No  → Forced leaf finalization (decomposition halted)
+```
+
+### 3.2 LLM Input
+
+Information to include in the decomposition prompt:
+
+**Required inputs**:
+- Definition of the goal to be decomposed (hypothesis, context, constraints)
+- Parent goal definitions (chain of constraints traced back to root)
+- Existing dimension list (to prevent duplicate sub-goals)
+- Current depth and max_depth (to inform the LLM of "how many more levels it can decompose into")
+
+**Output format**:
+
+```
+[
+  {
+    hypothesis: string,         // What this sub-goal aims to solve
+    dimensions: Dimension[],    // Dimensions and thresholds
+    constraints: Constraint[],  // Constraints specific to this sub-goal
+    expected_specificity: number // Expected specificity score after decomposition
+  }
+]
+```
+
+### 3.3 Validating Decomposition Results
+
+After receiving the LLM output, perform the following validations.
+
+**Coverage validation**: Do the generated sub-goals collectively cover all dimensions of the parent goal? (Have the LLM re-evaluate.)
+
+**Dimension consistency check**: Are the child goal dimensions consistent with the parent goal dimensions (matching direction and scale)?
+
+**Circular reference check**: Use GoalDependencyGraph to confirm that new sub-goals do not create circular dependencies with existing goals.
+
+### 3.4 Design Decisions
+
+| Parameter | Default value | Rationale |
+|-----------|--------------|-----------|
+| `min_specificity` | 0.7 | Conservative value accounting for LLM output quality. Below 0.6, concrete tasks often cannot be generated. |
+| `max_depth` | 5 | Prevents over-decomposition. Beyond depth 5, each node tends to lose its meaningful scope. |
+| `max_children_per_node` | 5 | Upper limit on sub-goals generated by LLM. More than 5 creates complex interdependencies. |
+
+---
+
+## 4. Pruning
+
+### 4.1 Pruning Conditions
+
+| Pruning reason | Definition |
+|---------------|-----------|
+| `no_progress` | Gap has not improved for N loops (default: 3–10, depending on goal nature) |
+| `superseded` | The pursuit of this node is no longer needed due to a change in the parent goal's direction |
+| `merged` | Determined to be substantively identical to another sub-goal and consolidated |
+| `user_requested` | The user explicitly requested deletion |
+
+### 4.2 Impact of Pruning
+
+The allocation of a pruned node is redistributed to its sibling goals under the same parent node. If all sibling nodes are also pruned, the issue escalates to the parent node.
+
+Pruning is logged and becomes input for the curiosity engine's feedback (`curiosity.md` §4.2).
+
+---
+
+## 5. State Aggregation and Propagation
+
+### 5.1 Bottom-Up (Aggregation)
+
+The completion and progress state of leaf nodes is aggregated up to parent nodes.
+
+**Gap aggregation**: Follows the SatisficingAggregation method in `satisficing.md`. Default is bottleneck aggregation (min).
+
+```
+parent_gap = aggregate(children_gaps, method)
+
+method:
+  "min"          → gap of the least-progressed child goal (bottleneck)
+  "avg"          → weighted average across all child goals
+  "max"          → gap of the child goal with the largest gap
+  "all_required" → parent does not complete until all children complete
+```
+
+**Confidence aggregation**: The minimum confidence value among child goals is adopted (conservative).
+
+```
+parent_confidence = min(children_confidence)
+```
+
+### 5.2 Top-Down (Propagation)
+
+Changes to a parent goal are propagated to child goals.
+
+**Adding or changing constraints**: When a parent goal's constraints are updated, they are immediately propagated to all child goals. The constraint check is re-run before task generation for child goals.
+
+**Proportional deadline adjustment**: When a parent goal's deadline changes, child goal deadlines are adjusted proportionally.
+
+```
+child_new_deadline =
+  child_original_deadline × (parent_new_deadline / parent_original_deadline)
+```
+
+---
+
+## 6. Completion Determination
+
+### 6.1 Leaf Node Completion
+
+A leaf node completes via the normal completion determination flow in `satisficing.md` (threshold met + SatisficingJudge confirmation).
+
+### 6.2 Non-leaf Node Completion
+
+```
+All child goals are in "completed" or "pruned(merged)" state
+    │
+    ↓
+Calculate the aggregated gap of each parent goal dimension
+    │
+    ↓
+Confirm whether the aggregated gap meets the threshold
+    │
+    ├── Yes → Trigger parent goal completion determination
+    └── No  → Consider generating additional sub-goals
+```
+
+Completion determination propagates in a chain from leaf to root (leaf → depth N-1 → ... → root).
+
+---
+
+## 7. Parallel Loop Execution (default behavior / goal-tree scheduling)
+
+### 7.1 Launching Loops for Leaf Nodes
+
+When a leaf node is finalized, an independent task discovery loop is started. Each leaf node has its own independent loop state (LoopState).
+
+```
+Leaf node finalized
+    │
+    ↓
+Initialize LoopState
+    │
+    ├── loop_iteration: 0
+    ├── last_gap_snapshot: null
+    ├── last_task_completed_at: null
+    └── stall_count: 0
+```
+
+### 7.2 Controlling Parallel Execution
+
+The number of loops running simultaneously is controlled by `parallel_loop_limit` (default: 3).
+
+**Node selection algorithm**:
+
+```
+1. Collect all active leaf nodes
+2. Calculate a score for each node:
+     score = gap_magnitude × depth_weight × (1 / dependency_penalty)
+     depth_weight = 1 / (depth + 1)  // lower priority for deeper nodes
+     dependency_penalty = blocked_by_count + 1  // number of dependency blocks
+3. Activate the top parallel_loop_limit nodes by score
+4. The rest wait in waiting state
+```
+
+### 7.3 default behavior: Round-Robin Pseudo-Parallelism
+
+In the default behavior, rather than true parallel execution, a round-robin approach is used, processing one node per iteration.
+
+```
+loop iteration:
+  1. Among active_nodes, select the one that has been waiting longest
+  2. Execute one cycle for that node (observe → gap → score → task)
+  3. Move to the next node
+```
+
+This avoids the complexity of true parallel execution (race conditions, state contention) while advancing multiple nodes evenly.
+
+### 7.4 Design Decisions
+
+| Parameter | Default value | Rationale |
+|-----------|--------------|-----------|
+| `parallel_loop_limit` | 3 | Balance between resource constraints (LLM cost, agent sessions) and quality |
+
+---
+
+## 8. Integration with Existing Design
+
+### 8.1 Relationship with GoalDependencyGraph
+
+The GoalDependencyGraph from `goal-dependency.md` is used to manage dependencies between goal tree nodes.
+
+- Parent-child relationships in the goal tree are registered as `parent_child` type dependencies
+- Cross-branch dependencies (e.g., Sub-goal A-1 requires Sub-goal B-1 to complete first) can also be registered as `prerequisite` type
+- Circular reference detection reuses the existing logic of GoalDependencyGraph
+
+### 8.2 Relationship with PortfolioManager
+
+Each leaf node has its own Portfolio (the strategy management unit is the leaf goal). Non-leaf nodes do not have portfolios; they only aggregate child goal states.
+
+### 8.3 Relationship with KnowledgeManager
+
+The results of goal decomposition (which sub-goals were generated, which decompositions were effective) are recorded in KnowledgeManager. They are referenced when decomposing similar goals in the future (see `learning-pipeline.md` §3).
+
+---
+
+## 9. Default behavior and extensions
+
+### Default behavior (goal-tree baseline)
+
+| Item | default behavior specification |
+|------|-----------------|
+| Decomposition automation | Automatic LLM decomposition (with user confirmation) |
+| Parallel execution | Round-robin (no true parallelism) |
+| State aggregation | Bottleneck aggregation (min) fixed |
+| Pruning | Only `no_progress` and `user_requested` are automatic. Others are manual. |
+| Parallel loop limit | 3 |
+
+### Extended behavior
+
+| Item | extended behavior specification |
+|------|----------------------|
+| Parallel execution | True parallel execution (async loops) |
+| State aggregation | Aggregation method configurable per node |
+| Pruning | Automatic judgment for all 4 conditions |
+| Dynamic rebalancing | Dynamically adjust round-robin allocation based on changes in leaf node scores |
+
+---
+
+## Summary of Design Principles
+
+| Principle | Concrete design decision |
+|-----------|------------------------|
+| Decompose until specific enough | LLM decomposes when below min_specificity. Hard stop at max_depth. |
+| Aggregate conservatively | Confidence uses minimum value; default aggregation is bottleneck (min). |
+| Completion propagates in a chain | Completion propagates from leaf to root in order. |
+| Parallelism is bounded | Resource consumption controlled by parallel_loop_limit. |
+| The default behavior uses pseudo-parallelism | Round-robin advances multiple nodes while avoiding complexity. |
