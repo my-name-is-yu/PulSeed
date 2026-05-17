@@ -374,8 +374,7 @@ export async function dispatchCommand(
     }
 
     if (daemonSubcommand === "stop") {
-      await cmdStop(argv.slice(2));
-      return 0;
+      return await cmdStop(argv.slice(2));
     }
 
     if (daemonSubcommand === "restart") {
@@ -404,8 +403,7 @@ export async function dispatchCommand(
   }
 
   if (subcommand === "stop") {
-    await cmdStop(argv.slice(1));
-    return 0;
+    return await cmdStop(argv.slice(1));
   }
 
   if (subcommand === "cron") {

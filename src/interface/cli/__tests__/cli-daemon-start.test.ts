@@ -1038,6 +1038,37 @@ describe("cmdRestart", () => {
     }
   });
 
+  it("propagates daemon stop failures through the CLI exit code", async () => {
+    pidStopRuntimeMock.mockResolvedValue({
+      info: { pid: 123, started_at: new Date("2026-05-10T00:00:00.000Z").toISOString() },
+      runtimePid: 456,
+      ownerPid: 123,
+      sentSignalsTo: [123, 456],
+      forced: false,
+      stopped: false,
+      alivePids: [123, 456],
+    });
+    const consoleCapture = captureConsoleLog();
+
+    try {
+      const code = await dispatchCommand(
+        ["daemon", "stop"],
+        false,
+        stateManager as never,
+        characterConfigManager as never,
+        { value: null },
+      );
+
+      expect(code).toBe(1);
+      expect(pidStopRuntimeMock).toHaveBeenCalledOnce();
+      const output = consoleCapture.read();
+      expect(output).toContain("Stopping daemon (PID: 456)...");
+      expect(output).toContain("Daemon still running (PIDs: 123, 456)");
+    } finally {
+      consoleCapture.spy.mockRestore();
+    }
+  });
+
   it("does not start a second daemon when the stop path fails", async () => {
     pidStopRuntimeMock.mockResolvedValue({
       info: { pid: 123, started_at: new Date("2026-05-10T00:00:00.000Z").toISOString() },

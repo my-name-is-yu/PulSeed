@@ -1013,11 +1013,12 @@ async function stopDaemonRuntimeForCli(): Promise<StopDaemonOutcome> {
   return { status: "stopped", messages };
 }
 
-export async function cmdStop(_args: string[]): Promise<void> {
+export async function cmdStop(_args: string[]): Promise<number> {
   const outcome = await stopDaemonRuntimeForCli();
   for (const message of outcome.messages) {
     console.log(message);
   }
+  return outcome.status === "failed" ? 1 : 0;
 }
 
 export async function cmdRestart(
