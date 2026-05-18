@@ -12,6 +12,7 @@ import {
   ArcAgi3FinishTool,
   ArcAgi3ListGamesTool,
   ArcAgi3RunIdSchema,
+  ArcAgi3ScorecardTool,
   ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
   createArcAgi3Tools,
@@ -337,6 +338,84 @@ describe("ARC-AGI-3 tools", () => {
       "action",
       "closeScorecard",
     ]);
+  });
+
+  it("returns cached scorecards after a closed ARC scorecard is no longer retrievable", async () => {
+    const client = makeMockClient();
+    client.retrieveScorecard = async (cardId) => {
+      client.calls.push({ method: "retrieveScorecard", input: { cardId } });
+      throw new Error(`ARC-AGI-3 API GET /api/scorecard/${cardId} failed (404): not found`);
+    };
+    const deps = { client, artifactStore, pulseedCommit: "commit-1" };
+    const start = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-closed-cache",
+    }, makeContext());
+    expect(start.success).toBe(true);
+    const firstFinish = await new ArcAgi3FinishTool(deps).call({
+      run_id: "run-closed-cache",
+      close_scorecard: true,
+    }, makeContext());
+    expect(firstFinish.success).toBe(true);
+
+    const scorecard = await new ArcAgi3ScorecardTool(deps).call({
+      run_id: "run-closed-cache",
+      game_only: false,
+    }, makeContext());
+    expect(scorecard.success).toBe(true);
+    expect(scorecard.summary).toContain("cached");
+    expect(scorecard.data).toMatchObject({
+      run_id: "run-closed-cache",
+      scorecard: expect.objectContaining({ card_id: "card-1", score: 7 }),
+      official_score: 7,
+    });
+
+    const secondFinish = await new ArcAgi3FinishTool(deps).call({
+      run_id: "run-closed-cache",
+      close_scorecard: false,
+    }, makeContext());
+    expect(secondFinish.success).toBe(true);
+    expect(secondFinish.summary).toContain("cached");
+    expect(secondFinish.data).toMatchObject({
+      run_id: "run-closed-cache",
+      card_id: "card-1",
+      scorecard: expect.objectContaining({ card_id: "card-1", score: 7 }),
+      artifact_path: artifactStore.runPath("run-closed-cache"),
+    });
+  });
+
+  it("does not use cached scorecards for non-404 ARC retrieval failures", async () => {
+    const client = makeMockClient();
+    const deps = { client, artifactStore, pulseedCommit: "commit-1" };
+    const start = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-cache-500",
+    }, makeContext());
+    expect(start.success).toBe(true);
+    const firstFinish = await new ArcAgi3FinishTool(deps).call({
+      run_id: "run-cache-500",
+      close_scorecard: true,
+    }, makeContext());
+    expect(firstFinish.success).toBe(true);
+
+    client.retrieveScorecard = async (cardId) => {
+      client.calls.push({ method: "retrieveScorecard", input: { cardId } });
+      throw new Error(`ARC-AGI-3 API GET /api/scorecard/${cardId} failed (500): server unavailable`);
+    };
+
+    const scorecard = await new ArcAgi3ScorecardTool(deps).call({
+      run_id: "run-cache-500",
+      game_only: false,
+    }, makeContext());
+    expect(scorecard.success).toBe(false);
+    expect(scorecard.error).toContain("failed (500)");
+
+    const secondFinish = await new ArcAgi3FinishTool(deps).call({
+      run_id: "run-cache-500",
+      close_scorecard: false,
+    }, makeContext());
+    expect(secondFinish.success).toBe(false);
+    expect(secondFinish.error).toContain("failed (500)");
   });
 
   it("does not require ARC API credentials while merely registering ARC tools", () => {

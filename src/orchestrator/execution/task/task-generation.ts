@@ -21,6 +21,7 @@ import {
 } from "../../../platform/time/execution-mode.js";
 import { isArtifactContractRequired } from "./task-artifact-contract.js";
 import { enforceWorkspaceBoundArtifactTaskContract } from "./task-generation-workspace-contract.js";
+import { hasArcAgi3ProfileConstraint } from "./task-lifecycle-policies.js";
 import {
   LLMGeneratedCriterionSchema,
   LLMGeneratedTaskSchema,
@@ -416,11 +417,21 @@ export async function generateTask(
   });
 
   const goalForArtifactContract = await deps.stateManager.loadGoal(goalId).catch(() => null);
-  const artifactContractRequired = isArtifactContractRequired({
-    artifactContract: generated.artifact_contract,
-    taskConstraints: generated.constraints,
-    goal: goalForArtifactContract,
-  });
+  const isArcAgi3Task = hasArcAgi3ProfileConstraint(generated.constraints)
+    || hasArcAgi3ProfileConstraint(goalForArtifactContract?.constraints);
+  const artifactContractRequired = isArcAgi3Task
+    ? false
+    : isArtifactContractRequired({
+        artifactContract: generated.artifact_contract,
+        taskConstraints: generated.constraints,
+        goal: goalForArtifactContract,
+      });
+  if (isArcAgi3Task) {
+    generated = {
+      ...generated,
+      artifact_contract: { required: false, required_artifacts: [] },
+    };
+  }
   generated = await enforceWorkspaceBoundArtifactTaskContract({
     generated,
     goal: goalForArtifactContract,
@@ -459,7 +470,9 @@ export async function generateTask(
   const activeStrategy = await deps.strategyManager.getActiveStrategy(goalId);
   const resolvedStrategyId = strategyId ?? activeStrategy?.id ?? null;
 
-  const artifactContract = artifactContractRequired
+  const artifactContract = isArcAgi3Task
+    ? { required: false, required_artifacts: [] }
+    : artifactContractRequired
     ? { ...generated.artifact_contract, required: true }
     : generated.artifact_contract;
   const taskCreateInput = {

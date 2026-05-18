@@ -41,6 +41,7 @@ import { runSelfReportStage } from "./engine/observe-self-report.js";
 import { createGoalWorkspaceArtifactMetricDataSource } from "../../adapters/datasources/artifact-metric-datasource.js";
 import type { ArtifactMetricFreshnessScope } from "../../adapters/datasources/artifact-metric-datasource.js";
 import { isArtifactContractRequired } from "../../orchestrator/execution/task/task-artifact-contract.js";
+import { hasArcAgi3ProfileConstraint } from "../../orchestrator/execution/task/task-lifecycle-policies.js";
 import { extractWorkspacePathConstraint, resolveWorkspacePath } from "../../base/utils/workspace-path.js";
 
 import type { ToolExecutor } from "../../tools/executor.js";
@@ -287,6 +288,28 @@ export class ObservationEngine {
       const method: ObservationMethod = methods[idx] ?? dim.observation_method;
 
       void this.hookManager?.emit("PreObserve", { goal_id: goalId, dimension: dim.name });
+
+      const arcAgi3TaskCompletion = await observeArcAgi3TaskCompletion({
+        goalId,
+        goal,
+        dimension: dim,
+        stateManager: this.stateManager,
+        applyObservation: (gId, entry) => this.applyObservation(gId, entry),
+      });
+      if (arcAgi3TaskCompletion.handled) {
+        if (arcAgi3TaskCompletion.entry) {
+          void this.hookManager?.emit("PostObserve", {
+            goal_id: goalId,
+            dimension: dim.name,
+            data: {
+              value: arcAgi3TaskCompletion.entry.extracted_value,
+              confidence: arcAgi3TaskCompletion.entry.confidence,
+              task_id: arcAgi3TaskCompletion.taskId,
+            },
+          });
+        }
+        continue;
+      }
 
       if (await runPreCheckStage({
         goalId,
@@ -594,6 +617,96 @@ async function createGoalScopedArtifactDataSource(
 
 function isArtifactMetricDimension(dimension: Dimension): boolean {
   return dimension.threshold.type === "min" || dimension.threshold.type === "max" || dimension.threshold.type === "range";
+}
+
+async function observeArcAgi3TaskCompletion(input: {
+  goalId: string;
+  goal: Pick<Goal, "constraints">;
+  dimension: Dimension;
+  stateManager: StateManager;
+  applyObservation: (goalId: string, entry: ObservationLogEntry) => Promise<void>;
+}): Promise<{ handled: boolean; entry?: ObservationLogEntry; taskId?: string }> {
+  if (!hasArcAgi3ProfileConstraint(input.goal.constraints)) return { handled: false };
+  if (!isArcAgi3TaskCompletionDimension(input.dimension)) return { handled: false };
+
+  const completedTasks = (await input.stateManager.listTasks(input.goalId).catch(() => []))
+    .filter((task) =>
+      task.status === "completed" &&
+      taskTargetsDimension(task, input.dimension.name)
+    )
+    .sort((a, b) => taskCompletionSortKey(b).localeCompare(taskCompletionSortKey(a)));
+  if (completedTasks.length === 0) return { handled: false };
+
+  const observationLog = await input.stateManager.loadObservationLog(input.goalId).catch(() => null);
+  const latestTask = completedTasks.find((task) =>
+    !hasArcAgi3TaskCompletionObservation(observationLog, input.dimension.name, task)
+  );
+  if (!latestTask) return { handled: true };
+
+  const entry = createObservationEntry({
+    goalId: input.goalId,
+    dimensionName: input.dimension.name,
+    layer: "mechanical",
+    method: {
+      type: "mechanical",
+      source: "arc_agi3_task_completion",
+      schedule: null,
+      endpoint: null,
+      confidence_tier: "mechanical",
+    },
+    trigger: "post_task",
+    rawResult: {
+      source: "arc_agi3_task_completion",
+      task_id: latestTask.id,
+      task_status: latestTask.status,
+      completed_at: latestTask.completed_at,
+      primary_dimension: latestTask.primary_dimension,
+      target_dimensions: latestTask.target_dimensions,
+    },
+    extractedValue: completionThresholdValue(input.dimension),
+    confidence: 0.95,
+    notes: "ARC-AGI-3 typed tool task completed through the task lifecycle.",
+  });
+  await input.applyObservation(input.goalId, entry);
+  return { handled: true, entry, taskId: latestTask.id };
+}
+
+function isArcAgi3TaskCompletionDimension(dimension: Dimension): boolean {
+  return dimension.observation_mapping?.data_source === "arc_agi_3_task_completion" &&
+    dimension.observation_mapping.dimension === "task_completion";
+}
+
+function completionThresholdValue(dimension: Dimension): number | boolean {
+  if (dimension.threshold.type === "present") return true;
+  return dimension.threshold.type === "min" ? dimension.threshold.value : 1;
+}
+
+function hasArcAgi3TaskCompletionObservation(
+  log: ObservationLog | null,
+  dimensionName: string,
+  task: Task,
+): boolean {
+  return log?.entries.some((entry) =>
+    entry.dimension_name === dimensionName &&
+    entry.method.source === "arc_agi3_task_completion" &&
+    isArcAgi3TaskCompletionRawResult(entry.raw_result, task)
+  ) ?? false;
+}
+
+function isArcAgi3TaskCompletionRawResult(rawResult: unknown, task: Task): boolean {
+  if (!rawResult || typeof rawResult !== "object" || Array.isArray(rawResult)) return false;
+  const result = rawResult as Record<string, unknown>;
+  return result["source"] === "arc_agi3_task_completion" &&
+    result["task_id"] === task.id &&
+    result["completed_at"] === task.completed_at;
+}
+
+function taskCompletionSortKey(task: Task): string {
+  return task.completed_at ?? task.started_at ?? task.created_at;
+}
+
+function taskTargetsDimension(task: Task, dimensionName: string): boolean {
+  return task.primary_dimension === dimensionName || task.target_dimensions.includes(dimensionName);
 }
 
 function needsPlainMetricMapping(dimensionName: string): boolean {

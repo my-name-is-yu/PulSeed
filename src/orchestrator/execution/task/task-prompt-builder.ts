@@ -11,6 +11,7 @@ import {
 } from "../../../base/utils/workspace-path.js";
 import { parsePackageMetadata } from "../../../base/utils/package-metadata.js";
 import type { Goal } from "../../goal/types/goal.js";
+import { hasArcAgi3ProfileConstraint } from "./task-lifecycle-policies.js";
 
 interface RepositoryPromptContext {
   projectName: string;
@@ -280,9 +281,19 @@ Gap Analysis:
     dimensionSection = `Dimension to improve: "${targetDimension}"`;
   }
 
+  const isArcAgi3Profile = hasArcAgi3ProfileConstraint(goal?.constraints);
+
   // Build adapter context section
   let adapterSection = "";
-  if (adapterType === "github_issue") {
+  if (isArcAgi3Profile) {
+    adapterSection = `\nExecution context: ARC-AGI-3 online profile.
+Generate an ARC benchmark execution task, not a code/file-writing task.
+Use only the ARC-AGI-3 typed tool flow: arc_agi3_policy if needed, arc_agi3_list_games, arc_agi3_start, arc_agi3_observe, up to the requested number of arc_agi3_act calls, then arc_agi3_finish.
+Do not ask the executing agent to create or edit workspace files, custom JSON artifacts, scripts, shell commands, browser steps, generic HTTP fetches, web research, or Kaggle artifacts.
+Completion evidence is the ARC tool output and the canonical PulSeed ARC artifacts persisted by arc_agi3_start/act/finish under PULSEED_HOME/arc-agi-3/runs/<run_id>/, especially run.json, actions.jsonl, scorecard.json, card_id, replay_url, and action_count.
+Set artifact_contract.required=false with an empty required_artifacts array for ARC-AGI-3 tasks. The generic workspace artifact_contract mechanism is for Kaggle/workspace artifacts, not ARC online scorecards.
+If you include a run_id, make it fresh and unique for the attempt. The work_description should ask to report card_id, replay_url, action_count, selected game_id/title, score, and canonical artifact_path returned by arc_agi3_finish.\n`;
+  } else if (adapterType === "github_issue") {
     adapterSection = `\nExecution context: GitHub issue creation.
 - work_description: issue title (line 1) + issue body
 - Generate specific, actionable issues only\n`;

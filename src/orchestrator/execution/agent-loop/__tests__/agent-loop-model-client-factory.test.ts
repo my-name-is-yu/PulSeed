@@ -3,6 +3,7 @@ import type { ILLMClient, LLMMessage, LLMRequestOptions, LLMResponse } from "../
 import type { ProviderConfig } from "../../../../base/llm/provider-config.js";
 import {
   AnthropicMessagesAgentLoopModelClient,
+  ILLMClientAgentLoopModelClient,
   OpenAIResponsesAgentLoopModelClient,
   StaticAgentLoopModelRegistry,
   createProviderNativeAgentLoopModelClient,
@@ -25,6 +26,12 @@ function makeLLMClient(): ILLMClient {
   };
 }
 
+function makeCodexOAuthToken(): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
+  return `${header}.${payload}.signature`;
+}
+
 const registry = new StaticAgentLoopModelRegistry([{
   ref: { providerId: "test", modelId: "model" },
   displayName: "test/model",
@@ -45,6 +52,21 @@ describe("createProviderNativeAgentLoopModelClient", () => {
     });
 
     expect(client).toBeInstanceOf(OpenAIResponsesAgentLoopModelClient);
+  });
+
+  it("keeps Codex OAuth backed OpenAI runs on the configured LLM client transport", () => {
+    const client = createProviderNativeAgentLoopModelClient({
+      providerConfig: {
+        provider: "openai",
+        model: "gpt-5.5",
+        adapter: "openai_codex_cli",
+        api_key: makeCodexOAuthToken(),
+      } as ProviderConfig,
+      llmClient: makeLLMClient(),
+      modelRegistry: registry,
+    });
+
+    expect(client).toBeInstanceOf(ILLMClientAgentLoopModelClient);
   });
 
   it("selects Anthropic native client for anthropic provider", () => {

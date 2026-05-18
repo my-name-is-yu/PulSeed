@@ -149,6 +149,49 @@ const HEREDOC_VERIFICATION_RESPONSE = `\`\`\`json
 }
 \`\`\``;
 
+const ARC_ARTIFACT_CONTRACT_RESPONSE = `\`\`\`json
+{
+  "work_description": "Run one ARC-AGI-3 public demo scorecard and write a workspace metrics artifact",
+  "rationale": "The ARC smoke dimension needs online scorecard evidence",
+  "approach": "Use ARC tools to start, act, finish, and summarize the scorecard",
+  "success_criteria": [
+    {
+      "description": "ARC scorecard has replay URL",
+      "verification_method": "test -f artifacts/arc_agi3_public_demo_smoke_scorecard.json",
+      "is_blocking": true
+    }
+  ],
+  "scope_boundary": {
+    "in_scope": ["ARC-AGI-3 online scorecard"],
+    "out_of_scope": ["Kaggle submissions", "web research"],
+    "blast_radius": "one ARC community scorecard"
+  },
+  "constraints": ["run_spec_profile:arc_agi_3"],
+  "risk_profile": {
+    "external_action": {
+      "required": true,
+      "approval_required": true,
+      "action_kind": "external_mutation",
+      "rationale": "Opening a scorecard mutates ARC online state"
+    }
+  },
+  "artifact_contract": {
+    "required": true,
+    "required_artifacts": [
+      {
+        "kind": "metrics_json",
+        "path": "artifacts/arc_agi3_public_demo_smoke_scorecard.json",
+        "required_fields": ["scorecard_id", "replay_url", "arc_agi3_smoke_completed"],
+        "field_types": { "scorecard_id": "string", "replay_url": "string", "arc_agi3_smoke_completed": "number" },
+        "fresh_after_task_start": true
+      }
+    ]
+  },
+  "reversibility": "unknown",
+  "estimated_duration": { "value": 20, "unit": "minutes" }
+}
+\`\`\``;
+
 const WORKSPACE_ARTIFACT_WITH_BROAD_REPO_TEST_RESPONSE = `\`\`\`json
 {
   "work_description": "Create fresh and stale accuracy metrics artifacts in experiments/",
@@ -899,6 +942,25 @@ describe("TaskLifecycle", async () => {
       const task = expectTask(await lifecycle.generateTask("goal-kaggle", "test_coverage"));
 
       expect(task.artifact_contract).toMatchObject({ required: true, required_artifacts: [] });
+    });
+
+    it("suppresses generic workspace artifact contracts for ARC-AGI-3 profile tasks", async () => {
+      const llm = createMockLLMClient([ARC_ARTIFACT_CONTRACT_RESPONSE]);
+      const lifecycle = createLifecycle(llm);
+      await stateManager.saveGoal(makeGoal({
+        id: "goal-arc",
+        constraints: [
+          "run_spec_profile:arc_agi_3",
+          "arc_agi3_claim_mode:community_online_scorecard",
+          "arc_agi3_public_research:disabled",
+          "arc_agi3_generic_network:disabled",
+        ],
+      }));
+
+      const task = expectTask(await lifecycle.generateTask("goal-arc", "arc_agi3_smoke_completed"));
+
+      expect(task.constraints).toContain("run_spec_profile:arc_agi_3");
+      expect(task.artifact_contract).toEqual({ required: false, required_artifacts: [] });
     });
 
     it("sets strategy_id from active strategy", async () => {

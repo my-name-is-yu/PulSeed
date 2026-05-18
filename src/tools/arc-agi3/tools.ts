@@ -26,6 +26,7 @@ import {
   type ArcAgi3ModelIdentity,
   type ArcAgi3ObserveInput,
   type ArcAgi3PolicyInput,
+  type ArcAgi3Scorecard,
   type ArcAgi3ScorecardInput,
   type ArcAgi3StartInput,
 } from "./types.js";
@@ -342,19 +343,22 @@ export class ArcAgi3FinishTool extends ArcAgi3ToolBase<ArcAgi3FinishInput> {
     const startTime = Date.now();
     try {
       const artifact = await this.artifactStore.load(input.run_id);
-      const scorecard = input.close_scorecard
-        ? await this.client().closeScorecard(artifact.card_id, context.abortSignal)
-        : await this.client().retrieveScorecard(artifact.card_id, context.abortSignal);
+      let scorecard;
+      try {
+        scorecard = input.close_scorecard
+          ? await this.client().closeScorecard(artifact.card_id, context.abortSignal)
+          : await this.client().retrieveScorecard(artifact.card_id, context.abortSignal);
+      } catch (err) {
+        if (artifact.scorecard && isScorecardNotFoundError(err)) {
+          return this.ok(toFinishedRunOutput(input.run_id, artifact, this.artifactStore.runPath(input.run_id)), `Finished ARC-AGI-3 run ${input.run_id} with cached community online scorecard ${artifact.card_id} after ARC returned 404 for the closed scorecard.`, startTime, [
+            this.artifactStore.runPath(input.run_id),
+            this.artifactStore.scorecardPath(input.run_id),
+          ]);
+        }
+        throw err;
+      }
       const updated = await this.artifactStore.recordScorecard(input.run_id, scorecard);
-      return this.ok({
-        run_id: input.run_id,
-        card_id: artifact.card_id,
-        replay_url: updated.replay_url,
-        official_score: updated.official_score,
-        scorecard: updated.scorecard,
-        artifact_path: this.artifactStore.runPath(input.run_id),
-        claim_mode: updated.claim_mode,
-      }, `Finished ARC-AGI-3 run ${input.run_id} with community online scorecard ${artifact.card_id}.`, startTime, [
+      return this.ok(toFinishedRunOutput(input.run_id, updated, this.artifactStore.runPath(input.run_id)), `Finished ARC-AGI-3 run ${input.run_id} with community online scorecard ${artifact.card_id}.`, startTime, [
         this.artifactStore.runPath(input.run_id),
         this.artifactStore.scorecardPath(input.run_id),
       ]);
@@ -390,17 +394,22 @@ export class ArcAgi3ScorecardTool extends ArcAgi3ToolBase<ArcAgi3ScorecardInput>
     const startTime = Date.now();
     try {
       const artifact = await this.artifactStore.load(input.run_id);
-      const scorecard = input.game_only
-        ? await this.client().retrieveScorecardForGame(artifact.card_id, artifact.game_id, context.abortSignal)
-        : await this.client().retrieveScorecard(artifact.card_id, context.abortSignal);
+      let scorecard;
+      try {
+        scorecard = input.game_only
+          ? await this.client().retrieveScorecardForGame(artifact.card_id, artifact.game_id, context.abortSignal)
+          : await this.client().retrieveScorecard(artifact.card_id, context.abortSignal);
+      } catch (err) {
+        if (artifact.scorecard && isScorecardNotFoundError(err)) {
+          return this.ok(toScorecardOutput(input.run_id, artifact), `Retrieved cached ARC-AGI-3 scorecard for ${input.run_id} after ARC returned 404 for the closed scorecard.`, startTime, [
+            this.artifactStore.runPath(input.run_id),
+            this.artifactStore.scorecardPath(input.run_id),
+          ]);
+        }
+        throw err;
+      }
       const updated = await this.artifactStore.recordScorecard(input.run_id, scorecard);
-      return this.ok({
-        run_id: input.run_id,
-        scorecard: updated.scorecard,
-        official_score: updated.official_score,
-        replay_url: updated.replay_url,
-        claim_mode: updated.claim_mode,
-      }, `Retrieved ARC-AGI-3 scorecard for ${input.run_id}.`, startTime, [
+      return this.ok(toScorecardOutput(input.run_id, updated), `Retrieved ARC-AGI-3 scorecard for ${input.run_id}.`, startTime, [
         this.artifactStore.runPath(input.run_id),
         this.artifactStore.scorecardPath(input.run_id),
       ]);
@@ -501,4 +510,43 @@ async function resolveArcAgi3ModelIdentity(
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isScorecardNotFoundError(err: unknown): boolean {
+  const message = formatError(err);
+  return /\bfailed \(404\):/.test(message) &&
+    /ARC-AGI-3 API (?:GET|POST) \/api\/scorecard(?:\/|$)/.test(message);
+}
+
+function toFinishedRunOutput(runId: string, artifact: {
+  card_id: string;
+  replay_url: string;
+  official_score: number | null;
+  scorecard: ArcAgi3Scorecard | null;
+  claim_mode: string;
+}, artifactPath?: string): Record<string, unknown> {
+  return {
+    run_id: runId,
+    card_id: artifact.card_id,
+    replay_url: artifact.replay_url,
+    official_score: artifact.official_score,
+    scorecard: artifact.scorecard,
+    ...(artifactPath ? { artifact_path: artifactPath } : {}),
+    claim_mode: artifact.claim_mode,
+  };
+}
+
+function toScorecardOutput(runId: string, artifact: {
+  scorecard: ArcAgi3Scorecard | null;
+  official_score: number | null;
+  replay_url: string;
+  claim_mode: string;
+}): Record<string, unknown> {
+  return {
+    run_id: runId,
+    scorecard: artifact.scorecard,
+    official_score: artifact.official_score,
+    replay_url: artifact.replay_url,
+    claim_mode: artifact.claim_mode,
+  };
 }

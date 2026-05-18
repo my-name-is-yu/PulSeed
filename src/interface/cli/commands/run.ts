@@ -75,6 +75,7 @@ export async function cmdRun(
     if (verbose || process.env.DEBUG) {
       logger.error(err instanceof Error ? err.stack ?? String(err) : String(err));
     }
+    await logger.close();
     return 1;
   }
 
@@ -84,6 +85,7 @@ export async function cmdRun(
   if (!goal) {
     rl?.close();
     logger.error(`Error: Goal "${goalId}" not found.`);
+    await closeRunResources(durableLoop, logger);
     return 1;
   }
 
@@ -117,6 +119,7 @@ export async function cmdRun(
       logger.error(formatOperationError("reconcile interrupted resident tasks", err));
       if (activeDurableLoopRef) activeDurableLoopRef.value = null;
       rl?.close();
+      await closeRunResources(durableLoop, logger);
       return 1;
     }
   }
@@ -163,6 +166,7 @@ export async function cmdRun(
     }
     if (activeDurableLoopRef) activeDurableLoopRef.value = null;
     rl?.close();
+    await closeRunResources(durableLoop, logger);
     return 1;
   }
 
@@ -199,7 +203,8 @@ export async function cmdRun(
     }
   }
 
-  switch (result.finalStatus) {
+  const exitCode = (() => {
+    switch (result.finalStatus) {
     case "completed":
       return 0;
     case "stalled":
@@ -210,7 +215,10 @@ export async function cmdRun(
       return 1;
     default:
       return 0;
-  }
+    }
+  })();
+  await closeRunResources(durableLoop, logger);
+  return exitCode;
 }
 
 async function reconcileResidentShutdownTasks(
@@ -233,4 +241,15 @@ async function reconcileResidentShutdownTasks(
   } catch (err) {
     logger.warn(formatOperationError("reconcile interrupted resident shutdown tasks", err));
   }
+}
+
+async function closeRunResources(
+  durableLoop: DurableLoop,
+  logger: ReturnType<typeof buildLoopLogger>,
+): Promise<void> {
+  const closeLoop = (durableLoop as { close?: () => Promise<void> | void }).close;
+  if (typeof closeLoop === "function") {
+    await closeLoop.call(durableLoop);
+  }
+  await logger.close();
 }

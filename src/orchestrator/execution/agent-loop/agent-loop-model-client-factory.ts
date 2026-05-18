@@ -1,4 +1,5 @@
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import { isCodexOAuthAccessToken } from "../../../base/llm/codex-llm-client.js";
 import type { ProviderConfig } from "../../../base/llm/provider-config.js";
 import type { AgentLoopModelClient, AgentLoopModelRegistry } from "./agent-loop-model.js";
 import { ILLMClientAgentLoopModelClient } from "./agent-loop-model-client.js";
@@ -14,7 +15,11 @@ export function createProviderNativeAgentLoopModelClient(input: {
     return new ILLMClientAgentLoopModelClient(input.llmClient, input.modelRegistry);
   }
 
-  if (input.providerConfig.provider === "openai" && input.providerConfig.api_key) {
+  if (
+    input.providerConfig.provider === "openai"
+    && input.providerConfig.api_key
+    && !isCodexOAuthAccessToken(input.providerConfig.api_key)
+  ) {
     return new OpenAIResponsesAgentLoopModelClient(
       {
         apiKey: input.providerConfig.api_key,
