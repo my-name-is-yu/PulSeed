@@ -890,15 +890,22 @@ export class ToolExecutor {
     fn: () => Promise<ToolResult>,
     timeoutMs: number,
   ): Promise<ToolResult> {
-    return Promise.race([
-      fn(),
-      new Promise<ToolResult>((_, reject) =>
-        setTimeout(
-          () => reject(new ToolExecutionTimeoutError(timeoutMs)),
-          timeoutMs,
-        ),
-      ),
-    ]);
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<ToolResult>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new ToolExecutionTimeoutError(timeoutMs)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   /**

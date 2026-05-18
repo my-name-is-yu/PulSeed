@@ -1772,6 +1772,29 @@ describe("ToolExecutor", () => {
     });
 
     describe("Timeout", () => {
+      it("clears the timeout timer after a successful tool call", async () => {
+        vi.useFakeTimers();
+        try {
+          const tool = createMockTool({
+            call: vi.fn().mockResolvedValue({
+              success: true,
+              data: { result: "ok" },
+              summary: "success",
+              durationMs: 1,
+            } as ToolResult),
+          });
+          const { executor } = createExecutor([tool]);
+          const ctx = createMockContext({ timeoutMs: 60_000 });
+
+          const result = await executor.execute("mock-tool", { value: "x" }, ctx);
+
+          expect(result.success).toBe(true);
+          expect(vi.getTimerCount()).toBe(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       it("times out when tool takes too long", async () => {
         const slowTool = createMockTool({
           call: vi.fn().mockImplementation(
