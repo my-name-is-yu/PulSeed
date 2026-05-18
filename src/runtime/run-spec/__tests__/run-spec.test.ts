@@ -867,5 +867,56 @@ describe("RunSpec handoff", () => {
     expect(goal?.constraints).toContain("arc_agi3_public_research:disabled");
     expect(goal?.constraints).toContain("arc_agi3_generic_network:disabled");
     expect(goal?.constraints).not.toContain("artifact_contract:required");
+    expect(goal?.dimensions[0]?.observation_mapping).toMatchObject({
+      data_source: "arc_agi_3_task_completion",
+      dimension: "task_completion",
+      confidence: "high",
+    });
+  });
+
+  it("does not map ARC-AGI-3 metric targets to task-completion observations", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-handoff-arc-metric-"));
+    const stateManager = new StateManager(baseDir);
+    const spec = await deriveRunSpecFromText(
+      "Run ARC-AGI-3 public demo games with gpt-5.5 and reach at least 5% RHAE.",
+      {
+        cwd: "/repo/pulseed",
+        now: NOW,
+        llmClient: llmDraft({
+          profile: "arc_agi_3",
+          objective: "Run ARC-AGI-3 public demo games with GPT-5.5",
+          metric: {
+            name: "rhae_score",
+            direction: "maximize",
+            target: 0.05,
+            target_rank_percent: null,
+            datasource: "arc_agi_3_scorecard",
+            confidence: "high",
+          },
+          progress_contract: {
+            kind: "metric_target",
+            dimension: "rhae_score",
+            threshold: 0.05,
+            semantics: "Reach an ARC-AGI-3 RHAE score of at least 5%.",
+            confidence: "high",
+          },
+        }),
+      },
+    );
+    expect(spec).not.toBeNull();
+
+    const result = await new RunSpecHandoffService({
+      stateManager,
+      daemonClient: { startGoal: async () => ({ ok: true }) } as never,
+    }).startConfirmed({ ...spec!, status: "confirmed" });
+
+    expect(result.success).toBe(true);
+    const goal = await stateManager.loadGoal(result.goalId!);
+    expect(goal?.constraints).toContain("run_spec_profile:arc_agi_3");
+    expect(goal?.dimensions[0]).toMatchObject({
+      name: "rhae_score",
+      threshold: { type: "min", value: 0.05 },
+    });
+    expect(goal?.dimensions[0]?.observation_mapping).toBeUndefined();
   });
 });

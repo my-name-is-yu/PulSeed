@@ -243,6 +243,37 @@ describe("buildTaskGenerationPrompt — code-agent operational KPI grounding", (
   });
 });
 
+describe("buildTaskGenerationPrompt — ARC-AGI-3 profile", () => {
+  it("replaces generic code-agent file-writing instructions with ARC tool execution instructions", async () => {
+    const goal = makeGoal({
+      id: "g-arc",
+      title: "ARC-AGI-3 public demo smoke",
+      constraints: [
+        "run_spec_profile:arc_agi_3",
+        "arc_agi3_claim_mode:community_online_scorecard",
+        "arc_agi3_public_research:disabled",
+        "arc_agi3_generic_network:disabled",
+      ],
+    });
+    const sm = makeMockStateManager({ "g-arc": goal });
+
+    const prompt = await buildTaskGenerationPrompt(
+      sm,
+      "g-arc",
+      "arc_agi3_smoke_completed",
+      undefined,
+      "openai_codex_cli",
+    );
+
+    expect(prompt).toContain("Execution context: ARC-AGI-3 online profile.");
+    expect(prompt).toContain("arc_agi3_list_games");
+    expect(prompt).toContain("arc_agi3_finish");
+    expect(prompt).toContain("Set artifact_contract.required=false");
+    expect(prompt).toContain("Do not ask the executing agent to create or edit workspace files");
+    expect(prompt).not.toContain("You MUST produce implementation tasks that modify or create files inside the active workspace.");
+  });
+});
+
 describe("buildTaskGenerationPrompt — workspace constraints", () => {
   it("includes workspace_path constraints and artifact workspace boundary instructions", async () => {
     const workspace = path.join("/tmp", "goal-workspace");

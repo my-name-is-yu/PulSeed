@@ -21,6 +21,7 @@ const FILESYSTEM_SNAPSHOT_EXCLUDED_DIRS = new Set([
   "venv",
   "__pycache__",
   ".cache",
+  ".codex",
   "dist",
   "build",
 ]);

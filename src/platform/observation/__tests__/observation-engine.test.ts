@@ -4,12 +4,14 @@ import * as path from "node:path";
 import { ObservationEngine } from "../observation-engine.js";
 import { StateManager } from "../../../base/state/state-manager.js";
 import type { Goal } from "../../../base/types/goal.js";
+import type { Task } from "../../../base/types/task.js";
 import type { ObservationLogEntry } from "../../../base/types/state.js";
 import type { ObservationLayer, ObservationMethod, ObservationTrigger } from "../../../base/types/core.js";
 import type { KnowledgeGapSignal } from "../../../base/types/knowledge.js";
 import type { IDataSourceAdapter } from "../data-source-adapter.js";
 import type { DataSourceConfig } from "../../../base/types/data-source.js";
 import type { ILLMClient } from "../../../base/llm/llm-client.js";
+import type { HookManager } from "../../../runtime/hook-manager.js";
 import { makeTempDir } from "../../../../tests/helpers/temp-dir.js";
 import { makeGoal } from "../../../../tests/helpers/fixtures.js";
 import { randomUUID } from "node:crypto";
@@ -715,6 +717,13 @@ describe("observeFromDataSource", () => {
           weight: 1.0,
           uncertainty_weight: null,
           state_integrity: "ok",
+          observation_mapping: {
+            kind: "data_source",
+            data_source: "arc_agi_3_task_completion",
+            dimension: "task_completion",
+            confidence: "high",
+            rationale: "ARC typed-tool task completion closes this smoke dimension.",
+          },
           dimension_mapping: null,
         },
       ],
@@ -1356,6 +1365,139 @@ describe("observeFromDataSource", () => {
         },
       ],
     });
+  });
+
+  it("observes ARC-AGI-3 task completion once, emits PostObserve, and does not require task profile constraints", async () => {
+    const llmClient = makeMockLLMClient(0);
+    const hookManager = { emit: vi.fn().mockResolvedValue(undefined) } as unknown as HookManager;
+    const engine = new ObservationEngine(
+      stateManager,
+      [],
+      llmClient,
+      undefined,
+      {},
+      undefined,
+      undefined,
+      hookManager,
+    );
+    const goal = makeGoal({
+      id: "goal-arc-agi3-smoke",
+      constraints: [
+        "run_spec_profile:arc_agi_3",
+        "arc_agi3_claim_mode:community_online_scorecard",
+      ],
+      dimensions: [
+        {
+          name: "arc_agi3_smoke_completed",
+          label: "ARC-AGI-3 smoke completed",
+          current_value: 0,
+          threshold: { type: "min", value: 1 },
+          confidence: 0.3,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          observation_mapping: {
+            kind: "data_source",
+            data_source: "arc_agi_3_task_completion",
+            dimension: "task_completion",
+            confidence: "high",
+            rationale: "ARC typed-tool task completion closes this smoke dimension.",
+          },
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    await stateManager.saveTask(makeTaskRecord({
+      id: "task-arc",
+      goal_id: "goal-arc-agi3-smoke",
+      target_dimensions: ["arc_agi3_smoke_completed"],
+      primary_dimension: "arc_agi3_smoke_completed",
+      constraints: [],
+      work_description: "Run one ARC-AGI-3 online scorecard smoke",
+      status: "completed",
+    }) as Task);
+
+    await engine.observe("goal-arc-agi3-smoke", []);
+    await engine.observe("goal-arc-agi3-smoke", []);
+
+    const updated = await stateManager.loadGoal("goal-arc-agi3-smoke");
+    expect(updated?.dimensions[0]).toMatchObject({
+      current_value: 1,
+      confidence: 0.95,
+      last_observed_layer: "mechanical",
+    });
+    expect(llmClient.sendMessage).not.toHaveBeenCalled();
+    const log = await stateManager.loadObservationLog("goal-arc-agi3-smoke");
+    expect(log?.entries).toHaveLength(1);
+    expect(log?.entries[0]).toMatchObject({
+      layer: "mechanical",
+      extracted_value: 1,
+      method: { source: "arc_agi3_task_completion" },
+      raw_result: {
+        source: "arc_agi3_task_completion",
+        task_id: "task-arc",
+        task_status: "completed",
+      },
+    });
+    const postObserveCalls = vi.mocked(hookManager.emit).mock.calls.filter(([event]) => event === "PostObserve");
+    expect(postObserveCalls).toHaveLength(1);
+    expect(postObserveCalls[0]).toEqual([
+      "PostObserve",
+      {
+        goal_id: "goal-arc-agi3-smoke",
+        dimension: "arc_agi3_smoke_completed",
+        data: {
+          value: 1,
+          confidence: 0.95,
+          task_id: "task-arc",
+        },
+      },
+    ]);
+  });
+
+  it("does not infer ARC-AGI-3 completion for min-1 dimensions without explicit completion mapping", async () => {
+    const goal = makeGoal({
+      id: "goal-arc-agi3-score-like",
+      constraints: [
+        "run_spec_profile:arc_agi_3",
+        "arc_agi3_claim_mode:community_online_scorecard",
+      ],
+      dimensions: [
+        {
+          name: "arc_agi3_score_ready",
+          label: "ARC-AGI-3 score ready",
+          current_value: 0,
+          threshold: { type: "min", value: 1 },
+          confidence: 0.3,
+          observation_method: defaultMethod,
+          last_updated: new Date().toISOString(),
+          history: [],
+          weight: 1.0,
+          uncertainty_weight: null,
+          state_integrity: "ok",
+          dimension_mapping: null,
+        },
+      ],
+    });
+    await stateManager.saveGoal(goal);
+    await stateManager.saveTask(makeTaskRecord({
+      id: "task-arc",
+      goal_id: "goal-arc-agi3-score-like",
+      target_dimensions: ["arc_agi3_score_ready"],
+      primary_dimension: "arc_agi3_score_ready",
+      constraints: ["run_spec_profile:arc_agi_3"],
+      status: "completed",
+    }) as Task);
+
+    await new ObservationEngine(stateManager).observe("goal-arc-agi3-score-like", []);
+
+    const updated = await stateManager.loadGoal("goal-arc-agi3-score-like");
+    expect(updated?.dimensions[0]?.current_value).toBe(0);
+    expect(updated?.dimensions[0]?.last_observed_layer).not.toBe("mechanical");
   });
 
   it("lowers confidence when required task-scoped artifact metrics are age-stale", async () => {

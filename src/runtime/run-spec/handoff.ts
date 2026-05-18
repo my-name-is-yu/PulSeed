@@ -684,8 +684,26 @@ function goalDimensionFromRunSpec(spec: RunSpec, now: string): Goal["dimensions"
     weight: 1,
     uncertainty_weight: null,
     state_integrity: "ok",
+    ...(usesArcAgi3TaskCompletionObservation(spec)
+      ? {
+          observation_mapping: {
+            kind: "data_source" as const,
+            data_source: "arc_agi_3_task_completion",
+            dimension: "task_completion",
+            confidence: "high" as const,
+            rationale: "ARC-AGI-3 scorecard completion is observed from completed typed-tool task records.",
+          },
+        }
+      : {}),
     dimension_mapping: null,
   };
+}
+
+function usesArcAgi3TaskCompletionObservation(spec: RunSpec): boolean {
+  return spec.profile === "arc_agi_3"
+    && spec.progress_contract.kind === "open_ended"
+    && spec.progress_contract.threshold === null
+    && spec.metric === null;
 }
 
 function goalConstraintsFromRunSpec(spec: RunSpec): string[] {
