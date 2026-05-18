@@ -694,6 +694,13 @@ function goalConstraintsFromRunSpec(spec: RunSpec): string[] {
     `Profile: ${spec.profile}`,
     `run_spec_profile:${spec.profile}`,
     ...(spec.profile === "kaggle" ? ["artifact_contract:required"] : []),
+    ...(spec.profile === "arc_agi_3"
+      ? [
+          "arc_agi3_claim_mode:community_online_scorecard",
+          "arc_agi3_public_research:disabled",
+          "arc_agi3_generic_network:disabled",
+        ]
+      : []),
     `Workspace: ${spec.workspace?.path ?? "unresolved"}`,
     `Progress: ${spec.progress_contract.semantics}`,
     `Submit policy: ${spec.approval_policy.submit}`,

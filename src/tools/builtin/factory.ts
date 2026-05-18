@@ -92,6 +92,7 @@ import {
 } from "../runtime/LongRunningRuntimeTools.js";
 import { createRunSpecHandoffTools } from "../runtime/RunSpecHandoffTools.js";
 import { createSetupRuntimeControlTools } from "../runtime/SetupRuntimeControlTools.js";
+import { ArcAgi3ArtifactStore, createArcAgi3Tools } from "../arc-agi3/index.js";
 import { CreateScheduleTool } from "../schedule/CreateScheduleTool/CreateScheduleTool.js";
 import { GetScheduleTool } from "../schedule/GetScheduleTool/GetScheduleTool.js";
 import { ListSchedulesTool } from "../schedule/ListSchedulesTool/ListSchedulesTool.js";
@@ -189,6 +190,9 @@ export interface BuiltinToolDeps {
 /** All built-in tools, sorted alphabetically by name. */
 export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
   const stateManagerBaseDir = deps?.stateManager ? getStateManagerBaseDir(deps.stateManager) : undefined;
+  const arcAgi3ToolDeps = stateManagerBaseDir
+    ? { artifactStore: new ArcAgi3ArtifactStore(path.join(stateManagerBaseDir, "arc-agi-3", "runs")) }
+    : undefined;
   const tools: ITool[] = [
     new EnvTool(),
     new ApplyPatchTool(),
@@ -235,6 +239,7 @@ export function createBuiltinTools(deps?: BuiltinToolDeps): ITool[] {
     new UpdatePlanTool(),
     new ViewImageTool(),
     new WorkspaceImportTool(),
+    ...createArcAgi3Tools(arcAgi3ToolDeps),
   ];
 
   if (deps?.stateManager) {

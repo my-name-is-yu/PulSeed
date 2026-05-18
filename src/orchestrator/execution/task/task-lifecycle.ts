@@ -51,6 +51,7 @@ import {
   deriveTaskAgentLoopBudget,
   failNativeCodeTaskWithoutFileChanges,
   isExternalActionTask,
+  resolveArcAgi3AgentLoopToolPolicy,
   shouldDeferAgentLoopTerminalUntilVerification,
   shouldKeepDaemonShutdownInterruptedTaskRunning,
   taskApprovalHandoffId,
@@ -651,6 +652,7 @@ export class TaskLifecycle {
       const diffBaseline = captureExecutionDiffBaseline(this.execFileSyncFn, taskCwd ?? process.cwd());
       const artifactGoal = await this.stateManager.loadGoal(runningTask.goal_id).catch(() => null);
       const agentLoopBudget = deriveTaskAgentLoopBudget(runningTask, artifactGoal);
+      const arcAgi3ToolPolicy = resolveArcAgi3AgentLoopToolPolicy(runningTask, artifactGoal);
       if (agentLoopBudget.reason === "profiled_estimate") {
         this.logger?.info?.("[TaskLifecycle] Aligning profiled task AgentLoop budget with generated estimate", {
           taskId: runningTask.id,
@@ -665,6 +667,7 @@ export class TaskLifecycle {
         knowledgeContext,
         cwd: taskCwd,
         ...(agentLoopBudget.budget ? { budget: agentLoopBudget.budget } : {}),
+        ...(arcAgi3ToolPolicy ? { toolPolicy: arcAgi3ToolPolicy } : {}),
         ...(abortSignal ? { abortSignal } : {}),
       });
       agentLoopResult.activeBudgetMs ??= agentLoopBudget.activeBudgetMs;
@@ -707,7 +710,13 @@ export class TaskLifecycle {
           result.filesChanged = diffArtifacts.changedPaths.length > 0;
         }
       }
-      failNativeCodeTaskWithoutFileChanges({ task: runningTask, result, capturedChangedPaths, logger: this.logger });
+      failNativeCodeTaskWithoutFileChanges({
+        task: runningTask,
+        goal: artifactGoal,
+        result,
+        capturedChangedPaths,
+        logger: this.logger,
+      });
     } catch (err) {
       result = {
         success: false,

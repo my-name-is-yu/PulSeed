@@ -128,6 +128,30 @@ describe("task lifecycle policies", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it("does not require file-change capture for ARC-AGI-3 profiled normal tasks", () => {
+    const warn = vi.fn();
+    const result = makeAgentResult({
+      success: true,
+      error: null,
+      exit_code: 0,
+      stopped_reason: "completed",
+      agentLoop: makeAgentLoopInfo(),
+    });
+
+    failNativeCodeTaskWithoutFileChanges({
+      task: makeTask({ task_category: "normal" }),
+      goal: { constraints: ["run_spec_profile:arc_agi_3"] },
+      result,
+      capturedChangedPaths: [],
+      logger: { warn } as never,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.agentLoop?.verificationHints ?? []).not.toContain(NATIVE_CODE_TASK_NO_CHANGES_ERROR);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("does not require file-change capture for knowledge acquisition tasks", () => {
     const result = makeAgentResult({
       success: true,

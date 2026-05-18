@@ -144,6 +144,45 @@ describe("RunSpec derivation", () => {
     });
   });
 
+  it("derives ARC-AGI-3 as its own profile with online community artifacts", async () => {
+    const spec = await deriveRunSpecFromText(
+      "Run ARC-AGI-3 public demo games with gpt-5.5 for a community leaderboard scorecard.",
+      {
+        cwd: "/work/pulseed",
+        now: NOW,
+        llmClient: llmDraft({
+          profile: "arc_agi_3",
+          objective: "Run ARC-AGI-3 public demo games with GPT-5.5",
+          metric: {
+            name: "rhae_score",
+            direction: "maximize",
+            target: null,
+            target_rank_percent: null,
+            datasource: "arc_agi_3_online_scorecard",
+            confidence: "medium",
+          },
+          progress_contract: {
+            kind: "open_ended",
+            dimension: "arc_agi_3_online_scorecard",
+            threshold: null,
+            semantics: "Collect a community online scorecard and replay for ARC-AGI-3 runs.",
+            confidence: "high",
+          },
+        }),
+      },
+    );
+
+    expect(spec).not.toBeNull();
+    expect(spec!.profile).toBe("arc_agi_3");
+    expect(spec!.artifact_contract.expected_artifacts).toEqual(expect.arrayContaining([
+      "ARC-AGI-3 action log",
+      "online scorecard metadata",
+      "replay URL",
+    ]));
+    expect(spec!.artifact_contract.primary_outputs).toContain("ARC-AGI-3 run artifact");
+    expect(spec!.artifact_contract.primary_outputs).not.toContain("submission.csv");
+  });
+
   it("preserves ambiguous metric direction as a required missing field", async () => {
     const spec = await deriveRunSpecFromText(
       "Please continue the benchmark work through tomorrow and get score 0.98 if possible.",
@@ -790,5 +829,43 @@ describe("RunSpec handoff", () => {
     const goal = await stateManager.loadGoal(result.goalId!);
     expect(goal?.constraints).toContain("run_spec_profile:kaggle");
     expect(goal?.constraints).toContain("artifact_contract:required");
+  });
+
+  it("creates ARC-AGI-3 goals with typed rule-enforcement constraints without Kaggle artifact requirements", async () => {
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pulseed-runspec-handoff-arc-"));
+    const stateManager = new StateManager(baseDir);
+    const spec = await deriveRunSpecFromText(
+      "Run ARC-AGI-3 public demo games with gpt-5.5 and save the online replay scorecard.",
+      {
+        cwd: "/repo/pulseed",
+        now: NOW,
+        llmClient: llmDraft({
+          profile: "arc_agi_3",
+          objective: "Run ARC-AGI-3 public demo games with GPT-5.5",
+          metric: null,
+          progress_contract: {
+            kind: "open_ended",
+            dimension: "arc_agi_3_online_scorecard",
+            threshold: null,
+            semantics: "Collect ARC-AGI-3 community online scorecard evidence.",
+            confidence: "high",
+          },
+        }),
+      },
+    );
+    expect(spec).not.toBeNull();
+
+    const result = await new RunSpecHandoffService({
+      stateManager,
+      daemonClient: { startGoal: async () => ({ ok: true }) } as never,
+    }).startConfirmed({ ...spec!, status: "confirmed" });
+
+    expect(result.success).toBe(true);
+    const goal = await stateManager.loadGoal(result.goalId!);
+    expect(goal?.constraints).toContain("run_spec_profile:arc_agi_3");
+    expect(goal?.constraints).toContain("arc_agi3_claim_mode:community_online_scorecard");
+    expect(goal?.constraints).toContain("arc_agi3_public_research:disabled");
+    expect(goal?.constraints).toContain("arc_agi3_generic_network:disabled");
+    expect(goal?.constraints).not.toContain("artifact_contract:required");
   });
 });

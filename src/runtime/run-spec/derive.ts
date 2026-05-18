@@ -15,6 +15,7 @@ import {
   type RunSpecDerivationContext,
   type RunSpecMetric,
   type RunSpecMissingField,
+  type RunSpecProfile,
   type RunSpecProgressContract,
 } from "./types.js";
 
@@ -82,7 +83,7 @@ const DraftArtifactContractSchema = z.object({
 const RunSpecDraftSchema = z.object({
   decision: z.enum(["run_spec_request", "not_run_spec_request"]),
   confidence: RunSpecConfidenceValueSchema,
-  profile: z.enum(["generic", "kaggle"]).optional(),
+  profile: z.enum(["generic", "kaggle", "arc_agi_3"]).optional(),
   objective: z.string().optional(),
   workspace: DraftWorkspaceSchema.optional(),
   execution_target: DraftExecutionTargetSchema,
@@ -104,7 +105,7 @@ type RunSpecDraft = z.infer<typeof RunSpecDraftSchema>;
 
 export interface RunSpecIntent {
   needsRunSpec: true;
-  profile: "generic" | "kaggle";
+  profile: RunSpecProfile;
   reason: string;
   confidence: number;
 }
@@ -118,7 +119,9 @@ function getRunSpecDraftPrompt(context: RunSpecDerivationContext): string {
 Return not_run_spec_request for ordinary chat, explanations, questions about how PulSeed works, runtime-control commands, and ambiguous text that does not clearly request long-running work.
 
 When it is a run spec request, extract a typed draft:
-- profile: kaggle for Kaggle/competition/leaderboard/submission workflows, otherwise generic.
+- profile: arc_agi_3 for ARC-AGI-3, ARC Prize 2026 public demo/community leaderboard, ARC Online API, or ARC game-playing benchmark workflows.
+- profile: kaggle for Kaggle competition notebooks, Kaggle submissions, or Kaggle leaderboard workflows that are not ARC-AGI-3.
+- profile: generic for other long-running workflows.
 - objective: concise operator objective in the user's meaning.
 - workspace: explicit user workspace path if named. If none is named, omit it; the caller may use context.
 - execution_target: local, daemon, or remote; include remote_host only when explicitly known.
@@ -137,7 +140,7 @@ Respond only as JSON with this shape:
 {
   "decision": "run_spec_request" | "not_run_spec_request",
   "confidence": 0.0-1.0,
-  "profile": "generic" | "kaggle",
+  "profile": "generic" | "kaggle" | "arc_agi_3",
   "objective": "...",
   "workspace": { "path": "...", "source": "user", "confidence": "high" } | null,
   "execution_target": { "kind": "local" | "daemon" | "remote", "remote_host": null, "confidence": "medium" },
@@ -342,7 +345,7 @@ function normalizeApprovalPolicy(policy: RunSpecDraft["approval_policy"]): RunSp
 }
 
 function normalizeArtifactContract(
-  profile: "generic" | "kaggle",
+  profile: RunSpecProfile,
   draft: RunSpecDraft["artifact_contract"],
 ): RunSpecArtifactContract {
   const fallback = defaultArtifactContract(profile);
@@ -353,12 +356,23 @@ function normalizeArtifactContract(
   };
 }
 
-function defaultArtifactContract(profile: "generic" | "kaggle"): RunSpecArtifactContract {
+function defaultArtifactContract(profile: RunSpecProfile): RunSpecArtifactContract {
   if (profile === "kaggle") {
     return {
       expected_artifacts: ["submission files", "leaderboard metrics", "experiment notes", "model artifacts"],
       discovery_globs: ["**/submission*.csv", "**/leaderboard*.json", "**/metrics*.json", "reports/**/*.md"],
       primary_outputs: ["submission.csv", "metrics summary", "run report"],
+    };
+  }
+  if (profile === "arc_agi_3") {
+    return {
+      expected_artifacts: ["ARC-AGI-3 action log", "online scorecard metadata", "replay URL", "run report"],
+      discovery_globs: [
+        "arc-agi-3/runs/**/run.json",
+        "arc-agi-3/runs/**/actions.jsonl",
+        "arc-agi-3/runs/**/scorecard.json",
+      ],
+      primary_outputs: ["ARC-AGI-3 run artifact", "scorecard summary", "replay URL"],
     };
   }
   return {

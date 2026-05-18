@@ -82,6 +82,7 @@ import type {
 } from "../../../runtime/store/evidence-ledger.js";
 import { RuntimeReproducibilityManifestStore } from "../../../runtime/store/reproducibility-manifest.js";
 import type { TaskCycleResult } from "../../execution/task/task-execution-types.js";
+import { hasArcAgi3ProfileConstraint } from "../../execution/task/task-lifecycle-policies.js";
 import {
   bestArtifactFromEvidence,
   phaseStatusToOutcome,
@@ -892,7 +893,22 @@ export class CoreIterationKernel {
       driveScores,
       knowledgeRefresh,
     });
-    const publicResearch = publicResearchRequest
+    const suppressPublicResearchForArcAgi3 = publicResearchRequest && hasArcAgi3ProfileConstraint(goal.constraints);
+    if (suppressPublicResearchForArcAgi3) {
+      await appendRuntimeEvidence({
+        kind: "decision",
+        summary: "Suppressed public web research because the active goal uses the ARC-AGI-3 profile.",
+        strategy: "arc_agi3_public_research_suppressed",
+        outcome: "blocked",
+        decision_reason: "ARC-AGI-3 runs must use the typed ARC toolset only; generic web research is disabled even when stall recovery would normally request it.",
+        scope: { phase: "public_research" },
+        result: {
+          status: "arc_agi3_public_research_suppressed",
+          summary: "public_research phase was not invoked for this ARC-AGI-3 goal.",
+        },
+      });
+    }
+    const publicResearch = publicResearchRequest && !suppressPublicResearchForArcAgi3
       ? await runPhase("public-research", () =>
           corePhaseRuntime.run(
             {
