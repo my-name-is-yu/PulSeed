@@ -11,6 +11,7 @@ import {
   ArcAgi3ActTool,
   ArcAgi3FinishTool,
   ArcAgi3ListGamesTool,
+  ArcAgi3RunIdSchema,
   ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
   createArcAgi3Tools,
@@ -152,6 +153,16 @@ describe("ARC-AGI-3 tools", () => {
     expect(ArcAgi3ActInputSchema.safeParse({ run_id: "run-1", action: "ACTION6", x: 0 }).success).toBe(false);
     expect(ArcAgi3ActInputSchema.safeParse({ run_id: "run-1", action: "ACTION1", x: 0, y: 0 }).success).toBe(false);
     expect(ArcAgi3ActInputSchema.safeParse({ run_id: "run-1", action: "JUMP" }).success).toBe(false);
+  });
+
+  it("rejects path-unsafe run ids before artifact paths are built", () => {
+    expect(ArcAgi3RunIdSchema.safeParse("run-1").success).toBe(true);
+    expect(ArcAgi3RunIdSchema.safeParse("demo_1.2-3").success).toBe(true);
+    expect(ArcAgi3RunIdSchema.safeParse("demo:1").success).toBe(false);
+    expect(ArcAgi3StartInputSchema.safeParse({
+      game_id: "ls20-016295f7601e",
+      run_id: "demo:1",
+    }).success).toBe(false);
   });
 
   it("runs list/start/act/finish against a mocked ARC client and writes non-verified community artifacts", async () => {

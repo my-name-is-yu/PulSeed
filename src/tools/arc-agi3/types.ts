@@ -44,7 +44,7 @@ export const ArcAgi3ScorecardSchema = z.object({
 }).passthrough();
 export type ArcAgi3Scorecard = z.infer<typeof ArcAgi3ScorecardSchema>;
 
-export const ArcAgi3RunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+export const ArcAgi3RunIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 export const ArcAgi3ActionNameSchema = z.enum([
   "RESET",
   "ACTION1",
