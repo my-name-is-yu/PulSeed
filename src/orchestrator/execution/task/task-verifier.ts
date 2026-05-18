@@ -69,6 +69,7 @@ import {
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { resolveTaskWorkspacePath } from "./task-workspace.js";
 import { readTaskArtifactMetricValues, verifyTaskArtifactContract } from "./task-artifact-contract.js";
+import { verifyTaskCompletionArtifacts } from "./task-completion-artifacts.js";
 import {
   applyThresholdProgressDelta,
   boundCompletionJudgerForTimedOutTask,
@@ -201,6 +202,33 @@ async function collectVerificationDiffs(
   }
 }
 
+async function buildArtifactMetricDimensionUpdates(input: {
+  deps: VerifierDeps;
+  task: Task;
+  metricValues: ReadonlyMap<string, number>;
+  confidence: number;
+}): Promise<VerificationResult["dimension_updates"]> {
+  if (input.metricValues.size === 0) return [];
+  const goalData = await input.deps.stateManager.loadGoal(input.task.goal_id);
+  const goalDims = goalData?.dimensions;
+  return input.task.target_dimensions.flatMap((dimName) => {
+    const metricValue = getArtifactMetricValueForDimension(input.metricValues, dimName);
+    if (metricValue === null) return [];
+    const dim = goalDims?.find((candidate) => candidate.name === dimName);
+    const prevVal =
+      dim !== undefined && typeof dim.current_value === "number"
+        ? (dim.current_value as number)
+        : null;
+    return [{
+      dimension_name: dimName,
+      previous_value: prevVal,
+      new_value: metricValue,
+      confidence: input.confidence,
+      source: "artifact_contract" as const,
+    }];
+  });
+}
+
 // ─── verifyTask ───
 
 /**
@@ -240,6 +268,96 @@ export async function verifyTask(
   const artifactMetricValues = artifactResult.passed
     ? await readTaskArtifactMetricValues(task, taskWorkspacePath)
     : new Map<string, number>();
+  const completionArtifactResult = await verifyTaskCompletionArtifacts(executionResult);
+
+  if (completionArtifactResult.passed) {
+    const confidence = executionResult.success ? 0.95 : 0.9;
+    const now = new Date().toISOString();
+    const verificationResult = VerificationResultSchema.parse({
+      task_id: task.id,
+      verdict: "pass",
+      confidence,
+      evidence: [
+        {
+          layer: "mechanical" as const,
+          description: completionArtifactResult.description,
+          confidence,
+        },
+        ...(artifactResult.applicable
+          ? [{
+              layer: "mechanical" as const,
+              description: artifactResult.description,
+              confidence: 0.9,
+            }]
+          : []),
+        {
+          layer: "self_report" as const,
+          description: formatSelfReportEvidence(parseExecutorReport(executionResult)),
+          confidence: 0.3,
+        },
+      ],
+      dimension_updates: await buildArtifactMetricDimensionUpdates({
+        deps,
+        task,
+        metricValues: completionArtifactResult.metricValues,
+        confidence,
+      }),
+      file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+      artifact_contract_status: artifactResult,
+      completion_artifact_status: {
+        applicable: completionArtifactResult.applicable,
+        passed: completionArtifactResult.passed,
+        description: completionArtifactResult.description,
+        artifacts: completionArtifactResult.artifacts,
+      },
+      timestamp: now,
+    });
+    await deps.stateManager.saveTaskVerificationResult(task.id, {
+      ...verificationResult,
+      criteria_met: task.success_criteria.filter((criterion) => criterion.is_blocking).length,
+      criteria_total: task.success_criteria.filter((criterion) => criterion.is_blocking).length,
+      executor_report: parseExecutorReport(executionResult),
+      agent_loop: executionResult.agentLoop ?? null,
+    });
+    return verificationResult;
+  }
+  if (completionArtifactResult.applicable) {
+    const verificationResult = VerificationResultSchema.parse({
+      task_id: task.id,
+      verdict: "fail",
+      confidence: 0.9,
+      evidence: [
+        {
+          layer: "mechanical" as const,
+          description: completionArtifactResult.description,
+          confidence: 0.9,
+        },
+        {
+          layer: "self_report" as const,
+          description: formatSelfReportEvidence(parseExecutorReport(executionResult)),
+          confidence: 0.3,
+        },
+      ],
+      dimension_updates: [],
+      file_diffs: await collectVerificationDiffs(deps, task, executionResult),
+      artifact_contract_status: artifactResult,
+      completion_artifact_status: {
+        applicable: completionArtifactResult.applicable,
+        passed: completionArtifactResult.passed,
+        description: completionArtifactResult.description,
+        artifacts: completionArtifactResult.artifacts,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    await deps.stateManager.saveTaskVerificationResult(task.id, {
+      ...verificationResult,
+      criteria_met: 0,
+      criteria_total: task.success_criteria.filter((criterion) => criterion.is_blocking).length,
+      executor_report: parseExecutorReport(executionResult),
+      agent_loop: executionResult.agentLoop ?? null,
+    });
+    return verificationResult;
+  }
 
   // ─── Short-circuit: GitHub issue URL evidence ───
   // When execution succeeded and output contains a GitHub issue URL,
@@ -590,6 +708,16 @@ export async function verifyTask(
     dimension_updates,
     file_diffs: await collectVerificationDiffs(deps, task, executionResult),
     artifact_contract_status: artifactResult,
+    ...(completionArtifactResult.applicable
+      ? {
+          completion_artifact_status: {
+            applicable: completionArtifactResult.applicable,
+            passed: completionArtifactResult.passed,
+            description: completionArtifactResult.description,
+            artifacts: completionArtifactResult.artifacts,
+          },
+        }
+      : {}),
     timestamp: now,
   });
 

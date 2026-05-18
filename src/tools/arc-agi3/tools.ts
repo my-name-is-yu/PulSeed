@@ -521,16 +521,24 @@ function isScorecardNotFoundError(err: unknown): boolean {
 function toFinishedRunOutput(runId: string, artifact: {
   card_id: string;
   replay_url: string;
+  action_count: number;
   official_score: number | null;
   scorecard: ArcAgi3Scorecard | null;
+  model_turns: number | null;
+  tool_calls: number | null;
+  token_usage?: unknown;
   claim_mode: string;
 }, artifactPath?: string): Record<string, unknown> {
   return {
     run_id: runId,
     card_id: artifact.card_id,
     replay_url: artifact.replay_url,
+    action_count: artifact.action_count,
     official_score: artifact.official_score,
     scorecard: artifact.scorecard,
+    model_turns: artifact.model_turns,
+    tool_calls: artifact.tool_calls,
+    token_usage: artifact.token_usage ?? null,
     ...(artifactPath ? { artifact_path: artifactPath } : {}),
     claim_mode: artifact.claim_mode,
   };

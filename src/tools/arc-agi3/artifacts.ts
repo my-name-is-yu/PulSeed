@@ -18,6 +18,15 @@ import {
   type ArcAgi3StartInput,
 } from "./types.js";
 
+export interface ArcAgi3UsageMetadata {
+  modelTurns?: number | null;
+  toolCalls?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  agentLoopTotalTokens?: number | null;
+  taskCycleTotalTokens?: number | null;
+}
+
 export class ArcAgi3ArtifactStore {
   constructor(private readonly baseDir: string = path.join(getPulseedDirPath(), "arc-agi-3", "runs")) {}
 
@@ -94,6 +103,7 @@ export class ArcAgi3ArtifactStore {
       scorecard: null,
       model_turns: null,
       tool_calls: null,
+      token_usage: null,
       cost: null,
       failure_reason: null,
     });
@@ -172,6 +182,35 @@ export class ArcAgi3ArtifactStore {
     }
   }
 
+  async recordUsage(runId: string, usage: ArcAgi3UsageMetadata): Promise<ArcAgi3RunArtifact | null> {
+    try {
+      const current = await this.load(runId);
+      const updated = ArcAgi3RunArtifactSchema.parse({
+        ...current,
+        updated_at: new Date().toISOString(),
+        model_turns: finiteNonNegativeIntegerOrNull(usage.modelTurns, current.model_turns),
+        tool_calls: finiteNonNegativeIntegerOrNull(usage.toolCalls, current.tool_calls),
+        token_usage: {
+          input_tokens: finiteNonNegativeIntegerOrNull(usage.inputTokens, current.token_usage?.input_tokens ?? null),
+          output_tokens: finiteNonNegativeIntegerOrNull(usage.outputTokens, current.token_usage?.output_tokens ?? null),
+          agent_loop_total_tokens: finiteNonNegativeIntegerOrNull(
+            usage.agentLoopTotalTokens,
+            current.token_usage?.agent_loop_total_tokens ?? null
+          ),
+          task_cycle_total_tokens: finiteNonNegativeIntegerOrNull(
+            usage.taskCycleTotalTokens,
+            current.token_usage?.task_cycle_total_tokens ?? null
+          ),
+          recorded_at: new Date().toISOString(),
+        },
+      });
+      await this.writeArtifact(updated);
+      return updated;
+    } catch {
+      return null;
+    }
+  }
+
   private async writeArtifact(artifact: ArcAgi3RunArtifact): Promise<void> {
     await fs.mkdir(this.runDir(artifact.run_id), { recursive: true });
     await fs.writeFile(this.runPath(artifact.run_id), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
@@ -191,6 +230,11 @@ export class ArcAgi3ArtifactStore {
     await fs.mkdir(this.runDir(runId), { recursive: true });
     await fs.appendFile(path.join(this.runDir(runId), "actions.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
   }
+}
+
+function finiteNonNegativeIntegerOrNull(value: number | null | undefined, fallback: number | null): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.trunc(value));
 }
 
 export function replayUrl(cardId: string): string {

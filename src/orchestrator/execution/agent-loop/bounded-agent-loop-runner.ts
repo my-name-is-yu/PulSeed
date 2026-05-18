@@ -308,6 +308,7 @@ export class BoundedAgentLoopRunner {
               output: parsed.output,
               changedFiles,
               commandResults,
+              toolResults: toolResultSummaries,
               calledTools: [...calledTools],
               modelTurns,
               toolCalls,

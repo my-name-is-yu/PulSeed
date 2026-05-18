@@ -22,6 +22,7 @@ import { finalizeSuccessfulExecution } from "./task-post-execution.js";
 import { persistTaskCycleSideEffects } from "./task-side-effects.js";
 import { reloadTaskFromDisk, verifyExecutionWithGitDiff } from "./task-execution-helpers-internal.js";
 import { appendTaskOutcomeEvent, setTaskOutcomeTokens } from "./task-outcome-ledger.js";
+import { attachTaskUsageToCompletionArtifacts } from "./task-completion-artifacts.js";
 import { createSkippedTaskResult } from "./task-execution-types.js";
 import type { ExecutionModeState } from "../../../platform/time/execution-mode.js";
 import type { LearningPriorPhaseProjection } from "../../../runtime/learning/index.js";
@@ -497,6 +498,19 @@ export async function runTaskLifecycleCycle(context: TaskLifecycleTaskCycleConte
   );
   await runPhase("persist-usage-telemetry", async () => {
     await setTaskOutcomeTokens(stateManager, verdictResult.task, taskCycleTokens);
+    const updatedArtifacts = await attachTaskUsageToCompletionArtifacts({
+      task: verdictResult.task,
+      executionResult,
+      taskCycleTokens,
+    });
+    if (updatedArtifacts.length > 0) {
+      logger?.info("TaskLifecycle: attached usage telemetry to completion artifacts", {
+        goalId,
+        taskId: verdictResult.task.id,
+        artifacts: updatedArtifacts,
+        tokensUsed: taskCycleTokens,
+      });
+    }
   });
 
   return {

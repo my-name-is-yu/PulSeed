@@ -98,6 +98,10 @@ export type {
 import type { TaskCycleResult } from "./task-execution-types.js";
 import { appendTaskOutcomeEvent } from "./task-outcome-ledger.js";
 import { runTaskLifecycleCycle } from "./task-lifecycle-runner.js";
+import {
+  runTaskCompletionArtifactFinalizers,
+  type TaskCompletionArtifactFinalizer,
+} from "./task-completion-finalizer.js";
 import { recordTaskPreExecutionPolicyDecision } from "./task-pre-execution-policy-trace.js";
 import type { TaskPreExecutionPolicyDecisionInput } from "./task-pre-execution-policy-trace.js";
 import {
@@ -142,6 +146,8 @@ export interface TaskLifecycleOptions {
   toolExecutor?: ToolExecutor;
   /** Native task-level agentloop runner. When present, runTaskCycle executes tasks through this path. */
   agentLoopRunner?: TaskAgentLoopRunner;
+  /** Optional finalizers that close external artifact-backed sessions after AgentLoop stops. */
+  completionArtifactFinalizers?: readonly TaskCompletionArtifactFinalizer[];
   /** Optional PromptGateway used for task generation and verifier review. */
   gateway?: IPromptGateway;
   /** Optional explicit workspace root for git-based revert operations. */
@@ -196,6 +202,7 @@ export class TaskLifecycle {
   private readonly hookManager?: HookManager;
   private readonly toolExecutor?: ToolExecutor;
   private readonly agentLoopRunner?: TaskAgentLoopRunner;
+  private readonly completionArtifactFinalizers: readonly TaskCompletionArtifactFinalizer[];
   private readonly gateway?: IPromptGateway;
   private readonly revertCwd?: string;
   private readonly healthCheckCwd?: string;
@@ -256,6 +263,7 @@ export class TaskLifecycle {
     this.hookManager = resolvedOptions?.hookManager;
     this.toolExecutor = resolvedOptions?.toolExecutor;
     this.agentLoopRunner = resolvedOptions?.agentLoopRunner;
+    this.completionArtifactFinalizers = resolvedOptions?.completionArtifactFinalizers ?? [];
     this.gateway = resolvedOptions?.gateway;
     this.revertCwd = resolvedOptions?.revertCwd;
     this.healthCheckCwd = resolvedOptions?.healthCheckCwd;
@@ -673,6 +681,16 @@ export class TaskLifecycle {
       agentLoopResult.activeBudgetMs ??= agentLoopBudget.activeBudgetMs;
       if (agentLoopBudget.generatedEstimateMs !== null) {
         agentLoopResult.generatedEstimateMs ??= agentLoopBudget.generatedEstimateMs;
+      }
+      if (this.completionArtifactFinalizers.length > 0) {
+        await runTaskCompletionArtifactFinalizers({
+          finalizers: this.completionArtifactFinalizers,
+          task: runningTask,
+          goal: artifactGoal,
+          agentLoopResult,
+          logger: this.logger,
+          abortSignal,
+        });
       }
       result = taskAgentLoopResultToAgentResult(agentLoopResult);
       if (shouldKeepDaemonShutdownInterruptedTaskRunning(result, abortSignal)) {

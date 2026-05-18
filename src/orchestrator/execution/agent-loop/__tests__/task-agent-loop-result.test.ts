@@ -104,6 +104,50 @@ describe("taskAgentLoopResultToAgentResult", () => {
     expect(result.agentLoop?.filesChangedPaths).toEqual([]);
   });
 
+  it("carries non-patch tool artifacts as completion artifacts without treating them as file edits", () => {
+    const result = taskAgentLoopResultToAgentResult({
+      success: true,
+      output: {
+        status: "done",
+        finalAnswer: "finished",
+        summary: "finished",
+        filesChanged: [],
+        testsRun: [],
+        completionEvidence: [],
+        verificationHints: [],
+        blockers: [],
+      },
+      finalText: "finished",
+      stopReason: "completed",
+      elapsedMs: 1,
+      modelTurns: 1,
+      toolCalls: 1,
+      compactions: 0,
+      changedFiles: [],
+      toolResults: [{
+        toolName: "arc_agi3_finish",
+        success: true,
+        artifacts: ["/state/arc-agi-3/runs/run-1/run.json"],
+        outputSummary: "Finished ARC run",
+        durationMs: 1,
+      }],
+      commandResults: [],
+      traceId: "trace-1",
+      sessionId: "session-1",
+      turnId: "turn-1",
+    });
+
+    expect(result.filesChanged).toBe(false);
+    expect(result.completionArtifacts).toEqual([{
+      path: "/state/arc-agi-3/runs/run-1/run.json",
+      sourceTool: "arc_agi3_finish",
+    }]);
+    expect(result.agentLoop?.completionArtifacts).toEqual(result.completionArtifacts);
+    expect(result.agentLoop?.completionEvidence).toContain(
+      "completion artifact from arc_agi3_finish: /state/arc-agi-3/runs/run-1/run.json"
+    );
+  });
+
   it("does not mark a dirty isolated worktree as completed without handoff", () => {
     const result = taskAgentLoopResultToAgentResult({
       success: true,

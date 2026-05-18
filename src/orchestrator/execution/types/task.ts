@@ -141,6 +141,12 @@ export const VerificationResultSchema = z.object({
     passed: z.boolean(),
     description: z.string(),
   }).optional(),
+  completion_artifact_status: z.object({
+    applicable: z.boolean(),
+    passed: z.boolean(),
+    description: z.string(),
+    artifacts: z.array(z.string()).default([]),
+  }).optional(),
   timestamp: z.string(),
 });
 export type VerificationResult = z.infer<typeof VerificationResultSchema>;

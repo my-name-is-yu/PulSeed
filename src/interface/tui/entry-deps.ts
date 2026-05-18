@@ -51,6 +51,7 @@ export async function buildStandaloneTuiDeps() {
   const { CharacterConfigManager } = await import("../../platform/traits/character-config.js");
   const { SharedManagerTuiChatSurface } = await import("./chat-surface.js");
   const { ToolRegistry, ToolExecutor, ToolPermissionManager, ConcurrencyController, createBuiltinTools } = await import("../../tools/index.js");
+  const { createArcAgi3CompletionArtifactFinalizer } = await import("../../tools/arc-agi3/index.js");
   const { buildCliDataSourceRegistry } = await import("../cli/data-source-bootstrap.js");
   const {
     createNativeCorePhaseRunner,
@@ -224,6 +225,7 @@ export async function buildStandaloneTuiDeps() {
       approvalFn,
       toolExecutor,
       agentLoopRunner,
+      completionArtifactFinalizers: [createArcAgi3CompletionArtifactFinalizer()],
       revertCwd: process.cwd(),
       healthCheckCwd: process.cwd(),
       operatorHandoffStore,
