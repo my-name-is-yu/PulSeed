@@ -1,6 +1,6 @@
 import { z } from "zod/v3";
 import * as path from "node:path";
-import type { AgentResult } from "../adapter-layer.js";
+import type { AgentCompletionArtifact, AgentResult } from "../adapter-layer.js";
 import type { AgentLoopResult, AgentLoopWorkspaceInfo } from "./agent-loop-result.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -91,6 +91,30 @@ function collectAgentLoopChangedPaths(
       ...applyPatchArtifactPaths,
     ]),
   ];
+}
+
+function collectCompletionArtifacts(
+  result: AgentLoopResult<TaskAgentLoopOutput>,
+): AgentCompletionArtifact[] {
+  const artifacts = (result.toolResults ?? []).flatMap((entry) => {
+    if (!entry.success || entry.checkOnly === true) return [];
+    if (entry.toolName === "apply_patch") return [];
+    return (entry.artifacts ?? [])
+      .map((artifact) => artifact.trim())
+      .filter((artifact) => artifact.length > 0)
+      .map((artifact) => ({
+        path: artifact,
+        sourceTool: entry.toolName,
+      }));
+  });
+
+  const seen = new Set<string>();
+  return artifacts.filter((artifact) => {
+    const key = `${artifact.sourceTool ?? ""}:${artifact.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function isBlockingNotExecutedReason(reason: string | undefined): boolean {
@@ -204,6 +228,7 @@ export function taskAgentLoopResultToAgentResult(
     command.evidenceEligible && command.relevantToTask !== false
   );
   const filesChangedPaths = collectAgentLoopChangedPaths(result);
+  const completionArtifacts = collectCompletionArtifacts(result);
   const blockerOutput = blockers.join("; ");
   const policyBlocked = policyBlockedBlockers.length > 0;
   const fallbackOutput = done
@@ -224,6 +249,7 @@ export function taskAgentLoopResultToAgentResult(
       done ? "completed" : "error",
     filesChanged: filesChangedPaths.length > 0 || Boolean(result.filesChanged),
     filesChangedPaths,
+    ...(completionArtifacts.length > 0 ? { completionArtifacts } : {}),
     agentLoop: {
       traceId: result.traceId,
       sessionId: result.sessionId,
@@ -240,6 +266,9 @@ export function taskAgentLoopResultToAgentResult(
       completionEvidence: [
         ...(result.output?.completionEvidence ?? []),
         ...runtimeVerificationCommands.filter((command) => command.success).map((command) => `verified command: ${command.command}`),
+        ...completionArtifacts.map((artifact) =>
+          `completion artifact${artifact.sourceTool ? ` from ${artifact.sourceTool}` : ""}: ${artifact.path}`
+        ),
       ],
       verificationHints: [
         ...(result.output?.verificationHints ?? []),
@@ -247,6 +276,7 @@ export function taskAgentLoopResultToAgentResult(
         ...notExecutedBlockers,
         ...workspaceHandoffBlockers,
       ],
+      ...(completionArtifacts.length > 0 ? { completionArtifacts } : {}),
       filesChangedPaths,
       ...(result.workspace
         ? {

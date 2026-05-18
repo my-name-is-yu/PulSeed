@@ -60,6 +60,7 @@ export interface AgentLoopExecutionInfo {
   compactions: number;
   completionEvidence?: string[];
   verificationHints?: string[];
+  completionArtifacts?: AgentCompletionArtifact[];
   filesChangedPaths?: string[];
   requestedCwd?: string;
   executionCwd?: string;
@@ -76,6 +77,12 @@ export interface AgentLoopExecutionInfo {
   activeBudgetMs?: number;
   generatedEstimateMs?: number;
   requiresPostVerificationBeforeSuccessLedger?: boolean;
+}
+
+export interface AgentCompletionArtifact {
+  path: string;
+  sourceTool?: string;
+  kind?: string;
 }
 
 export interface AgentResult {
@@ -105,6 +112,8 @@ export interface AgentResult {
   fileDiffs?: VerificationFileDiff[];
   /** Source used to determine changed paths and diffs. */
   diffEvidenceSource?: "git" | "filesystem_artifact" | "unavailable";
+  /** Durable artifacts produced by tools that can mechanically prove task completion. */
+  completionArtifacts?: AgentCompletionArtifact[];
   /** Execution was interrupted by daemon shutdown and should be recovered, not verified as a terminal task result. */
   interruptedByDaemonShutdown?: boolean;
   /** Native agentloop execution metadata when the task ran through the in-process loop. */

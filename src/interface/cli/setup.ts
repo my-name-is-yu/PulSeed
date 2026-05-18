@@ -57,6 +57,7 @@ import { HookManager } from "../../runtime/hook-manager.js";
 import { getCliLogger } from "./cli-logger.js";
 import { formatOperationError } from "./utils.js";
 import { ToolRegistry, ToolExecutor, ToolPermissionManager, ConcurrencyController, createBuiltinTools } from "../../tools/index.js";
+import { createArcAgi3CompletionArtifactFinalizer } from "../../tools/arc-agi3/index.js";
 import { isSafeBashCommand } from "../tui/bash-mode.js";
 import {
   createNativeCorePhaseRunner,
@@ -333,6 +334,7 @@ export async function buildDeps(
       memoryLifecycle: memoryLifecycleManager,
       toolExecutor,
       agentLoopRunner,
+      completionArtifactFinalizers: [createArcAgi3CompletionArtifactFinalizer()],
       revertCwd: resolvedWorkspacePath,
       healthCheckCwd: resolvedWorkspacePath,
       operatorHandoffStore,

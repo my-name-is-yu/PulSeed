@@ -16,8 +16,11 @@ import {
   ArcAgi3StartInputSchema,
   ArcAgi3StartTool,
   createArcAgi3Tools,
+  createArcAgi3CompletionArtifactFinalizer,
+  recordArcAgi3UsageForCompletionArtifacts,
   type ArcAgi3Scorecard,
   type ArcAgi3Snapshot,
+  verifyArcAgi3CompletionArtifacts,
 } from "../index.js";
 
 const baseSnapshot: ArcAgi3Snapshot = {
@@ -338,6 +341,122 @@ describe("ARC-AGI-3 tools", () => {
       "action",
       "closeScorecard",
     ]);
+  });
+
+  it("finalizes and verifies ARC completion artifacts after an agent loop stops before finish", async () => {
+    const client = makeMockClient();
+    const deps = {
+      client,
+      artifactStore,
+      pulseedCommit: "commit-1",
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.5",
+        adapter: "openai_codex_cli" as const,
+      }),
+    };
+    const start = await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-finalizer",
+    }, makeContext());
+    expect(start.success).toBe(true);
+    await new ArcAgi3ActTool(deps).call({
+      run_id: "run-finalizer",
+      action: "ACTION1",
+    }, makeContext());
+
+    const runPath = artifactStore.runPath("run-finalizer");
+    expect(JSON.parse(fs.readFileSync(runPath, "utf8")).scorecard).toBeNull();
+    const finalizer = createArcAgi3CompletionArtifactFinalizer({ client });
+    const result = await finalizer({
+      task: { id: "task-1", goal_id: "goal-arc", constraints: [] } as unknown as Parameters<typeof finalizer>[0]["task"],
+      agentLoopResult: {
+        success: false,
+        output: null,
+        finalText: "model stream failed",
+        stopReason: "fatal_error",
+        elapsedMs: 1,
+        modelTurns: 1,
+        toolCalls: 2,
+        compactions: 0,
+        changedFiles: [],
+        toolResults: [{
+          toolName: "arc_agi3_start",
+          success: true,
+          artifacts: [runPath],
+          outputSummary: "started",
+          durationMs: 1,
+        }],
+        commandResults: [],
+        traceId: "trace-arc",
+        sessionId: "session-arc",
+        turnId: "turn-arc",
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      success: true,
+    });
+    expect(client.calls.map((call) => call.method)).toContain("closeScorecard");
+    const artifact = JSON.parse(fs.readFileSync(runPath, "utf8"));
+    expect(artifact).toMatchObject({
+      official_score: 7,
+      scorecard: expect.objectContaining({ card_id: "card-1", score: 7 }),
+    });
+
+    const verification = await verifyArcAgi3CompletionArtifacts([{
+      path: runPath,
+      sourceTool: "completion_artifact_finalizer",
+    }]);
+    expect(verification).toMatchObject({
+      applicable: true,
+      passed: true,
+    });
+    expect(verification.metricValues.get("official_score")).toBe(7);
+  });
+
+  it("records observed token usage on ARC run artifacts without model self-report", async () => {
+    const client = makeMockClient();
+    const deps = {
+      client,
+      artifactStore,
+      pulseedCommit: "commit-1",
+      providerConfigLoader: async () => ({
+        provider: "openai" as const,
+        model: "gpt-5.5",
+        adapter: "openai_codex_cli" as const,
+      }),
+    };
+    await new ArcAgi3StartTool(deps).call({
+      game_id: "ls20-016295f7601e",
+      run_id: "run-usage",
+    }, makeContext());
+    await new ArcAgi3FinishTool(deps).call({ run_id: "run-usage", close_scorecard: true }, makeContext());
+
+    await recordArcAgi3UsageForCompletionArtifacts({
+      artifacts: [{ path: artifactStore.runPath("run-usage"), sourceTool: "arc_agi3_finish" }],
+      usage: {
+        modelTurns: 3,
+        toolCalls: 5,
+        inputTokens: 100,
+        outputTokens: 40,
+        agentLoopTotalTokens: 140,
+        taskCycleTotalTokens: 222,
+      },
+    });
+
+    const artifact = JSON.parse(fs.readFileSync(artifactStore.runPath("run-usage"), "utf8"));
+    expect(artifact).toMatchObject({
+      model_turns: 3,
+      tool_calls: 5,
+      token_usage: {
+        input_tokens: 100,
+        output_tokens: 40,
+        agent_loop_total_tokens: 140,
+        task_cycle_total_tokens: 222,
+      },
+    });
   });
 
   it("returns cached scorecards after a closed ARC scorecard is no longer retrievable", async () => {

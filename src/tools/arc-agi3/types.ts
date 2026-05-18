@@ -156,6 +156,13 @@ export const ArcAgi3RunArtifactSchema = z.object({
   scorecard: ArcAgi3ScorecardSchema.nullable(),
   model_turns: z.number().int().nonnegative().nullable(),
   tool_calls: z.number().int().nonnegative().nullable(),
+  token_usage: z.object({
+    input_tokens: z.number().int().nonnegative().nullable(),
+    output_tokens: z.number().int().nonnegative().nullable(),
+    agent_loop_total_tokens: z.number().int().nonnegative().nullable(),
+    task_cycle_total_tokens: z.number().int().nonnegative().nullable(),
+    recorded_at: z.string().datetime(),
+  }).nullable().default(null),
   cost: z.number().nonnegative().nullable(),
   failure_reason: z.string().nullable(),
 }).strict();

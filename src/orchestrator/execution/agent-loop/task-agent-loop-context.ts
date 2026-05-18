@@ -104,7 +104,7 @@ export function buildTaskAgentLoopTurnContext(
     budget: withDefaultBudget(input.budget),
     toolPolicy: input.toolPolicy ?? {},
     verificationPlan,
-    completionValidator: async ({ output, changedFiles, commandResults }): Promise<AgentLoopCompletionValidationResult> => {
+    completionValidator: async ({ output, changedFiles, commandResults, toolResults }): Promise<AgentLoopCompletionValidationResult> => {
       if (output.status !== "done") return { ok: true, reasons: [] };
 
       const reasons: string[] = [];
@@ -122,10 +122,17 @@ export function buildTaskAgentLoopTurnContext(
       const runtimeVerifiedCommands = commandResults.filter((result) =>
         result.success && isTaskRelevantVerificationCommand(input.task, result)
       );
+      const completionArtifactCount = toolResults.filter((result) =>
+        result.success &&
+        result.checkOnly !== true &&
+        result.toolName !== "apply_patch" &&
+        (result.artifacts?.length ?? 0) > 0
+      ).length;
       const claimedChangedFiles = [...new Set([...(output.filesChanged ?? []), ...changedFiles])];
       const completionEvidenceCount =
         (output.completionEvidence ?? []).filter((item) => item.trim().length > 0).length
         + runtimeVerifiedCommands.length
+        + completionArtifactCount
         + (artifactContractPassed ? 1 : 0);
 
       if (!output.finalAnswer.trim()) {

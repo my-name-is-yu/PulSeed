@@ -8,7 +8,7 @@ import type {
   AgentLoopModelRef,
   AgentLoopReasoningEffort,
 } from "./agent-loop-model.js";
-import type { AgentLoopCommandResult, AgentLoopCompletionValidationResult } from "./agent-loop-result.js";
+import type { AgentLoopCommandResult, AgentLoopCompletionValidationResult, AgentLoopToolResultSummary } from "./agent-loop-result.js";
 import type { AgentLoopSession } from "./agent-loop-session.js";
 import type { AgentLoopSessionState } from "./agent-loop-session-state.js";
 import type { ExecutionPolicy } from "./execution-policy.js";
@@ -46,6 +46,7 @@ export interface AgentLoopTurnContext<TOutput> {
     output: TOutput;
     changedFiles: string[];
     commandResults: AgentLoopCommandResult[];
+    toolResults: readonly AgentLoopToolResultSummary[];
     calledTools: string[];
     modelTurns: number;
     toolCalls: number;

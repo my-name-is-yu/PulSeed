@@ -192,6 +192,166 @@ describe("TaskLifecycle", async () => {
       expect(verification.verdict).toBe("pass");
     });
 
+    it("trusts verified completion artifacts instead of model self-report for ARC scorecards", async () => {
+      const runDir = path.join(tmpDir, "arc-agi-3", "runs", "run-arc");
+      fs.mkdirSync(runDir, { recursive: true });
+      const now = new Date().toISOString();
+      const runPath = path.join(runDir, "run.json");
+      fs.writeFileSync(runPath, JSON.stringify({
+        schema_version: "pulseed.arc_agi_3.run/v1",
+        claim_mode: "community_online_scorecard",
+        run_id: "run-arc",
+        mode: "online_api",
+        game_id: "ft09-0d8bbf25",
+        model_provider: "openai",
+        model_id: "gpt-5.5",
+        pulseed_commit: "commit-1",
+        tool_policy_version: "arc-agi-3-tool-policy-v1",
+        created_at: now,
+        updated_at: now,
+        card_id: "card-arc",
+        guid: "guid-arc",
+        replay_url: "https://arcprize.org/scorecards/card-arc",
+        action_count: 2,
+        reset_count: 1,
+        submitted_action_log: [{
+          at: now,
+          action: "RESET",
+          state_after: "NOT_FINISHED",
+          levels_completed_after: 0,
+          available_actions_after: [1],
+          reasoning_provided: false,
+        }],
+        latest_snapshot: {
+          game_id: "ft09-0d8bbf25",
+          guid: "guid-arc",
+          frame: [[[0]]],
+          state: "NOT_FINISHED",
+          levels_completed: 0,
+          win_levels: 254,
+          action_input: {},
+          available_actions: [1],
+        },
+        official_scorecard_id: "card-arc",
+        official_score: 0,
+        scorecard: { card_id: "card-arc", score: 0, total_actions: 2 },
+        model_turns: null,
+        tool_calls: null,
+        token_usage: null,
+        cost: null,
+        failure_reason: null,
+      }), "utf8");
+
+      const llm = createSpyLLMClient([LLM_REVIEW_FAIL]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        constraints: ["run_spec_profile:arc_agi_3"],
+        target_dimensions: ["official_score"],
+        primary_dimension: "official_score",
+        work_description: "Run ARC-AGI-3 and finish the scorecard.",
+        artifact_contract: { required: false, required_artifacts: [] },
+      });
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        success: false,
+        output: "Agent loop stopped before final JSON.",
+        error: "model stream failed",
+        stopped_reason: "error",
+        completionArtifacts: [{ path: runPath, sourceTool: "arc_agi3_finish" }],
+        agentLoop: {
+          traceId: "trace-1",
+          sessionId: "session-1",
+          turnId: "turn-1",
+          stopReason: "fatal_error",
+          modelTurns: 1,
+          toolCalls: 3,
+          compactions: 0,
+          completionArtifacts: [{ path: runPath, sourceTool: "arc_agi3_finish" }],
+        },
+      }));
+
+      expect(verification.verdict).toBe("pass");
+      expect(verification.completion_artifact_status).toMatchObject({
+        applicable: true,
+        passed: true,
+      });
+      expect(verification.evidence[0]?.description).toContain("ARC-AGI-3 completion artifact verified");
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it("treats incomplete completion artifacts as hard mechanical failures", async () => {
+      const runDir = path.join(tmpDir, "arc-agi-3", "runs", "run-incomplete");
+      fs.mkdirSync(runDir, { recursive: true });
+      const now = new Date().toISOString();
+      const runPath = path.join(runDir, "run.json");
+      fs.writeFileSync(runPath, JSON.stringify({
+        schema_version: "pulseed.arc_agi_3.run/v1",
+        claim_mode: "community_online_scorecard",
+        run_id: "run-incomplete",
+        mode: "online_api",
+        game_id: "ft09-0d8bbf25",
+        model_provider: "openai",
+        model_id: "gpt-5.5",
+        pulseed_commit: "commit-1",
+        tool_policy_version: "arc-agi-3-tool-policy-v1",
+        created_at: now,
+        updated_at: now,
+        card_id: "card-incomplete",
+        guid: "guid-incomplete",
+        replay_url: "https://arcprize.org/scorecards/card-incomplete",
+        action_count: 2,
+        reset_count: 1,
+        submitted_action_log: [{
+          at: now,
+          action: "RESET",
+          state_after: "NOT_FINISHED",
+          levels_completed_after: 0,
+          available_actions_after: [1],
+          reasoning_provided: false,
+        }],
+        latest_snapshot: {
+          game_id: "ft09-0d8bbf25",
+          guid: "guid-incomplete",
+          frame: [[[0]]],
+          state: "NOT_FINISHED",
+          levels_completed: 0,
+          win_levels: 254,
+          action_input: {},
+          available_actions: [1],
+        },
+        official_scorecard_id: "card-incomplete",
+        official_score: null,
+        scorecard: null,
+        model_turns: null,
+        tool_calls: null,
+        token_usage: null,
+        cost: null,
+        failure_reason: "scorecard close failed",
+      }), "utf8");
+
+      const llm = createSpyLLMClient([LLM_REVIEW_PASS]);
+      const lifecycle = createLifecycle(llm, { adapterRegistry: null });
+      const task = makeTask({
+        constraints: ["run_spec_profile:arc_agi_3"],
+        target_dimensions: ["official_score"],
+        primary_dimension: "official_score",
+        work_description: "Run ARC-AGI-3 and finish the scorecard.",
+        artifact_contract: { required: false, required_artifacts: [] },
+      });
+      const verification = await lifecycle.verifyTask(task, makeExecutionResult({
+        success: true,
+        output: "I finished the run.",
+        completionArtifacts: [{ path: runPath, sourceTool: "arc_agi3_start" }],
+      }));
+
+      expect(verification.verdict).toBe("fail");
+      expect(verification.completion_artifact_status).toMatchObject({
+        applicable: true,
+        passed: false,
+      });
+      expect(verification.evidence[0]?.description).toContain("scorecard close failed");
+      expect(llm.calls).toHaveLength(0);
+    });
+
     it("fails artifact-contracted Kaggle progress when only source markers exist", async () => {
       const workspace = path.join(tmpDir, "kaggle-workspace");
       fs.mkdirSync(path.join(workspace, "src", "experiments"), { recursive: true });
