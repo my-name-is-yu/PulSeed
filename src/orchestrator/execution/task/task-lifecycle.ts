@@ -710,7 +710,13 @@ export class TaskLifecycle {
           result.filesChanged = diffArtifacts.changedPaths.length > 0;
         }
       }
-      failNativeCodeTaskWithoutFileChanges({ task: runningTask, result, capturedChangedPaths, logger: this.logger });
+      failNativeCodeTaskWithoutFileChanges({
+        task: runningTask,
+        goal: artifactGoal,
+        result,
+        capturedChangedPaths,
+        logger: this.logger,
+      });
     } catch (err) {
       result = {
         success: false,

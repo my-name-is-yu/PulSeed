@@ -833,6 +833,54 @@ describe("TaskLifecycle", async () => {
       ]));
     });
 
+    it("does not fail ARC-AGI-3 normal tasks when they produce artifacts instead of workspace diffs", async () => {
+      const llm = createMockLLMClient([]);
+      await stateManager.saveGoal(GoalSchema.parse({
+        id: "goal-1",
+        parent_id: null,
+        node_type: "goal",
+        title: "ARC-AGI-3 community scorecard run",
+        description: "Run ARC-AGI-3 using online API tools and persist scorecard artifacts.",
+        status: "active",
+        dimensions: [],
+        gap_aggregation: "max",
+        dimension_mapping: null,
+        constraints: [
+          "run_spec_profile:arc_agi_3",
+          "arc_agi3_public_research:disabled",
+          "arc_agi3_generic_network:disabled",
+        ],
+        children_ids: [],
+        target_date: null,
+        origin: "manual",
+        pace_snapshot: null,
+        deadline: null,
+        confidence_flag: "high",
+        user_override: false,
+        feasibility_note: null,
+        uncertainty_weight: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+      const agentLoopRunner = makeAgentLoopRunner(makeAgentLoopResult("completed", {
+        changedFiles: [],
+        filesChanged: false,
+      }));
+      const lifecycle = createLifecycle(llm, {
+        agentLoopRunner,
+        execFileSyncFn: () => "",
+      });
+      const task = makeTask({ task_category: "normal" });
+      await stateManager.writeRaw(`tasks/${task.goal_id}/${task.id}.json`, task);
+
+      const result = await lifecycle.executeTaskWithAgentLoop(task, "workspace context", "knowledge context");
+
+      const persisted = await stateManager.readRaw(`tasks/${task.goal_id}/${task.id}.json`) as Task;
+      expect(result.success).toBe(true);
+      expect(result.error).toBeNull();
+      expect(persisted.status).toBe("completed");
+    });
+
     it("records dirty isolated worktree handoff as non-completed execution", async () => {
       const llm = createMockLLMClient([]);
       const lifecycle = createLifecycle(llm, {

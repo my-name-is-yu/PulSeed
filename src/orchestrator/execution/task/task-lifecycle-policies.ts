@@ -58,7 +58,11 @@ export const ARC_AGI3_DENIED_AGENT_LOOP_TOOLS = [
   "kaggle_workspace_prepare",
 ] as const;
 
-export function nativeTaskRequiresCapturedFileChanges(task: Task): boolean {
+export function nativeTaskRequiresCapturedFileChanges(
+  task: Task,
+  goal?: Pick<Goal, "constraints"> | null,
+): boolean {
+  if (isArcAgi3GoalOrTask(task, goal)) return false;
   return task.task_category === "normal" || task.task_category === "capability_acquisition";
 }
 
@@ -130,11 +134,12 @@ export function deriveTaskAgentLoopBudget(
 
 export function failNativeCodeTaskWithoutFileChanges(input: {
   task: Task;
+  goal?: Pick<Goal, "constraints"> | null;
   result: AgentResult;
   capturedChangedPaths: string[];
   logger?: Logger;
 }): void {
-  if (!input.result.success || !nativeTaskRequiresCapturedFileChanges(input.task)) return;
+  if (!input.result.success || !nativeTaskRequiresCapturedFileChanges(input.task, input.goal)) return;
   if (input.capturedChangedPaths.length > 0) return;
 
   input.logger?.warn(
